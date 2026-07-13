@@ -81,6 +81,7 @@ const IPC_CHANNELS = [
   'download:cancel',
   'download:dismiss',
   'download:retryFailed',
+  'download:priority',
   'download:clearQueue',
   'scan:run',
   'scan:libraryVersions',
@@ -710,6 +711,10 @@ export function initIpc(): void {
       return ''
     }
     const id = downloadQueue.enqueue(request, meta)
+    if (id && meta?.manual === true && shouldCrawlAutoDownload()) {
+      downloadQueue.start()
+      scheduler.setStatus('downloading')
+    }
     return id
   })
 
@@ -759,6 +764,11 @@ export function initIpc(): void {
 
   ipcMain.handle('download:retryFailed', (_e, queueId: string) => {
     downloadQueue.retryFailed(queueId)
+    return downloadQueue.getState()
+  })
+
+  ipcMain.handle('download:priority', (_e, queueId: string) => {
+    downloadQueue.prioritizeQueueItem(queueId)
     return downloadQueue.getState()
   })
 

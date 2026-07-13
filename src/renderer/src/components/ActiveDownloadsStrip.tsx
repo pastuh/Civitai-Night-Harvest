@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DownloadQueueItem, DeferredDownload, DownloadStripLayout } from '../../../shared/types'
 import { compareDownloadPipelineItems } from '../../../shared/download-queue-order'
 import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
-import { formatBytes, formatAuthorWithWeight, getModelPageUrl } from '../../../shared/utils'
+import { getModelPageUrl } from '../../../shared/utils'
 import { PreviewThumb } from './PreviewThumb'
 import { useT } from '../i18n/context'
-import type { TranslateFn } from '../i18n/context'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 
 const COLLAPSED_KEY = 'csd:downloads-strip-collapsed'
@@ -23,6 +22,7 @@ interface Props {
   clearQueueBusy?: boolean
   onRetryFailed?: (queueId: string) => Promise<void>
   onDismissFailed?: (queueId: string) => Promise<void>
+  onPrioritizeDownload?: (queueId: string) => Promise<void>
   onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
 }
 
@@ -62,68 +62,18 @@ function useDownloadStalls(queue: DownloadQueueItem[]): Set<string> {
   return stalledIds
 }
 
-function queueStatusLabel(
-  t: TranslateFn,
-  item: DownloadQueueItem,
-  queuePaused: boolean,
-  deferredEntry?: DeferredDownload
-): string {
-  if (item.status === 'downloading') return ''
-  if (item.status === 'queued') {
-    return queuePaused ? t('downloadsStrip.statusQueuedPaused') : t('downloadsStrip.statusQueued')
-  }
-  if (item.status === 'deferred') {
-    if (deferredEntry?.earlyAccessEndsAt) {
-      const time = new Date(deferredEntry.earlyAccessEndsAt).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-      return t('downloadsStrip.statusUnlocksToday', { time })
-    }
-    return t('downloadsStrip.statusPlanned')
-  }
-  if (item.status === 'failed') return t('downloadsStrip.statusFailed')
-  return item.status
-}
-
-function progressDetail(t: TranslateFn, item: DownloadQueueItem, stalled: boolean): string {
-  if (item.status !== 'downloading') return ''
-  if (stalled) {
-    return t('downloadsStrip.progressStalled', { bytes: formatBytes(item.bytesReceived) })
-  }
-  if (item.phase === 'preview') return t('downloadsStrip.progressSavingPreview')
-  if (item.phase === 'swarm') return t('downloadsStrip.progressMetadata')
-  const parts: string[] = []
-  if (item.totalBytes > 0) {
-    parts.push(`${pct(item)}%`)
-    parts.push(`${formatBytes(item.bytesReceived)} / ${formatBytes(item.totalBytes)}`)
-  } else if (item.bytesReceived > 0) {
-    parts.push(formatBytes(item.bytesReceived))
-  }
-  if (item.speedBps > 0) parts.push(`${formatBytes(item.speedBps)}/s`)
-  return parts.join(' · ')
-}
-
 function DownloadQueueRichCard({
   item,
-  queuePaused: _queuePaused,
   stalled,
   banMode = false,
   onBan,
-  onRetryFailed,
-  onDismissFailed,
-  onContextMenu,
-  deferredEntry
+  onContextMenu
 }: {
   item: DownloadQueueItem
-  queuePaused: boolean
   stalled: boolean
   banMode?: boolean
   onBan?: (item: DownloadQueueItem) => void
-  onRetryFailed?: (queueId: string) => Promise<void>
-  onDismissFailed?: (queueId: string) => Promise<void>
   onContextMenu: (e: React.MouseEvent) => void
-  deferredEntry?: DeferredDownload
 }) {
   const t = useT()
   const isFailed = item.status === 'failed'
@@ -137,15 +87,6 @@ function DownloadQueueRichCard({
       : isDeferred
         ? 'deferred'
         : item.status
-  const progressText = progressDetail(t, item, stalled)
-  const statusFoot =
-    isDownloading && progressText
-      ? progressText
-      : isFailed
-        ? t('downloadsStrip.statusFailed')
-        : isDeferred
-          ? queueStatusLabel(t, item, false, deferredEntry)
-          : ''
 
   const cardClass = [
     'gallery-card',
@@ -158,16 +99,6 @@ function DownloadQueueRichCard({
   ]
     .filter(Boolean)
     .join(' ')
-
-  const tags = item.civitaiTags ?? []
-  const authorWeight = formatAuthorWithWeight(
-    item.author,
-    item.fileSizeBytes && item.fileSizeBytes > 0
-      ? item.fileSizeBytes
-      : item.totalBytes > 0
-        ? item.totalBytes
-        : undefined
-  )
 
   return (
     <div
@@ -188,11 +119,6 @@ function DownloadQueueRichCard({
             </div>
           </div>
         )}
-        {statusFoot && (
-          <div className={`card-status-foot active-queue-status-foot ${stalled ? 'stalled' : ''}`}>
-            {statusFoot}
-          </div>
-        )}
         {banMode && onBan && (
           <button
             type="button"
@@ -208,46 +134,10 @@ function DownloadQueueRichCard({
           </button>
         )}
       </div>
-      {(isFailed || isDeferred) && item.reason && (
-        <div className={`card-download-error ${isDeferred ? 'deferred' : ''} muted`}>{item.reason}</div>
-      )}
-      <div className={`gallery-card-body${isQueued ? ' active-queue-card-body-name-only' : ''}`}>
+      <div className="gallery-card-body active-queue-card-body-compact">
         <div className="gallery-card-title-row">
           <strong title={item.modelName}>{item.modelName}</strong>
         </div>
-        {authorWeight && <div className="muted active-queue-rich-meta">{authorWeight}</div>}
-        {!isQueued && tags.length > 0 && (
-          <div className="tag-row active-queue-rich-tags">
-            {tags.slice(0, 6).map((tag) => (
-              <span
-                key={tag}
-                className={`tag-chip ${item.routingTag.toLowerCase() === tag.toLowerCase() ? 'selected' : ''}`}
-              >
-                {tag}
-              </span>
-            ))}
-            {tags.length > 6 && <span className="tag-chip muted">+{tags.length - 6}</span>}
-          </div>
-        )}
-        {isFailed && item.bytesReceived > 0 && (
-          <div className="muted active-queue-rich-meta">
-            {t('downloadsStrip.receivedBeforeFail', { bytes: formatBytes(item.bytesReceived) })}
-          </div>
-        )}
-        {isFailed && (onRetryFailed || onDismissFailed) && (
-          <div className="active-queue-card-actions">
-            {onRetryFailed && (
-              <button type="button" className="btn-sm" onClick={() => void onRetryFailed(item.id)}>
-                Retry
-              </button>
-            )}
-            {onDismissFailed && (
-              <button type="button" className="btn-sm btn-ghost" onClick={() => void onDismissFailed(item.id)}>
-                Dismiss
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )
@@ -303,6 +193,7 @@ export function ActiveDownloadsStrip({
   clearQueueBusy = false,
   onRetryFailed,
   onDismissFailed,
+  onPrioritizeDownload,
   onBrowseModelBanChange
 }: Props) {
   const t = useT()
@@ -406,6 +297,7 @@ export function ActiveDownloadsStrip({
       stripItems.find((i) => i.status === 'queued') ??
       stripItems[0]
     if (!primary) return null
+    const primaryDeferred = primary.versionId ? deferredByVersion.get(primary.versionId) : undefined
     return (
       <div className="active-queue-strip active-queue-strip-collapsed">
         <div className="active-queue-strip-collapsed-row">
@@ -423,7 +315,10 @@ export function ActiveDownloadsStrip({
                 </>
               ) : primary.status === 'deferred' ? (
                 <>
-                  {t('downloadsStrip.labelUnlocksToday')} <strong>{primary.modelName}</strong>
+                  {primaryDeferred?.failureKind === 'early_access'
+                    ? t('downloadsStrip.labelUnlocksToday')
+                    : t('downloadsStrip.labelFailed')}{' '}
+                  <strong>{primary.modelName}</strong>
                   {plannedCount > 1 ? ` ${t('downloadsStrip.pipelineMore', { count: plannedCount - 1 })}` : ''}
                 </>
               ) : downloadingCount > 0 ? (
@@ -474,42 +369,44 @@ export function ActiveDownloadsStrip({
 
   return (
     <div className="active-queue-strip">
-      <div className="active-queue-strip-head">
-        {queuedCount > 0 && (
-          <span className="active-queue-strip-head-item">
-            {queuePaused ? t('downloadsStrip.labelQueuedPaused') : t('downloadsStrip.labelQueued')}{' '}
-            <strong>{queuedCount}</strong>
-          </span>
-        )}
-        {downloadingCount > 0 && (
-          <span className="active-queue-strip-head-item">
-            {t('downloadsStrip.labelDownloading')} <strong>{downloadingCount}</strong>
-          </span>
-        )}
-        {failedCount > 0 && (
-          <span className="active-queue-strip-head-item">
-            {t('downloadsStrip.labelFailed')} <strong>{failedCount}</strong>
-          </span>
-        )}
-      </div>
-      <div className="active-queue-strip-toolbar">
-        {showQueueControls && (
-          <StripQueueControls
-            manualQueueMode={manualQueueMode}
-            clearing={clearQueueBusy}
-            onManualQueueModeChange={onManualQueueModeChange!}
-            onClearQueue={onClearQueue!}
-          />
-        )}
-        <button
-          type="button"
-          className="active-queue-strip-float-btn active-queue-strip-collapse-btn"
-          onClick={() => setCollapsed(true)}
-          title={t('downloadsStrip.collapse')}
-          aria-label={t('downloadsStrip.collapse')}
-        >
-          ▴
-        </button>
+      <div className="active-queue-strip-top">
+        <div className="active-queue-strip-head">
+          {queuedCount > 0 && (
+            <span className="active-queue-strip-head-item">
+              {queuePaused ? t('downloadsStrip.labelQueuedPaused') : t('downloadsStrip.labelQueued')}{' '}
+              <strong>{queuedCount}</strong>
+            </span>
+          )}
+          {downloadingCount > 0 && (
+            <span className="active-queue-strip-head-item">
+              {t('downloadsStrip.labelDownloading')} <strong>{downloadingCount}</strong>
+            </span>
+          )}
+          {failedCount > 0 && (
+            <span className="active-queue-strip-head-item">
+              {t('downloadsStrip.labelFailed')} <strong>{failedCount}</strong>
+            </span>
+          )}
+        </div>
+        <div className="active-queue-strip-toolbar">
+          {showQueueControls && (
+            <StripQueueControls
+              manualQueueMode={manualQueueMode}
+              clearing={clearQueueBusy}
+              onManualQueueModeChange={onManualQueueModeChange!}
+              onClearQueue={onClearQueue!}
+            />
+          )}
+          <button
+            type="button"
+            className="active-queue-strip-float-btn active-queue-strip-collapse-btn"
+            onClick={() => setCollapsed(true)}
+            title={t('downloadsStrip.collapse')}
+            aria-label={t('downloadsStrip.collapse')}
+          >
+            ▴
+          </button>
+        </div>
       </div>
 
       <div className={listClass}>
@@ -517,16 +414,12 @@ export function ActiveDownloadsStrip({
           <DownloadQueueRichCard
             key={item.id}
             item={item}
-            queuePaused={queuePaused}
             stalled={stalledIds.has(item.id)}
             banMode={banFunctionMode}
             onBan={banItem}
-            onRetryFailed={onRetryFailed}
-            onDismissFailed={onDismissFailed}
             onContextMenu={(e) =>
               setContextMenu({ x: e.clientX, y: e.clientY, item })
             }
-            deferredEntry={deferredByVersion.get(item.versionId)}
           />
         ))}
       </div>
@@ -557,6 +450,18 @@ export function ActiveDownloadsStrip({
                 {t('downloadsStrip.removeFromQueue')}
               </button>
             )}
+            {onPrioritizeDownload &&
+              (contextMenu.item.status === 'queued' ||
+                contextMenu.item.status === 'failed' ||
+                contextMenu.item.status === 'deferred') && (
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void onPrioritizeDownload(contextMenu.item.id)
+                  )}
+                >
+                  {t('downloadsStrip.priorityDownload')}
+                </button>
+              )}
             {contextMenu.item.status === 'failed' && onRetryFailed && (
               <button
                 {...contextMenuButtonProps(() => void onRetryFailed(contextMenu.item.id))}

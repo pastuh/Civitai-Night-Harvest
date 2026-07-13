@@ -151,6 +151,7 @@ export function isSameLocalCalendarDay(isoTimestamp: string, reference: Date = n
 export function shouldShowDeferredInDownloadStrip(
   entry: Pick<DeferredDownload, 'failureKind' | 'earlyAccessEndsAt'>
 ): boolean {
+  if (entry.failureKind === 'interrupted') return true
   return (
     entry.failureKind === 'early_access' &&
     Boolean(entry.earlyAccessEndsAt) &&

@@ -1843,18 +1843,26 @@ export function SearchBrowsePanel({
             {contextMenu.model.tags.length > 0 && onHiddenTagsChange && (
               <>
                 <div className="context-menu-divider" />
-                {contextMenu.model.tags.map((tag) => (
-                  <button
-                    key={tag}
-                    {...contextMenuButtonProps(() => {
-                      void hideTagFromBrowse(tag)
-                      setContextMenu(null)
-                    })}
-                    disabled={hiddenTags.some((t) => t.toLowerCase() === tag.toLowerCase())}
-                  >
-                    Skip tag “{tag}”
-                  </button>
-                ))}
+                <div className="context-menu-label">{t('browse.contextSkipTag')}</div>
+                <div className="context-menu-tag-picks">
+                  {contextMenu.model.tags.map((tag) => {
+                    const hidden = hiddenTags.some((t) => t.toLowerCase() === tag.toLowerCase())
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="tag-chip context-menu-tag-chip"
+                        disabled={hidden}
+                        onClick={() => {
+                          void hideTagFromBrowse(tag)
+                          setContextMenu(null)
+                        }}
+                      >
+                        {tag}
+                      </button>
+                    )
+                  })}
+                </div>
               </>
             )}
             {contextMenu.model.pageUrl && (

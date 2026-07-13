@@ -919,6 +919,12 @@ export default function App() {
               setQueue(state.items)
               setQueuePaused(state.paused)
             }}
+            onPrioritizeDownload={async (id) => {
+              const state = await window.api.prioritizeDownload(id)
+              setQueue(state.items)
+              setQueuePaused(state.paused)
+              if (!state.paused) setStatus(await window.api.getScanStatus())
+            }}
             onBrowseModelBanChange={markBrowseModelBan}
           />
         </div>

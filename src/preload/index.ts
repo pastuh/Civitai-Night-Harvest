@@ -152,6 +152,8 @@ const api = {
     ipcRenderer.invoke('download:dismiss', queueId),
   retryFailedDownload: (queueId: string): Promise<DownloadQueueState> =>
     ipcRenderer.invoke('download:retryFailed', queueId),
+  prioritizeDownload: (queueId: string): Promise<DownloadQueueState> =>
+    ipcRenderer.invoke('download:priority', queueId),
   clearDownloadQueue: (): Promise<{ queue: DownloadQueueState; settings: AppSettingsPublic }> =>
     ipcRenderer.invoke('download:clearQueue'),
 

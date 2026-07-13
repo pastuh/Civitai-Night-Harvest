@@ -98,6 +98,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.browseTags')}</li>
             <li>{t('help.browseManualQueue')}</li>
             <li>{t('help.browseBan')}</li>
+            <li>{t('help.browseContextSkipTag')}</li>
           </ul>
         </section>
 
@@ -154,6 +155,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <li>{t('help.dlStrip')}</li>
+            <li>{t('help.dlStripPriority')}</li>
             <li>{t('help.dlStatusBar')}</li>
             <li>{t('help.dlAwaiting')}</li>
             <li>{t('help.dlNewVersions')}</li>

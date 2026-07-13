@@ -232,6 +232,8 @@ export const en = {
     browseManualQueue:
       'Manual queue (download strip on Browse) — only models you click are queued; crawl/scan will not auto-add. Clear queue empties the list and enables manual mode',
     browseBan: 'Ban On — red × on cards excludes a model from future auto-queue',
+    browseContextSkipTag:
+      'Right-click a model → Skip tag — block a tag from auto-queue (click a tag chip; already-blocked tags are dimmed)',
     libraryFolders: 'Tag Folders tab — map Civitai tags to disk subfolders under your LoRA/Checkpoint paths',
     librarySort: 'Sort — folder tag, Civitai downloads, tag group, or download order',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
@@ -242,7 +244,10 @@ export const en = {
     edgeNew: 'Teal top border — new, not queued',
     edgeAwaiting: 'Yellow — awaiting access / early access',
     edgeBlocked: 'Purple — skipped (blocked tag or excluded)',
-    dlStrip: 'Download strip — top of Browse (with queue controls) and Library (view only)',
+    dlStrip:
+      'Download strip — compact cards (thumbnail + title, up to 3 lines). Browse has Manual queue and Clear queue in the strip header; Library is view-only',
+    dlStripPriority:
+      'Right-click a strip card → Priority download — moves it to the front of the queue (or right after active downloads)',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Awaiting access tab — 403, early access, or missing API key',
     dlNewVersions: 'New versions tab — approve updates for models you already own',
@@ -342,6 +347,7 @@ export const en = {
     loadMoreTitle: 'Load next page from Civitai',
     loadMoreStallTitle: 'Crawl paused or stuck — load next page manually',
     loadMore: 'Load more ({label})',
+    contextSkipTag: 'Skip tag',
     fetchPreviews: 'Fetch previews ({count})',
     fetchPreviewsTitle:
       'Load preview images — NSFW / R+ models are fetched from civitai.red only (.com blocks them)',
@@ -452,6 +458,7 @@ export const en = {
     exclude: 'Exclude / ban model',
     removeFromQueue: 'Remove & exclude (no auto re-queue)',
     retryDownload: 'Retry download',
+    priorityDownload: 'Priority download',
     row: 'Row',
     hide: 'Hide ▴',
     failed: '{count} failed',

@@ -770,6 +770,65 @@ export class DownloadQueue {
     if (!this.paused) void this.pump()
   }
 
+  /** Move item to front of queued pipeline (after any active downloads). */
+  prioritizeQueueItem(id: string): boolean {
+    const item = this.items.find((i) => i.id === id)
+    if (!item || item.status === 'downloading') return false
+
+    const frontQueuedAt = this.frontQueuedAt(id)
+
+    if (item.status === 'failed') {
+      item.status = 'queued'
+      item.bytesReceived = 0
+      item.totalBytes = 0
+      item.speedBps = 0
+      item.phase = 'model'
+      item.reason = undefined
+      item.completedAt = undefined
+      item.startedAt = undefined
+      item.failureKind = undefined
+      item.manual = true
+    } else if (item.status === 'deferred') {
+      if (inventory.hasVersion(item.versionId)) {
+        inventory.removeDeferredDownload(item.versionId)
+        item.status = 'skipped'
+        item.reason = 'Already downloaded'
+        item.completedAt = new Date().toISOString()
+        this.broadcast()
+        this.emitDeferred()
+        return false
+      }
+      inventory.removeDeferredDownload(item.versionId)
+      item.status = 'queued'
+      item.reason = undefined
+      item.failureKind = undefined
+      item.bytesReceived = 0
+      item.totalBytes = 0
+      item.phase = 'model'
+      item.completedAt = undefined
+      item.manual = true
+      this.emitDeferred()
+    } else if (item.status !== 'queued') {
+      return false
+    }
+
+    item.queuedAt = frontQueuedAt
+    this.log?.('info', `Priority download: ${item.modelName}`)
+    this.broadcast()
+    this.onQueueMutated?.()
+    if (!this.paused) void this.pump()
+    return true
+  }
+
+  private frontQueuedAt(excludeId?: string): string {
+    const queuedMs = this.items
+      .filter((i) => i.status === 'queued' && i.id !== excludeId)
+      .map((i) => Date.parse(i.queuedAt))
+      .filter((ms) => !Number.isNaN(ms))
+    const base = queuedMs.length > 0 ? Math.min(...queuedMs) : Date.now()
+    return new Date(base - 1000).toISOString()
+  }
+
   cancelByModelId(modelId: number): void {
     for (const item of this.items) {
       if (item.modelId !== modelId) continue

@@ -234,6 +234,8 @@ export const lt: Messages = {
     browseManualQueue:
       'Manual queue (siuntimo juosta Browse) — tik jūsų paspausti modeliai eina į eilę; crawl/scan nebededa. Clear queue išvalo ir įjungia manual režimą',
     browseBan: 'Ban On — raudonas × ant kortelės nebeįtraukia modelio į auto-queue',
+    browseContextSkipTag:
+      'Dešinis pelės mygtukas ant modelio → Skip tag — blokuoti tag nuo auto-queue (spauskite tag chip; jau blokuoti — pritemę)',
     libraryFolders: 'Tag Folders — Civitai tag → poaplankis po LoRA/Checkpoint keliais',
     librarySort: 'Sort — folder tag, Civitai downloads, tag group arba download order',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
@@ -244,7 +246,10 @@ export const lt: Messages = {
     edgeNew: 'Mėlynai žalias kraštas — naujas, ne eilėje',
     edgeAwaiting: 'Geltona — laukia prieigos / early access',
     edgeBlocked: 'Violetinė — praleista (blokuotas tag arba excluded)',
-    dlStrip: 'Siuntimo juosta — viršuje Browse (su eilės valdikliais) ir Library (tik peržiūra)',
+    dlStrip:
+      'Siuntimo juosta — kompaktiškos kortelės (miniatiūra + pavadinimas, iki 3 eilučių). Browse turi Manual queue ir Clear queue antraštėje; Library tik peržiūrai',
+    dlStripPriority:
+      'Dešinis pelės mygtukas ant juostos kortelės → Prioritetinis atsisiuntimas — perkelia į eilės priekį (arba iškart po aktyvių siuntimų)',
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
     dlAwaiting: 'Awaiting access — 403, early access arba trūksta API rakto',
     dlNewVersions: 'New versions — patvirtinkite atnaujinimus jau turimiems modeliams',
@@ -347,6 +352,7 @@ export const lt: Messages = {
     loadMoreTitle: 'Krauti kitą puslapį iš Civitai',
     loadMoreStallTitle: 'Crawl sustojo — krauti kitą puslapį rankiniu būdu',
     loadMore: 'Daugiau ({label})',
+    contextSkipTag: 'Praleisti tag',
     fetchPreviews: 'Gauti preview ({count})',
     fetchPreviewsTitle:
       'Užkrauti preview — NSFW / R+ modeliams naudojamas tik civitai.red (.com jų negrąžina)',
@@ -460,6 +466,7 @@ export const lt: Messages = {
     exclude: 'Blokuoti / ban modelį',
     removeFromQueue: 'Pašalinti ir exclude (be auto re-queue)',
     retryDownload: 'Bandyti atsisiųsti dar',
+    priorityDownload: 'Prioritetinis atsisiuntimas',
     row: 'Eilė',
     hide: 'Slėpti ▴',
     failed: '{count} nepavyko',
