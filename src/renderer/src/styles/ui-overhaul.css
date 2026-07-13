@@ -22,6 +22,7 @@
   --browse-cat-awaiting: #ffca24;
   --browse-cat-blocked: #c4a0f0;
   --browse-cat-banned: #f08088;
+  --strip-interrupted: #e879a8;
   --radius: 6px;
   --radius-sm: 4px;
   --space-xs: 4px;
@@ -69,6 +70,7 @@
   --browse-cat-awaiting: #c99600;
   --browse-cat-blocked: #7c3aed;
   --browse-cat-banned: #c73e48;
+  --strip-interrupted: #db7093;
   --section-head-bg: #b8c6d6;
   --section-head-border: #a3b3c6;
 }
@@ -520,7 +522,9 @@ label.field-label {
 }
 
 .gallery-card[data-state='queued'],
-.gallery-card[data-state='queued-auto'] {
+.gallery-card[data-state='queued-auto'],
+.gallery-card.in-queue.queue-manual,
+.gallery-card.in-queue.queue-auto {
   --card-accent: var(--browse-cat-loaded);
 }
 
@@ -584,11 +588,19 @@ label.field-label {
   padding: var(--space-xs) var(--space-md) var(--space-sm);
 }
 
-.active-queue-rich-card.in-queue.queue-manual,
-.active-queue-rich-card.in-queue.queue-auto,
-.active-queue-rich-card[data-state='queued'],
-.active-queue-rich-card[data-state='queued-auto'] {
+.active-queue-rich-card.in-queue,
+.active-queue-rich-card[data-state='strip-queued'],
+.active-queue-rich-card.is-downloading[data-state='strip-queued'] {
   --card-accent: var(--browse-cat-loaded);
+}
+
+.active-queue-rich-card[data-state='strip-interrupted'],
+.active-queue-rich-card.strip-error-waiting {
+  --card-accent: var(--strip-interrupted, #e879a8);
+}
+
+.active-queue-rich-card[data-state='deferred'] {
+  --card-accent: var(--browse-cat-awaiting);
 }
 
 /* ── Browse toolbar compact ── */
@@ -1244,15 +1256,17 @@ label.field-label {
   flex-direction: column;
   min-height: calc(100vh - 180px);
   max-height: calc(100vh - 180px);
+  overflow: hidden;
 }
 
 .activity-tab-lead {
   flex: none;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
 }
 
 .activity-log-list {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   max-height: none;
@@ -1260,10 +1274,24 @@ label.field-label {
 
 .status-model-card-clickable {
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .status-model-card-clickable:hover {
-  border-color: var(--accent);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--surface2) 65%, var(--surface));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+}
+
+.status-model-card-clickable:hover .status-model-card-title {
+  color: var(--accent);
+}
+
+.status-model-card-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .header-next-scan {
@@ -1323,8 +1351,85 @@ label.field-label {
 .activity-filters {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex: none;
+}
+
+.activity-filters-compact .activity-filter-block {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface2) 32%, transparent);
+}
+
+.activity-filters-compact .activity-filter-block-head {
+  margin-bottom: 4px;
+}
+
+.activity-filters-compact .activity-filter-block-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.activity-filters-compact .activity-filter-block-actions {
+  font-size: 10px;
+}
+
+.activity-filters-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 6px;
+}
+
+.activity-filters-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface2) 28%, transparent);
+}
+
+.activity-filters-search-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.activity-filters-chips-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  flex: 2 1 360px;
+  min-width: 0;
+}
+
+.activity-filter-chip-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+  flex: none;
+}
+
+.activity-date-field-compact span {
+  font-size: 9px;
+  line-height: 1.1;
+}
+
+.activity-date-field-compact input[type='date'] {
+  min-height: 26px;
+  padding: 2px 4px;
+  font-size: 10px;
 }
 
 .activity-filter-block {
@@ -1360,35 +1465,42 @@ label.field-label {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: 4px 8px;
 }
 
 .activity-filters-search-row {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 8px 12px;
+  gap: 6px 8px;
   width: 100%;
 }
 
 .activity-search-input {
-  flex: 1 1 220px;
-  min-width: 180px;
-  padding: 8px 10px;
-  font-size: 13px;
+  flex: 1 1 180px;
+  min-width: 140px;
+  padding: 4px 8px;
+  font-size: 12px;
+  min-height: 28px;
 }
 
 .activity-time-preset,
 .activity-date-field input[type='date'] {
-  font-size: 12px;
-  padding: 6px 8px;
+  font-size: 11px;
+  padding: 4px 6px;
+  min-height: 28px;
 }
 
 .activity-date-field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 11px;
+  gap: 1px;
+  font-size: 10px;
+}
+
+.activity-filters-compact .checkbox-field.activity-filter-chip {
+  font-size: 10px;
+  gap: 4px;
 }
 
 .activity-filter-chip {
@@ -1398,12 +1510,12 @@ label.field-label {
 
 .activity-filter-count {
   display: inline-block;
-  min-width: 1.4em;
-  margin-left: 4px;
-  padding: 0 5px;
-  font-size: 10px;
+  min-width: 1.3em;
+  margin-left: 3px;
+  padding: 0 4px;
+  font-size: 9px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 1.35;
   text-align: center;
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 70%, var(--border));
@@ -1415,7 +1527,7 @@ label.field-label {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   padding: 0 2px;
 }
 
@@ -1428,7 +1540,7 @@ label.field-label {
 }
 
 .activity-filters-summary {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .log-entry-meta {

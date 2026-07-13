@@ -1301,7 +1301,7 @@ export function SearchBrowsePanel({
           )}
           <p className="browse-legend muted ui-extended-only">
             {t('browse.legendOwned')} · {t('browse.legendNew')} · {t('browse.legendBlocked')} ·{' '}
-            {t('browse.legendAwaiting')} · {t('browse.legendAutoQueued')} · {t('browse.legendQueue')} ·{' '}
+            {t('browse.legendAwaiting')} · {t('browse.legendAutoQueued')} ·{' '}
             {t('browse.legendDl')}
             {contentFilter === 'all' && (
               <>
@@ -2082,7 +2082,8 @@ function ModelCard({
 
   let cardState = 'new'
   if (model.inInventory) cardState = 'owned'
-  else if (isDownloading || isQueued) cardState = 'queued-auto'
+  else if (isDownloading) cardState = 'downloading'
+  else if (isQueued) cardState = 'queued-auto'
   else if (isFailed) cardState = 'failed'
   else if (isDeferred || awaitingAccess || model.isEarlyAccess) cardState = 'deferred'
   else if (isSkipped || (tagSkipBlocked && !inQueueActive)) cardState = 'skipped'

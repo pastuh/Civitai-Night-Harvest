@@ -1345,9 +1345,12 @@ th {
   --card-accent: var(--error);
 }
 
-.gallery-card.download-skipped,
+.gallery-card.download-skipped {
+  --card-accent: var(--browse-cat-blocked);
+}
+
 .gallery-card.download-deferred {
-  --card-accent: var(--warn, #c9a227);
+  --card-accent: var(--browse-cat-awaiting);
 }
 
 .badge-deferred {
@@ -2875,6 +2878,7 @@ code {
   position: fixed;
   z-index: 100000;
   min-width: 200px;
+  max-width: min(420px, calc(100vw - 16px));
   pointer-events: auto;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2916,6 +2920,10 @@ code {
 }
 
 .context-menu-tag-picks .context-menu-tag-chip {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  text-align: center;
   margin: 0;
   padding: 2px 8px;
   font-size: 11px;
@@ -3287,6 +3295,7 @@ code {
   background: var(--surface2);
   border-bottom: 1px solid var(--border);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  overflow: visible;
 }
 
 .downloads-strip-dock:empty {
@@ -3296,20 +3305,40 @@ code {
 .active-queue-strip:not(.active-queue-strip-collapsed) {
   display: flex;
   flex-direction: column;
-  max-height: min(28vh, 240px);
+  max-height: min(42vh, calc(var(--queue-card-width, 160px) + 120px));
   padding: 4px 10px 6px;
+  overflow: visible;
 }
 
-.active-queue-strip:not(.active-queue-strip-collapsed)::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 36px;
-  pointer-events: none;
-  background: linear-gradient(to left, var(--surface2) 55%, transparent);
-  z-index: 3;
+.active-queue-strip-collapsed {
+  padding: 6px 10px 6px 12px;
+  overflow: visible;
+}
+
+.active-queue-strip-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  min-height: 26px;
+  padding: 0 0 4px;
+  overflow: visible;
+}
+
+.active-queue-strip-toolbar {
+  position: static;
+  top: auto;
+  right: auto;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+  flex: none;
+  margin-left: auto;
+  padding-right: 2px;
 }
 
 .active-queue-strip-collapse-btn {
@@ -3324,29 +3353,6 @@ code {
   background: color-mix(in srgb, var(--surface2) 88%, transparent);
   backdrop-filter: blur(6px);
   box-shadow: 0 1px 8px rgba(0, 0, 0, 0.22);
-}
-
-.active-queue-strip-toolbar {
-  position: static;
-  top: auto;
-  right: auto;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
-  flex: none;
-  max-width: min(520px, 55%);
-}
-
-.active-queue-strip-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex: none;
-  min-height: 26px;
-  padding: 0 2px 4px;
 }
 
 .active-queue-strip-queue-controls {
@@ -3386,9 +3392,9 @@ code {
   overflow-y: auto;
   min-height: 0;
   flex: 1;
-  padding: 2px 36px 4px 2px;
+  padding: 2px 4px 4px 2px;
   scrollbar-width: thin;
-  align-items: stretch;
+  align-items: flex-start;
 }
 
 .active-queue-strip-grid {
@@ -3399,11 +3405,7 @@ code {
   min-height: 0;
   flex: 1;
   padding: 2px 8px 4px 2px;
-  align-items: stretch;
-}
-
-.active-queue-strip-collapsed {
-  padding: 6px 12px;
+  align-items: start;
 }
 
 .active-queue-strip-collapsed-row {
@@ -3587,7 +3589,7 @@ code {
 }
 
 .active-queue-rich-card.download-stalled {
-  --card-accent: var(--warn, #e6a817);
+  --card-accent: var(--browse-cat-loaded);
 }
 
 .active-queue-rich-card .gallery-thumb,
@@ -3601,6 +3603,20 @@ code {
   line-height: 1.35;
   margin-top: 2px;
   word-break: break-word;
+}
+
+.active-queue-strip-progress {
+  flex: none;
+  font-size: 10px;
+  line-height: 1.3;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.active-queue-strip-progress.stalled {
+  color: var(--warn, #e6a817);
 }
 
 .active-queue-rich-tags {
@@ -3623,8 +3639,8 @@ code {
 .active-queue-strip-grid .active-queue-rich-card {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  align-self: stretch;
+  height: auto;
+  align-self: auto;
 }
 
 .active-queue-rich-card.in-queue .gallery-card-body.active-queue-card-body-name-only,
@@ -3633,12 +3649,13 @@ code {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  min-height: calc(1.35em * 3 + 14px);
+  min-height: calc(1.35em * 3 + 12px);
   padding: 6px 8px 8px;
   background: var(--surface);
 }
 
-.active-queue-rich-card.in-queue .gallery-card-body.active-queue-card-body-compact {
+.active-queue-rich-card.in-queue .gallery-card-body.active-queue-card-body-compact,
+.active-queue-rich-card.is-downloading .gallery-card-body.active-queue-card-body-compact {
   background: rgba(0, 0, 0, 0.52);
 }
 

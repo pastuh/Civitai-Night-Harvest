@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DownloadQueueItem, DeferredDownload, DownloadStripLayout } from '../../../shared/types'
 import { compareDownloadPipelineItems } from '../../../shared/download-queue-order'
 import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
-import { getModelPageUrl } from '../../../shared/utils'
+import { formatBytes, getModelPageUrl } from '../../../shared/utils'
 import { PreviewThumb } from './PreviewThumb'
 import { useT } from '../i18n/context'
+import type { TranslateFn } from '../i18n/context'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 
 const COLLAPSED_KEY = 'csd:downloads-strip-collapsed'
@@ -62,6 +63,36 @@ function useDownloadStalls(queue: DownloadQueueItem[]): Set<string> {
   return stalledIds
 }
 
+function isStripErrorWaiting(item: DownloadQueueItem): boolean {
+  if (item.status === 'failed') return true
+  if (item.status === 'deferred' && item.failureKind === 'interrupted') return true
+  return false
+}
+
+function stripCardState(item: DownloadQueueItem): string {
+  if (item.status === 'deferred' && item.failureKind === 'early_access') return 'deferred'
+  if (isStripErrorWaiting(item)) return 'strip-interrupted'
+  if (item.status === 'queued' || item.status === 'downloading') return 'strip-queued'
+  return item.status
+}
+
+function progressDetail(t: TranslateFn, item: DownloadQueueItem, stalled: boolean): string {
+  if (item.status !== 'downloading') return ''
+  if (stalled) {
+    return t('downloadsStrip.progressStalled', { bytes: formatBytes(item.bytesReceived) })
+  }
+  if (item.phase === 'preview') return t('downloadsStrip.progressSavingPreview')
+  if (item.phase === 'swarm') return t('downloadsStrip.progressMetadata')
+  const parts: string[] = []
+  if (item.totalBytes > 0) {
+    parts.push(`${formatBytes(item.bytesReceived)} / ${formatBytes(item.totalBytes)}`)
+  } else if (item.bytesReceived > 0) {
+    parts.push(formatBytes(item.bytesReceived))
+  }
+  if (item.speedBps > 0) parts.push(`${formatBytes(item.speedBps)}/s`)
+  return parts.join(' · ')
+}
+
 function DownloadQueueRichCard({
   item,
   stalled,
@@ -76,25 +107,20 @@ function DownloadQueueRichCard({
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const t = useT()
-  const isFailed = item.status === 'failed'
   const isDeferred = item.status === 'deferred'
   const isDownloading = item.status === 'downloading'
   const isQueued = item.status === 'queued'
-  const cardState = isDownloading || isQueued
-    ? 'queued-auto'
-    : isFailed
-      ? 'failed'
-      : isDeferred
-        ? 'deferred'
-        : item.status
+  const errorWaiting = isStripErrorWaiting(item)
+  const cardState = stripCardState(item)
+  const progressText = progressDetail(t, item, stalled)
 
   const cardClass = [
     'gallery-card',
     'active-queue-rich-card',
     isDownloading ? 'is-downloading' : '',
-    isQueued ? (item.manual ? 'in-queue queue-manual' : 'in-queue queue-auto') : '',
-    isFailed ? 'download-failed' : '',
-    isDeferred ? 'download-deferred' : '',
+    (isQueued || isDownloading) && !errorWaiting ? 'in-queue' : '',
+    errorWaiting ? 'strip-error-waiting' : '',
+    isDeferred && item.failureKind === 'early_access' ? 'download-deferred' : '',
     stalled ? 'download-stalled' : ''
   ]
     .filter(Boolean)
@@ -135,6 +161,11 @@ function DownloadQueueRichCard({
         )}
       </div>
       <div className="gallery-card-body active-queue-card-body-compact">
+        {progressText && (
+          <div className={`muted active-queue-strip-progress${stalled ? ' stalled' : ''}`}>
+            {progressText}
+          </div>
+        )}
         <div className="gallery-card-title-row">
           <strong title={item.modelName}>{item.modelName}</strong>
         </div>

@@ -152,6 +152,32 @@ export class DownloadQueue {
       this.paused = true
     }
 
+    let normalizedInterrupted = 0
+    for (const item of this.items) {
+      if (item.versionId) {
+        const d = inventory.getDeferredDownload(item.versionId)
+        if (d?.failureKind === 'interrupted') {
+          inventory.removeDeferredDownload(item.versionId)
+        }
+      }
+      if (item.status === 'deferred' && item.failureKind === 'interrupted') {
+        item.status = 'queued'
+        item.reason = undefined
+        item.failureKind = undefined
+        item.completedAt = undefined
+        item.bytesReceived = 0
+        item.totalBytes = 0
+        item.phase = 'model'
+        item.speedBps = 0
+        normalizedInterrupted++
+        continue
+      }
+      if (item.status === 'queued') {
+        item.failureKind = undefined
+        if (item.reason && !item.manual) item.reason = undefined
+      }
+    }
+
     let requeuedExisting = 0
     for (const item of this.items) {
       if (item.status !== 'failed' || !item.versionId) continue
@@ -192,6 +218,13 @@ export class DownloadQueue {
       this.log?.(
         'info',
         `Restored ${resumed} interrupted download(s) — reset to queued (press Start downloads)`
+      )
+      this.flushPersist()
+    }
+    if (normalizedInterrupted > 0) {
+      this.log?.(
+        'info',
+        `Re-queued ${normalizedInterrupted} stale interrupted row(s) as normal queue items`
       )
       this.flushPersist()
     }
@@ -513,6 +546,10 @@ export class DownloadQueue {
     })
 
     const deferred = request.versionId ? inventory.getDeferredDownload(request.versionId) : undefined
+    const useEarlyAccessDeferred = deferred?.failureKind === 'early_access'
+    if (deferred && !useEarlyAccessDeferred && request.versionId) {
+      inventory.removeDeferredDownload(request.versionId)
+    }
     const id = randomUUID()
     const item: DownloadQueueItem = {
       id,
@@ -529,15 +566,15 @@ export class DownloadQueue {
       confirmTagsAfter: meta.confirmTagsAfter,
       manual: meta.manual === true,
       sourceDomain: request.sourceDomain,
-      status: deferred ? 'deferred' : 'queued',
+      status: useEarlyAccessDeferred ? 'deferred' : 'queued',
       bytesReceived: 0,
       totalBytes: 0,
       phase: 'model',
       speedBps: 0,
       queuedAt: new Date().toISOString(),
       outputFolder: deferred?.outputFolder || outputFolder,
-      reason: deferred?.reason,
-      failureKind: deferred?.failureKind
+      reason: useEarlyAccessDeferred ? deferred?.reason : undefined,
+      failureKind: useEarlyAccessDeferred ? deferred?.failureKind : undefined
     }
 
     this.items.push(item)
@@ -887,6 +924,11 @@ export class DownloadQueue {
       if (!item.versionId) continue
       const deferred = inventory.getDeferredDownload(item.versionId)
       if (!deferred) continue
+      if (deferred.failureKind !== 'early_access') {
+        inventory.removeDeferredDownload(item.versionId)
+        item.failureKind = undefined
+        continue
+      }
       item.status = 'deferred'
       item.reason = deferred.reason
       item.failureKind = deferred.failureKind
@@ -911,6 +953,28 @@ export class DownloadQueue {
         continue
       }
       if (this.items.some((i) => i.versionId === d.versionId)) continue
+
+      if (d.failureKind === 'interrupted') {
+        inventory.removeDeferredDownload(d.versionId)
+        this.items.push({
+          id: randomUUID(),
+          modelId: d.modelId,
+          versionId: d.versionId,
+          modelName: d.modelName,
+          slug: '',
+          previewUrl: d.previewUrl,
+          routingTag: d.routingTag,
+          modelType: d.modelType,
+          status: 'queued',
+          bytesReceived: 0,
+          totalBytes: 0,
+          phase: 'model',
+          speedBps: 0,
+          queuedAt: d.deferredAt,
+          outputFolder: d.outputFolder
+        })
+        continue
+      }
 
       this.items.push({
         id: randomUUID(),

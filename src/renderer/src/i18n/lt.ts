@@ -247,13 +247,18 @@ export const lt: Messages = {
     edgeAwaiting: 'Geltona — laukia prieigos / early access',
     edgeBlocked: 'Violetinė — praleista (blokuotas tag arba excluded)',
     dlStrip:
-      'Siuntimo juosta — kompaktiškos kortelės (miniatiūra + pavadinimas, iki 3 eilučių). Browse turi Manual queue ir Clear queue antraštėje; Library tik peržiūrai',
+      'Siuntimo juosta — miniatiūra, pavadinimas (iki 3 eilučių), siunčiant: gauta / bendras dydis ir greitis po pavadinimu. Browse: Manual queue + Clear queue antraštėje; Library tik peržiūrai. Kortelės plotį keiskite Nustatymuose.',
+    dlStripProgress:
+      'Aktyvus siuntimas — progreso juosta ant miniatiūros; po pavadinimu pvz. 218 MB / 1.2 GB · 12 MB/s (be procentų).',
+    dlStripColors:
+      'Tik juostos viršutinis kraštas: pilka = eilėje arba siunčiama · rožinė = klaida, laukia kito bandymo · geltona = early access atrakina šiandien',
     dlStripPriority:
       'Dešinis pelės mygtukas ant juostos kortelės → Prioritetinis atsisiuntimas — perkelia į eilės priekį (arba iškart po aktyvių siuntimų)',
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
     dlAwaiting: 'Awaiting access — 403, early access arba trūksta API rakto',
     dlNewVersions: 'New versions — patvirtinkite atnaujinimus jau turimiems modeliams',
-    dlActivity: 'Activity — scan/crawl/siuntimų logas; spustelėkite modelio vardą → Library',
+    dlActivity:
+      'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
       'Civitai domenas Browse skiltyje (virš Results). Both = atskiri .com ir .red katalogai. Mature turiniui dažnai reikia civitai.red + API rakto.',
     settingsRef: {
@@ -282,7 +287,8 @@ export const lt: Messages = {
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
       hashVerify: 'Lyginama SHA256 diske su Civitai /model-versions/by-hash.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
-      queueGridSize: 'Download juostos kortelės plotis (row scroll ir grid layout).'
+      queueGridSize:
+        'Download juostos kortelės plotis (miniatiūros dydis). Didesnėms kortelėms reikia aukštesnės juostos — padidinkite, jei karpomas pavadinimas (juostos aukštis auga su kortelės plocu iki ekrano limito).'
     },
     progressBar: {
       green: 'Žalia = turite',
@@ -452,8 +458,7 @@ export const lt: Messages = {
     legendNew: 'Cyan edge / badge = new (not in library)',
     legendBlocked: 'Purple = blocked by tag',
     legendAwaiting: 'Orange = awaiting access',
-    legendAutoQueued: 'Gray edge = auto-queued',
-    legendQueue: 'Mėlynas kraštas = rankiniu būdu eilėje',
+    legendAutoQueued: 'Pilkas kraštas = siuntimo eilėje',
     legendDl: 'Gintarinis kraštas = siunčiama',
     queueAll: 'Eilė visiems (puslapis po puslapio)',
     crawling: 'Skenuojama API…'

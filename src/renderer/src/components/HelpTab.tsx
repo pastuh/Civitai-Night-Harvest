@@ -155,6 +155,8 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <li>{t('help.dlStrip')}</li>
+            <li>{t('help.dlStripProgress')}</li>
+            <li>{t('help.dlStripColors')}</li>
             <li>{t('help.dlStripPriority')}</li>
             <li>{t('help.dlStatusBar')}</li>
             <li>{t('help.dlAwaiting')}</li>

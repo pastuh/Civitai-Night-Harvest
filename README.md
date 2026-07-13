@@ -16,8 +16,8 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Manual queue** — click models in Results to queue only what you want; optional “manual queue” mode blocks auto-queue from crawl
 - **Local library** — SQLite inventory, duplicate detection by version, tag-based folder routing
 - **Domains** — civitai.com, civitai.red, or both (same version is not downloaded twice)
-- **Queue & retries** — download strip, awaiting-access / early-access handling, new-version approval
-- **Activity log** — scan, crawl, and download history
+- **Queue & retries** — download strip (progress, priority queue, color-coded states), awaiting-access / early-access handling, new-version approval
+- **Activity log** — compact filters; scan, crawl, and download history
 
 For UI details, open the in-app **Help** tab.
 

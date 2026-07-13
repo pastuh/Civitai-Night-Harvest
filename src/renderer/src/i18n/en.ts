@@ -245,13 +245,18 @@ export const en = {
     edgeAwaiting: 'Yellow — awaiting access / early access',
     edgeBlocked: 'Purple — skipped (blocked tag or excluded)',
     dlStrip:
-      'Download strip — compact cards (thumbnail + title, up to 3 lines). Browse has Manual queue and Clear queue in the strip header; Library is view-only',
+      'Download strip — thumbnail, title (up to 3 lines), and while downloading: received/total size and speed under the title. Browse: Manual queue + Clear queue in the header; Library is view-only. Adjust card width in Settings.',
+    dlStripProgress:
+      'Active download — progress bar on the thumbnail; below the title: e.g. 218 MB / 1.2 GB · 12 MB/s (no percentage).',
+    dlStripColors:
+      'Strip top border only: gray = queued or downloading · pink = retryable error until the next attempt starts · yellow = early access unlocks today',
     dlStripPriority:
       'Right-click a strip card → Priority download — moves it to the front of the queue (or right after active downloads)',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Awaiting access tab — 403, early access, or missing API key',
     dlNewVersions: 'New versions tab — approve updates for models you already own',
-    dlActivity: 'Activity tab — scan/crawl/download log; click a model name to jump to Library',
+    dlActivity:
+      'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:
       'Set Civitai domain on the Browse tab (above Results). Both = separate .com and .red catalogs. Mature content often needs civitai.red plus an API key.',
     settingsRef: {
@@ -277,7 +282,8 @@ export const en = {
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
       hashVerify: 'Compares SHA256 on disk with Civitai /model-versions/by-hash. Use after moving files manually or if a model seems corrupted.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
-      queueGridSize: 'Card width in the download strip (row scroll and grid layout).'
+      queueGridSize:
+        'Download strip card width (thumbnail size). Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).'
     },
     progressBar: {
       green: 'Green = owned',
@@ -442,10 +448,9 @@ export const en = {
     previewErrorApi: 'Civitai API error ({status}): {detail}',
     legendOwned: 'Green = owned',
     legendNew: 'Cyan edge / badge = new (not in library)',
-    legendAutoQueued: 'Gray edge = auto-queued',
+    legendAutoQueued: 'Gray edge = in download queue',
     legendBlocked: 'Purple = blocked by tag',
     legendAwaiting: 'Orange = awaiting access',
-    legendQueue: 'Blue edge = queued manually',
     legendDl: 'Amber edge = downloading',
     queueAll: 'Queue all (page by page)',
     crawling: 'Crawling API…'
