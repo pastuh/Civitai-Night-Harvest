@@ -121,8 +121,12 @@ export function getSettings(): AppSettings {
   raw.locale = normalizeLocale(raw.locale)
   raw.galleryGridMinPx = clampGridSizePx(raw.galleryGridMinPx ?? DEFAULT_GALLERY_GRID_MIN_PX)
   raw.queueGridMinPx = clampGridSizePx(raw.queueGridMinPx ?? DEFAULT_QUEUE_GRID_MIN_PX)
-  if (raw.downloadStripLayout !== 'horizontal' && raw.downloadStripLayout !== 'grid') {
-    raw.downloadStripLayout = 'horizontal'
+  if (
+    raw.downloadStripLayout !== 'horizontal' &&
+    raw.downloadStripLayout !== 'grid' &&
+    raw.downloadStripLayout !== 'minimal'
+  ) {
+    raw.downloadStripLayout = 'minimal'
   }
   if (raw.banFunctionMode === undefined) {
     raw.banFunctionMode = false

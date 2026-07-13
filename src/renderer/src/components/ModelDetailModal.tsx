@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CivitaiDomain, CivitaiModelDetail, InventoryRecord } from '../../../shared/types'
 import {
   formatCompactCount,
@@ -86,7 +87,7 @@ export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: 
   const versionLabel =
     detail?.versionName ?? (target.kind === 'library' ? target.record.versionName : undefined)
 
-  return (
+  return createPortal(
     <div className="preview-modal-backdrop" onClick={onClose}>
       <div className="preview-modal model-detail-modal" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="preview-modal-close" onClick={onClose} aria-label="Close">
@@ -242,6 +243,7 @@ export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: 
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

@@ -26,6 +26,7 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
   { refKey: 'browseSettledDimPercent', fieldKey: 'settings.fields.browseSettledDimPercent' },
   { refKey: 'queueGridSize', fieldKey: 'settings.fields.queueGridSize' },
+  { refKey: 'downloadStripLayout', fieldKey: 'settings.fields.downloadStripLayout' },
   { refKey: 'hashVerify', fieldKey: 'settings.fields.hashVerify' }
 ]
 
@@ -159,6 +160,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <li>{t('help.dlStrip')}</li>
+            <li>{t('help.dlStripLayouts')}</li>
             <li>{t('help.dlStripProgress')}</li>
             <li>{t('help.dlStripColors')}</li>
             <li>{t('help.dlStripPriority')}</li>

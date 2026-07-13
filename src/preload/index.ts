@@ -138,6 +138,8 @@ const api = {
       author?: string
       civitaiTags?: string[]
       fileSizeBytes?: number
+      nsfw?: boolean
+      nsfwLevel?: number
       confirmTagsAfter?: boolean
       manual?: boolean
     }

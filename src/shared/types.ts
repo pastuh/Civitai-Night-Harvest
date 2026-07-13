@@ -11,7 +11,7 @@ export type UiMode = 'minimal' | 'extended'
 export type AppTheme = 'dark' | 'light'
 
 /** Download strip card layout */
-export type DownloadStripLayout = 'horizontal' | 'grid'
+export type DownloadStripLayout = 'horizontal' | 'grid' | 'minimal'
 
 /** Filename slug pattern for downloads and rename sync */
 export type SlugFormat = 'compact' | 'versionName' | 'modelTitle'
@@ -170,7 +170,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   locale: 'en',
   galleryGridMinPx: 160,
   queueGridMinPx: 160,
-  downloadStripLayout: 'horizontal',
+  downloadStripLayout: 'minimal',
   slugFormat: 'versionName',
   activityLogVerbosity: 'minimal',
   browseSettledToEnd: false,
@@ -370,6 +370,9 @@ export interface DownloadQueueItem {
   civitaiTags?: string[]
   /** Expected file size when known (browse / Civitai API). */
   fileSizeBytes?: number
+  /** Civitai content rating when known at enqueue time. */
+  nsfw?: boolean
+  nsfwLevel?: number
   confirmTagsAfter?: boolean
   /** True when the user explicitly queued from Browse/Library — affects gallery highlighting. */
   manual?: boolean

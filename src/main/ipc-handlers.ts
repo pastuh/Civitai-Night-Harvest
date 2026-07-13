@@ -699,6 +699,8 @@ export function initIpc(): void {
     author?: string
     civitaiTags?: string[]
     fileSizeBytes?: number
+    nsfw?: boolean
+    nsfwLevel?: number
     confirmTagsAfter?: boolean
     manual?: boolean
   }) => {

@@ -54,6 +54,20 @@ For UI details, open the in-app **Help** tab.
 
 ---
 
+## Download strip layout
+
+Settings → **Download strip layout**:
+
+| Mode | Description |
+|------|-------------|
+| **Row** | Horizontal scroll of thumbnail cards (default) |
+| **Grid** | Wrapped rows of thumbnail cards |
+| **Minimal** | Compact vertical list — each row: thumbnail + queue/download info, separator, model name. A green fill grows across the info column while downloading; when it reaches the separator, the file transfer is complete. Ban, priority, and context menu work the same as other modes |
+
+Also adjust **Download strip card size** for Row and Grid modes.
+
+---
+
 ## Quick start
 
 1. **Settings** → set your **LoRA folder** (and **Checkpoint** if needed) plus Civitai **API key** for NSFW/restricted content.

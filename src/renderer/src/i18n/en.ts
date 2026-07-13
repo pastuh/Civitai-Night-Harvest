@@ -126,6 +126,7 @@ export const en = {
       themeLight: 'Light',
       stripLayoutRow: 'Row (horizontal scroll)',
       stripLayoutGrid: 'Grid (wrapped rows)',
+      stripLayoutMinimal: 'Minimal (compact list with inline progress)',
       uiMinimal: 'Minimal',
       uiExtended: 'Extended',
       contentAll: 'All (SFW + NSFW)',
@@ -263,7 +264,9 @@ export const en = {
     edgeAwaiting: 'Yellow — awaiting access / early access',
     edgeBlocked: 'Purple — skipped (blocked tag or excluded)',
     dlStrip:
-      'Download strip — thumbnail, title (up to 3 lines), and while downloading: received/total size and speed under the title. Header: **Auto**, **Manual**, and **Pause**; **Clear queue** in the strip (Browse only) empties the strip without changing mode. Adjust card width in Settings.',
+      'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode.',
+    dlStripLayouts:
+      '**Minimal** — thumbnail always visible; left column shows queue/download text; vertical separator; model name on the right. Green fill grows across the left column only — when it reaches the separator, the download is complete. Right-click, ban, and priority work like other layouts.',
     dlStripProgress:
       'Active download — progress bar on the thumbnail; below the title: e.g. 218 MB / 1.2 GB · 12 MB/s (no percentage).',
     dlStripColors:
@@ -308,7 +311,9 @@ export const en = {
       browseSettledDimPercent:
         'Browse Results — dim settled cards (0% = off). Hover restores brightness; search matches stay fully visible.',
       queueGridSize:
-        'Download strip card width (thumbnail size). Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).'
+        'Download strip card width (thumbnail size) for Row and Grid layouts. Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).',
+      downloadStripLayout:
+        'Row = horizontal scroll cards · Grid = wrapped card grid · Minimal = vertical list with thumbnail, status column, separator, and name; progress fill stops at the separator when complete.'
     },
     progressBar: {
       green: 'Green = owned',
@@ -486,6 +491,7 @@ export const en = {
     banFunction: 'Ban function',
     excludeBan: 'Exclude / ban model',
     openCivitai: 'Open on Civitai',
+    modelDetails: 'Model details (license, stats)',
     unban: 'Unban — allow downloads',
     exclude: 'Exclude / ban model',
     removeFromQueue: 'Remove & exclude (no auto re-queue)',

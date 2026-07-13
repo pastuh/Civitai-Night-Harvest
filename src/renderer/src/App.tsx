@@ -960,7 +960,7 @@ export default function App() {
             queue={queue}
             queuePaused={queuePaused}
             deferred={deferred}
-            stripLayout={settings.downloadStripLayout ?? 'horizontal'}
+            stripLayout={settings.downloadStripLayout ?? 'minimal'}
             banFunctionMode={settings.banFunctionMode ?? false}
             onClearQueue={tab === 'watch' ? clearDownloadQueue : undefined}
             clearQueueBusy={clearQueueBusy}

@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import type { InventoryRecord } from '../../../shared/types'
 import { formatAuthorWithWeight, getModelPageUrl } from '../../../shared/utils'
 
@@ -12,7 +13,7 @@ export function GalleryPreviewModal({ record, domain, onClose, onDelete }: Props
   const previewSrc = record.previewPath ? window.api.toMediaUrl(record.previewPath) : null
   const pageUrl = getModelPageUrl(domain, record.modelId, record.versionId)
 
-  return (
+  return createPortal(
     <div className="preview-modal-backdrop" onClick={onClose}>
       <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="preview-modal-close" onClick={onClose} aria-label="Close">
@@ -94,6 +95,7 @@ export function GalleryPreviewModal({ record, domain, onClose, onDelete }: Props
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

@@ -50,6 +50,8 @@ export interface EnqueueMeta {
   author?: string
   civitaiTags?: string[]
   fileSizeBytes?: number
+  nsfw?: boolean
+  nsfwLevel?: number
   confirmTagsAfter?: boolean
   manual?: boolean
 }
@@ -575,6 +577,8 @@ export class DownloadQueue {
       author: meta.author,
       civitaiTags: meta.civitaiTags,
       fileSizeBytes: meta.fileSizeBytes,
+      nsfw: meta.nsfw,
+      nsfwLevel: meta.nsfwLevel,
       confirmTagsAfter: meta.confirmTagsAfter,
       manual: meta.manual === true,
       sourceDomain: request.sourceDomain,

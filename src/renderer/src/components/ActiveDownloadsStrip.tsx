@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DownloadQueueItem, DeferredDownload, DownloadStripLayout } from '../../../shared/types'
 import { compareDownloadPipelineItems } from '../../../shared/download-queue-order'
 import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
+import { describeNsfwRating } from '../../../shared/nsfw-rating'
 import { formatBytes, getModelPageUrl } from '../../../shared/utils'
 import { PreviewThumb } from './PreviewThumb'
+import { ModelDetailModal, type ModelDetailTarget } from './ModelDetailModal'
 import { useT } from '../i18n/context'
 import type { TranslateFn } from '../i18n/context'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
@@ -89,6 +91,190 @@ function progressDetail(t: TranslateFn, item: DownloadQueueItem, stalled: boolea
   }
   if (item.speedBps > 0) parts.push(`${formatBytes(item.speedBps)}/s`)
   return parts.join(' · ')
+}
+
+function stripStatusLabel(
+  t: TranslateFn,
+  item: DownloadQueueItem,
+  queuePaused: boolean,
+  deferred?: DeferredDownload
+): string {
+  if (item.status === 'queued') {
+    return queuePaused ? t('downloadsStrip.statusQueuedPaused') : t('downloadsStrip.statusQueued')
+  }
+  if (item.status === 'failed') return t('downloadsStrip.statusFailed')
+  if (item.status === 'deferred') {
+    if (deferred?.failureKind === 'early_access' && deferred.earlyAccessEndsAt) {
+      const time = new Date(deferred.earlyAccessEndsAt).toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+      return t('downloadsStrip.statusUnlocksToday', { time })
+    }
+    if (item.failureKind === 'interrupted') return t('downloadsStrip.statusFailed')
+    return t('downloadsStrip.statusPlanned')
+  }
+  return ''
+}
+
+function minimalFillPct(item: DownloadQueueItem): number {
+  if (item.status === 'downloading') {
+    if (item.phase === 'preview' || item.phase === 'swarm' || item.phase === 'done') return 100
+    if (item.totalBytes > 0) return pct(item)
+    if (item.bytesReceived > 0) return 8
+    return 3
+  }
+  if (item.status === 'failed' && item.totalBytes > 0 && item.bytesReceived > 0) {
+    return Math.min(100, Math.round((item.bytesReceived / item.totalBytes) * 100))
+  }
+  return 0
+}
+
+function DownloadQueueMinimalRow({
+  item,
+  stalled,
+  queuePaused,
+  deferred,
+  banMode = false,
+  onBan,
+  onViewDetails,
+  onContextMenu
+}: {
+  item: DownloadQueueItem
+  stalled: boolean
+  queuePaused: boolean
+  deferred?: DeferredDownload
+  banMode?: boolean
+  onBan?: (item: DownloadQueueItem) => void
+  onViewDetails?: (item: DownloadQueueItem) => void
+  onContextMenu: (e: React.MouseEvent) => void
+}) {
+  const t = useT()
+  const isDownloading = item.status === 'downloading'
+  const errorWaiting = isStripErrorWaiting(item)
+  const cardState = stripCardState(item)
+  const progressText = isDownloading ? progressDetail(t, item, stalled) : ''
+  const statusText = stripStatusLabel(t, item, queuePaused, deferred)
+  const receivedNote =
+    item.status === 'failed' && item.bytesReceived > 0
+      ? t('downloadsStrip.receivedBeforeFail', { bytes: formatBytes(item.bytesReceived) })
+      : ''
+  const queueInfo = progressText || statusText || receivedNote
+  const fillPct = minimalFillPct(item)
+  const isComplete = fillPct >= 100
+  const hasRating = item.nsfwLevel != null || item.nsfw != null
+  const rating = hasRating ? describeNsfwRating(item.nsfw, item.nsfwLevel) : null
+  const pageUrl =
+    item.sourceDomain && item.modelId
+      ? getModelPageUrl(item.sourceDomain, item.modelId, item.versionId || undefined)
+      : null
+
+  const cardClass = [
+    'active-queue-minimal-row',
+    isDownloading ? 'is-downloading' : '',
+    isComplete ? 'is-complete' : '',
+    errorWaiting ? 'strip-error-waiting' : '',
+    item.status === 'deferred' ? 'download-deferred' : '',
+    item.status === 'queued' ? 'is-queued' : '',
+    stalled ? 'download-stalled' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div
+      className={cardClass}
+      data-state={cardState}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onContextMenu(e)
+      }}
+    >
+      <div className="active-queue-minimal-line">
+        <div
+          className="active-queue-minimal-track"
+          style={{ '--minimal-fill-pct': `${fillPct}%` } as React.CSSProperties}
+        >
+          <div className="active-queue-minimal-fill" aria-hidden />
+          <div className="active-queue-minimal-thumb">
+            <PreviewThumb urls={item.previewUrl ? [item.previewUrl] : []} className="gallery-thumb" />
+          </div>
+          <div className="active-queue-minimal-meta-col">
+            {queueInfo ? (
+              <span
+                className={`active-queue-minimal-queue-text${
+                  progressText && stalled ? ' stalled' : ''
+                }${!progressText ? ' muted' : ''}`}
+              >
+                {queueInfo}
+              </span>
+            ) : (
+              <span className="active-queue-minimal-queue-text muted">—</span>
+            )}
+          </div>
+        </div>
+        <div className="active-queue-minimal-sep" aria-hidden />
+        <div className="active-queue-minimal-title-block">
+          {rating ? (
+            <span
+              className={`nsfw-rating-badge inline-badge active-queue-minimal-rating tier-${rating.tier}`}
+              title={`Content: ${rating.label}`}
+            >
+              {rating.label}
+            </span>
+          ) : null}
+          <strong className="active-queue-minimal-title" title={item.modelName}>
+            {item.modelName}
+          </strong>
+        </div>
+        <div className="active-queue-minimal-actions">
+          {item.versionId > 0 && onViewDetails ? (
+            <button
+              type="button"
+              className="gallery-detail-btn active-queue-minimal-action-btn"
+              title={t('downloadsStrip.modelDetails')}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onViewDetails(item)
+              }}
+            >
+              ℹ
+            </button>
+          ) : null}
+          {pageUrl ? (
+            <button
+              type="button"
+              className="gallery-web-btn-inline active-queue-minimal-action-btn"
+              title={t('downloadsStrip.openCivitai')}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                void window.api.openExternal(pageUrl)
+              }}
+            >
+              ↗
+            </button>
+          ) : null}
+          {banMode && onBan ? (
+            <button
+              type="button"
+              className="gallery-ban-inline-btn active-queue-minimal-ban"
+              title={t('downloadsStrip.excludeBan')}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                void onBan(item)
+              }}
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function DownloadQueueRichCard({
@@ -197,7 +383,7 @@ export function ActiveDownloadsStrip({
   queue,
   queuePaused,
   deferred = [],
-  stripLayout = 'horizontal',
+  stripLayout = 'minimal',
   banFunctionMode = false,
   onClearQueue,
   clearQueueBusy = false,
@@ -214,6 +400,7 @@ export function ActiveDownloadsStrip({
     y: number
     item: DownloadQueueItem
   } | null>(null)
+  const [detailTarget, setDetailTarget] = useState<ModelDetailTarget | null>(null)
   const [bannedIds, setBannedIds] = useState<Set<number>>(() => new Set())
   useEffect(() => {
     void window.api.getBannedModels().then((list) => {
@@ -237,6 +424,17 @@ export function ActiveDownloadsStrip({
     setContextMenu(null)
     onBrowseModelBanChange?.(item.modelId, false)
     await window.api.unbanModel(item.modelId)
+  }
+
+  const openDetail = (item: DownloadQueueItem) => {
+    setDetailTarget({
+      kind: 'browse',
+      modelId: item.modelId,
+      versionId: item.versionId,
+      name: item.modelName,
+      previewUrl: item.previewUrl,
+      domain: item.sourceDomain
+    })
   }
 
   const dismissItem = async (item: DownloadQueueItem) => {
@@ -370,10 +568,16 @@ export function ActiveDownloadsStrip({
   }
 
   const listClass =
-    stripLayout === 'grid' ? 'active-queue-strip-grid' : 'active-queue-strip-scroll'
+    stripLayout === 'grid'
+      ? 'active-queue-strip-grid'
+      : stripLayout === 'minimal'
+        ? 'active-queue-strip-minimal'
+        : 'active-queue-strip-scroll'
+
+  const stripLayoutClass = `active-queue-strip-layout-${stripLayout}`
 
   return (
-    <div className="active-queue-strip">
+    <div className={`active-queue-strip ${stripLayoutClass}`}>
       <div className="active-queue-strip-top">
         <div className="active-queue-strip-head">
           {queuedCount > 0 && (
@@ -410,18 +614,30 @@ export function ActiveDownloadsStrip({
       </div>
 
       <div className={listClass}>
-        {displayItems.map((item) => (
-          <DownloadQueueRichCard
-            key={item.id}
-            item={item}
-            stalled={stalledIds.has(item.id)}
-            banMode={banFunctionMode}
-            onBan={banItem}
-            onContextMenu={(e) =>
-              setContextMenu({ x: e.clientX, y: e.clientY, item })
-            }
-          />
-        ))}
+        {displayItems.map((item) =>
+          stripLayout === 'minimal' ? (
+            <DownloadQueueMinimalRow
+              key={item.id}
+              item={item}
+              stalled={stalledIds.has(item.id)}
+              queuePaused={queuePaused}
+              deferred={item.versionId ? deferredByVersion.get(item.versionId) : undefined}
+              banMode={banFunctionMode}
+              onBan={banItem}
+              onViewDetails={openDetail}
+              onContextMenu={(e) => setContextMenu({ x: e.clientX, y: e.clientY, item })}
+            />
+          ) : (
+            <DownloadQueueRichCard
+              key={item.id}
+              item={item}
+              stalled={stalledIds.has(item.id)}
+              banMode={banFunctionMode}
+              onBan={banItem}
+              onContextMenu={(e) => setContextMenu({ x: e.clientX, y: e.clientY, item })}
+            />
+          )
+        )}
       </div>
 
       {contextMenu && (
@@ -486,6 +702,10 @@ export function ActiveDownloadsStrip({
               </button>
             )}
         </ContextMenuPortal>
+      )}
+
+      {detailTarget && (
+        <ModelDetailModal target={detailTarget} onClose={() => setDetailTarget(null)} />
       )}
     </div>
   )

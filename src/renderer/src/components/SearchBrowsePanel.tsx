@@ -1059,6 +1059,8 @@ export function SearchBrowsePanel({
             author: model.creator,
             civitaiTags: model.tags,
             fileSizeBytes: model.fileSizeBytes,
+            nsfw: model.nsfw,
+            nsfwLevel: model.nsfwLevel,
             confirmTagsAfter: needsConfirmation,
             manual: true
           }

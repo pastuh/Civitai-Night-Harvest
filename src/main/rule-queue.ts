@@ -211,6 +211,8 @@ function processModel(
         modelType: model.type,
         author: model.creator?.username,
         civitaiTags,
+        nsfw: model.nsfw,
+        nsfwLevel: model.nsfwLevel,
         confirmTagsAfter: false,
         manual: options.markManual === true
       }
@@ -625,6 +627,8 @@ export function queueEligibleTestModels(
         author: m.creator,
         civitaiTags: m.tags,
         fileSizeBytes: m.fileSizeBytes,
+        nsfw: m.nsfw,
+        nsfwLevel: m.nsfwLevel,
         confirmTagsAfter: false,
         manual: false
       }

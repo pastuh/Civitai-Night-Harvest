@@ -223,13 +223,14 @@ export function SettingsTab({
         <div className="field">
           <label className="field-label">{t('settings.fields.downloadStripLayout')}</label>
           <select
-            value={draft.downloadStripLayout ?? 'horizontal'}
+            value={draft.downloadStripLayout ?? 'minimal'}
             onChange={(e) =>
               update('downloadStripLayout', e.target.value as AppSettingsPublic['downloadStripLayout'])
             }
           >
             <option value="horizontal">{t('settings.options.stripLayoutRow')}</option>
             <option value="grid">{t('settings.options.stripLayoutGrid')}</option>
+            <option value="minimal">{t('settings.options.stripLayoutMinimal')}</option>
           </select>
         </div>
         <span className="muted settings-field-note">

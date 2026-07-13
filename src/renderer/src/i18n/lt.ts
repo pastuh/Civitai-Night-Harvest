@@ -128,6 +128,7 @@ export const lt: Messages = {
       themeLight: 'Šviesi',
       stripLayoutRow: 'Eilė (horizontalus scroll)',
       stripLayoutGrid: 'Tinklelis (kelios eilės)',
+      stripLayoutMinimal: 'Minimal (kompaktinis sąrašas su progresu)',
       uiMinimal: 'Minimali',
       uiExtended: 'Išplėsta',
       contentAll: 'Visi (SFW + NSFW)',
@@ -265,7 +266,9 @@ export const lt: Messages = {
     edgeAwaiting: 'Geltona — laukia prieigos / early access',
     edgeBlocked: 'Violetinė — praleista (blokuotas tag arba excluded)',
     dlStrip:
-      'Siuntimo juosta — miniatiūra, pavadinimas (iki 3 eilučių), siunčiant: gauta / dydis / greitis po pavadinimu. Antraštėje: **Auto**, **Manual**, **Pause**; **Clear queue** Browse juostoje išvalo eilę nekeisdama režimo. Kortelės plotį keiskite Nustatymuose.',
+      'Siuntimo juosta — Nustatymai → išdėstymas: **Row** (scroll kortelės), **Grid** (tinklelis), **Minimal** (kompaktinis sąrašas). Antraštė: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) išvalo eilę nekeisdama režimo.',
+    dlStripLayouts:
+      '**Minimal** — miniatiūra visada matoma; kairėje stulpelis su eilės/siuntimo tekstu; vertikalus skirtukas; dešinėje pavadinimas. Žalias užpildas auga tik per kairį stulpelį — pasiekus skirtuką, atsisiuntimas baigtas. Dešinis pelės mygtukas, ban ir prioritetas kaip kituose režimuose.',
     dlStripProgress:
       'Aktyvus siuntimas — progreso juosta ant miniatiūros; po pavadinimu pvz. 218 MB / 1.2 GB · 12 MB/s (be procentų).',
     dlStripColors:
@@ -312,7 +315,9 @@ export const lt: Messages = {
       browseSettledDimPercent:
         'Browse Results — pritemdyti settled korteles (0% = išjungta). Hover atstatyti ryškumą; paieška lieka ryški.',
       queueGridSize:
-        'Download juostos kortelės plotis (miniatiūros dydis). Didesnėms kortelėms reikia aukštesnės juostos — padidinkite, jei karpomas pavadinimas (juostos aukštis auga su kortelės plocu iki ekrano limito).'
+        'Download juostos kortelės plotis (miniatiūra) Row ir Grid režimams. Didesnėms kortelėms reikia aukštesnės juostos.',
+      downloadStripLayout:
+        'Row = horizontalus scroll · Grid = kortelių tinklelis · Minimal = vertikalus sąrašas su miniatiūra, statuso stulpeliu, skirtuku ir pavadinimu; progresas baigiasi ties skirtuku.'
     },
     progressBar: {
       green: 'Žalia = turite',
@@ -493,6 +498,7 @@ export const lt: Messages = {
     banFunction: 'Ban režimas',
     excludeBan: 'Blokuoti / ban modelį',
     openCivitai: 'Atidaryti Civitai',
+    modelDetails: 'Modelio informacija (licencija, statistika)',
     unban: 'Atbaninti — leisti siųsti',
     exclude: 'Blokuoti / ban modelį',
     removeFromQueue: 'Pašalinti ir exclude (be auto re-queue)',

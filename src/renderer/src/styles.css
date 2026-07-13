@@ -3255,7 +3255,7 @@ code {
 .preview-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: 12000;
   background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
@@ -3442,9 +3442,20 @@ code {
 .active-queue-strip:not(.active-queue-strip-collapsed) {
   display: flex;
   flex-direction: column;
-  max-height: min(42vh, calc(var(--queue-card-width, 160px) + 120px));
   padding: 4px 10px 6px;
   overflow: visible;
+}
+
+.active-queue-strip-layout-horizontal:not(.active-queue-strip-collapsed) {
+  max-height: min(42vh, calc(var(--queue-card-width, 160px) + 120px));
+}
+
+.active-queue-strip-layout-grid:not(.active-queue-strip-collapsed) {
+  max-height: min(52vh, 560px);
+}
+
+.active-queue-strip-layout-minimal:not(.active-queue-strip-collapsed) {
+  max-height: min(38vh, 320px);
 }
 
 .active-queue-strip-collapsed {
@@ -3537,12 +3548,25 @@ code {
 .active-queue-strip-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--queue-grid-min, 160px), 1fr));
+  grid-auto-rows: min-content;
+  align-content: start;
   gap: 12px;
   overflow-y: auto;
   min-height: 0;
   flex: 1;
   padding: 2px 8px 4px 2px;
   align-items: start;
+}
+
+.active-queue-strip-minimal {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  padding: 2px 4px 4px 2px;
+  scrollbar-width: thin;
 }
 
 .active-queue-strip-collapsed-row {
@@ -3723,6 +3747,211 @@ code {
 
 .active-queue-strip-grid .active-queue-rich-card {
   width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.active-queue-strip-minimal {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  flex: 1;
+  padding: 0;
+  scrollbar-width: thin;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.active-queue-minimal-row {
+  position: relative;
+  flex: none;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  cursor: default;
+  overflow: hidden;
+}
+
+.active-queue-minimal-row + .active-queue-minimal-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+.active-queue-minimal-track {
+  position: relative;
+  flex: 0 0 clamp(9.5rem, 38%, 16rem);
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 8px 4px 4px;
+}
+
+.active-queue-minimal-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--minimal-fill-pct, 0%);
+  background: color-mix(in srgb, var(--success) 20%, transparent);
+  transition: width 0.35s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.active-queue-minimal-row.is-downloading .active-queue-minimal-fill {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--success) 42%, var(--surface)) 0%,
+    color-mix(in srgb, var(--success) 22%, var(--surface)) 100%
+  );
+}
+
+.active-queue-minimal-row.is-downloading.is-complete .active-queue-minimal-fill {
+  background: color-mix(in srgb, var(--success) 36%, var(--surface));
+}
+
+.active-queue-minimal-row.is-downloading.download-stalled .active-queue-minimal-fill {
+  background: color-mix(in srgb, var(--warn, #e6a817) 28%, var(--surface));
+}
+
+.active-queue-minimal-row.strip-error-waiting .active-queue-minimal-fill {
+  background: color-mix(in srgb, var(--strip-interrupted, #e879a8) 26%, var(--surface));
+}
+
+.active-queue-minimal-row.download-deferred .active-queue-minimal-fill {
+  background: color-mix(in srgb, var(--browse-cat-awaiting) 18%, transparent);
+}
+
+.active-queue-minimal-row.is-queued .active-queue-minimal-fill {
+  width: 0;
+}
+
+.active-queue-minimal-line {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.active-queue-minimal-thumb {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 6px;
+  align-self: center;
+}
+
+.active-queue-minimal-thumb .gallery-thumb,
+.active-queue-minimal-thumb .preview-empty {
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.active-queue-minimal-meta-col {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: center;
+}
+
+.active-queue-minimal-queue-text {
+  display: block;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.active-queue-minimal-queue-text.stalled {
+  color: var(--warn, #e6a817);
+}
+
+.active-queue-minimal-sep {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  min-height: 18px;
+  margin: auto 8px auto 0;
+  background: color-mix(in srgb, var(--border) 90%, var(--text));
+}
+
+.active-queue-minimal-title-block {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.active-queue-minimal-title-block .active-queue-minimal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.active-queue-minimal-rating {
+  flex: none;
+  margin: 0;
+  font-size: 8px;
+  padding: 0 4px;
+  pointer-events: auto;
+}
+
+.active-queue-minimal-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.active-queue-minimal-action-btn {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  font-size: 12px;
+}
+
+.active-queue-minimal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.active-queue-minimal-ban {
+  position: static;
+  flex: none;
+  align-self: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  margin: 0 0 0 6px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
 }
 
 .active-queue-rich-card.download-stalled {
