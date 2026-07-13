@@ -23,6 +23,8 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'showBanned', fieldKey: 'settings.fields.showBannedInGallery' },
   { refKey: 'launchAtLogin', fieldKey: 'settings.fields.launchAtLogin' },
   { refKey: 'galleryGridSize', fieldKey: 'settings.fields.galleryGridSize' },
+  { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
+  { refKey: 'browseSettledDimPercent', fieldKey: 'settings.fields.browseSettledDimPercent' },
   { refKey: 'queueGridSize', fieldKey: 'settings.fields.queueGridSize' },
   { refKey: 'hashVerify', fieldKey: 'settings.fields.hashVerify' }
 ]
@@ -97,6 +99,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.browseResults')}</li>
             <li>{t('help.browseTags')}</li>
             <li>{t('help.browseManualQueue')}</li>
+            <li>{t('help.browseSettled')}</li>
             <li>{t('help.browseBan')}</li>
             <li>{t('help.browseContextSkipTag')}</li>
           </ul>
@@ -111,6 +114,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <li>{t('help.libraryFolders')}</li>
+            <li>{t('help.libraryBadge')}</li>
             <li>{t('help.librarySort')}</li>
             <li>{t('help.libraryContent')}</li>
             <li>{t('help.libraryTags')}</li>
@@ -161,6 +165,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.dlStatusBar')}</li>
             <li>{t('help.dlAwaiting')}</li>
             <li>{t('help.dlNewVersions')}</li>
+            <li>{t('help.dlTabBadges')}</li>
             <li>{t('help.dlActivity')}</li>
           </ul>
         </section>

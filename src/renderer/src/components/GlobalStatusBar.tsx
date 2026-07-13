@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type {
 
@@ -144,6 +144,8 @@ function primaryActivityLabel(
 
     crawlProgress?: CrawlProgressPayload | null
 
+    remainingWaitMs?: number | null
+
     showReadyIdle?: boolean
 
   }
@@ -173,6 +175,8 @@ function primaryActivityLabel(
     crawlHasMorePages,
 
     crawlProgress,
+
+    remainingWaitMs,
 
     showReadyIdle
 
@@ -224,12 +228,17 @@ function primaryActivityLabel(
 
     const total = crawlGalleryTotal ?? 0
 
-    if (crawlProgress?.phase === 'waiting' && crawlProgress.waitMs) {
+    if (crawlProgress?.phase === 'waiting' && (remainingWaitMs != null || crawlProgress.waitMs)) {
       if (crawlProgress.catalogComplete === true || crawlCatalogComplete) {
-        const min = Math.max(1, Math.ceil(crawlProgress.waitMs / 60_000))
+        const ms = remainingWaitMs ?? crawlProgress.waitMs ?? 0
+        const min = ms >= 60_000 ? Math.max(1, Math.ceil(ms / 60_000)) : 0
+        const label =
+          min > 0
+            ? `${min} min`
+            : t('globalStatus.peekCountdownUnderMin')
         return rules
-          ? t('globalStatus.scanningApiWaitingRule', { rules, min })
-          : t('globalStatus.scanningApiWaiting', { min })
+          ? t('globalStatus.scanningApiWaitingRule', { rules, time: label })
+          : t('globalStatus.scanningApiWaiting', { time: label })
       }
     }
 
@@ -529,6 +538,23 @@ export function GlobalStatusBar({
 
   const t = useT()
 
+  const [waitTick, setWaitTick] = useState(0)
+
+  useEffect(() => {
+    if (crawlProgress?.phase !== 'waiting') return
+    const id = window.setInterval(() => setWaitTick((n) => n + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [crawlProgress?.phase, crawlProgress?.waitUntil, crawlProgress?.ruleId])
+
+  const remainingWaitMs = useMemo(() => {
+    void waitTick
+    if (crawlProgress?.phase !== 'waiting') return null
+    if (crawlProgress.waitUntil != null) {
+      return Math.max(0, crawlProgress.waitUntil - Date.now())
+    }
+    return crawlProgress.waitMs ?? null
+  }, [crawlProgress, waitTick])
+
   const downloading = useMemo(
 
     () => queue.filter((i) => i.status === 'downloading'),
@@ -585,6 +611,8 @@ export function GlobalStatusBar({
 
         crawlProgress,
 
+        remainingWaitMs,
+
         showReadyIdle
 
       }),
@@ -614,6 +642,8 @@ export function GlobalStatusBar({
       crawlHasMorePages,
 
       crawlProgress,
+
+      remainingWaitMs,
 
       showReadyIdle
 

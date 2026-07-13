@@ -479,7 +479,9 @@ export function initIpc(): void {
         if (!pages.length) return emptyBrowseResult(enums)
 
         if (pages.length === 1) {
-          return mergeWatchRuleBrowsePages(pages, enums)
+          const result = mergeWatchRuleBrowsePages(pages, enums)
+          scheduler.seedBrowseModels(rule.id, result.sampleModels)
+          return result
         }
 
         if (hasDomainCursors) {
@@ -491,7 +493,9 @@ export function initIpc(): void {
           )
         }
 
-        return mergeWatchRuleBrowsePages(pages, enums)
+        const result = mergeWatchRuleBrowsePages(pages, enums)
+        scheduler.seedBrowseModels(rule.id, result.sampleModels)
+        return result
       } finally {
         sendToRenderer(() => mainWindow, 'crawl:progress', null)
       }
@@ -725,8 +729,9 @@ export function initIpc(): void {
 
   ipcMain.handle('download:reconcile', () => {
     downloadQueue.syncWithInventory()
-    if (getSettings().nightMode && shouldCrawlAutoDownload() && shouldAutoQueue()) {
-      scheduler.fillBrowseDownloadPipeline()
+    if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
+      const allowOutsideNightMode = !getSettings().nightMode
+      scheduler.fillBrowseDownloadPipeline('system', allowOutsideNightMode)
     }
     return downloadQueue.getState()
   })
@@ -735,8 +740,9 @@ export function initIpc(): void {
     if (!outputFoldersConfigured()) {
       throw new Error('Set LoRA and Checkpoint folders in Settings first')
     }
-    if (getSettings().nightMode && shouldCrawlAutoDownload() && shouldAutoQueue()) {
-      scheduler.fillBrowseDownloadPipeline()
+    if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
+      const allowOutsideNightMode = !getSettings().nightMode
+      scheduler.fillBrowseDownloadPipeline('system', allowOutsideNightMode)
     }
     const queued = downloadQueue.getItems().filter((i) => i.status === 'queued')
     if (!queued.length) {
@@ -774,12 +780,11 @@ export function initIpc(): void {
 
   ipcMain.handle('download:clearQueue', () => {
     const removed = downloadQueue.clearAll()
-    saveSettings({ manualQueueMode: true })
     scheduler.log(
       'info',
       removed > 0
-        ? `Cleared download queue (${removed} item(s)); manual queue mode enabled`
-        : 'Download queue cleared; manual queue mode enabled'
+        ? `Cleared download queue (${removed} item(s))`
+        : 'Download queue cleared'
     )
     return {
       queue: downloadQueue.getState(),

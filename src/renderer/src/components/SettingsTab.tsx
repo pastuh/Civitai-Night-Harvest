@@ -643,6 +643,27 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
+              checked={draft.browseSettledToEnd ?? false}
+              onChange={(e) => update('browseSettledToEnd', e.target.checked)}
+            />
+            {t('settings.fields.browseSettledToEnd')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.browseSettledToEnd')}</p>
+        </div>
+        <RangeSlider
+          label={t('settings.fields.browseSettledDimPercent')}
+          value={draft.browseSettledDimPercent ?? 0}
+          min={0}
+          max={100}
+          step={5}
+          formatValue={(v) => (v <= 0 ? t('settings.options.dimOff') : `${v}%`)}
+          onChange={(v) => update('browseSettledDimPercent', v)}
+        />
+        <p className="muted settings-field-note">{t('settings.notes.browseSettledDimPercent')}</p>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
               checked={draft.launchAtLogin ?? false}
               onChange={(e) => update('launchAtLogin', e.target.checked)}
             />

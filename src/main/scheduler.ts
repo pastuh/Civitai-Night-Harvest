@@ -60,6 +60,7 @@ export class ScanScheduler {
   private lastScanFinishedAt: number | null = null
   private pendingActivityEmits: ActivityEntry[] = []
   private activityEmitTimer: ReturnType<typeof setTimeout> | null = null
+  private wasNightMode = getSettings().nightMode
 
   clearCrawlBrowseAccum(ruleId?: string): void {
     if (ruleId) {
@@ -113,6 +114,20 @@ export class ScanScheduler {
       }
     }
     return merged
+  }
+
+  /** Merge manual browse / test results into the in-memory gallery (used for auto-queue outside night mode). */
+  seedBrowseModels(ruleId: string, models: WatchRuleTestModel[]): void {
+    if (!models.length) return
+    const bucket = this.crawlBrowseRuleBucket(ruleId)
+    const order = this.crawlBrowseRuleOrder(ruleId)
+    for (const m of models) {
+      const key = this.crawlModelKey(m)
+      const prev = bucket.get(key)
+      const mergedModel = prev ? preferBrowseModel(prev, m) : m
+      if (!prev) order.push(key)
+      bucket.set(key, mergedModel)
+    }
   }
 
   /** Queue eligible models from live browse gallery into the download pipeline. */
@@ -575,8 +590,9 @@ export class ScanScheduler {
       )
       return
     }
-    if (getSettings().nightMode) {
-      const filled = this.fillBrowseDownloadPipeline()
+    if (shouldAutoQueue()) {
+      const allowOutsideNightMode = !getSettings().nightMode
+      const filled = this.fillBrowseDownloadPipeline('system', allowOutsideNightMode)
       if (filled > 0) {
         this.log('info', `Auto-download on — queued ${filled} from browse gallery`, undefined, {
           source: 'system'
@@ -599,8 +615,9 @@ export class ScanScheduler {
   }
 
   onSettingsChanged(): void {
-    this.applyCrawlAutoDownloadPolicy()
     const settings = getSettings()
+    const nightTurnedOff = this.wasNightMode && !settings.nightMode
+    this.applyCrawlAutoDownloadPolicy()
     this.restartInterval()
     if (settings.nightMode) {
       if (!this.validateNightModePrereqs()) return
@@ -620,8 +637,11 @@ export class ScanScheduler {
       }
     } else {
       void this.stopContinuousCrawl()
-      this.clearCrawlBrowseAccum()
+      if (nightTurnedOff) {
+        this.clearCrawlBrowseAccum()
+      }
     }
+    this.wasNightMode = settings.nightMode
   }
 
   /** Restart crawl when saved Browse rules change search criteria. */
@@ -898,18 +918,20 @@ export class ScanScheduler {
     this.emit('crawl:page', payload)
     this.downloadQueue.syncWithInventory()
 
-    if (getSettings().nightMode && shouldCrawlAutoDownload()) {
+    if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
       const freshPageModels = pageModels.map((m) => ({
         ...m,
         inInventory: inventory.hasVersion(m.versionId)
       }))
+      const allowOutsideNightMode = !getSettings().nightMode
       this.reconcileBrowseDownloadQueue({
         models: freshPageModels,
         ruleId: rule.id,
-        source
+        source,
+        allowOutsideNightMode
       })
       if (catalogComplete) {
-        this.reconcileBrowseDownloadQueue({ ruleId: rule.id, source })
+        this.reconcileBrowseDownloadQueue({ ruleId: rule.id, source, allowOutsideNightMode })
       }
     }
 
@@ -987,6 +1009,7 @@ export class ScanScheduler {
           ruleName: rule.name,
           phase: 'waiting',
           waitMs,
+          waitUntil: Date.now() + waitMs,
           domain,
           catalogComplete: catalogDone,
           hasMorePages: !catalogDone,
@@ -1191,6 +1214,7 @@ export class ScanScheduler {
               ruleName: rule.name,
               phase: 'waiting',
               waitMs: peekIntervalMs,
+              waitUntil: Date.now() + peekIntervalMs,
               galleryTotal,
               catalogComplete: true,
               hasMorePages: false

@@ -371,16 +371,18 @@ button.active {
 
 button.downloads-toggle {
   font-weight: 600;
-  min-width: 7.5rem;
+  min-width: 9.5rem;
 }
 
-button.downloads-toggle-on {
+button.downloads-toggle-on,
+button.downloads-toggle-auto {
   background: color-mix(in srgb, var(--success) 28%, var(--surface2));
   border-color: color-mix(in srgb, var(--success) 70%, var(--border));
   color: var(--success);
 }
 
-button.downloads-toggle-on:hover:not(:disabled) {
+button.downloads-toggle-on:hover:not(:disabled),
+button.downloads-toggle-auto:hover:not(:disabled) {
   background: color-mix(in srgb, var(--success) 38%, var(--surface2));
   border-color: var(--success);
   color: var(--success);
@@ -396,6 +398,65 @@ button.downloads-toggle-paused:hover:not(:disabled) {
   background: color-mix(in srgb, var(--error) 32%, var(--surface2));
   border-color: var(--error);
   color: var(--error);
+}
+
+button.downloads-toggle-manual {
+  background: color-mix(in srgb, #5b8cff 22%, var(--surface2));
+  border-color: color-mix(in srgb, #5b8cff 62%, var(--border));
+  color: color-mix(in srgb, #8ab4ff 88%, var(--text));
+}
+
+button.downloads-toggle-manual:hover:not(:disabled) {
+  background: color-mix(in srgb, #5b8cff 32%, var(--surface2));
+  border-color: #5b8cff;
+  color: #9ec0ff;
+}
+
+.downloads-header-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+button.downloads-pause-btn {
+  min-width: 2.1rem;
+  padding: 0 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+button.downloads-pause-btn.is-idle {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface2));
+  border-color: color-mix(in srgb, var(--text) 18%, var(--border));
+  color: color-mix(in srgb, var(--text) 42%, var(--muted));
+}
+
+button.downloads-pause-btn.is-idle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 14%, var(--surface2));
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+}
+
+button.downloads-pause-btn.is-paused {
+  background: color-mix(in srgb, var(--error) 22%, var(--surface2));
+  border-color: color-mix(in srgb, var(--error) 65%, var(--border));
+  color: var(--error);
+}
+
+button.downloads-pause-btn.is-paused:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 32%, var(--surface2));
+  border-color: var(--error);
+  color: var(--error);
+}
+
+button.downloads-pause-btn.is-disabled,
+button.downloads-pause-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: color-mix(in srgb, var(--text) 6%, var(--surface2));
+  border-color: color-mix(in srgb, var(--text) 12%, var(--border));
+  color: color-mix(in srgb, var(--text) 35%, var(--muted));
 }
 
 .tab {
@@ -529,7 +590,7 @@ label.field-label {
 }
 
 .gallery-card[data-state='downloading'] {
-  --card-accent: var(--warn);
+  --card-accent: var(--browse-cat-loaded);
 }
 
 .gallery-card[data-state='failed'] {
@@ -1344,8 +1405,13 @@ label.field-label {
 .skipped-tags-panel .tag-chip.hidden-tag-chip,
 .hidden-tags-chips .tag-chip.hidden-tag-chip {
   font-size: 10px;
-  padding: 1px 6px;
-  line-height: 1.35;
+  padding: 1px 5px;
+  margin: 0;
+  min-height: 0;
+  height: auto;
+  line-height: 1.25;
+  font-weight: 400;
+  border-radius: 4px;
 }
 
 .activity-filters {
@@ -1819,9 +1885,10 @@ label.field-label {
   font-size: 10px;
   padding: 1px 5px;
   margin: 0;
-  line-height: 1.35;
+  line-height: 1.25;
   font-weight: 400;
   min-height: 0;
+  height: auto;
   border-radius: 4px;
 }
 
@@ -2130,6 +2197,17 @@ label.field-label {
   gap: 8px;
   margin-bottom: 0;
   min-width: 0;
+}
+
+.browse-results-title-row .browse-results-filters-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.browse-results-title-row .browse-results-controls-box {
+  flex: 0 0 auto;
+  margin-left: 0;
 }
 
 .browse-results-title-row h2 {

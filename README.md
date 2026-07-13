@@ -3,7 +3,7 @@
 Desktop app for **automated Civitai browsing, night crawl, and downloads**.  
 Saves models in a **SwarmUI-friendly** layout: `.safetensors`, preview image, and `.swarm.json` metadata.
 
-> **Testing note:** So far the download flow is tested mainly with **LoRA** models. Checkpoint support is included but not fully verified yet.
+> **Testing note:** Download flow is tested mainly with **LoRA** models. Checkpoint support is included but not fully verified yet.
 
 Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/Civitai-Night-Harvest)
 
@@ -11,23 +11,55 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 
 ## What it does
 
-- **Night harvest** — scans your Browse rules on a schedule, finds new models, queues and downloads them in the background
-- **Browse rules** — Civitai search filters (model type, base model, keywords, sort, SFW/NSFW)
-- **Manual queue** — click models in Results to queue only what you want; optional “manual queue” mode blocks auto-queue from crawl
-- **Local library** — SQLite inventory, duplicate detection by version, tag-based folder routing
+- **Night harvest** — scans enabled Browse rules on a schedule, finds new models, queues and downloads them in the background
+- **Browse rules** — Civitai search filters (model type, base model, keywords, sort, SFW/NSFW, creator)
+- **Results gallery** — live crawl or manual Test; search by name/author; sort, tag filter, content filters in a compact toolbar
+- **Download modes** — **Auto** (auto-queue from crawl/browse, up to 10 in pipeline) or **Manual** (click cards to queue); separate **Pause** button stops active downloads without changing mode
+- **Clear queue** — empties the download strip only; does not switch Auto → Manual or enable Pause
+- **Local library** — SQLite inventory, duplicate detection by version, tag-based folder routing; tab badge **+N** for new downloads since last Library visit
 - **Domains** — civitai.com, civitai.red, or both (same version is not downloaded twice)
-- **Queue & retries** — download strip (progress, priority queue, color-coded states), awaiting-access / early-access handling, new-version approval
-- **Activity log** — compact filters; scan, crawl, and download history
+- **Queue & retries** — download strip with progress, priority, color-coded states; awaiting-access / early-access handling; **New Versions** tab for updates to owned models
+- **Activity log** — compact filters; scan, crawl, and download history with live peek countdown
+- **Tab badges** — Browse shows active queue count; Library shows **+N** new downloads until you open Library; New Versions and Awaiting access show pending counts
 
 For UI details, open the in-app **Help** tab.
 
 ---
 
+## Header controls
+
+| Control | Purpose |
+|--------|---------|
+| **Harvest** | Toggle night mode (scheduled scan + crawl) |
+| **Auto / Manual** | Auto-queue eligible models vs manual queue only |
+| **Pause** | Stop auto-downloads (works in both Auto and Manual) |
+| **Clear queue** | Remove queued/downloading items from the strip (does not change Auto/Manual or Pause) |
+
+---
+
+## Library tab
+
+- **+N badge** on the tab — how many models were downloaded since you last opened Library; clears when you visit the tab
+- Sort, content filter, tag sidebar, and per-card folder assignment
+
+---
+
+## Browse Results
+
+- **Search** — filter gallery by model or author name
+- **Filters** — content (All/SFW/NSFW), hide owned, excluded, blocked tags, awaiting access; ban mode toggle
+- **Sort** — folder tag, Civitai downloads, or download order
+- **Tags** — popover filter from tags seen in results
+- **Gallery settings** (Settings) — optionally move owned/excluded/awaiting cards to the end; dim them with adjustable opacity (hover restores brightness)
+
+---
+
 ## Quick start
 
-1. **Settings** → set your **LoRA folder** (and Civitai **API key** for NSFW/restricted content).
+1. **Settings** → set your **LoRA folder** (and **Checkpoint** if needed) plus Civitai **API key** for NSFW/restricted content.
 2. **Browse** → **Rules** → enable at least one rule → **Save rules**.
-3. Click **🌙 Harvest** in the header to start automatic scan and downloads.
+3. Click **Harvest** in the header to start automatic scan and downloads.
+4. Use **Auto** for hands-off queueing, or **Manual** and click cards in Results.
 
 Optional: **Tag Folders** tab maps Civitai tags to subfolders on disk.
 

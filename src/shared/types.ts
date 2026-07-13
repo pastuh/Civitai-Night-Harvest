@@ -83,6 +83,10 @@ export interface AppSettings {
   activityLogVerbosity: ActivityLogVerbosity
   /** Per-topic overrides when activityLogVerbosity is custom */
   activityLogTopics?: Partial<ActivityLogTopicFlags>
+  /** Move owned / excluded / awaiting-access models to the end of Browse Results */
+  browseSettledToEnd: boolean
+  /** Dim settled Browse cards (0 = off, 1–100 = opacity %) */
+  browseSettledDimPercent: number
 }
 
 export type CivitaiSort = 'Newest' | 'Most Downloaded' | 'Highest Rated'
@@ -130,6 +134,8 @@ export interface AppSettingsPublic {
   slugFormat: SlugFormat
   activityLogVerbosity: ActivityLogVerbosity
   activityLogTopics?: Partial<ActivityLogTopicFlags>
+  browseSettledToEnd: boolean
+  browseSettledDimPercent: number
 }
 
 /** Partial save from renderer; omit apiKey or send empty to keep existing */
@@ -166,7 +172,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   queueGridMinPx: 160,
   downloadStripLayout: 'horizontal',
   slugFormat: 'versionName',
-  activityLogVerbosity: 'minimal'
+  activityLogVerbosity: 'minimal',
+  browseSettledToEnd: false,
+  browseSettledDimPercent: 0
 }
 
 export interface ScanScheduleInfo {
@@ -589,8 +597,10 @@ export interface CrawlProgressPayload {
   pageModelsOnPage?: number
   /** Raw models returned on this API page before rule filters */
   apiModelsOnPage?: number
-  /** When phase is waiting — ms until next peek */
+  /** When phase is waiting — ms until next peek (initial; use waitUntil for live countdown) */
   waitMs?: number
+  /** When phase is waiting — epoch ms when the peek cooldown ends */
+  waitUntil?: number
   /** Supplemental tag API fetch (phase fetching-tags) */
   tagFetchStep?: number
   tagFetchTotal?: number

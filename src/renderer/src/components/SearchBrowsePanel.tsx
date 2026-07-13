@@ -55,6 +55,26 @@ function modelFromQueueItem(item: DownloadQueueItem, ownedVersionIds: Set<number
   }
 }
 
+function modelMatchesBrowseSearch(model: WatchRuleTestModel, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  if (model.name.toLowerCase().includes(q)) return true
+  if (model.creator?.toLowerCase().includes(q)) return true
+  return false
+}
+
+function isBrowseSettledModel(
+  model: WatchRuleTestModel,
+  awaitingAccessVersionIds: Set<number>
+): boolean {
+  return (
+    model.inInventory ||
+    model.isBanned ||
+    model.isEarlyAccess === true ||
+    awaitingAccessVersionIds.has(model.versionId)
+  )
+}
+
 interface Props {
   result: WatchRuleTestResult
   tagRules: TagFolderRule[]
@@ -106,6 +126,8 @@ interface Props {
   onRunScan?: () => Promise<void>
   /** Active Browse rule — keyword filter applied to gallery when query has tag keywords */
   browseRule?: WatchRule | null
+  browseSettledToEnd?: boolean
+  browseSettledDimPercent?: number
 }
 
 interface ContextMenuState {
@@ -154,7 +176,9 @@ export function SearchBrowsePanel({
   crawlProgress = null,
   browseGalleryAwaiting = false,
   onRunScan,
-  browseRule = null
+  browseRule = null,
+  browseSettledToEnd = false,
+  browseSettledDimPercent = 0
 }: Props) {
   const t = useT()
   const awaitingAccessVersionIds = useMemo(
@@ -162,6 +186,7 @@ export function SearchBrowsePanel({
     [deferredVersionIds]
   )
   const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [onlyMissing, setOnlyMissing] = useState(true)
   const [hideBanned, setHideBanned] = useState(false)
   const [showBlockedModels, setShowBlockedModels] = useState(false)
@@ -531,6 +556,7 @@ export function SearchBrowsePanel({
         }
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
+        if (searchQuery.trim() && !modelMatchesBrowseSearch(m, searchQuery)) continue
       }
 
       const key = browseModelDedupeKey(m)
@@ -548,6 +574,7 @@ export function SearchBrowsePanel({
     awaitingAccessVersionIds,
     hiddenTags,
     tagFilter,
+    searchQuery,
     queueItemFor,
     result.crawlSource
   ])
@@ -620,6 +647,17 @@ export function SearchBrowsePanel({
           return (orphanOrder.get(ka) ?? 0) - (orphanOrder.get(kb) ?? 0)
         })
     }
+    const searchActive = searchQuery.trim().length > 0
+    if (browseSettledToEnd && !searchActive) {
+      const withIdx = sorted.map((m, i) => ({ m, i }))
+      withIdx.sort((a, b) => {
+        const sa = isBrowseSettledModel(a.m, awaitingAccessVersionIds) ? 1 : 0
+        const sb = isBrowseSettledModel(b.m, awaitingAccessVersionIds) ? 1 : 0
+        if (sa !== sb) return sa - sb
+        return a.i - b.i
+      })
+      return withIdx.map((x) => x.m)
+    }
     return sorted
   }, [
     filtered,
@@ -630,7 +668,9 @@ export function SearchBrowsePanel({
     isBanned,
     browseSort,
     tagRules,
-    routingTag
+    routingTag,
+    browseSettledToEnd,
+    searchQuery
   ])
 
   const gridModels = useMemo(
@@ -1146,6 +1186,16 @@ export function SearchBrowsePanel({
         <div className="search-browse-title">
           <div className="browse-results-title-row">
             <h2>{t('browse.results')}</h2>
+            <input
+              type="search"
+              className="browse-results-search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('browse.searchPlaceholder')}
+              title={t('browse.searchTitle')}
+              aria-label={t('browse.searchPlaceholder')}
+            />
+            <div className="browse-results-filters-box">
             <div className="browse-results-filters-row">
               <select
                 className="browse-content-filter"
@@ -1202,6 +1252,219 @@ export function SearchBrowsePanel({
                   {banFunctionMode ? t('browse.banModeOn') : t('browse.banModeOff')}
                 </button>
               )}
+            </div>
+            </div>
+            <div className="browse-results-controls-box">
+              <label className="library-sort browse-results-sort">
+                {t('gallery.sortLabel')}
+                <select
+                  value={browseSort}
+                  onChange={(e) => setBrowseSort(e.target.value as 'default' | 'folder' | 'downloads')}
+                >
+                  <option value="folder">{t('gallery.sortFolder')}</option>
+                  <option value="downloads">{t('gallery.sortDownloads')}</option>
+                  <option value="default">{t('gallery.sortDefault')}</option>
+                </select>
+              </label>
+              <div className="tags-popover-wrap" ref={tagsPopoverRef}>
+                <div className="tags-popover-toggle-row">
+                  <button
+                    type="button"
+                    className={`tags-popover-toggle ${tagsOpen ? 'active' : ''} ${tagFilter ? 'filtered' : ''}`}
+                    onClick={() => setTagsOpen((o) => !o)}
+                    title={t('browse.tagsToggleTitle')}
+                  >
+                    {tagFilter ? t('browse.tagsFilterActive', { tag: tagFilter }) : t('browse.tagsToggleShort')}
+                    {' '}({tagCatalog.length})
+                  </button>
+                  {tagFilter && (
+                    <button
+                      type="button"
+                      className="tags-filter-clear-btn"
+                      onClick={() => {
+                        setTagFilter(null)
+                        setMessage(t('browse.tagFilterCleared'))
+                      }}
+                      title={t('browse.tagsClearFilter')}
+                      aria-label={t('browse.tagsClearFilter')}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                {tagsOpen && (
+                  <div className="tags-popover">
+                    {hiddenTags.length > 0 && onHiddenTagsChange && (
+                      <div className="hidden-tags-panel hidden-tags-panel-top">
+                        <p className="muted tags-popover-section-label">{t('browse.tagsBlockedSection')}</p>
+                        <div className="hidden-tags-chips">
+                          {hiddenTags.map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              className="tag-chip hidden-tag-chip"
+                              title={t('browse.tagUnblockTitle')}
+                              onClick={() => void unhideTag(tag)}
+                            >
+                              {tag} ×
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="tags-popover-head">
+                      <input
+                        type="search"
+                        className="tags-popover-search"
+                        value={tagSearch}
+                        onChange={(e) => setTagSearch(e.target.value)}
+                        placeholder={t('browse.tagsSearch')}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        className={`tags-popover-all ${tagFilter === null ? 'active' : ''}`}
+                        onClick={() => {
+                          setTagFilter(null)
+                          setMessage(t('browse.tagFilterCleared'))
+                        }}
+                      >
+                        {t('browse.tagsAll')}
+                      </button>
+                    </div>
+                    <div className="tags-popover-hint">
+                      <p className="muted tags-popover-hint-line">{t('browse.tagsHintLine1')}</p>
+                      <p className="muted tags-popover-hint-line">{t('browse.tagsHintLine2')}</p>
+                      <p className="muted tags-popover-hint-line">{t('browse.tagsHintLine3')}</p>
+                      {tagDomainStats.unique > 0 && (
+                        <p className="muted tags-popover-hint-line">
+                          {t('browse.tagUniqueCount', { count: tagDomainStats.unique })}
+                          {tagDomainStats.fromCom > 0 ? ` · .com ${tagDomainStats.fromCom}` : ''}
+                          {tagDomainStats.fromRed > 0 ? (
+                            <span className={civitaiDomain === 'red' ? 'tag-domain-priority' : ''}>
+                              {' '}
+                              · .red {tagDomainStats.fromRed}
+                            </span>
+                          ) : null}
+                        </p>
+                      )}
+                    </div>
+                    <div className="tags-popover-list">
+                      {filteredTagCatalog.map((tag) => {
+                        const skipped = isTagSkipped(tag.name)
+                        const isFilterActive = tagFilter === tag.name
+                        return (
+                          <div
+                            key={tag.name}
+                            className={`sidebar-tag-row tags-popover-row ${skipped ? 'tag-row-skipped' : ''}`}
+                          >
+                            <button
+                              type="button"
+                              className={`sidebar-tag ${isFilterActive ? 'active' : ''}`}
+                              disabled={skipped && !showBlockedModels}
+                              title={
+                                skipped && !showBlockedModels
+                                  ? t('browse.tagUnblockTitle')
+                                  : isFilterActive
+                                    ? t('browse.tagsClearFilter')
+                                    : t('browse.tagNameFilterTitle')
+                              }
+                              onClick={() => {
+                                if (skipped && !showBlockedModels) return
+                                if (isFilterActive) {
+                                  setTagFilter(null)
+                                  setMessage(t('browse.tagFilterCleared'))
+                                } else {
+                                  setTagFilter(tag.name)
+                                  setTagsOpen(false)
+                                }
+                              }}
+                            >
+                              <span className="tag-name">
+                                {skipped ? '🚫 ' : ''}
+                                {tag.name}
+                              </span>
+                              <span className="tag-counts">
+                                {tag.missing > 0 && !skipped && (
+                                  <span className="badge-missing">{tag.missing}</span>
+                                )}
+                                <span className="muted">{tag.total}</span>
+                                {((tag.fromCom ?? 0) > 0 || (tag.fromRed ?? 0) > 0) && (
+                                  <span className="tag-domain-counts muted">
+                                    {civitaiDomain !== 'red' && (tag.fromCom ?? 0) > 0 && (
+                                      <span> ·c{tag.fromCom}</span>
+                                    )}
+                                    {(tag.fromRed ?? 0) > 0 && (
+                                      <span
+                                        className={
+                                          civitaiDomain === 'red' || civitaiDomain === 'both'
+                                            ? 'tag-domain-priority'
+                                            : ''
+                                        }
+                                      >
+                                        {' '}
+                                        ·r{tag.fromRed}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                            {onSearchWithTag && (
+                              <button
+                                type="button"
+                                className="tag-action-btn"
+                                title={t('browse.tagApiSearchTitle')}
+                                disabled={searchingTag === tag.name}
+                                onClick={() => {
+                                  setTagsOpen(false)
+                                  onSearchWithTag(tag.name)
+                                }}
+                              >
+                                API
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className={`tag-action-btn ${routingTag === tag.name ? 'active-route' : ''}`}
+                              title={
+                                folderForTag(tag.name, tagRules)
+                                  ? t('browse.tagRouteTo', { folder: folderForTag(tag.name, tagRules)! })
+                                  : t('browse.tagRouteCreate')
+                              }
+                              onClick={() => void routeTagAsFolder(tag.name)}
+                            >
+                              📁
+                            </button>
+                            {onHiddenTagsChange && (
+                              <button
+                                type="button"
+                                className={`tag-action-btn tag-hide-btn ${skipped ? 'active' : ''}`}
+                                title={skipped ? t('browse.tagUnblockTitle') : t('browse.tagBlockTitle')}
+                                onClick={() =>
+                                  void (skipped ? unhideTag(tag.name) : hideTagFromBrowse(tag.name))
+                                }
+                              >
+                                {skipped ? '↩' : '🚫'}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {!tagCatalog.length && (
+                        <p className="muted tags-popover-empty">{t('browse.tagEmptyCatalog')}</p>
+                      )}
+                      {tagCatalog.length > 0 && !filteredTagCatalog.length && (
+                        <p className="muted tags-popover-empty">
+                          {tagSearch
+                            ? t('browse.tagEmptySearch', { query: tagSearch })
+                            : t('browse.tagEmptySearchShort')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           {showBrowseStatsDebug && (
@@ -1303,13 +1566,9 @@ export function SearchBrowsePanel({
             {t('browse.legendOwned')} · {t('browse.legendNew')} · {t('browse.legendBlocked')} ·{' '}
             {t('browse.legendAwaiting')} · {t('browse.legendAutoQueued')} ·{' '}
             {t('browse.legendDl')}
-            {contentFilter === 'all' && (
-              <>
-                {' '}
-                · <span className="legend-rating-sfw">SFW</span> /{' '}
-                <span className="legend-rating-mature">NSFW</span> {t('browse.legendNsfwBadge')}
-              </>
-            )}
+            {' '}
+            · <span className="legend-rating-sfw">SFW</span> /{' '}
+            <span className="legend-rating-mature">NSFW</span> {t('browse.legendNsfwBadge')}
           </p>
         </div>
         <div className="search-browse-actions row browse-results-actions-row">
@@ -1341,218 +1600,6 @@ export function SearchBrowsePanel({
           )}
         </div>
         </div>
-      <div className="search-browse-header-aside browse-results-header-controls">
-        <label className="library-sort browse-results-sort">
-          {t('gallery.sortLabel')}
-          <select
-            value={browseSort}
-            onChange={(e) => setBrowseSort(e.target.value as 'default' | 'folder' | 'downloads')}
-          >
-            <option value="folder">{t('gallery.sortFolder')}</option>
-            <option value="downloads">{t('gallery.sortDownloads')}</option>
-            <option value="default">{t('gallery.sortDefault')}</option>
-          </select>
-        </label>
-        <div className="tags-popover-wrap" ref={tagsPopoverRef}>
-        <div className="tags-popover-toggle-row">
-          <button
-            type="button"
-            className={`tags-popover-toggle ${tagsOpen ? 'active' : ''} ${tagFilter ? 'filtered' : ''}`}
-            onClick={() => setTagsOpen((o) => !o)}
-            title={t('browse.tagsToggleTitle')}
-          >
-            {tagFilter ? t('browse.tagsFilterActive', { tag: tagFilter }) : t('browse.tagsToggleShort')}
-            {' '}({tagCatalog.length})
-          </button>
-          {tagFilter && (
-            <button
-              type="button"
-              className="tags-filter-clear-btn"
-              onClick={() => {
-                setTagFilter(null)
-                setMessage(t('browse.tagFilterCleared'))
-              }}
-              title={t('browse.tagsClearFilter')}
-              aria-label={t('browse.tagsClearFilter')}
-            >
-              ×
-            </button>
-          )}
-        </div>
-        {tagsOpen && (
-          <div className="tags-popover">
-            {hiddenTags.length > 0 && onHiddenTagsChange && (
-              <div className="hidden-tags-panel hidden-tags-panel-top">
-                <p className="muted tags-popover-section-label">{t('browse.tagsBlockedSection')}</p>
-                <div className="hidden-tags-chips">
-                  {hiddenTags.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className="tag-chip hidden-tag-chip"
-                      title={t('browse.tagUnblockTitle')}
-                      onClick={() => void unhideTag(tag)}
-                    >
-                      {tag} ×
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="tags-popover-head">
-              <input
-                type="search"
-                className="tags-popover-search"
-                value={tagSearch}
-                onChange={(e) => setTagSearch(e.target.value)}
-                placeholder={t('browse.tagsSearch')}
-                autoFocus
-              />
-              <button
-                type="button"
-                className={`tags-popover-all ${tagFilter === null ? 'active' : ''}`}
-                onClick={() => {
-                  setTagFilter(null)
-                  setMessage(t('browse.tagFilterCleared'))
-                }}
-              >
-                {t('browse.tagsAll')}
-              </button>
-            </div>
-            <div className="tags-popover-hint">
-              <p className="muted tags-popover-hint-line">{t('browse.tagsHintLine1')}</p>
-              <p className="muted tags-popover-hint-line">{t('browse.tagsHintLine2')}</p>
-              <p className="muted tags-popover-hint-line">{t('browse.tagsHintLine3')}</p>
-              {tagDomainStats.unique > 0 && (
-                <p className="muted tags-popover-hint-line">
-                  {t('browse.tagUniqueCount', { count: tagDomainStats.unique })}
-                  {tagDomainStats.fromCom > 0 ? ` · .com ${tagDomainStats.fromCom}` : ''}
-                  {tagDomainStats.fromRed > 0 ? (
-                    <span className={civitaiDomain === 'red' ? 'tag-domain-priority' : ''}>
-                      {' '}
-                      · .red {tagDomainStats.fromRed}
-                    </span>
-                  ) : null}
-                </p>
-              )}
-            </div>
-            <div className="tags-popover-list">
-              {filteredTagCatalog.map((tag) => {
-                const skipped = isTagSkipped(tag.name)
-                const isFilterActive = tagFilter === tag.name
-                return (
-                <div
-                  key={tag.name}
-                  className={`sidebar-tag-row tags-popover-row ${skipped ? 'tag-row-skipped' : ''}`}
-                >
-                  <button
-                    type="button"
-                    className={`sidebar-tag ${isFilterActive ? 'active' : ''}`}
-                    disabled={skipped && !showBlockedModels}
-                    title={
-                      skipped && !showBlockedModels
-                        ? t('browse.tagUnblockTitle')
-                        : isFilterActive
-                          ? t('browse.tagsClearFilter')
-                          : t('browse.tagNameFilterTitle')
-                    }
-                    onClick={() => {
-                      if (skipped && !showBlockedModels) return
-                      if (isFilterActive) {
-                        setTagFilter(null)
-                        setMessage(t('browse.tagFilterCleared'))
-                      } else {
-                        setTagFilter(tag.name)
-                        setTagsOpen(false)
-                      }
-                    }}
-                  >
-                    <span className="tag-name">
-                      {skipped ? '🚫 ' : ''}
-                      {tag.name}
-                    </span>
-                    <span className="tag-counts">
-                      {tag.missing > 0 && !skipped && (
-                        <span className="badge-missing">{tag.missing}</span>
-                      )}
-                      <span className="muted">{tag.total}</span>
-                      {((tag.fromCom ?? 0) > 0 || (tag.fromRed ?? 0) > 0) && (
-                        <span className="tag-domain-counts muted">
-                          {civitaiDomain !== 'red' && (tag.fromCom ?? 0) > 0 && (
-                            <span> ·c{tag.fromCom}</span>
-                          )}
-                          {(tag.fromRed ?? 0) > 0 && (
-                            <span
-                              className={
-                                civitaiDomain === 'red' || civitaiDomain === 'both'
-                                  ? 'tag-domain-priority'
-                                  : ''
-                              }
-                            >
-                              {' '}
-                              ·r{tag.fromRed}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                  {onSearchWithTag && (
-                    <button
-                      type="button"
-                      className="tag-action-btn"
-                      title={t('browse.tagApiSearchTitle')}
-                      disabled={searchingTag === tag.name}
-                      onClick={() => {
-                        setTagsOpen(false)
-                        onSearchWithTag(tag.name)
-                      }}
-                    >
-                      API
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={`tag-action-btn ${routingTag === tag.name ? 'active-route' : ''}`}
-                    title={
-                      folderForTag(tag.name, tagRules)
-                        ? t('browse.tagRouteTo', { folder: folderForTag(tag.name, tagRules)! })
-                        : t('browse.tagRouteCreate')
-                    }
-                    onClick={() => void routeTagAsFolder(tag.name)}
-                  >
-                    📁
-                  </button>
-                  {onHiddenTagsChange && (
-                    <button
-                      type="button"
-                      className={`tag-action-btn tag-hide-btn ${skipped ? 'active' : ''}`}
-                      title={skipped ? t('browse.tagUnblockTitle') : t('browse.tagBlockTitle')}
-                      onClick={() =>
-                        void (skipped ? unhideTag(tag.name) : hideTagFromBrowse(tag.name))
-                      }
-                    >
-                      {skipped ? '↩' : '🚫'}
-                    </button>
-                  )}
-                </div>
-                )
-              })}
-              {!tagCatalog.length && (
-                <p className="muted tags-popover-empty">{t('browse.tagEmptyCatalog')}</p>
-              )}
-              {tagCatalog.length > 0 && !filteredTagCatalog.length && (
-                <p className="muted tags-popover-empty">
-                  {tagSearch
-                    ? t('browse.tagEmptySearch', { query: tagSearch })
-                    : t('browse.tagEmptySearchShort')}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
       </div>
 
       <div className="browse-download-progress">
@@ -1648,7 +1695,6 @@ export function SearchBrowsePanel({
 
       <div className="search-browse-body">
         <div className="gallery-main search-browse-main">
-          {message && <p className="muted">{message}</p>}
           {resultsAwaitingReload && (
             <div className="browse-gallery-awaiting-banner" role="status">
               <p className="muted">{t(galleryAwaitingDetailKey)}</p>
@@ -1665,11 +1711,20 @@ export function SearchBrowsePanel({
           <div
             className={`gallery-grid compact${onlyMissing ? '' : ' browse-show-owned'}`}
           >
-            {gridModels.map((m) => (
+            {gridModels.map((m) => {
+              const searchActive = searchQuery.trim().length > 0
+              const matchesSearch = searchActive && modelMatchesBrowseSearch(m, searchQuery)
+              const settled = isBrowseSettledModel(m, awaitingAccessVersionIds)
+              const dimOpacity =
+                browseSettledDimPercent > 0 && settled && !matchesSearch
+                  ? browseSettledDimPercent / 100
+                  : undefined
+              return (
               <ModelCard
                 key={`${m.id}-${m.versionId}`}
                 model={m}
-                showRating={contentFilter === 'all'}
+                showRating
+                settledDimOpacity={dimOpacity}
                 queueItem={queueItemFor(m)}
                 queuePaused={queuePaused}
                 awaitingAccess={m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)}
@@ -1687,7 +1742,8 @@ export function SearchBrowsePanel({
                   setContextMenu({ x: e.clientX, y: e.clientY, model: m })
                 }}
               />
-            ))}
+              )
+            })}
           </div>
 
           {!gridModels.length && showEmptyHint && (
@@ -1985,10 +2041,12 @@ function ModelCard({
   onJumpToGallery,
   onViewDetails,
   banFunctionMode = false,
-  onBanModel
+  onBanModel,
+  settledDimOpacity
 }: {
   model: WatchRuleTestModel
   showRating?: boolean
+  settledDimOpacity?: number
   queueItem?: DownloadQueueItem
   queuePaused?: boolean
   awaitingAccess?: boolean
@@ -2101,10 +2159,13 @@ function ModelCard({
     inQueueActive ? 'in-queue' : '',
     canQueue ? 'can-queue-hint' : '',
     isQueued || canQueue ? 'clickable' : '',
-    queuing ? 'queuing' : ''
+    queuing ? 'queuing' : '',
+    settledDimOpacity != null ? 'browse-card-settled-dim' : ''
   ]
     .filter(Boolean)
     .join(' ')
+
+  const cardStyle = settledDimOpacity != null ? { opacity: settledDimOpacity } : undefined
 
   const statusHint = isDeferred
     ? queueItem?.reason ?? 'Awaiting access — retry when API key or Civitai access is ready'
@@ -2124,6 +2185,7 @@ function ModelCard({
     <div
       className={cardClass}
       data-state={cardState}
+      style={cardStyle}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, a, input, label, .tag-chip')) return
         if (isQueued || canQueue) onEnqueue()

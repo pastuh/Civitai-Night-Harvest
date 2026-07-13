@@ -29,6 +29,9 @@ export const lt: Messages = {
     nightTags: '🌙 Harvesting',
     nightAll: '🌙 Visi',
     downloadsOn: '⬇ Siųsti',
+    downloadsAuto: 'Auto',
+    downloadsManual: 'Manual',
+    downloadsPauseBtn: '⏸',
     downloadsPaused: '⏸ Pauzė',
     blur: 'Sulieti',
     scan: 'Skenuoti',
@@ -44,7 +47,10 @@ export const lt: Messages = {
     tooltipNightTagsOn: 'Night harvest on — tik su jūsų naudojamais tagais. Spauskite, kad išjungtumėte.',
     tooltipNightOff: 'Paleisti harvest — automatinis scan ir atsisiuntimai',
     tooltipDownloadsOn: 'Siunčiama — spauskite, kad pauzuotumėte eilę (scan tęsiasi)',
-    tooltipDownloadsPaused: 'Pauzė — spauskite, kad tęstumėte eilę',
+    tooltipDownloadsAuto: 'Auto eilė — spauskite rankiniam režimui',
+    tooltipDownloadsManual: 'Rankinė eilė — spauskite auto režimui',
+    tooltipDownloadsPause: 'Pauzuoti siuntimus (scan tęsiasi)',
+    tooltipDownloadsResume: 'Tęsti siuntimus',
     tooltipBlur: 'Sulieti preview nuotraukas',
     tooltipScan: 'Skenuoti visas įjungtas Browse taisykles ir atnaujinti rezultatus',
     tooltipScanNight:
@@ -104,6 +110,8 @@ export const lt: Messages = {
       blurPreviews: 'Blur preview nuotraukos',
       showBannedInGallery: 'Rodyti banned galerijoje',
       banFunctionMode: 'Ban function (× šalia kortelės pavadinimo)',
+      browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
+      browseSettledDimPercent: 'Pritemdyti settled Browse korteles',
       launchAtLogin: 'Paleisti su Windows (tray)',
       hashVerify: 'Bibliotekos hash tikrinimas',
       galleryGridSize: 'Galerijos kortelės dydis (px)',
@@ -132,6 +140,7 @@ export const lt: Messages = {
       hashCom: 'Force civitai.com',
       hashRed: 'Force civitai.red',
       slugCompact: 'Kompaktinis — pirmas žodis + base + autorius',
+      dimOff: 'Išjungta',
       slugVersionName: 'Versijos pavadinimas (Civitai variantas)',
       slugModelTitle: 'Pilnas modelio pavadinimas',
       activityLogMinimal: 'Esminiai — atsisiuntimai, klaidos, naujos versijos',
@@ -176,7 +185,11 @@ export const lt: Messages = {
       activityLogNormal:
         'Prideda crawl/scan santraukas, bibliotekos tikrinimo pradžią/pabaigą, eilės įvykius ir kelių taisymus.',
       activityLogVerbose: 'Logina viską, įskaitant API puslapių progresą ir atsisiuntimo režimą.',
-      activityLogCustom: 'Įjunkite tik reikiamas temų grupes.'
+      activityLogCustom: 'Įjunkite tik reikiamas temų grupes.',
+      browseSettledToEnd:
+        'Turimi, excluded (banned) ir awaiting-access kortelės perkeliamos į Browse Results galą. Paieškos atitikmenys lieka savo vietoje.',
+      browseSettledDimPercent:
+        'Sumažina settled kortelių ryškumą (0% = išjungta). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.'
     },
     actions: {
       slugSync: 'Pervardinti bibliotekos failus pagal formatą',
@@ -220,23 +233,28 @@ export const lt: Messages = {
       'Kol kas programa testuota daugiausia su LoRA siuntimais. Checkpoint keliai yra, bet mažiau patikrinti — klaidas rašykite GitHub.',
     quickStart1: 'Nustatymai → LoRA aplankas (ir API raktas NSFW turiniui)',
     quickStart2: 'Browse → Rules → įjunkite taisyklę On → Save rules',
-    quickStart3: 'Antraštė → 🌙 Harvest — automatinis scan ir siuntimai',
+    quickStart3: 'Antraštė → 🌙 Harvest periodiniam scan; **Auto** — automatinė eilė (arba **Manual** ir spauskite korteles)',
     headerHarvest: '🌙 Harvest — periodinis enabled Browse taisyklių scan; deda į eilę ir siunčia naujus modelius',
     headerNightModes:
       '🌙 All vs 🌙 Harvesting — Nustatymuose: „Night mode: queue all Browse matches“ nusprendžia ar visi atitikmenys, ar tik su jūsų tagais',
-    headerDownloads: '⬇ Siųsti / ⏸ Pauzė — sustabdyti ar tęsti siuntimo eilę (scan gali tęstis)',
+    headerDownloads:
+      '**Auto** / **Manual** — atskiri antraštės mygtukai: Auto deda tinkamus modelius į eilę (iki 10 pipeline); Manual — tik paspaustos kortelės. **Pause** (raudonas) sustabdo siuntimus nekeisdamas režimo.',
     headerScan: 'Scan — vieną kartą paleisti visas enabled Browse taisykles ir atnaujinti Results',
     headerBlur: 'Blur — slėpti preview miniatiūras',
     browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort); domenas virš Results',
-    browseResults: 'Results — spustelėkite kortelę į eilę / pašalinti; Sort ir Tags filtrai šalia pavadinimo',
+    browseResults:
+      'Results — paieška pagal pavadinimą/autorių; filtrų juosta (turinys, hide owned, ban); Sort ir Tags dešinėje; spustelėkite kortelę į eilę / pašalinti',
     browseTags:
-      'Tags langas — filtruoti grid · 🚫 blokuoti tag nuo auto-queue · 📁 aplanko maršrutas rankinei eilei',
+      'Tags langas — filtruoti grid · 🚫 blokuoti tag nuo auto-queue · blokuoti tagai rodomi viršuje',
     browseManualQueue:
-      'Manual queue (siuntimo juosta Browse) — tik jūsų paspausti modeliai eina į eilę; crawl/scan nebededa. Clear queue išvalo ir įjungia manual režimą',
+      'Manual — crawl/scan ir Auto pipeline nebededa modelių; tik jūsų paspaustos kortelės eina į eilę (be limito)',
+    browseSettled:
+      'Nustatymai → Browse gallery — owned/excluded/awaiting galima perkelti į galerijos galą ir pritemdyti (hover atstatyti; paieškos atitikmenys lieka ryškūs)',
     browseBan: 'Ban On — raudonas × ant kortelės nebeįtraukia modelio į auto-queue',
     browseContextSkipTag:
       'Dešinis pelės mygtukas ant modelio → Skip tag — blokuoti tag nuo auto-queue (spauskite tag chip; jau blokuoti — pritemę)',
     libraryFolders: 'Tag Folders — Civitai tag → poaplankis po LoRA/Checkpoint keliais',
+    libraryBadge: 'Library skilties **+N** — nauji modeliai nuo paskutinio apsilankymo; ženkliukas dingsta atidarius Library',
     librarySort: 'Sort — folder tag, Civitai downloads, tag group arba download order',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
     libraryTags: 'Spustelėkite tag ant kortelės perkelti modelius; dešinis pelės mygtukas — daugiau veiksmų',
@@ -247,7 +265,7 @@ export const lt: Messages = {
     edgeAwaiting: 'Geltona — laukia prieigos / early access',
     edgeBlocked: 'Violetinė — praleista (blokuotas tag arba excluded)',
     dlStrip:
-      'Siuntimo juosta — miniatiūra, pavadinimas (iki 3 eilučių), siunčiant: gauta / bendras dydis ir greitis po pavadinimu. Browse: Manual queue + Clear queue antraštėje; Library tik peržiūrai. Kortelės plotį keiskite Nustatymuose.',
+      'Siuntimo juosta — miniatiūra, pavadinimas (iki 3 eilučių), siunčiant: gauta / dydis / greitis po pavadinimu. Antraštėje: **Auto**, **Manual**, **Pause**; **Clear queue** Browse juostoje išvalo eilę nekeisdama režimo. Kortelės plotį keiskite Nustatymuose.',
     dlStripProgress:
       'Aktyvus siuntimas — progreso juosta ant miniatiūros; po pavadinimu pvz. 218 MB / 1.2 GB · 12 MB/s (be procentų).',
     dlStripColors:
@@ -257,6 +275,8 @@ export const lt: Messages = {
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
     dlAwaiting: 'Awaiting access — 403, early access arba trūksta API rakto',
     dlNewVersions: 'New versions — patvirtinkite atnaujinimus jau turimiems modeliams',
+    dlTabBadges:
+      'Skiltų ženkliukai — Browse: aktyvi eilė · Library: +N naujų nuo paskutinio apsilankymo · New Versions / Awaiting access: laukiančių skaičius',
     dlActivity:
       'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
@@ -269,7 +289,7 @@ export const lt: Messages = {
       contentFilter: 'Numatyta naujoms Browse taisyklėms. NSFW/All reikia API rakto. Galima keisti per taisyklę.',
       nightMode: 'Periodinis enabled Browse taisyklių scan + auto-queue. Reikia aplanko + bent vienos On taisyklės.',
       autoStart:
-        'Išjungus crawl vis tiek deda į eilę, bet atsisiuntimai pauzuojami iki antraštės ⏸ Pauzė (perjunkite į ⬇ Siųsti).',
+        'Išjungus (aktyvus Pause) eilėje esantys siuntimai pauzuojami iki Pause išjungimo. Auto/Manual tik valdo ar nauji modeliai dedami į eilę.',
       nightDownloadAll:
         'All režimas: eilė visiems naujiems pagal Browse taisykles (ne tik bibliotekos tagus). Blokuojami tagai visada praleidžiami.',
       scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę × domeną. 0 = off (night mode nustato 60 min jei reikia).',
@@ -287,6 +307,10 @@ export const lt: Messages = {
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
       hashVerify: 'Lyginama SHA256 diske su Civitai /model-versions/by-hash.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
+      browseSettledToEnd:
+        'Browse Results — owned, excluded ir awaiting-access kortelės į galerijos galą. Paieškos atitikmenys lieka savo vietoje.',
+      browseSettledDimPercent:
+        'Browse Results — pritemdyti settled korteles (0% = išjungta). Hover atstatyti ryškumą; paieška lieka ryški.',
       queueGridSize:
         'Download juostos kortelės plotis (miniatiūros dydis). Didesnėms kortelėms reikia aukštesnės juostos — padidinkite, jei karpomas pavadinimas (juostos aukštis auga su kortelės plocu iki ekrano limito).'
     },
@@ -417,6 +441,8 @@ export const lt: Messages = {
     contentAll: 'All',
     contentSfw: 'SFW',
     contentNsfw: 'NSFW',
+    searchPlaceholder: 'Ieškoti pavadinimo ar autoriaus…',
+    searchTitle: 'Filtruoti įkeltus modelius pagal pavadinimą ar kūrėjo vardą',
     hideOwned: 'Slėpti turimus',
     hideOwnedTitle: 'Slėpti modelius, kurie jau bibliotekoje',
     badgeOwnedTitle: 'Jau bibliotekoje',
@@ -502,7 +528,7 @@ export const lt: Messages = {
     manualQueue: 'Manual queue',
     manualQueueTitle: 'Tik patys pridėti modeliai eina į eilę — crawl/scan nebeauto-queue',
     clearQueue: 'Clear queue',
-    clearQueueTitle: 'Išvalyti eilę ir įjungti manual queue režimą'
+    clearQueueTitle: 'Pašalinti visus modelius iš eilės (nekeičia Auto/Manual ir neįjungia Pause)',
   },
   nightQuiet: {
     title: 'Night mode',
@@ -762,8 +788,9 @@ export const lt: Messages = {
     scanningApiFetchingTagsRule: 'Tag {step}/{total}: „{tag}“ · Taisyklė: {rules}',
     scanningApiFetchingTagsPrep: 'Ruošiami {total} tag variantai…',
     scanningApiFetchingTagsPrepRule: 'Ruošiami {total} tag variantai · Taisyklė: {rules}',
-    scanningApiWaiting: 'Kitas Civitai peek po ~{min} min',
-    scanningApiWaitingRule: 'Kitas peek po ~{min} min · Taisyklė: {rules}',
+    scanningApiWaiting: 'Kitas Civitai peek po ~{time}',
+    scanningApiWaitingRule: 'Kitas peek po ~{time} · Taisyklė: {rules}',
+    peekCountdownUnderMin: '<1 min',
     scanningCatalogComplete: 'Katalogas baigtas · {page} pusl. · {total} galerijoje',
     scanningCatalogCompleteRule: 'Katalogas baigtas · {page} pusl. · {total} galerijoje · {rules}',
     scanningCatalogCompleteFiltered:

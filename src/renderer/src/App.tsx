@@ -93,11 +93,25 @@ export default function App() {
   const busyRef = useRef(false)
   const previewRepairRef = useRef(false)
   previewRepairRef.current = previewRepairActive
+  const seenLibraryVersionIdsRef = useRef<Set<number> | null>(null)
+  const [librarySeenTick, setLibrarySeenTick] = useState(0)
 
   useEffect(() => {
     busyRef.current = Boolean(busy)
     if (!busy && !previewRepairRef.current) setSyncProgress(null)
   }, [busy])
+
+  useEffect(() => {
+    if (!startupReady || seenLibraryVersionIdsRef.current !== null) return
+    seenLibraryVersionIdsRef.current = new Set(inventory.map((i) => i.versionId))
+    setLibrarySeenTick((n) => n + 1)
+  }, [startupReady, inventory])
+
+  useEffect(() => {
+    if (tab !== 'gallery' || !startupReady) return
+    seenLibraryVersionIdsRef.current = new Set(inventory.map((i) => i.versionId))
+    setLibrarySeenTick((n) => n + 1)
+  }, [tab, inventory, startupReady])
 
   useEffect(() => {
     void window.api?.getAppIconDataUrl().then(setAppIconUrl).catch(() => {})
@@ -455,6 +469,17 @@ export default function App() {
     [deferred]
   )
 
+  const newLibraryCount = useMemo(() => {
+    if (tab === 'gallery' || !startupReady) return 0
+    const seen = seenLibraryVersionIdsRef.current
+    if (!seen) return 0
+    let count = 0
+    for (const item of inventory) {
+      if (!seen.has(item.versionId)) count++
+    }
+    return count
+  }, [inventory, tab, startupReady, librarySeenTick])
+
   const enabledRuleNames = useMemo(
     () => watchRules.filter((r) => r.enabled).map((r) => r.name),
     [watchRules]
@@ -488,9 +513,7 @@ export default function App() {
     await saveSettings(partial)
   }
 
-  const toggleCrawlAutoDownload = async () => {
-    if (!settings) return
-    await saveSettings({ crawlAutoDownload: !settings.crawlAutoDownload })
+  const refreshDownloadQueueState = async () => {
     try {
       const q = await window.api.getDownloadQueue()
       setQueue(q.items)
@@ -501,13 +524,32 @@ export default function App() {
     }
   }
 
+  const toggleDownloadMode = async () => {
+    if (!settings) return
+    const nextManual = !(settings.manualQueueMode ?? false)
+    await saveSettings({ manualQueueMode: nextManual })
+    if (!nextManual) {
+      try {
+        const q = await window.api.reconcileDownloadQueue()
+        setQueue(q.items)
+        setQueuePaused(q.paused)
+      } catch {
+        await refreshDownloadQueueState()
+      }
+    } else {
+      await refreshDownloadQueueState()
+    }
+  }
+
+  const toggleDownloadPause = async () => {
+    if (!settings) return
+    await saveSettings({ crawlAutoDownload: settings.crawlAutoDownload === false })
+    await refreshDownloadQueueState()
+  }
+
   const toggleBlurPreviews = async () => {
     if (!settings) return
     await saveSettings({ blurPreviews: !settings.blurPreviews })
-  }
-
-  const toggleManualQueueMode = async (enabled: boolean) => {
-    await saveSettings({ manualQueueMode: enabled })
   }
 
   const clearDownloadQueue = async () => {
@@ -682,8 +724,9 @@ export default function App() {
   const m = getMessages(locale)
 
   const activeDownloads = queue.filter((q) => q.status === 'downloading' || q.status === 'queued').length
-  const hasDownloadPipeline = queue.some((i) => i.status === 'queued' || i.status === 'downloading')
-  const showDownloadsToggle = settings.nightMode || hasDownloadPipeline
+  const downloadModeManual = settings.manualQueueMode ?? false
+  const downloadsPaused = settings.crawlAutoDownload === false
+  const showDownloadsToggle = outputFoldersReady
   const enabledRulesCount = watchRules.filter((r) => r.enabled).length
   const crawlLiveState = getCrawlLiveState({
     nightMode: settings.nightMode,
@@ -705,9 +748,9 @@ export default function App() {
     unlockTodayCount > 0 ||
     (startupReady && browseGalleryAwaiting && status === 'idle' && !busy)
 
-  const tabs: { id: Tab; label: string; badge?: number }[] = [
+  const tabs: { id: Tab; label: string; badge?: number; badgePrefix?: string }[] = [
     { id: 'watch', label: m.tabs.browse, badge: activeDownloads || undefined },
-    { id: 'gallery', label: m.tabs.library },
+    { id: 'gallery', label: m.tabs.library, badge: newLibraryCount || undefined, badgePrefix: '+' },
     { id: 'download', label: m.tabs.download },
     { id: 'tags', label: m.tabs.tagFolders },
     { id: 'pending', label: m.tabs.newVersions, badge: pending.length },
@@ -768,20 +811,30 @@ export default function App() {
               : m.header.nightOff}
           </button>
           {showDownloadsToggle && (
-            <button
-              type="button"
-              className={`btn-sm downloads-toggle ${
-                settings.crawlAutoDownload !== false ? 'downloads-toggle-on' : 'downloads-toggle-paused'
-              }`}
-              onClick={() => void toggleCrawlAutoDownload()}
-              title={
-                settings.crawlAutoDownload !== false
-                  ? m.header.tooltipDownloadsOn
-                  : m.header.tooltipDownloadsPaused
-              }
-            >
-              {settings.crawlAutoDownload !== false ? m.header.downloadsOn : m.header.downloadsPaused}
-            </button>
+            <div className="downloads-header-controls">
+              <button
+                type="button"
+                className={`btn-sm downloads-toggle ${
+                  downloadModeManual ? 'downloads-toggle-manual' : 'downloads-toggle-auto'
+                }`}
+                onClick={() => void toggleDownloadMode()}
+                title={
+                  downloadModeManual ? m.header.tooltipDownloadsManual : m.header.tooltipDownloadsAuto
+                }
+              >
+                {downloadModeManual ? m.header.downloadsManual : m.header.downloadsAuto}
+              </button>
+              <button
+                type="button"
+                className={`btn-sm downloads-pause-btn ${downloadsPaused ? 'is-paused' : 'is-idle'}`}
+                onClick={() => void toggleDownloadPause()}
+                title={downloadsPaused ? m.header.tooltipDownloadsResume : m.header.tooltipDownloadsPause}
+                aria-pressed={downloadsPaused}
+                aria-label={downloadsPaused ? m.header.tooltipDownloadsResume : m.header.tooltipDownloadsPause}
+              >
+                {m.header.downloadsPauseBtn}
+              </button>
+            </div>
           )}
           <button
             type="button"
@@ -882,7 +935,12 @@ export default function App() {
             onClick={() => setTab(t.id)}
           >
             {t.label}
-            {t.badge != null && t.badge > 0 ? <span className="tab-badge">{t.badge}</span> : null}
+            {t.badge != null && t.badge > 0 ? (
+              <span className="tab-badge">
+                {t.badgePrefix ?? ''}
+                {t.badge}
+              </span>
+            ) : null}
           </button>
         ))}
       </nav>
@@ -904,8 +962,6 @@ export default function App() {
             deferred={deferred}
             stripLayout={settings.downloadStripLayout ?? 'horizontal'}
             banFunctionMode={settings.banFunctionMode ?? false}
-            manualQueueMode={settings.manualQueueMode ?? false}
-            onManualQueueModeChange={tab === 'watch' ? toggleManualQueueMode : undefined}
             onClearQueue={tab === 'watch' ? clearDownloadQueue : undefined}
             clearQueueBusy={clearQueueBusy}
             onRetryFailed={async (id) => {

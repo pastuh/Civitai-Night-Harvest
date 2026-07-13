@@ -399,6 +399,24 @@ label {
   border: 1px solid var(--border);
   font-size: 12px;
   cursor: pointer;
+  line-height: 1.25;
+  box-sizing: border-box;
+}
+
+/* Compact chips — override global button min-height (32px) on tag controls */
+button.tag-chip,
+.tag-chip.hidden-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.25;
+  border-radius: 4px;
 }
 
 .tag-chip.selected {
@@ -532,12 +550,22 @@ th {
   margin-top: 4px;
   max-height: none;
   overflow: visible;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 4px;
+  align-items: center;
 }
 
 .gallery-card .tag-row.library-card-tags .tag-chip {
   font-size: 10px;
   padding: 1px 5px;
-  margin: 1px 2px;
+  margin: 0;
+}
+
+.gallery-card-body > .tag-chip {
+  font-size: 10px;
+  padding: 1px 5px;
+  margin: 2px 0 0;
 }
 
 .library-weight-pill {
@@ -1154,7 +1182,7 @@ th {
 }
 
 .gallery-card.status-downloading {
-  --card-accent: var(--warn);
+  --card-accent: var(--browse-cat-loaded);
 }
 
 .gallery-card.status-queued {
@@ -2281,10 +2309,66 @@ code {
   flex-wrap: nowrap;
   align-items: center;
   gap: 4px 8px;
-  margin-top: 4px;
+  margin-top: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+}
+
+.browse-results-filters-box,
+.browse-results-controls-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  min-height: 30px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface2) 88%, var(--bg-elevated));
+  flex: 0 1 auto;
+  min-width: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.browse-results-title-row .browse-results-controls-box {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.browse-results-controls-box {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.browse-results-search {
+  flex: 0 1 18rem;
+  min-width: 12rem;
+  max-width: 22rem;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.browse-results-search::placeholder {
+  color: var(--muted);
+}
+
+.browse-results-search:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.search-browse-layout .gallery-card.browse-card-settled-dim {
+  transition: opacity 0.15s ease;
+}
+
+.search-browse-layout .gallery-card.browse-card-settled-dim:hover {
+  opacity: 1 !important;
 }
 
 .browse-results-actions-row:empty {
@@ -2730,11 +2814,53 @@ code {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  flex: 0 0 auto;
 }
 
 .browse-results-sort {
   white-space: nowrap;
   margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1;
+  height: 26px;
+}
+
+.browse-results-controls-box .browse-results-sort select {
+  font-size: 10px;
+  line-height: 1;
+  height: 26px;
+  min-height: 26px;
+  max-height: 26px;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.browse-results-controls-box .tags-popover-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.browse-results-controls-box .tags-popover-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  height: 26px;
+  max-height: 26px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 7px;
+  box-sizing: border-box;
+}
+
+.browse-results-controls-box .tags-filter-clear-btn {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
 }
 
 .search-browse-title {
@@ -2828,6 +2954,10 @@ code {
 }
 
 .tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 4px;
+  align-items: center;
   margin-top: 4px;
   max-height: 48px;
   overflow: hidden;
@@ -2836,6 +2966,7 @@ code {
 .tag-row .tag-chip {
   font-size: 10px;
   padding: 1px 5px;
+  margin: 0;
 }
 
 .gallery-card.banned {
@@ -2915,20 +3046,26 @@ code {
 .context-menu-tag-picks {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 2px 10px 8px;
+  gap: 4px 6px;
+  padding: 0 10px 6px;
+  align-items: center;
 }
 
 .context-menu-tag-picks .context-menu-tag-chip {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: auto;
   max-width: 100%;
+  min-height: 0;
+  height: auto;
   text-align: center;
   margin: 0;
-  padding: 2px 8px;
-  font-size: 11px;
-  line-height: 1.35;
-  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.25;
+  border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--surface2);
   color: var(--text);
@@ -3879,8 +4016,18 @@ button.danger-btn:hover {
 .hidden-tags-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px 4px;
+  align-items: center;
   margin-top: 4px;
+}
+
+.hidden-tags-chips .tag-chip.hidden-tag-chip {
+  min-height: 0;
+  height: auto;
+  padding: 1px 5px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.25;
 }
 
 .hidden-tag-chip {

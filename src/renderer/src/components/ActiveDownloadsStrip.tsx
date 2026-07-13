@@ -17,8 +17,6 @@ interface Props {
   deferred?: DeferredDownload[]
   stripLayout?: DownloadStripLayout
   banFunctionMode?: boolean
-  manualQueueMode?: boolean
-  onManualQueueModeChange?: (enabled: boolean) => void | Promise<void>
   onClearQueue?: () => void | Promise<void>
   clearQueueBusy?: boolean
   onRetryFailed?: (queueId: string) => Promise<void>
@@ -174,41 +172,24 @@ function DownloadQueueRichCard({
   )
 }
 
-function StripQueueControls({
-  manualQueueMode,
+function StripClearQueueButton({
   clearing,
-  onManualQueueModeChange,
   onClearQueue
 }: {
-  manualQueueMode: boolean
   clearing?: boolean
-  onManualQueueModeChange: (enabled: boolean) => void | Promise<void>
   onClearQueue: () => void | Promise<void>
 }) {
   const t = useT()
   return (
-    <div className="active-queue-strip-queue-controls">
-      <label
-        className="checkbox-field active-queue-manual-queue-label"
-        title={t('downloadsStrip.manualQueueTitle')}
-      >
-        <input
-          type="checkbox"
-          checked={manualQueueMode}
-          onChange={(e) => void onManualQueueModeChange(e.target.checked)}
-        />
-        {t('downloadsStrip.manualQueue')}
-      </label>
-      <button
-        type="button"
-        className="btn-sm active-queue-clear-btn"
-        disabled={clearing}
-        onClick={() => void onClearQueue()}
-        title={t('downloadsStrip.clearQueueTitle')}
-      >
-        {t('downloadsStrip.clearQueue')}
-      </button>
-    </div>
+    <button
+      type="button"
+      className="btn-sm active-queue-clear-btn"
+      disabled={clearing}
+      onClick={() => void onClearQueue()}
+      title={t('downloadsStrip.clearQueueTitle')}
+    >
+      {t('downloadsStrip.clearQueue')}
+    </button>
   )
 }
 
@@ -218,8 +199,6 @@ export function ActiveDownloadsStrip({
   deferred = [],
   stripLayout = 'horizontal',
   banFunctionMode = false,
-  manualQueueMode = false,
-  onManualQueueModeChange,
   onClearQueue,
   clearQueueBusy = false,
   onRetryFailed,
@@ -318,7 +297,7 @@ export function ActiveDownloadsStrip({
   const plannedCount = stripItems.filter((i) => i.status === 'deferred').length
   const pipelineCount = downloadingCount + queuedCount
 
-  const showQueueControls = Boolean(onManualQueueModeChange && onClearQueue)
+  const showClearQueue = Boolean(onClearQueue)
 
   if (!displayItems.length) return null
 
@@ -373,13 +352,8 @@ export function ActiveDownloadsStrip({
               )}
             </span>
           </button>
-          {showQueueControls && (
-            <StripQueueControls
-              manualQueueMode={manualQueueMode}
-              clearing={clearQueueBusy}
-              onManualQueueModeChange={onManualQueueModeChange!}
-              onClearQueue={onClearQueue!}
-            />
+          {showClearQueue && (
+            <StripClearQueueButton clearing={clearQueueBusy} onClearQueue={onClearQueue!} />
           )}
           <button
             type="button"
@@ -420,13 +394,8 @@ export function ActiveDownloadsStrip({
           )}
         </div>
         <div className="active-queue-strip-toolbar">
-          {showQueueControls && (
-            <StripQueueControls
-              manualQueueMode={manualQueueMode}
-              clearing={clearQueueBusy}
-              onManualQueueModeChange={onManualQueueModeChange!}
-              onClearQueue={onClearQueue!}
-            />
+          {showClearQueue && (
+            <StripClearQueueButton clearing={clearQueueBusy} onClearQueue={onClearQueue!} />
           )}
           <button
             type="button"

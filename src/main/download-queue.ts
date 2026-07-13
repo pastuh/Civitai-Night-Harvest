@@ -28,6 +28,15 @@ import {
 } from '../shared/tag-routing'
 import { pickNextQueuedItem } from '../shared/download-queue-order'
 import { DownloadService } from './download-service'
+
+/** Max auto-queued models in the download strip pipeline (manual queue is unlimited). */
+export const AUTO_QUEUE_PIPELINE_CAP = 10
+
+function countAutoPipelineItems(items: DownloadQueueItem[]): number {
+  return items.filter(
+    (i) => (i.status === 'queued' || i.status === 'downloading') && i.manual !== true
+  ).length
+}
 import * as inventory from './inventory'
 import { getSettings, getTagRules, getWatchRules } from './settings-store'
 import { sendToRenderer } from './window-notify'
@@ -523,6 +532,9 @@ export class DownloadQueue {
     if (request.versionId && inventory.hasVersion(request.versionId)) return ''
     const settings = getSettings()
     if (settings.manualQueueMode && meta.manual !== true) return ''
+    if (meta.manual !== true && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
+      return ''
+    }
     const hiddenTags = settings.hiddenTags ?? []
     if (modelHasHiddenTag(meta.civitaiTags ?? [], hiddenTags)) return ''
     if (request.versionId && this.hasActiveItem(request.versionId)) {
@@ -1002,8 +1014,10 @@ export class DownloadQueue {
   private ensurePumpHealthy(): void {
     const concurrency = Math.max(1, getSettings().downloadConcurrency)
     const hasQueued = this.items.some((i) => i.status === 'queued')
-    if (!this.paused && hasQueued && this.active < concurrency) {
-      void this.pump()
+    if (!this.paused && hasQueued) {
+      const busy = this.items.filter((i) => i.status === 'downloading').length
+      const concurrency = Math.max(1, getSettings().downloadConcurrency)
+      if (busy < concurrency) void this.pump()
     }
   }
 
@@ -1226,9 +1240,11 @@ export class DownloadQueue {
   private async pump(): Promise<void> {
     if (this.paused) return
     const concurrency = Math.max(1, getSettings().downloadConcurrency)
-    while (!this.paused && this.active < concurrency) {
+    while (!this.paused) {
+      const busy = this.items.filter((i) => i.status === 'downloading').length
+      if (busy >= concurrency) break
       const next = pickNextQueuedItem(this.items, (id) => inventory.isModelBanned(id))
-      if (!next) break
+      if (!next || this.runningIds.has(next.id)) break
       this.active++
       void this.runOne(next).finally(() => {
         this.active--

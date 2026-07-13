@@ -857,6 +857,8 @@ export function WatchRulesTab({
           browseRule={browseRule}
           browseGalleryAwaiting={browseGalleryAwaiting}
           onRunScan={onRunScan}
+          browseSettledToEnd={settings.browseSettledToEnd ?? false}
+          browseSettledDimPercent={settings.browseSettledDimPercent ?? 0}
         />
       ) : settings.nightMode ? (
         <NightCrawlQuietPanel

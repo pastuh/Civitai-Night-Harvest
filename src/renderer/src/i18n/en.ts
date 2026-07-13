@@ -27,6 +27,9 @@ export const en = {
     nightTags: '🌙 Harvesting',
     nightAll: '🌙 All',
     downloadsOn: '⬇ Download',
+    downloadsAuto: 'Auto',
+    downloadsManual: 'Manual',
+    downloadsPauseBtn: '⏸',
     downloadsPaused: '⏸ Paused',
     blur: 'Blur',
     scan: 'Scan',
@@ -42,7 +45,10 @@ export const en = {
     tooltipNightTagsOn: 'Night harvest on — only models with tags you already use. Click to turn off.',
     tooltipNightOff: 'Start harvest — automatic scan and download',
     tooltipDownloadsOn: 'Downloads running — click to pause queue (scan continues)',
-    tooltipDownloadsPaused: 'Downloads paused — click to resume queue',
+    tooltipDownloadsAuto: 'Auto queue — click to switch to manual',
+    tooltipDownloadsManual: 'Manual queue — click to switch to auto',
+    tooltipDownloadsPause: 'Pause downloads (scan continues)',
+    tooltipDownloadsResume: 'Resume downloads',
     tooltipBlur: 'Blur previews',
     tooltipScan: 'Scan all enabled Browse rules and refresh results',
     tooltipScanNight:
@@ -102,6 +108,8 @@ export const en = {
       blurPreviews: 'Blur preview images',
       showBannedInGallery: 'Show banned in gallery',
       banFunctionMode: 'Ban function (× next to card title)',
+      browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
+      browseSettledDimPercent: 'Dim settled Browse cards',
       launchAtLogin: 'Start with Windows (tray)',
       hashVerify: 'Library hash verify',
       galleryGridSize: 'Gallery card size (px)',
@@ -130,6 +138,7 @@ export const en = {
       hashCom: 'Force civitai.com',
       hashRed: 'Force civitai.red',
       slugCompact: 'Compact — first word + base + author',
+      dimOff: 'Off',
       slugVersionName: 'Version name (Civitai variant title)',
       slugModelTitle: 'Full model title',
       activityLogMinimal: 'Essential — downloads, errors, new versions',
@@ -174,7 +183,11 @@ export const en = {
       activityLogNormal:
         'Adds crawl/scan progress summaries, library check start/finish, queue events, and path repairs.',
       activityLogVerbose: 'Logs all events including API page progress and download transfer mode.',
-      activityLogCustom: 'Enable only the topic groups you need.'
+      activityLogCustom: 'Enable only the topic groups you need.',
+      browseSettledToEnd:
+        'Owned, excluded (banned), and awaiting-access cards move to the bottom of Browse Results. Search matches keep their normal position.',
+      browseSettledDimPercent:
+        'Lower opacity for settled cards (0% = off). Hover restores full brightness. Search matches stay fully visible.'
     },
     actions: {
       slugSync: 'Rename library files to match format',
@@ -218,23 +231,28 @@ export const en = {
       'So far this app is tested mainly with LoRA downloads. Checkpoint paths exist but are less verified — report issues on GitHub.',
     quickStart1: 'Settings → set LoRA folder (and API key for NSFW)',
     quickStart2: 'Browse → Rules → turn a rule On → Save rules',
-    quickStart3: 'Header → 🌙 Harvest to start automatic scan and downloads',
+    quickStart3: 'Header → 🌙 Harvest for scheduled scan; set **Auto** for hands-off queueing (or **Manual** and click cards)',
     headerHarvest: '🌙 Harvest — periodic scan of enabled Browse rules; queues and downloads new models',
     headerNightModes:
       '🌙 All vs 🌙 Harvesting — in Settings: “Night mode: queue all Browse matches” controls whether every match or only library-tag matches are queued',
-    headerDownloads: '⬇ Download / ⏸ Paused — pause or resume the download queue (scan can continue)',
+    headerDownloads:
+      '**Auto** / **Manual** — separate header toggles: Auto queues eligible models (up to 10 in pipeline); Manual only queues cards you click. **Pause** (red) stops active downloads without switching mode.',
     headerScan: 'Scan — run all enabled Browse rules once and refresh Results',
     headerBlur: 'Blur — hide preview thumbnails',
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort); pick domain above Results',
-    browseResults: 'Results — click a card to queue or remove; Sort and Tags filters next to the title',
+    browseResults:
+      'Results — search by name/author; filter toolbar (content, hide owned, ban mode); Sort and Tags in the right toolbar box; click a card to queue or remove',
     browseTags:
-      'Tags popover — filter the grid · 🚫 block tag from auto-queue · 📁 set folder route for manual queue',
+      'Tags popover — filter the grid · 🚫 block tag from auto-queue · blocked tags listed at top when any exist',
     browseManualQueue:
-      'Manual queue (download strip on Browse) — only models you click are queued; crawl/scan will not auto-add. Clear queue empties the list and enables manual mode',
+      'Manual — crawl/scan and Auto pipeline do not add models; only your card clicks enter the queue (unlimited)',
+    browseSettled:
+      'Settings → Browse gallery — optionally send owned/excluded/awaiting cards to the end and dim them (hover restores; search matches stay bright)',
     browseBan: 'Ban On — red × on cards excludes a model from future auto-queue',
     browseContextSkipTag:
       'Right-click a model → Skip tag — block a tag from auto-queue (click a tag chip; already-blocked tags are dimmed)',
     libraryFolders: 'Tag Folders tab — map Civitai tags to disk subfolders under your LoRA/Checkpoint paths',
+    libraryBadge: 'Library tab **+N** — new models downloaded since your last visit; badge clears when you open Library',
     librarySort: 'Sort — folder tag, Civitai downloads, tag group, or download order',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
     libraryTags: 'Click a tag on a card to move models; right-click for more actions',
@@ -245,7 +263,7 @@ export const en = {
     edgeAwaiting: 'Yellow — awaiting access / early access',
     edgeBlocked: 'Purple — skipped (blocked tag or excluded)',
     dlStrip:
-      'Download strip — thumbnail, title (up to 3 lines), and while downloading: received/total size and speed under the title. Browse: Manual queue + Clear queue in the header; Library is view-only. Adjust card width in Settings.',
+      'Download strip — thumbnail, title (up to 3 lines), and while downloading: received/total size and speed under the title. Header: **Auto**, **Manual**, and **Pause**; **Clear queue** in the strip (Browse only) empties the strip without changing mode. Adjust card width in Settings.',
     dlStripProgress:
       'Active download — progress bar on the thumbnail; below the title: e.g. 218 MB / 1.2 GB · 12 MB/s (no percentage).',
     dlStripColors:
@@ -255,6 +273,8 @@ export const en = {
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Awaiting access tab — 403, early access, or missing API key',
     dlNewVersions: 'New versions tab — approve updates for models you already own',
+    dlTabBadges:
+      'Tab badges — Browse: active queue count · Library: +N new downloads since last visit · New Versions / Awaiting access: pending counts',
     dlActivity:
       'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:
@@ -264,7 +284,8 @@ export const en = {
       modelsRoot: 'Root folder on disk — use separate LoRA and Checkpoint folders below. Tag Folders can override per model.',
       contentFilter: 'Default for new Browse rules. NSFW/All needs API key. Override per rule.',
       nightMode: 'Periodic scan of enabled Browse rules + auto-queue. Needs folder + at least one rule On.',
-      autoStart: 'When off, crawl still queues models but downloads stay paused until you click ⏸ Paused in the header (toggle to ⬇ Download).',
+      autoStart:
+        'When off (Pause active), queued downloads stay paused until you turn Pause off. Auto/Manual only controls whether new models are added to the queue.',
       nightDownloadAll:
         'All mode: queue every new model matching Browse rules (not only library tags). Blocked tags in Settings/Browse are always skipped.',
       scanInterval: 'Background API check interval per enabled rule × domain. 0 = off (night mode sets 60 min if needed).',
@@ -282,6 +303,10 @@ export const en = {
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
       hashVerify: 'Compares SHA256 on disk with Civitai /model-versions/by-hash. Use after moving files manually or if a model seems corrupted.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
+      browseSettledToEnd:
+        'Browse Results — move owned, excluded, and awaiting-access cards to the end of the gallery. Search matches keep normal order.',
+      browseSettledDimPercent:
+        'Browse Results — dim settled cards (0% = off). Hover restores brightness; search matches stay fully visible.',
       queueGridSize:
         'Download strip card width (thumbnail size). Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).'
     },
@@ -411,6 +436,8 @@ export const en = {
     contentAll: 'All',
     contentSfw: 'SFW',
     contentNsfw: 'NSFW',
+    searchPlaceholder: 'Search name or author…',
+    searchTitle: 'Filter loaded models by title or creator username',
     hideOwned: 'Hide owned',
     hideOwnedTitle: 'Hide models already in your library',
     badgeOwnedTitle: 'Already in library',
@@ -494,7 +521,7 @@ export const en = {
     manualQueue: 'Manual queue',
     manualQueueTitle: 'Only models you add yourself go to the queue — crawl/scan will not auto-queue',
     clearQueue: 'Clear queue',
-    clearQueueTitle: 'Clear all queue items and enable manual queue mode'
+    clearQueueTitle: 'Remove all items from the download queue (does not switch Auto/Manual or enable Pause)',
   },
   nightQuiet: {
     title: 'Night mode',
@@ -754,8 +781,9 @@ export const en = {
     scanningApiFetchingTagsRule: 'Tag {step}/{total}: “{tag}” · Rule: {rules}',
     scanningApiFetchingTagsPrep: 'Preparing {total} tag search variants…',
     scanningApiFetchingTagsPrepRule: 'Preparing {total} tag variants · Rule: {rules}',
-    scanningApiWaiting: 'Next Civitai peek in ~{min} min',
-    scanningApiWaitingRule: 'Next peek in ~{min} min · Rule: {rules}',
+    scanningApiWaiting: 'Next Civitai peek in ~{time}',
+    scanningApiWaitingRule: 'Next peek in ~{time} · Rule: {rules}',
+    peekCountdownUnderMin: '<1 min',
     scanningCatalogComplete: 'Catalog complete · {page} page(s) · {total} in gallery',
     scanningCatalogCompleteRule: 'Catalog complete · {page} page(s) · {total} in gallery · {rules}',
     scanningCatalogCompleteFiltered:
