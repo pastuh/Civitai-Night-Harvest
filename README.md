@@ -24,6 +24,8 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 
 For UI details, open the in-app **Help** tab.
 
+> **UI mode note:** In **Minimal** mode the bottom status bar shows only queue counts (downloading + in queue). **Extended** shows per-item details (active model name, progress, next queued).
+
 ---
 
 ## Header controls

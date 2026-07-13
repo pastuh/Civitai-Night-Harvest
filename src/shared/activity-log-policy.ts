@@ -105,7 +105,6 @@ export function isEssentialActivityMessage(entry: Pick<ActivityEntry, 'level' | 
   }
   if (entry.level === 'warn' && /New version available:/i.test(m)) return true
   if (entry.level === 'warn' && /no progress — will retry/i.test(m)) return true
-  if (entry.level === 'warn' && /Browse reconcile: 0 queued/i.test(m)) return true
 
   if (entry.level === 'success') {
     if (/^Downloaded |Crawl finished:|Scan complete|Library check done|Library version check done|Library paths repaired/i.test(m)) {

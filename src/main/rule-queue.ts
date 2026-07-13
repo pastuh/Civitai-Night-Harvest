@@ -639,28 +639,7 @@ export function queueEligibleTestModels(
   }
 
   const missing = models.length - skipped.owned - skipped.noVersion
-  if (log && missing >= 10 && queued === 0) {
-    const parts = [
-      skipped.noRuleMatch > 0 ? `${skipped.noRuleMatch} rule keyword mismatch` : '',
-      skipped.hiddenTag > 0 ? `${skipped.hiddenTag} blocked tag` : '',
-      skipped.noTagMatch > 0 ? `${skipped.noTagMatch} no matching tag` : '',
-      skipped.earlyAccess > 0 ? `${skipped.earlyAccess} early access` : '',
-      skipped.deferred > 0 ? `${skipped.deferred} awaiting access` : '',
-      skipped.inQueue > 0 ? `${skipped.inQueue} already in list` : '',
-      skipped.banned > 0 ? `${skipped.banned} excluded` : ''
-    ].filter(Boolean)
-    log(
-      'warn',
-      `Browse reconcile: 0 queued from ${models.length} gallery models (${parts.join(', ') || 'no eligible missing models'})`,
-      rule?.id
-    )
-  } else if (log && queued > 0 && skipped.hiddenTag > 0) {
-    log(
-      'info',
-      `Browse reconcile: +${queued} queued, ${skipped.hiddenTag} skipped (blocked tag)`,
-      rule?.id
-    )
-  }
+  void missing
 
   return queued
 }

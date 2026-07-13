@@ -86,8 +86,10 @@ const api = {
   ): Promise<{ modelId: number; versionId: number; banned: boolean }> =>
     ipcRenderer.invoke('inventory:deleteVersion', { versionId, ban: options?.ban }),
 
-  patchVersionNsfw: (versionId: number, isNsfw: boolean): Promise<void> =>
-    ipcRenderer.invoke('inventory:patchNsfw', { versionId, isNsfw }),
+  patchVersionNsfw: (
+    versionId: number,
+    patch: { isNsfw?: boolean | null; nsfwLevel?: number | null }
+  ): Promise<void> => ipcRenderer.invoke('inventory:patchNsfw', { versionId, ...patch }),
 
   previewModel: (input: string) => ipcRenderer.invoke('model:preview', input),
 

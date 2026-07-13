@@ -8,7 +8,7 @@ export type ContentFilter = 'all' | 'sfw' | 'nsfw'
 /** Minimal = compact UI, less duplicate status; Extended = all hints and stats */
 export type UiMode = 'minimal' | 'extended'
 
-export type AppTheme = 'dark' | 'light'
+export type AppTheme = 'dark' | 'light' | 'gothic' | 'candy' | 'aroma'
 
 /** Download strip card layout */
 export type DownloadStripLayout = 'horizontal' | 'grid' | 'minimal'
@@ -652,6 +652,7 @@ export interface InventoryGetResult {
   items: InventoryRecord[]
   removedMissing: number
   repairedPreviews: number
+  repairedRatings?: number
   enrichedMeta?: number
   hashesBackfilled?: number
   /** Models scanned during syncDisk */
@@ -695,6 +696,7 @@ export interface InventoryRecord {
   fileVariant?: string
   trainingResolution?: string
   isNsfw?: boolean
+  nsfwLevel?: number
   /** First seen in awaiting-access (early access) before successful download */
   awaitingSince?: string
   /** Civitai site this file was downloaded from */

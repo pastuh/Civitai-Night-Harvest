@@ -817,6 +817,7 @@ export function WatchRulesTab({
 
       {browsePanelResult ? (
         <SearchBrowsePanel
+          key={browseRule?.id ?? 'browse'}
           result={browsePanelResult}
           crawlFetching={crawlFetching}
           crawlProgress={crawlProgress}

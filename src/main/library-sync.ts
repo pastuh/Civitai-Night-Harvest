@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import type { CivitaiClientPool } from '../shared/civitai-client-pool'
-import type { InventoryRecord, LibrarySyncProgress, TagFolderRule } from '../shared/types'
+import type { CivitaiModel, InventoryRecord, LibrarySyncProgress, TagFolderRule } from '../shared/types'
 import * as inventory from './inventory'
 import { importModelsFromDisk } from './disk-import'
 import { fetchFirstWorkingPreview } from './preview-fetch'
@@ -75,17 +75,44 @@ export function resetLibraryDiskSyncCache(): void {
   lastDiskSyncAt = 0
 }
 
-/** Re-download preview.jpg for on-disk models missing a preview image. */
+/** Re-download preview.jpg for on-disk models missing a preview image; backfill missing ratings. */
 export async function repairMissingPreviews(
   pool: CivitaiClientPool,
   records: InventoryRecord[],
   maxRepairs = Infinity,
   onProgress?: (p: LibrarySyncProgress) => void
-): Promise<number> {
+): Promise<{ repairedPreviews: number; repairedRatings: number }> {
   const { existsSync, readFileSync } = await import('fs')
-  let repaired = 0
+  let repairedPreviews = 0
+  let repairedRatings = 0
   const total = records.length
   const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  const needsRating = (record: InventoryRecord): boolean =>
+    record.isNsfw === undefined || record.nsfwLevel === undefined
+
+  const backfillRating = async (
+    record: InventoryRecord,
+    model?: CivitaiModel
+  ): Promise<boolean> => {
+    if (!needsRating(record)) return false
+    try {
+      const client = pool.forDomain(record.civitaiDomain ?? pool.primaryDomain())
+      const fetched = model ?? (await client.getModel(record.modelId))
+      const patch: { isNsfw?: boolean; nsfwLevel?: number } = {}
+      if (record.isNsfw === undefined && fetched.nsfw !== undefined) {
+        patch.isNsfw = Boolean(fetched.nsfw)
+      }
+      if (record.nsfwLevel === undefined && fetched.nsfwLevel !== undefined) {
+        patch.nsfwLevel = fetched.nsfwLevel
+      }
+      if (!Object.keys(patch).length) return false
+      inventory.patchVersionFileMeta(record.versionId, patch)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   if (total > 0) {
     onProgress?.({
@@ -129,12 +156,32 @@ export async function repairMissingPreviews(
     }
 
     if (!previewMissing && !swarmThumbMissing) {
-      report('Preview OK')
+      if (needsRating(record)) {
+        report('Fetching rating from Civitai')
+        if (await backfillRating(record)) {
+          repairedRatings++
+          report('Rating updated')
+        } else {
+          report('Preview OK')
+        }
+      } else {
+        report('Preview OK')
+      }
       continue
     }
 
-    if (repaired >= maxRepairs) {
-      report('Repair skipped (session limit)')
+    if (repairedPreviews >= maxRepairs) {
+      if (needsRating(record)) {
+        report('Fetching rating from Civitai')
+        if (await backfillRating(record)) {
+          repairedRatings++
+          report('Rating updated (preview skipped — limit)')
+        } else {
+          report('Repair skipped (session limit)')
+        }
+      } else {
+        report('Repair skipped (session limit)')
+      }
       continue
     }
 
@@ -150,13 +197,23 @@ export async function repairMissingPreviews(
         { nsfw: record.isNsfw }
       )
       if (!resolved.previewUrls.length) {
-        report('No preview URLs found')
+        if (await backfillRating(record)) {
+          repairedRatings++
+          report('Rating updated (no preview URLs)')
+        } else {
+          report('No preview URLs found')
+        }
         continue
       }
 
       const preview = await fetchFirstWorkingPreview(resolved.previewUrls)
       if (!preview) {
-        report('Preview download failed')
+        if (await backfillRating(record)) {
+          repairedRatings++
+          report('Rating updated (preview download failed)')
+        } else {
+          report('Preview download failed')
+        }
         continue
       }
 
@@ -165,7 +222,12 @@ export async function repairMissingPreviews(
       const version =
         model.modelVersions.find((v) => v.id === record.versionId) ?? model.modelVersions[0]
       if (!version) {
-        report('Model version not found')
+        if (await backfillRating(record, model)) {
+          repairedRatings++
+          report('Rating updated (version not found)')
+        } else {
+          report('Model version not found')
+        }
         continue
       }
 
@@ -179,14 +241,20 @@ export async function repairMissingPreviews(
       writeFileSync(swarmPath, JSON.stringify(swarm, null, 2), 'utf-8')
 
       inventory.addVersion({ ...record, previewPath, swarmPath })
-      repaired++
+      repairedPreviews++
+      if (await backfillRating(record, model)) repairedRatings++
       report('Preview restored')
     } catch {
-      report('Preview repair failed')
+      if (await backfillRating(record)) {
+        repairedRatings++
+        report('Rating updated (preview repair failed)')
+      } else {
+        report('Preview repair failed')
+      }
     }
   }
 
-  return repaired
+  return { repairedPreviews, repairedRatings }
 }
 
 export function syncInventoryWithDisk(): { removedMissing: number; enrichedMeta: number } {

@@ -126,6 +126,9 @@ export const lt: Messages = {
       langLt: 'Lietuvių',
       themeDark: 'Tamsi',
       themeLight: 'Šviesi',
+      themeGothic: 'Gothic',
+      themeCandy: 'Candy',
+      themeAroma: 'Aroma',
       stripLayoutRow: 'Eilė (horizontalus scroll)',
       stripLayoutGrid: 'Tinklelis (kelios eilės)',
       stripLayoutMinimal: 'Minimal (kompaktinis sąrašas su progresu)',
@@ -190,7 +193,7 @@ export const lt: Messages = {
       browseSettledToEnd:
         'Turimi, excluded (banned) ir awaiting-access kortelės perkeliamos į Browse Results galą. Paieškos atitikmenys lieka savo vietoje.',
       browseSettledDimPercent:
-        'Sumažina settled kortelių ryškumą (0% = išjungta). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.'
+        'Kiek stipriai pritemdomos settled kortelės (0% = išjungta, 100% = labiausiai). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.'
     },
     actions: {
       slugSync: 'Pervardinti bibliotekos failus pagal formatą',
@@ -622,6 +625,7 @@ export const lt: Messages = {
     busySyncingLibrary: 'Sinchronizuojama biblioteka su disku…',
     bgCheckingPreviews: 'Tikrinamos bibliotekos preview nuotraukos…',
     previewsRestored: 'atstatyta {count} preview nuotrauka(-os)',
+    ratingsRestored: 'užpildyta {count} reitingo(-ų)',
     librarySyncPrefix: 'Bibliotekos sync:',
     librarySyncExtra: 'Bibliotekos sync: {summary}.',
     nextScanSoon: 'scan netrukus',
@@ -657,10 +661,12 @@ export const lt: Messages = {
     enriched: 'atnaujinti {count} modelių metaduomenys',
     hashed: 'skaičiuotas SHA256 {count} failams',
     previews: 'atstatyta {count} preview',
+    ratings: 'užpildyta {count} reitingo(-ų)',
     allOk: 'Bibliotekos sync: patikrinta {count} modelių — viskas gerai.',
     summary: 'Bibliotekos sync ({count} bibliotekoje): {parts}.'
   },
   gallery: {
+    titleHeading: 'Biblioteka',
     title: 'Biblioteka ({shown}{total}{banned})',
     titleTotal: ' iš {total}',
     titleBanned: ' · {count} banned',
@@ -670,6 +676,22 @@ export const lt: Messages = {
     contentAll: 'Visi',
     contentSfw: 'Tik SFW',
     contentNsfw: 'Tik NSFW',
+    ratingFilter: {
+      all: 'Visi',
+      sfw: 'SFW',
+      nsfw: 'NSFW',
+      pg: 'PG',
+      'pg-13': 'PG-13',
+      r: 'R',
+      x: 'X',
+      xxx: 'XXX',
+      unrated: 'Be reitingo'
+    },
+    hideFolderAssigned: 'Slėpti su aplanku',
+    hideFolderAssignedTitle: 'Slėpti modelius, jau perkeltus į tag aplanką',
+    setRating: 'Nustatyti turinio reitingą',
+    clearRating: 'Nuimti reitingą',
+    ratingUpdated: 'Turinio reitingas atnaujintas',
     sortTagGroup: 'Pagal tag grupę',
     sortFolder: 'Pagal aplanko tag',
     sortDownloads: 'Pagal Civitai atsisiuntimus',
@@ -708,10 +730,10 @@ export const lt: Messages = {
     previewFiles: 'Peržiūrėti atsisiųstus failus',
     preview: 'Peržiūra',
     repairPreviews: 'Tikrinti preview',
-    repairPreviewsBusy: 'Tikrinami preview…',
+    repairPreviewsBusy: 'Tikrinami preview ir reitingai…',
     repairPreviewsTitle:
-      'Atsisiųsti trūkstamus preview.jpg ir swarm miniatiūras iš Civitai bibliotekos modeliams',
-    repairPreviewsNone: 'Visi bibliotekos preview tvarkingi — nieko atsisiųsti nereikia.',
+      'Atsisiųsti trūkstamus preview.jpg / swarm miniatiūras ir užpildyti trūkstamus NSFW reitingus iš Civitai',
+    repairPreviewsNone: 'Visi bibliotekos preview ir reitingai tvarkingi — nieko atnaujinti nereikia.',
     openOnCivitai: 'Atidaryti Civitai',
     checkpointType: 'Checkpoint tipas',
     statDownloads: 'Atsisiuntimai',

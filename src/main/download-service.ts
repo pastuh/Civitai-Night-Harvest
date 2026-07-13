@@ -646,6 +646,7 @@ export class DownloadService {
         fileVariant: fileMeta.fileVariant,
         trainingResolution: fileMeta.trainingResolution,
         isNsfw: Boolean(model.nsfw),
+        nsfwLevel: model.nsfwLevel,
         awaitingSince: deferredEntry?.deferredAt,
         civitaiDomain: client.getDomain(),
         downloadCount: stats.downloadCount,

@@ -112,7 +112,13 @@ export function getSettings(): AppSettings {
   if (raw.uiMode !== 'minimal' && raw.uiMode !== 'extended') {
     raw.uiMode = 'minimal'
   }
-  if (raw.theme !== 'dark' && raw.theme !== 'light') {
+  if (
+    raw.theme !== 'dark' &&
+    raw.theme !== 'light' &&
+    raw.theme !== 'gothic' &&
+    raw.theme !== 'candy' &&
+    raw.theme !== 'aroma'
+  ) {
     raw.theme = 'dark'
   }
   if (raw.domain !== 'com' && raw.domain !== 'red' && raw.domain !== 'both') {

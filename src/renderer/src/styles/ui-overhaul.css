@@ -75,6 +75,224 @@
   --section-head-border: #a3b3c6;
 }
 
+.theme-gothic {
+  color-scheme: dark;
+  --bg: #08080a;
+  --bg-elevated: #0e0e11;
+  --header-bg: #08080a;
+  --surface: #141418;
+  --surface2: #1c1c22;
+  --border: #34343c;
+  --text: #d8d8dc;
+  --muted: #787880;
+  --accent: #8b2942;
+  --accent-hover: #a83252;
+  --accent-contrast: #f0e8ea;
+  --accent-muted: color-mix(in srgb, var(--accent) 22%, transparent);
+  --success: #5a9468;
+  --warn: #a67c52;
+  --error: #d64550;
+  --browse-cat-loaded: #ffffff;
+  --browse-cat-owned: #5a9468;
+  --browse-cat-new: #7a8a9a;
+  --browse-cat-awaiting: #a67c52;
+  --browse-cat-blocked: #8b6b9a;
+  --browse-cat-banned: #c45a62;
+  --strip-interrupted: #b86b82;
+  --chrome-bg: #08080a;
+  --chrome-text: #d0d0d4;
+  --chrome-muted: #707078;
+  --chrome-border: #2e2e34;
+  --chrome-surface: #16161a;
+  --chrome-surface-hover: #202026;
+  --section-head-bg: #101014;
+  --section-head-border: #282830;
+}
+
+.theme-gothic .header-app-icon {
+  border: 1px solid #505058;
+  box-sizing: border-box;
+}
+
+.theme-gothic .browse-download-progress-bar-wrap {
+  background: var(--browse-cat-loaded);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--bg) 35%, transparent);
+}
+
+.theme-candy {
+  color-scheme: light;
+  /* warmer “paper” matte background */
+  --bg: #e9e0d2;
+  --bg-elevated: #f6f0e6;
+  --header-bg: var(--chrome-bg);
+  --surface: #fffaf4;
+  --surface2: #f7f0e6;
+  --border: #d8cfc2;
+  --text: #2b2b33;
+  --muted: #6b6b78;
+  /* Mint accent + candy highlights */
+  --accent: #2dd4bf;
+  --accent-hover: #14b8a6;
+  --accent-contrast: #0b2b25;
+  --accent-muted: color-mix(in srgb, var(--accent) 18%, transparent);
+  --success: #86efac;
+  --warn: #c4b5fd;
+  --error: #fb7185;
+  --browse-cat-loaded: #a8a29e;
+  --browse-cat-owned: #86efac;
+  --browse-cat-new: #c4b5fd;
+  --browse-cat-awaiting: #fbcfe8;
+  --browse-cat-blocked: #99f6e4;
+  --browse-cat-banned: #fb7185;
+  --strip-interrupted: #f472b6;
+  /* Softer chrome for flat matte look */
+  --chrome-bg: #fff3f6;
+  --chrome-text: #2b2b33;
+  --chrome-muted: #6b6b78;
+  --chrome-border: #ead3dc;
+  --chrome-surface: #fffaf4;
+  --chrome-surface-hover: #ffedf3;
+  --section-head-bg: #fff1f7;
+  --section-head-border: #efd6e0;
+  --radius: 10px;
+  --radius-sm: 8px;
+}
+
+.theme-candy .gallery-card {
+  border-top-width: 4px;
+  transition:
+    border-top-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.theme-candy .gallery-card:hover {
+  box-shadow:
+    0 10px 22px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 2px 0 color-mix(in srgb, white 70%, transparent);
+  transform: translateY(-1px);
+}
+
+.theme-candy .gallery-card.selected {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--border)),
+    0 10px 22px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.theme-aroma {
+  color-scheme: dark;
+  /* Night cafe base */
+  --bg: #2a2f3c;
+  --bg-elevated: #303547;
+  --header-bg: var(--chrome-bg);
+  --surface: #2f3545;
+  --surface2: #343a4e;
+  /* Reduce borders: keep subtle depth without hard lines */
+  --border: color-mix(in srgb, var(--bg) 55%, transparent);
+  --text: #f3f3f6;
+  --muted: #b2b7c8;
+
+  /* Feminine accents */
+  --accent: #ff2d8f; /* deep pink */
+  --accent-hover: #ff6bb2;
+  --accent-contrast: #12040c;
+  --accent-muted: color-mix(in srgb, var(--accent) 18%, transparent);
+  --success: #00d7ff; /* bright cyan */
+  --warn: #ff6a1a; /* dark orange */
+  --error: #ff4d6d;
+
+  /* Browse palette kept coherent */
+  --browse-cat-loaded: #9aa3ba;
+  --browse-cat-owned: #00d7ff;
+  /* Requested: New=orange, Awaiting=banned color, Banned=violet */
+  --browse-cat-new: #ff6a1a;
+  --browse-cat-awaiting: #ff4d6d;
+  --browse-cat-blocked: #b38cff;
+  --browse-cat-banned: #b38cff;
+  --strip-interrupted: #ff6bb2;
+
+  /* Gradient-y chrome */
+  --chrome-bg: #252a36;
+  --chrome-text: #f3f3f6;
+  --chrome-muted: #b2b7c8;
+  --chrome-border: color-mix(in srgb, var(--chrome-bg) 55%, transparent);
+  --chrome-surface: #2f3545;
+  --chrome-surface-hover: #3a4156;
+  --section-head-bg: #272c3a;
+  --section-head-border: color-mix(in srgb, var(--section-head-bg) 45%, transparent);
+  --radius: 10px;
+  --radius-sm: 8px;
+}
+
+/* Aroma: soft gradients + minimal borders */
+.theme-aroma .panel,
+.theme-aroma .browse-results-panel,
+.theme-aroma .browse-results-empty {
+  border-color: transparent;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface2) 96%, transparent),
+    var(--surface2)
+  );
+}
+
+.theme-aroma .browse-results-title-row,
+.theme-aroma .gallery-header,
+.theme-aroma .status-tab-header,
+.theme-aroma .tags-tab-head {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--section-head-bg) 92%, var(--accent) 8%);
+  box-shadow: 0 6px 14px color-mix(in srgb, #000 30%, transparent);
+}
+
+/* Aroma: make “clickable/active” controls very obvious */
+.theme-aroma input,
+.theme-aroma select,
+.theme-aroma textarea {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--surface) 70%, black);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 10%, transparent);
+}
+
+.theme-aroma input:focus,
+.theme-aroma select:focus,
+.theme-aroma textarea:focus {
+  outline: none;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--success) 12%, color-mix(in srgb, var(--surface) 70%, black));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--success) 42%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, white 12%, transparent);
+}
+
+.theme-aroma .checkbox-field input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.theme-aroma .checkbox-field input[type='checkbox']:checked {
+  accent-color: var(--success);
+}
+
+.theme-aroma button.toggle-on,
+.theme-aroma button.active {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 38%, var(--surface2)),
+      color-mix(in srgb, var(--warn) 18%, var(--surface2))
+    );
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.theme-aroma button.btn-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+  border-color: transparent;
+  color: #fff;
+}
+
 /* ── Layout density ── */
 .ui-minimal .content {
   --content-pad: var(--space-md);
@@ -420,34 +638,64 @@ button.downloads-toggle-manual:hover:not(:disabled) {
 }
 
 button.downloads-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 2.1rem;
   padding: 0 8px;
   font-weight: 700;
   line-height: 1;
 }
 
+.downloads-pause-glyph {
+  display: inline-block;
+  width: 9px;
+  height: 10px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.downloads-pause-glyph::before,
+.downloads-pause-glyph::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2.5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.downloads-pause-glyph::before {
+  left: 0;
+}
+
+.downloads-pause-glyph::after {
+  right: 0;
+}
+
 button.downloads-pause-btn.is-idle {
-  background: color-mix(in srgb, var(--text) 8%, var(--surface2));
-  border-color: color-mix(in srgb, var(--text) 18%, var(--border));
-  color: color-mix(in srgb, var(--text) 42%, var(--muted));
+  background: color-mix(in srgb, var(--text) 8%, var(--chrome-surface, var(--surface2)));
+  border-color: color-mix(in srgb, var(--text) 18%, var(--chrome-border, var(--border)));
+  color: color-mix(in srgb, var(--chrome-muted, var(--muted)) 90%, var(--text));
 }
 
 button.downloads-pause-btn.is-idle:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text) 14%, var(--surface2));
-  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
-  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+  background: color-mix(in srgb, var(--text) 14%, var(--chrome-surface, var(--surface2)));
+  border-color: color-mix(in srgb, var(--text) 28%, var(--chrome-border, var(--border)));
+  color: color-mix(in srgb, var(--chrome-text, var(--text)) 78%, var(--muted));
 }
 
 button.downloads-pause-btn.is-paused {
-  background: color-mix(in srgb, var(--error) 22%, var(--surface2));
-  border-color: color-mix(in srgb, var(--error) 65%, var(--border));
-  color: var(--error);
+  background: color-mix(in srgb, var(--accent) 38%, var(--chrome-surface, var(--surface2)));
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--chrome-border, var(--border)));
+  color: var(--accent);
 }
 
 button.downloads-pause-btn.is-paused:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 32%, var(--surface2));
-  border-color: var(--error);
-  color: var(--error);
+  background: color-mix(in srgb, var(--accent) 48%, var(--chrome-surface, var(--surface2)));
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
 }
 
 button.downloads-pause-btn.is-disabled,
@@ -584,13 +832,11 @@ label.field-label {
 
 .gallery-card[data-state='queued'],
 .gallery-card[data-state='queued-auto'],
+.gallery-card[data-state='downloading'],
+.gallery-card.in-queue,
 .gallery-card.in-queue.queue-manual,
 .gallery-card.in-queue.queue-auto {
-  --card-accent: var(--browse-cat-loaded);
-}
-
-.gallery-card[data-state='downloading'] {
-  --card-accent: var(--browse-cat-loaded);
+  --card-accent: #fff;
 }
 
 .gallery-card[data-state='failed'] {
@@ -650,9 +896,11 @@ label.field-label {
 }
 
 .active-queue-rich-card.in-queue,
+.active-queue-rich-card.is-downloading,
 .active-queue-rich-card[data-state='strip-queued'],
 .active-queue-rich-card.is-downloading[data-state='strip-queued'] {
-  --card-accent: var(--browse-cat-loaded);
+  --card-accent: #fff;
+  border-top-color: #fff;
 }
 
 .active-queue-rich-card[data-state='strip-interrupted'],

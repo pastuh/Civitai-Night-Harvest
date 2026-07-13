@@ -15,7 +15,6 @@ import {
   aggregateResultTags,
   formatBytes,
   formatAuthorWithWeight,
-  matchesContentFilter,
   browseHasMorePages,
   browseModelDedupeKey,
   preferBrowseModel,
@@ -23,6 +22,13 @@ import {
   parseRuleFilterTags
 } from '../../../shared/utils'
 import { describeNsfwRating, nsfwRatingCardClass } from '../../../shared/nsfw-rating'
+import {
+  countModelsByRatingFilter,
+  matchesRatingFilter,
+  ratingFilterToApiContent,
+  RATING_FILTER_OPTIONS,
+  type RatingFilter
+} from '../../../shared/rating-filter'
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
 import { folderForTag, findRuleForTag, modelHasHiddenTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
@@ -50,6 +56,8 @@ function modelFromQueueItem(item: DownloadQueueItem, ownedVersionIds: Set<number
     previewUrl: item.previewUrl,
     previewUrls: item.previewUrl ? [item.previewUrl] : [],
     tags: item.civitaiTags ?? [],
+    nsfw: item.nsfw,
+    nsfwLevel: item.nsfwLevel,
     inInventory: ownedVersionIds.has(item.versionId),
     isBanned: false
   }
@@ -185,6 +193,20 @@ export function SearchBrowsePanel({
     () => deferredVersionIds ?? new Set<number>(),
     [deferredVersionIds]
   )
+  const [ratingFilter, setRatingFilter] = useState<RatingFilter>(() =>
+    contentFilter === 'sfw' ? 'sfw' : contentFilter === 'nsfw' ? 'nsfw' : 'all'
+  )
+
+  const onRatingFilterChange = (filter: RatingFilter) => {
+    setRatingFilter(filter)
+    // Tier picks (PG-13, R, X, …) are UI-only — do not touch API contentFilter.
+    if (filter === 'all' || filter === 'sfw' || filter === 'nsfw') {
+      if (filter !== contentFilter) {
+        onContentFilterChange(filter)
+      }
+    }
+  }
+
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [onlyMissing, setOnlyMissing] = useState(true)
@@ -292,7 +314,7 @@ export function SearchBrowsePanel({
             nsfw: m.nsfw,
             nsfwLevel: m.nsfwLevel
           })),
-          contentFilter
+          ratingFilterToApiContent(ratingFilter)
         )
         let filled = 0
         setPreviewOverrides((prev) => {
@@ -320,7 +342,7 @@ export function SearchBrowsePanel({
         return 0
       }
     },
-    [contentFilter, resolvePreviewUrls]
+    [ratingFilter, resolvePreviewUrls]
   )
 
   useEffect(() => {
@@ -487,6 +509,14 @@ export function SearchBrowsePanel({
     )
   }, [enrichedModels, browseRule, ruleKeywordExtras, result.crawlSource])
 
+  const browseRatingCounts = useMemo(
+    () =>
+      countModelsByRatingFilter(
+        ruleScopedModels.map((m) => ({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }))
+      ),
+    [ruleScopedModels]
+  )
+
   useEffect(() => {
     let cancelled = false
     void fetchMissingPreviews(ruleScopedModels).then(() => {
@@ -542,10 +572,11 @@ export function SearchBrowsePanel({
     for (const m of ruleScopedModels) {
       const q = queueItemFor(m)
       if (q?.status === 'deferred') continue
+      if (!matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) continue
+
       const inActiveQueue = q ? q.status === 'queued' || q.status === 'downloading' : false
 
       if (!inActiveQueue) {
-        if (!matchesContentFilter(m.nsfw, contentFilter)) continue
         if (hideBanned && m.isBanned) continue
         if (!showBlockedModels && modelHasHiddenTag(m.tags, hiddenTags)) continue
         if (
@@ -566,7 +597,7 @@ export function SearchBrowsePanel({
     return [...byKey.values()]
   }, [
     ruleScopedModels,
-    contentFilter,
+    ratingFilter,
     onlyMissing,
     hideBanned,
     showBlockedModels,
@@ -595,6 +626,9 @@ export function SearchBrowsePanel({
         .filter((i) => isOrphanQueueStatus(i.status))
         .filter((i) => !ownedVersionIds.has(i.versionId))
         .filter((i) => !awaitingAccessVersionIds.has(i.versionId))
+        .filter((i) =>
+          matchesRatingFilter({ nsfw: i.nsfw, nsfwLevel: i.nsfwLevel }, ratingFilter)
+        )
         .filter((i) => {
           const key = i.versionId > 0 ? `v:${i.versionId}` : `m:${i.modelId}`
           if (orphanSeen.has(key) || seen.has(key)) return false
@@ -670,7 +704,8 @@ export function SearchBrowsePanel({
     tagRules,
     routingTag,
     browseSettledToEnd,
-    searchQuery
+    searchQuery,
+    ratingFilter
   ])
 
   const gridModels = useMemo(
@@ -752,7 +787,7 @@ export function SearchBrowsePanel({
       const q = queueItemFor(m)
       const inActiveQueue = q?.status === 'queued' || q?.status === 'downloading'
       if (inActiveQueue) continue
-      if (!matchesContentFilter(m.nsfw, contentFilter)) {
+      if (!matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) {
         counts.content++
         continue
       }
@@ -782,7 +817,7 @@ export function SearchBrowsePanel({
     return counts
   }, [
     ruleScopedModels,
-    contentFilter,
+    ratingFilter,
     hideBanned,
     showBlockedModels,
     hiddenTags,
@@ -1200,14 +1235,23 @@ export function SearchBrowsePanel({
             <div className="browse-results-filters-box">
             <div className="browse-results-filters-row">
               <select
-                className="browse-content-filter"
-                value={contentFilter}
-                onChange={(e) => onContentFilterChange(e.target.value as ContentFilter)}
+                className={`browse-content-filter${ratingFilter !== 'all' ? ' filtered' : ''}`}
+                value={ratingFilter}
+                onChange={(e) => onRatingFilterChange(e.target.value as RatingFilter)}
                 title={t('browse.contentFilterTitle')}
               >
-                <option value="all">{t('browse.contentAll')}</option>
-                <option value="sfw">{t('browse.contentSfw')}</option>
-                <option value="nsfw">{t('browse.contentNsfw')}</option>
+                {RATING_FILTER_OPTIONS.map((opt) => (
+                  <option
+                    key={opt}
+                    value={opt}
+                    disabled={
+                      opt !== 'all' && opt !== ratingFilter && browseRatingCounts[opt] === 0
+                    }
+                  >
+                    {t(`gallery.ratingFilter.${opt}`)}
+                    {opt !== 'all' ? ` (${browseRatingCounts[opt]})` : ''}
+                  </option>
+                ))}
               </select>
               <label className="checkbox-field" title={t('browse.hideOwnedTitle')}>
                 <input
@@ -1719,7 +1763,7 @@ export function SearchBrowsePanel({
               const settled = isBrowseSettledModel(m, awaitingAccessVersionIds)
               const dimOpacity =
                 browseSettledDimPercent > 0 && settled && !matchesSearch
-                  ? browseSettledDimPercent / 100
+                  ? 1 - browseSettledDimPercent / 100
                   : undefined
               return (
               <ModelCard
@@ -1765,7 +1809,7 @@ export function SearchBrowsePanel({
                     {filterBreakdown.content > 0 && (
                       <li>
                         {filterBreakdown.content} hidden by content filter{' '}
-                        <strong>{contentFilter.toUpperCase()}</strong> — try All content
+                        <strong>{ratingFilter.toUpperCase()}</strong> — try All content
                       </li>
                     )}
                     {filterBreakdown.owned > 0 && onlyMissing && (

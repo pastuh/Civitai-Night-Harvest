@@ -197,33 +197,6 @@ export class ScanScheduler {
 
     if (total > 0) {
       startDownloadsIfQueued(this.downloadQueue, total, () => this.setStatus('downloading'))
-      this.log(
-        'info',
-        `Download queue +${total} from browse reconcile (${models.length} checked)`,
-        options?.ruleId,
-        { source }
-      )
-    } else if (models.length > 0) {
-      const hiddenTags = getSettings().hiddenTags ?? []
-      let missing = 0
-      for (const m of models) {
-        if (!m.versionId || m.versionId <= 0) continue
-        if (inventory.hasVersion(m.versionId)) continue
-        if (m.isBanned || inventory.isModelBanned(m.id)) continue
-        if (m.isEarlyAccess) continue
-        if (inventory.getDeferredDownload(m.versionId)) continue
-        if (modelHasHiddenTag(m.tags ?? [], hiddenTags)) continue
-        if (this.downloadQueue.hasActiveItem(m.versionId)) continue
-        missing++
-      }
-      if (missing > 0) {
-        this.log(
-          'warn',
-          `Browse reconcile: ${missing} missing model(s) in gallery but none queued — check Activity`,
-          options?.ruleId,
-          { source }
-        )
-      }
     }
     return total
   }

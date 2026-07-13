@@ -412,6 +412,9 @@ export default function App() {
   useEffect(() => {
     const theme = settings?.theme ?? 'dark'
     document.documentElement.classList.toggle('theme-light', theme === 'light')
+    document.documentElement.classList.toggle('theme-gothic', theme === 'gothic')
+    document.documentElement.classList.toggle('theme-candy', theme === 'candy')
+    document.documentElement.classList.toggle('theme-aroma', theme === 'aroma')
   }, [settings?.theme])
 
   useEffect(() => {
@@ -661,8 +664,16 @@ export default function App() {
         syncDisk: false
       })
       setInventory(result.items)
-      if (result.repairedPreviews > 0) {
-        setSyncMessage(translate(loc, 'app.previewsRestored', { count: result.repairedPreviews }))
+      const ratingCount = result.repairedRatings ?? 0
+      if (result.repairedPreviews > 0 || ratingCount > 0) {
+        const parts: string[] = []
+        if (result.repairedPreviews > 0) {
+          parts.push(translate(loc, 'app.previewsRestored', { count: result.repairedPreviews }))
+        }
+        if (ratingCount > 0) {
+          parts.push(translate(loc, 'app.ratingsRestored', { count: ratingCount }))
+        }
+        setSyncMessage(parts.join(' · '))
       } else {
         setSyncMessage(translate(loc, 'gallery.repairPreviewsNone'))
       }
@@ -763,7 +774,7 @@ export default function App() {
   return (
     <I18nProvider locale={locale}>
     <div
-      className={`app ${settings.blurPreviews ? 'blur-previews' : ''} ${theme === 'light' ? 'theme-light' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}`}
+      className={`app ${settings.blurPreviews ? 'blur-previews' : ''} ${theme === 'light' ? 'theme-light' : theme === 'gothic' ? 'theme-gothic' : theme === 'candy' ? 'theme-candy' : theme === 'aroma' ? 'theme-aroma' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}`}
     >
       {busy && (
         <AppBusyOverlay
@@ -832,7 +843,7 @@ export default function App() {
                 aria-pressed={downloadsPaused}
                 aria-label={downloadsPaused ? m.header.tooltipDownloadsResume : m.header.tooltipDownloadsPause}
               >
-                {m.header.downloadsPauseBtn}
+                <span className="downloads-pause-glyph" aria-hidden="true" />
               </button>
             </div>
           )}
@@ -994,6 +1005,7 @@ export default function App() {
             tagRules={tagRules}
             domain={settings.domain}
             defaultLinkDomain={settings.domain === 'red' ? 'red' : 'com'}
+            uiExtended={uiExtended}
             showBannedInGallery={settings.showBannedInGallery}
             onShowBannedChange={(show) => saveSettings({ showBannedInGallery: show })}
             onSaveTagRules={saveTagRules}
@@ -1110,6 +1122,7 @@ export default function App() {
         status={status}
         queue={queue}
         queuePaused={queuePaused}
+        uiExtended={uiExtended}
         deferredDownloads={deferred}
         inventory={inventory}
         extraMessage={backgroundStatus}

@@ -189,6 +189,9 @@ export function SettingsTab({
             >
               <option value="dark">{t('settings.options.themeDark')}</option>
               <option value="light">{t('settings.options.themeLight')}</option>
+              <option value="gothic">{t('settings.options.themeGothic')}</option>
+              <option value="candy">{t('settings.options.themeCandy')}</option>
+              <option value="aroma">{t('settings.options.themeAroma')}</option>
             </select>
           </div>
           <div className="field">

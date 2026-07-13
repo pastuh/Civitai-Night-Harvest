@@ -124,6 +124,9 @@ export const en = {
       langLt: 'Lietuvių',
       themeDark: 'Dark',
       themeLight: 'Light',
+      themeGothic: 'Gothic',
+      themeCandy: 'Candy',
+      themeAroma: 'Aroma',
       stripLayoutRow: 'Row (horizontal scroll)',
       stripLayoutGrid: 'Grid (wrapped rows)',
       stripLayoutMinimal: 'Minimal (compact list with inline progress)',
@@ -188,7 +191,7 @@ export const en = {
       browseSettledToEnd:
         'Owned, excluded (banned), and awaiting-access cards move to the bottom of Browse Results. Search matches keep their normal position.',
       browseSettledDimPercent:
-        'Lower opacity for settled cards (0% = off). Hover restores full brightness. Search matches stay fully visible.'
+        'How strongly settled cards are dimmed (0% = off, 100% = most dim). Hover restores full brightness. Search matches stay fully visible.'
     },
     actions: {
       slugSync: 'Rename library files to match format',
@@ -615,6 +618,7 @@ export const en = {
     busySyncingLibrary: 'Syncing library with disk…',
     bgCheckingPreviews: 'Checking library preview images…',
     previewsRestored: 'restored {count} preview image(s)',
+    ratingsRestored: 'filled {count} rating(s)',
     librarySyncPrefix: 'Library sync:',
     librarySyncExtra: 'Library sync: {summary}.',
     nextScanSoon: 'scan soon',
@@ -650,10 +654,12 @@ export const en = {
     enriched: 'updated metadata for {count} model(s)',
     hashed: 'computed SHA256 for {count} file(s)',
     previews: 'restored {count} preview(s)',
+    ratings: 'filled {count} rating(s)',
     allOk: 'Library sync: checked {count} model(s) in library — all OK.',
     summary: 'Library sync ({count} in library): {parts}.'
   },
   gallery: {
+    titleHeading: 'Library',
     title: 'Library ({shown}{total}{banned})',
     titleTotal: ' of {total}',
     titleBanned: ' · {count} banned',
@@ -663,6 +669,22 @@ export const en = {
     contentAll: 'All',
     contentSfw: 'SFW only',
     contentNsfw: 'NSFW only',
+    ratingFilter: {
+      all: 'All',
+      sfw: 'SFW',
+      nsfw: 'NSFW',
+      pg: 'PG',
+      'pg-13': 'PG-13',
+      r: 'R',
+      x: 'X',
+      xxx: 'XXX',
+      unrated: 'Unrated'
+    },
+    hideFolderAssigned: 'Hide folder-assigned',
+    hideFolderAssignedTitle: 'Hide models already moved to a tag folder',
+    setRating: 'Set content rating',
+    clearRating: 'Clear rating',
+    ratingUpdated: 'Content rating updated',
     sortTagGroup: 'By tag group',
     sortFolder: 'By folder tag',
     sortDownloads: 'By Civitai downloads',
@@ -701,10 +723,10 @@ export const en = {
     previewFiles: 'Preview downloaded files',
     preview: 'Preview',
     repairPreviews: 'Check previews',
-    repairPreviewsBusy: 'Checking previews…',
+    repairPreviewsBusy: 'Checking previews & ratings…',
     repairPreviewsTitle:
-      'Download missing preview.jpg / swarm thumbnails from Civitai for library models on disk',
-    repairPreviewsNone: 'All library previews look OK — nothing to download.',
+      'Download missing preview.jpg / swarm thumbnails and fill missing NSFW ratings from Civitai',
+    repairPreviewsNone: 'All library previews and ratings look OK — nothing to update.',
     openOnCivitai: 'Open on Civitai',
     checkpointType: 'Checkpoint type',
     statDownloads: 'Downloads',

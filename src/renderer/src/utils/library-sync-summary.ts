@@ -26,6 +26,9 @@ export function formatLibrarySyncSummary(inv: InventoryGetResult, locale: AppLoc
   if (inv.repairedPreviews && inv.repairedPreviews > 0) {
     parts.push(translate(locale, 'syncSummary.previews', { count: inv.repairedPreviews }))
   }
+  if (inv.repairedRatings && inv.repairedRatings > 0) {
+    parts.push(translate(locale, 'syncSummary.ratings', { count: inv.repairedRatings }))
+  }
   if (!parts.length) {
     return translate(locale, 'syncSummary.allOk', { count: checked })
   }

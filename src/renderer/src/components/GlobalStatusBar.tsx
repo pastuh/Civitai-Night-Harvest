@@ -33,6 +33,9 @@ interface Props {
 
   queuePaused: boolean
 
+  /** Extended UI shows detailed per-item status. Minimal shows only counts. */
+  uiExtended?: boolean
+
   deferredDownloads?: DeferredDownload[]
 
   inventory?: InventoryRecord[]
@@ -532,7 +535,9 @@ export function GlobalStatusBar({
 
   crawlProgress = null,
 
-  showReadyIdle = false
+  showReadyIdle = false,
+
+  uiExtended = false
 
 }: Props) {
 
@@ -773,11 +778,11 @@ export function GlobalStatusBar({
 
     const parts: string[] = []
 
-    if (activityLabel) parts.push(activityLabel)
-
     if (summary) parts.push(summary)
 
-    if (detail) {
+    if (uiExtended && activityLabel) parts.unshift(activityLabel)
+
+    if (uiExtended && detail) {
 
       if (downloading.length > 0) parts.push(detail)
 
@@ -797,7 +802,7 @@ export function GlobalStatusBar({
 
     return parts
 
-  }, [activityLabel, summary, detail, downloading.length, failed.length, queued.length, t])
+  }, [activityLabel, summary, detail, downloading.length, failed.length, queued.length, t, uiExtended])
 
 
 

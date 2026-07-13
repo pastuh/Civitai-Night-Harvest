@@ -555,19 +555,28 @@ export function initIpc(): void {
       }
       let items = inventory.getAllVersions()
       let repairedPreviews = 0
+      let repairedRatings = 0
       if (options?.repairPreviews) {
         const emitPreview = createThrottledProgressEmitter(
           () => mainWindow,
           'library:syncProgress',
           300
         )
-        repairedPreviews = await repairMissingPreviews(
+        const repair = await repairMissingPreviews(
           clientPool,
           items,
           options.maxRepairs ?? Infinity,
           emitPreview
         )
-        if (repairedPreviews > 0 || enrichedMeta > 0 || hashesBackfilled > 0 || importedFromDisk > 0) {
+        repairedPreviews = repair.repairedPreviews
+        repairedRatings = repair.repairedRatings
+        if (
+          repairedPreviews > 0 ||
+          repairedRatings > 0 ||
+          enrichedMeta > 0 ||
+          hashesBackfilled > 0 ||
+          importedFromDisk > 0
+        ) {
           items = inventory.getAllVersions()
         }
       }
@@ -575,6 +584,7 @@ export function initIpc(): void {
         items,
         removedMissing,
         repairedPreviews,
+        repairedRatings,
         enrichedMeta,
         hashesBackfilled,
         checked,
@@ -634,8 +644,11 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'inventory:patchNsfw',
-    (_e, payload: { versionId: number; isNsfw: boolean }) => {
-      inventory.patchVersionFileMeta(payload.versionId, { isNsfw: payload.isNsfw })
+    (_e, payload: { versionId: number; isNsfw?: boolean | null; nsfwLevel?: number | null }) => {
+      const patch: { isNsfw?: boolean | null; nsfwLevel?: number | null } = {}
+      if ('isNsfw' in payload) patch.isNsfw = payload.isNsfw
+      if ('nsfwLevel' in payload) patch.nsfwLevel = payload.nsfwLevel
+      inventory.patchVersionFileMeta(payload.versionId, patch)
     }
   )
 

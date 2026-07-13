@@ -149,6 +149,9 @@ function migrateInventorySchema(database: Database.Database): void {
   if (!hasCol('file_hash_sha256')) {
     database.exec(`ALTER TABLE versions ADD COLUMN file_hash_sha256 TEXT`)
   }
+  if (!hasCol('nsfw_level')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN nsfw_level INTEGER`)
+  }
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -185,6 +188,10 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     fileVariant: (row.file_variant as string) || undefined,
     trainingResolution: (row.training_resolution as string) || undefined,
     isNsfw: isNsfwRaw == null ? undefined : Boolean(isNsfwRaw),
+    nsfwLevel:
+      row.nsfw_level != null && (row.nsfw_level as number) > 0
+        ? (row.nsfw_level as number)
+        : undefined,
     awaitingSince: (row.awaiting_since as string) || undefined,
     civitaiDomain: (row.civitai_domain as 'com' | 'red') || 'com',
     downloadCount: (row.download_count as number | null) ?? undefined,
@@ -285,9 +292,9 @@ export function addVersion(record: InventoryRecord): void {
         model_id, version_id, slug, model_name, version_name, author, base_model,
         routing_tag, output_folder, model_path, preview_path, swarm_path, downloaded_at, ignored,
         civitai_tags, file_size_bytes, file_fp, file_variant, training_resolution, is_nsfw,
-        awaiting_since, civitai_domain, download_count, thumbs_up_count, checkpoint_type,
+        nsfw_level, awaiting_since, civitai_domain, download_count, thumbs_up_count, checkpoint_type,
         civitai_mode, file_hash_sha256
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       record.modelId,
@@ -310,6 +317,7 @@ export function addVersion(record: InventoryRecord): void {
       record.fileVariant ?? null,
       record.trainingResolution ?? null,
       record.isNsfw == null ? null : record.isNsfw ? 1 : 0,
+      record.nsfwLevel ?? null,
       record.awaitingSince ?? null,
       record.civitaiDomain ?? 'com',
       record.downloadCount ?? null,
@@ -329,7 +337,6 @@ export function patchVersionFileMeta(
       | 'fileFp'
       | 'fileVariant'
       | 'trainingResolution'
-      | 'isNsfw'
       | 'awaitingSince'
       | 'fileHashSha256'
       | 'downloadCount'
@@ -337,7 +344,7 @@ export function patchVersionFileMeta(
       | 'checkpointType'
       | 'civitaiMode'
     >
-  >
+  > & { isNsfw?: boolean | null; nsfwLevel?: number | null }
 ): void {
   const sets: string[] = []
   const vals: unknown[] = []
@@ -357,9 +364,17 @@ export function patchVersionFileMeta(
     sets.push('training_resolution = ?')
     vals.push(patch.trainingResolution)
   }
-  if (patch.isNsfw != null) {
+  if (patch.isNsfw === null) {
+    sets.push('is_nsfw = NULL')
+  } else if (patch.isNsfw != null) {
     sets.push('is_nsfw = ?')
     vals.push(patch.isNsfw ? 1 : 0)
+  }
+  if (patch.nsfwLevel === null) {
+    sets.push('nsfw_level = NULL')
+  } else if (patch.nsfwLevel !== undefined) {
+    sets.push('nsfw_level = ?')
+    vals.push(patch.nsfwLevel)
   }
   if (patch.awaitingSince != null) {
     sets.push('awaiting_since = ?')

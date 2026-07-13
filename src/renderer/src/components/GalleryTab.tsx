@@ -11,6 +11,13 @@ import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown } from '../
 import { aggregateResultTags, formatAuthorWithWeight, formatWaitDuration, getModelPageUrl, domainLabel } from '../../../shared/utils'
 import type { CivitaiDomain, CivitaiDomainSetting } from '../../../shared/types'
 import { describeNsfwRating } from '../../../shared/nsfw-rating'
+import {
+  countModelsByRatingFilter,
+  matchesRatingFilter,
+  patchForRatingLevel,
+  RATING_FILTER_OPTIONS,
+  type RatingFilter
+} from '../../../shared/rating-filter'
 import { useT } from '../i18n/context'
 import { folderForTag, findRuleForTag, formatTagRuleLabel, namesForRoutingFilter, parseTagRuleNames, ruleCoversTag, countInventoryInFolder } from '../../../shared/tag-routing'
 import {
@@ -28,6 +35,7 @@ interface Props {
   tagRules: TagFolderRule[]
   domain: CivitaiDomainSetting
   defaultLinkDomain: CivitaiDomain
+  uiExtended?: boolean
   showBannedInGallery: boolean
   onShowBannedChange: (show: boolean) => Promise<void>
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
@@ -68,7 +76,13 @@ type LibraryFilter =
   | { type: 'baseModel'; name: string }
 
 type LibrarySort = 'default' | 'folder' | 'tagGroup' | 'downloads'
-type LibraryNsfwFilter = 'all' | 'sfw' | 'nsfw'
+
+function routingTagShownSeparately(record: InventoryRecord): string | null {
+  const rt = record.routingTag?.trim()
+  if (!rt) return null
+  if (record.civitaiTags?.some((t) => isTagAssignedToRecord(rt, t))) return null
+  return rt
+}
 
 function aggregateModelTags(inventory: InventoryRecord[]): Array<{ name: string; count: number }> {
   const map = new Map<string, number>()
@@ -94,6 +108,7 @@ export function GalleryTab({
   tagRules,
   domain,
   defaultLinkDomain,
+  uiExtended = false,
   showBannedInGallery,
   onShowBannedChange,
   onSaveTagRules,
@@ -111,7 +126,8 @@ export function GalleryTab({
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>({ type: 'all' })
   const [librarySort, setLibrarySort] = useState<LibrarySort>('tagGroup')
-  const [nsfwFilter, setNsfwFilter] = useState<LibraryNsfwFilter>('all')
+  const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>('all')
+  const [hideFolderAssigned, setHideFolderAssigned] = useState(false)
   const [tagSearch, setTagSearch] = useState('')
   const [modelSearch, setModelSearch] = useState('')
   const [modelLetter, setModelLetter] = useState<string | null>(null)
@@ -128,6 +144,14 @@ export function GalleryTab({
   const bannedIds = useMemo(() => new Set(bannedList.map((b) => b.modelId)), [bannedList])
   const modelTags = useMemo(() => aggregateModelTags(inventory), [inventory])
   const tagClusters = useMemo(() => buildTagClusters(modelTags), [modelTags])
+
+  const libraryRatingCounts = useMemo(
+    () =>
+      countModelsByRatingFilter(
+        inventory.map((r) => ({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }))
+      ),
+    [inventory]
+  )
 
   const baseModelOptions = useMemo(() => {
     const map = new Map<string, number>()
@@ -252,14 +276,17 @@ export function GalleryTab({
     if (!showBannedInGallery && libraryFilter.type !== 'banned') {
       list = list.filter((r) => !bannedIds.has(r.modelId))
     }
-    if (nsfwFilter === 'sfw') {
-      list = list.filter((r) => r.isNsfw !== true)
-    } else if (nsfwFilter === 'nsfw') {
-      list = list.filter((r) => r.isNsfw === true)
+    if (nsfwFilter !== 'all') {
+      list = list.filter((r) =>
+        matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)
+      )
+    }
+    if (hideFolderAssigned) {
+      list = list.filter((r) => !r.routingTag?.trim())
     }
     list = list.filter((r) => matchesModelSearch(r))
     return list
-  }, [inventory, libraryFilter, showBannedInGallery, bannedIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter])
+  }, [inventory, libraryFilter, showBannedInGallery, bannedIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter, hideFolderAssigned])
 
   const sortedInventory = useMemo(() => {
     const list = [...filteredInventory]
@@ -400,12 +427,15 @@ export function GalleryTab({
     }
   }
 
-  const setNsfwRating = async (versionId: number, isNsfw: boolean) => {
+  const setRecordRating = async (
+    versionId: number,
+    patch: { isNsfw?: boolean | null; nsfwLevel?: number | null }
+  ) => {
     setContextMenu(null)
     try {
-      await window.api.patchVersionNsfw(versionId, isNsfw)
+      await window.api.patchVersionNsfw(versionId, patch)
       await onRefresh()
-      setMessage(isNsfw ? t('gallery.markedNsfw') : t('gallery.markedSfw'))
+      setMessage(t('gallery.ratingUpdated'))
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
     }
@@ -605,111 +635,125 @@ export function GalleryTab({
     <div className="gallery-layout">
       <div className="gallery-main">
         <section className="panel gallery-panel">
-          <div className="gallery-panel-head">
-          <div className="gallery-header">
-            <h2>
-              {t('gallery.title', {
-                shown: String(filteredInventory.length),
-                total:
-                  inventory.length !== filteredInventory.length
-                    ? t('gallery.titleTotal', { total: inventory.length })
-                    : '',
-                banned: bannedCount > 0 ? t('gallery.titleBanned', { count: bannedCount }) : ''
-              })}
-            </h2>
-            <label className="library-show-banned">
-              <input
-                type="checkbox"
-                checked={showBannedInGallery}
-                onChange={(e) => void onShowBannedChange(e.target.checked)}
-              />
-              {t('gallery.showBanned')}
-            </label>
-            {onRepairPreviews && inventory.length > 0 && (
-              <button
-                type="button"
-                className="btn-sm"
-                disabled={previewRepairBusy}
-                title={t('gallery.repairPreviewsTitle')}
-                onClick={() => void onRepairPreviews()}
-              >
-                {previewRepairBusy ? t('gallery.repairPreviewsBusy') : t('gallery.repairPreviews')}
-              </button>
-            )}
-            <label className="library-sort">
-              {t('gallery.contentLabel')}
-              <select
-                value={nsfwFilter}
-                onChange={(e) => setNsfwFilter(e.target.value as LibraryNsfwFilter)}
-              >
-                <option value="all">{t('gallery.contentAll')}</option>
-                <option value="sfw">{t('gallery.contentSfw')}</option>
-                <option value="nsfw">{t('gallery.contentNsfw')}</option>
-              </select>
-            </label>
-            <label className="library-sort">
-              {t('gallery.sortLabel')}
-              <select
-                value={librarySort}
-                onChange={(e) => setLibrarySort(e.target.value as LibrarySort)}
-              >
-                <option value="tagGroup">{t('gallery.sortTagGroup')}</option>
-                <option value="folder">{t('gallery.sortFolder')}</option>
-                <option value="downloads">{t('gallery.sortDownloads')}</option>
-                <option value="default">{t('gallery.sortDefault')}</option>
-              </select>
-            </label>
-          </div>
-          <div className="library-find-bar">
+          <div className="gallery-panel-head library-panel-head">
+          <div className="browse-results-title-row library-results-title-row">
+            <h2>{t('gallery.titleHeading')}</h2>
             <input
               type="search"
-              className="library-model-search"
+              className="browse-results-search library-model-search"
               value={modelSearch}
               onChange={(e) => setModelSearch(e.target.value)}
               placeholder={t('gallery.searchPlaceholder')}
+              aria-label={t('gallery.searchPlaceholder')}
             />
-            {(modelSearch || modelLetter) && (
-              <button
-                type="button"
-                className="btn-sm btn-ghost"
-                onClick={() => {
-                  setModelSearch('')
-                  setModelLetter(null)
-                }}
-              >
-                {t('gallery.clear')}
-              </button>
-            )}
-            <div className="library-letter-row" role="toolbar" aria-label={t('gallery.filterByLetter')}>
-              <button
-                type="button"
-                className={`library-letter ${modelLetter === null ? 'active' : ''}`}
-                onClick={() => setModelLetter(null)}
-              >
-                {t('gallery.allLetters')}
-              </button>
-              {'abcdefghijklmnopqrstuvwxyz'.split('').map((letter) => (
-                <button
-                  key={letter}
-                  type="button"
-                  className={`library-letter ${modelLetter === letter ? 'active' : ''}`}
-                  disabled={!modelSearchLetters.has(letter)}
-                  onClick={() => setModelLetter(modelLetter === letter ? null : letter)}
+            <div className="browse-results-filters-box">
+              <div className="browse-results-filters-row">
+                <label className="checkbox-field" title={t('gallery.showBanned')}>
+                  <input
+                    type="checkbox"
+                    checked={showBannedInGallery}
+                    onChange={(e) => void onShowBannedChange(e.target.checked)}
+                  />
+                  {t('gallery.showBanned')}
+                </label>
+                <label className="checkbox-field" title={t('gallery.hideFolderAssignedTitle')}>
+                  <input
+                    type="checkbox"
+                    checked={hideFolderAssigned}
+                    onChange={(e) => setHideFolderAssigned(e.target.checked)}
+                  />
+                  {t('gallery.hideFolderAssigned')}
+                </label>
+                {onRepairPreviews && inventory.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    disabled={previewRepairBusy}
+                    title={t('gallery.repairPreviewsTitle')}
+                    onClick={() => void onRepairPreviews()}
+                  >
+                    {previewRepairBusy ? t('gallery.repairPreviewsBusy') : t('gallery.repairPreviews')}
+                  </button>
+                )}
+                <select
+                  className={`browse-content-filter${nsfwFilter !== 'all' ? ' filtered' : ''}`}
+                  value={nsfwFilter}
+                  onChange={(e) => setNsfwFilter(e.target.value as RatingFilter)}
+                  title={t('gallery.contentLabel')}
                 >
-                  {letter.toUpperCase()}
+                  {RATING_FILTER_OPTIONS.map((opt) => (
+                    <option
+                      key={opt}
+                      value={opt}
+                      disabled={
+                        opt !== 'all' && opt !== nsfwFilter && libraryRatingCounts[opt] === 0
+                      }
+                    >
+                      {t(`gallery.ratingFilter.${opt}`)}
+                      {opt !== 'all' ? ` (${libraryRatingCounts[opt]})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="browse-results-controls-box">
+              <label className="library-sort browse-results-sort">
+                {t('gallery.sortLabel')}
+                <select
+                  value={librarySort}
+                  onChange={(e) => setLibrarySort(e.target.value as LibrarySort)}
+                >
+                  <option value="tagGroup">{t('gallery.sortTagGroup')}</option>
+                  <option value="folder">{t('gallery.sortFolder')}</option>
+                  <option value="downloads">{t('gallery.sortDownloads')}</option>
+                  <option value="default">{t('gallery.sortDefault')}</option>
+                </select>
+              </label>
+              {(modelSearch || modelLetter) && (
+                <button
+                  type="button"
+                  className="btn-sm btn-ghost"
+                  onClick={() => {
+                    setModelSearch('')
+                    setModelLetter(null)
+                  }}
+                >
+                  {t('gallery.clear')}
                 </button>
-              ))}
+              )}
             </div>
           </div>
-          <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-            {t('gallery.helpText')}
-          </p>
+          <div className="library-letter-row" role="toolbar" aria-label={t('gallery.filterByLetter')}>
+            <button
+              type="button"
+              className={`library-letter ${modelLetter === null ? 'active' : ''}`}
+              onClick={() => setModelLetter(null)}
+            >
+              {t('gallery.allLetters')}
+            </button>
+            {'abcdefghijklmnopqrstuvwxyz'.split('').map((letter) => (
+              <button
+                key={letter}
+                type="button"
+                className={`library-letter ${modelLetter === letter ? 'active' : ''}`}
+                disabled={!modelSearchLetters.has(letter)}
+                onClick={() => setModelLetter(modelLetter === letter ? null : letter)}
+              >
+                {letter.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          {uiExtended && (
+            <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              {t('gallery.helpText')}
+            </p>
+          )}
           {selected.size > 0 ? (
             <span className="muted gallery-selection-hint">{t('gallery.selectedHint', { count: selected.size })}</span>
           ) : (
             <span className="gallery-selection-hint" aria-hidden />
           )}
-          {syncMessage && <p className="muted">{syncMessage}</p>}
+          {uiExtended && syncMessage && <p className="muted">{syncMessage}</p>}
           {message && <p>{message}</p>}
           </div>
           <div className="gallery-main-scroll">
@@ -724,20 +768,29 @@ export function GalleryTab({
               {sortedInventory.map((record) => {
                 const banned = isBanned(record.modelId)
                 const metaExtra = inventoryMetaExtra(record)
-                const nsfwLabel =
-                  record.isNsfw != null
-                    ? describeNsfwRating(record.isNsfw).label
+                const ratingInfo =
+                  record.isNsfw != null || record.nsfwLevel
+                    ? describeNsfwRating(record.isNsfw, record.nsfwLevel)
                     : null
+                const separateRoutingTag = routingTagShownSeparately(record)
                 return (
                   <div
                     key={record.versionId}
                     ref={(el) => setCardRef(record.versionId, el)}
-                    className={`gallery-card ${selected.has(record.versionId) ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlightVersionId === record.versionId ? 'highlight' : ''}`}
+                    className={`gallery-card library-card ${selected.has(record.versionId) ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlightVersionId === record.versionId ? 'highlight' : ''}`}
                     onClick={() => toggleSelect(record.versionId)}
                     onContextMenu={(e) =>
                       openContextMenu(e, record.modelId, record.modelName, record.versionId)
                     }
                   >
+                    {ratingInfo ? (
+                      <span
+                        className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
+                        title={`Content: ${ratingInfo.label}`}
+                      >
+                        {ratingInfo.label}
+                      </span>
+                    ) : null}
                     <input
                       type="checkbox"
                       checked={selected.has(record.versionId)}
@@ -752,15 +805,7 @@ export function GalleryTab({
                         {civitaiModeBadgeLabel(record.civitaiMode)}
                       </span>
                     )}
-                    <button
-                      type="button"
-                      className="gallery-thumb-wrap"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setPreviewRecord(record)
-                      }}
-                      title={t('gallery.previewFiles')}
-                    >
+                    <div className="gallery-thumb-wrap" aria-hidden="true">
                       {record.previewPath ? (
                         <img
                           src={window.api.toMediaUrl(record.previewPath)}
@@ -770,11 +815,21 @@ export function GalleryTab({
                       ) : (
                         <div className="gallery-thumb placeholder" />
                       )}
-                      <span className="gallery-preview-label">{t('gallery.preview')}</span>
-                    </button>
+                    </div>
                     <div className="gallery-card-body">
                       <div className="gallery-card-title-row">
                         <strong title={record.modelName}>{record.modelName}</strong>
+                        <button
+                          type="button"
+                          className="gallery-detail-btn"
+                          title={t('gallery.modelDetails')}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setPreviewRecord(record)
+                          }}
+                        >
+                          ℹ
+                        </button>
                         <button
                           type="button"
                           className="gallery-web-btn-inline"
@@ -824,14 +879,11 @@ export function GalleryTab({
                           {formatWaitDuration(record.awaitingSince, record.downloadedAt)}
                         </div>
                       )}
-                      {nsfwLabel && record.isNsfw && (
-                        <span className={`nsfw-rating-badge tier-mature inline-badge`}>{nsfwLabel}</span>
-                      )}
-                      {record.routingTag ? (
-                        <span className="tag-chip selected">{record.routingTag}</span>
-                      ) : (
+                      {separateRoutingTag ? (
+                        <span className="tag-chip selected">{separateRoutingTag}</span>
+                      ) : !record.routingTag?.trim() ? (
                         <span className="muted">{t('gallery.defaultFolder')}</span>
-                      )}
+                      ) : null}
                       {(record.civitaiTags?.length ?? 0) > 0 && (
                         <div className="tag-row library-card-tags">
                           {record.civitaiTags!.map((tag) => {
@@ -849,6 +901,7 @@ export function GalleryTab({
                                 disabled={moving}
                                 onClick={(e) => {
                                   e.stopPropagation()
+                                  if (assigned) return
                                   void assignCivitaiTagToFolder(tag, record.versionId)
                                 }}
                               >
@@ -889,7 +942,8 @@ export function GalleryTab({
             className={`sidebar-tag ${filterActive({ type: 'all' }) ? 'active' : ''}`}
             onClick={() => setLibraryFilter({ type: 'all' })}
           >
-            {t('gallery.allModels')}
+            <span className="tag-name">{t('gallery.allModels')}</span>
+            <span className="muted tag-count-inline">{inventory.length}</span>
           </button>
           <button
             type="button"
@@ -1058,15 +1112,62 @@ export function GalleryTab({
             {contextMenu.versionId != null && (
               <>
                 <div className="context-menu-divider" />
+                <div className="context-menu-subtitle">{t('gallery.setRating')}</div>
                 <button
-                  {...contextMenuButtonProps(() => void setNsfwRating(contextMenu.versionId!, false))}
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, { isNsfw: false, nsfwLevel: null })
+                  )}
                 >
                   {t('gallery.markSfw')}
                 </button>
                 <button
-                  {...contextMenuButtonProps(() => void setNsfwRating(contextMenu.versionId!, true))}
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(1))
+                  )}
+                >
+                  PG
+                </button>
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(2))
+                  )}
+                >
+                  PG-13
+                </button>
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(4))
+                  )}
+                >
+                  R
+                </button>
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(8))
+                  )}
+                >
+                  X
+                </button>
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(16))
+                  )}
+                >
+                  XXX
+                </button>
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, { isNsfw: true })
+                  )}
                 >
                   {t('gallery.markNsfw')}
+                </button>
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void setRecordRating(contextMenu.versionId!, { isNsfw: false, nsfwLevel: null })
+                  )}
+                >
+                  {t('gallery.clearRating')}
                 </button>
               </>
             )}
