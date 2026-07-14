@@ -538,7 +538,12 @@ export class DownloadQueue {
       return ''
     }
     const hiddenTags = settings.hiddenTags ?? []
-    if (modelHasHiddenTag(meta.civitaiTags ?? [], hiddenTags)) return ''
+    if (
+      meta.manual !== true &&
+      modelHasHiddenTag(meta.civitaiTags ?? [], hiddenTags)
+    ) {
+      return ''
+    }
     if (request.versionId && this.hasActiveItem(request.versionId)) {
       const existing = this.items.find(
         (i) =>
@@ -607,6 +612,7 @@ export class DownloadQueue {
     let removed = 0
     for (const item of [...this.items]) {
       if (item.status === 'done' || item.status === 'skipped') continue
+      if (item.manual) continue
       if (!queueItemBlockedByHiddenTags(item, tags)) continue
       if (item.status === 'downloading') {
         if (item.versionId) this.downloadService.cancel(item.versionId)

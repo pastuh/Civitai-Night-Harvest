@@ -212,7 +212,7 @@ export function WatchRulesTab({
   const [draft, setDraft] = useState<WatchRule[]>(rules)
   const [enums, setEnums] = useState<CivitaiEnums | null>(null)
   const [testResult, setTestResult] = useState<WatchRuleTestResult | null>(null)
-  const [browseFilter, setBrowseFilter] = useState<ContentFilter>('sfw')
+  const [browseFilter, setBrowseFilter] = useState<ContentFilter>('all')
   const [testingId, setTestingId] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null)

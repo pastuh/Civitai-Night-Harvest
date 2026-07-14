@@ -32,6 +32,26 @@ function applyBackfillDefaultMigration(): void {
   store.set('backfillCatalogDefaultV1', true)
 }
 
+function applyContentFilterAllDefaultMigration(): void {
+  if (store.get('contentFilterAllDefaultV1')) return
+  const settings = { ...DEFAULT_SETTINGS, ...store.get('settings') } as AppSettings & {
+    includeNsfw?: boolean
+    contentFilter?: ContentFilter
+  }
+  if (!settings.contentFilter || settings.contentFilter === 'sfw') {
+    settings.contentFilter = 'all'
+    store.set('settings', settings)
+  }
+  const rules = store.get('watchRules', []).map((r) => {
+    const raw = r as Record<string, unknown>
+    const cf = raw.contentFilter
+    if (cf === 'all' || cf === 'nsfw') return r
+    return { ...raw, contentFilter: 'all' as ContentFilter }
+  })
+  store.set('watchRules', rules)
+  store.set('contentFilterAllDefaultV1', true)
+}
+
 function applyManualDownloadPolicyMigration(): void {
   if (store.get('manualDownloadPolicyV1')) return
   const settings = { ...DEFAULT_SETTINGS, ...store.get('settings') }
@@ -58,10 +78,11 @@ function migrateOutputFolderSettings(raw: AppSettings): AppSettings {
 
 export function getSettings(): AppSettings {
   applyManualDownloadPolicyMigration()
+  applyContentFilterAllDefaultMigration()
   applyBackfillDefaultMigration()
   const raw = migrateOutputFolderSettings({ ...DEFAULT_SETTINGS, ...store.get('settings') } as AppSettings & { includeNsfw?: boolean })
   if (!raw.contentFilter) {
-    raw.contentFilter = raw.includeNsfw ? 'all' : 'sfw'
+    raw.contentFilter = 'all'
   }
   if (raw.showBannedInGallery === undefined) {
     raw.showBannedInGallery = false
@@ -169,7 +190,7 @@ export function toPublicSettings(settings: AppSettings): AppSettingsPublic {
       ? migrated.contentFilter
       : legacy.includeNsfw
         ? 'all'
-        : 'sfw'
+        : 'all'
   const loraOutputFolder = migrated.loraOutputFolder.trim()
   const checkpointOutputFolder = migrated.checkpointOutputFolder.trim()
   return {
@@ -195,7 +216,7 @@ function migrateContentFilter(raw: Record<string, unknown>): ContentFilter {
   if (raw.contentFilter === 'all' || raw.contentFilter === 'sfw' || raw.contentFilter === 'nsfw') {
     return raw.contentFilter
   }
-  return raw.includeNsfw ? 'all' : 'sfw'
+  return 'all'
 }
 
 function migrateWatchRule(raw: Record<string, unknown>): WatchRule {

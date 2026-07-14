@@ -872,7 +872,7 @@ export function SearchBrowsePanel({
     return 'browse.galleryAwaitingDetail'
   })()
 
-  const showEmptyHint = !gridModels.length && !resultsUpdating && ruleScopedModels.length > 0
+  const showEmptyHint = !gridModels.length && ruleScopedModels.length > 0
 
   const pipelineVersionIds = useMemo(() => {
     const ids = new Set<number>()
@@ -1051,7 +1051,6 @@ export function SearchBrowsePanel({
   const enqueueModel = useCallback(
     async (model: WatchRuleTestModel) => {
       if (model.inInventory || isBanned(model)) return
-      if (modelHasHiddenTag(model.tags, hiddenTags)) return
 
       const existing = queueItemFor(model)
       if (existing?.status === 'queued') {
@@ -1107,7 +1106,7 @@ export function SearchBrowsePanel({
         setQueuingId(null)
       }
     },
-    [isBanned, queueItemFor, routingTag, tagRules, hiddenTags]
+    [isBanned, queueItemFor, routingTag, tagRules]
   )
 
   const hideTagFromBrowse = useCallback(
@@ -1793,7 +1792,7 @@ export function SearchBrowsePanel({
           </div>
 
           {!gridModels.length && showEmptyHint && (
-            <div className="browse-empty-hint">
+            <div className={`browse-empty-hint${resultsUpdating ? ' browse-empty-hint-updating' : ''}`}>
               {ruleScopedModels.length > 0 ? (
                 <>
                   <strong>{t('browse.noModelsMatchFiltersTitle')}</strong>

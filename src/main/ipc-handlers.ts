@@ -726,7 +726,10 @@ export function initIpc(): void {
     if (!folder) {
       throw new Error('Set the output folder for this model type in Settings first')
     }
-    if (modelHasHiddenTag(meta?.civitaiTags ?? [], settings.hiddenTags ?? [])) {
+    if (
+      meta?.manual !== true &&
+      modelHasHiddenTag(meta?.civitaiTags ?? [], settings.hiddenTags ?? [])
+    ) {
       return ''
     }
     const id = downloadQueue.enqueue(request, meta)
