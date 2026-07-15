@@ -808,15 +808,23 @@ export const lt: Messages = {
     title: 'Tag → aplankas',
     lead:
       'Pažymėkite tagus — maršrutizuoja atsisiuntimus ir perkelia nesurūšiuotus bibliotekos modelius į {LoRA}/{base modelis}/{aplankas}. Rankiniu būdu Bibliotekoje padėti modeliai praleidžiami.',
-    searchPlaceholder: 'Ieškoti tagų bibliotekoje…',
+    searchPlaceholder: 'Ieškoti ar pridėti tagų…',
     clearSearch: 'Išvalyti tagų paiešką',
+    addTag: 'Pridėti',
+    addTagHint:
+      'Pridėti tagą(-us) į lentelę — kableliais; sujungia su jau esamais (be dublikatų)',
     folderFilterPlaceholder: 'Filtruoti pagal aplanką (pvz. checkpoint)…',
     clearFolderFilter: 'Išvalyti aplanko filtrą',
     searchPlaceholderMass: 'Ieškoti tagų priskyrimui…',
     hideAssigned: 'Slėpti anksčiau priskirtus',
+    hideSingles: 'Slėpti tagus su 1 modeliu',
     massAssign: 'Masinis priskyrimas',
+    massAssignOff: 'Mass Off',
+    massAssignOn: 'Mass On',
+    massAssignTitle:
+      'Masinis priskyrimas — lieka įjungtas kol išjungsite; pažymėkite tagus, aplanką, Taikyti',
     massAssignHint:
-      'Ieškokite tagų viršuje, pažymėkite lentelėje, įveskite aplanko pavadinimą ir spauskite Taikyti.',
+      'Mass režimas įjungtas: ieškokite tagų, pažymėkite lentelėje, įveskite aplanką ir spauskite Taikyti.',
     massFolderPlaceholder: 'Aplanko pavadinimas (pvz. style)',
     confirmFolder: 'Taikyti aplanko pavadinimą',
     massAssignApply: 'Taikyti {count} tag.',
@@ -835,7 +843,7 @@ export const lt: Messages = {
     noTags: 'Bibliotekoje dar nėra tagų',
     customTitle: 'Custom aplankų priskyrimai',
     customHint:
-      'Visiškai custom keliai už numatytų LoRA/Checkpoint šaknų. Kableliais atskirti tag sinonimai (pvz. tool, tools).',
+      'Prideda eilutę šiame bloke: pasirinkite bet kokį diską kelio už numatytų LoRA/Checkpoint šaknų, įrašykite tag sinonimus (kableliais) ir spauskite Save. Tuščios eilutės neišsaugomos, kol neužpildytos.',
     customEmpty: 'Nėra custom kelių — pridėkite apačioje, jei reikia.',
     ruleTags: 'Tag pavadinimai (kableliais)',
     ruleTagsPlaceholder: 'fantasy style, horror style, style',
@@ -862,6 +870,11 @@ export const lt: Messages = {
       'Išsaugota {count} tag. → {folder}; perkelta {moved}, praleista {skipped} (rankinis/jau surūšiuota)',
     transferring: 'Perkeliami modeliai pagal tag į aplanką…',
     renameFolderHint: 'Spustelėkite, kad pakeistumėte aplanko pavadinimą',
+    renameTagHint:
+      'Spustelėkite, kad pervadintumėte (rodomas vardas — atitikimas lieka pagal originalų Civitai tagą)',
+    confirmRenameTag: 'Taikyti tago pavadinimą',
+    removeTagHint: 'Pašalinti tagą iš lentelės (ir jo maršrutizavimo taisyklę, jei yra)',
+    tagRenamed: 'Pervadinta „{from}“ → „{to}“',
     ruleSaved: 'Maršrutizacija išsaugota tagui „{tag}“',
     moving: 'Perkeliami „{tag}“ modeliai ({count})…',
     movingMass: 'Perkeliami {count} tag. modeliai…',

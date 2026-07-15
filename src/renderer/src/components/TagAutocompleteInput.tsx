@@ -15,6 +15,8 @@ interface Props {
   /** Optional inline confirm control (e.g. folder name commit). */
   onConfirm?: () => void
   confirmLabel?: string
+  /** When set, confirm shows this label instead of ✓ (wider button). */
+  confirmText?: string
   /** Show × to clear the field when it has text. */
   clearable?: boolean
   clearLabel?: string
@@ -45,6 +47,7 @@ export function TagAutocompleteInput({
   onKeyDown: onKeyDownProp,
   onConfirm,
   confirmLabel,
+  confirmText,
   clearable = false,
   clearLabel,
   singleTag = false,
@@ -147,6 +150,7 @@ export function TagAutocompleteInput({
   const showClear = clearable && value.length > 0
   const fieldMods = [
     onConfirm ? 'has-confirm' : '',
+    confirmText ? 'has-confirm-text' : '',
     showClear ? 'has-clear' : ''
   ]
     .filter(Boolean)
@@ -205,14 +209,14 @@ export function TagAutocompleteInput({
         {onConfirm && (
           <button
             type="button"
-            className="tag-autocomplete-confirm"
+            className={`tag-autocomplete-confirm${confirmText ? ' tag-autocomplete-confirm-text' : ''}`}
             title={confirmLabel}
             aria-label={confirmLabel}
             disabled={disabled || !value.trim()}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onConfirm()}
           >
-            ✓
+            {confirmText ?? '✓'}
           </button>
         )}
       </div>

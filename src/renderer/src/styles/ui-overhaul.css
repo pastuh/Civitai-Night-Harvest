@@ -2870,11 +2870,14 @@ label.field-label {
 .tag-library-count {
   font-size: 11px;
   white-space: nowrap;
+  margin-left: auto;
+  align-self: center;
 }
 
 .tag-library-letters {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 2px;
   margin-bottom: var(--space-sm);
 }
@@ -2962,12 +2965,25 @@ label.field-label {
   padding-right: 44px;
 }
 
+/* Text confirm ("Add") — leave room for button + clear × */
+.tag-autocomplete-field.has-confirm-text.has-confirm input {
+  padding-right: 56px;
+}
+
+.tag-autocomplete-field.has-clear.has-confirm-text.has-confirm input {
+  padding-right: 80px;
+}
+
 .tag-autocomplete-clear {
   right: 4px;
 }
 
 .tag-autocomplete-field.has-confirm .tag-autocomplete-clear {
   right: 24px;
+}
+
+.tag-autocomplete-field.has-confirm-text.has-confirm .tag-autocomplete-clear {
+  right: 56px;
 }
 
 .tag-autocomplete-confirm {
@@ -2986,6 +3002,7 @@ label.field-label {
   line-height: 1;
   cursor: pointer;
   flex: none;
+  z-index: 1;
 }
 
 .tag-autocomplete-confirm:hover:not(:disabled) {
@@ -2997,6 +3014,18 @@ label.field-label {
 .tag-autocomplete-confirm:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.tag-autocomplete-confirm-text {
+  width: auto;
+  min-width: 42px;
+  max-width: 72px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .tag-autocomplete-list {
@@ -3159,8 +3188,46 @@ label.field-label {
 }
 
 .tags-col-actions {
-  width: 36px;
+  width: 56px;
   text-align: right;
+  white-space: nowrap;
+}
+
+.tags-name-edit-btn {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tags-name-edit-btn:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tags-name-edit-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.tags-col-name .tags-name-autocomplete {
+  width: 100%;
+  min-width: 120px;
+}
+
+.tags-col-name .tags-name-autocomplete input {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.tags-remove-tag-btn {
+  margin-left: 2px;
 }
 
 .tags-col-folder code.tags-folder-label,
@@ -3260,7 +3327,6 @@ label.field-label {
   accent-color: var(--warn);
 }
 
-.tags-mass-toggle,
 .tags-hide-assigned-toggle {
   display: flex;
   align-items: center;
@@ -3270,10 +3336,56 @@ label.field-label {
   cursor: pointer;
 }
 
+.tags-toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.tags-mass-mode-toggle {
+  font-size: 10px;
+  font-weight: 600;
+  min-height: 26px;
+  min-width: 4.75rem;
+  padding: 0 8px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.tags-mass-mode-off {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.tags-mass-mode-off:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 25%, var(--border));
+}
+
+.tags-mass-mode-on {
+  background: color-mix(in srgb, var(--warn) 24%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--warn) 65%, var(--border));
+  color: var(--warn);
+}
+
+.tags-mass-mode-on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn) 34%, var(--surface2));
+  border-color: var(--warn);
+}
+
 .tag-library-toolbar .tag-autocomplete {
   flex: 0 1 160px;
   min-width: 120px;
   max-width: 200px;
+}
+
+.tag-library-toolbar .tag-library-search.tag-autocomplete {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 360px;
 }
 
 .tag-library-toolbar .tag-library-folder-filter {
