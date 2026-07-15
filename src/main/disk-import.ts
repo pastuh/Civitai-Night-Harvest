@@ -92,25 +92,32 @@ function listModelFilesInFolder(folder: string): Array<{ slug: string; modelPath
   return found
 }
 
-function walkModelFiles(
+async function walkModelFiles(
   folder: string,
   depth: number,
-  out: Array<{ slug: string; modelPath: string; ext: string; folder: string }>
-): void {
+  out: Array<{ slug: string; modelPath: string; ext: string; folder: string }>,
+  onWalkProgress?: (found: number) => void
+): Promise<void> {
   if (depth > MAX_SCAN_DEPTH) return
   for (const entry of listModelFilesInFolder(folder)) {
     out.push({ ...entry, folder })
   }
-  let entries: string[]
+  onWalkProgress?.(out.length)
+
+  let entries: import('fs').Dirent[]
   try {
     entries = readdirSync(folder, { withFileTypes: true })
   } catch {
     return
   }
+
+  let visited = 0
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     if (entry.name.startsWith('.')) continue
-    walkModelFiles(join(folder, entry.name), depth + 1, out)
+    await walkModelFiles(join(folder, entry.name), depth + 1, out, onWalkProgress)
+    visited++
+    if (visited % 4 === 0) await yieldToEventLoop()
   }
 }
 
@@ -206,8 +213,32 @@ export async function importModelsFromDisk(
   const candidates: Array<{ slug: string; modelPath: string; ext: string; folder: string }> = []
   const seenPaths = new Set<string>()
 
-  for (const root of roots) {
-    walkModelFiles(root, 0, candidates)
+  onProgress?.({
+    phase: 'import',
+    current: 0,
+    total: 0,
+    modelName: '…',
+    action: `Scanning ${roots.length} folder root(s)…`
+  })
+
+  for (let r = 0; r < roots.length; r++) {
+    const root = roots[r]
+    onProgress?.({
+      phase: 'import',
+      current: 0,
+      total: 0,
+      modelName: basename(root),
+      action: `Walking folders (${r + 1}/${roots.length})…`
+    })
+    await walkModelFiles(root, 0, candidates, (found) => {
+      onProgress?.({
+        phase: 'import',
+        current: found,
+        total: 0,
+        modelName: basename(root),
+        action: `Found ${found} model file(s)…`
+      })
+    })
     await yieldToEventLoop()
   }
 

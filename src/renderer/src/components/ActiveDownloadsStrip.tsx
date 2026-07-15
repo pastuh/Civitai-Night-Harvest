@@ -358,7 +358,7 @@ function DownloadQueueRichCard({
   )
 }
 
-function StripClearQueueButton({
+export function StripClearQueueButton({
   clearing,
   onClearQueue
 }: {
@@ -378,6 +378,7 @@ function StripClearQueueButton({
     </button>
   )
 }
+
 
 export function ActiveDownloadsStrip({
   queue,

@@ -224,12 +224,31 @@ export function SettingsTab({
           formatValue={(v) => `${v}px`}
         />
         <div className="field">
+          <label className="field-label">{t('settings.fields.downloadStripVisibility')}</label>
+          <select
+            value={draft.downloadStripVisibility ?? 'off'}
+            onChange={(e) =>
+              update(
+                'downloadStripVisibility',
+                e.target.value as AppSettingsPublic['downloadStripVisibility']
+              )
+            }
+          >
+            <option value="off">{t('settings.options.stripVisibilityOff')}</option>
+            <option value="browse">{t('settings.options.stripVisibilityBrowse')}</option>
+            <option value="browseAndLibrary">{t('settings.options.stripVisibilityBrowseLibrary')}</option>
+            <option value="always">{t('settings.options.stripVisibilityAlways')}</option>
+          </select>
+          <span className="muted settings-field-note">{t('settings.notes.downloadStripVisibility')}</span>
+        </div>
+        <div className="field">
           <label className="field-label">{t('settings.fields.downloadStripLayout')}</label>
           <select
             value={draft.downloadStripLayout ?? 'minimal'}
             onChange={(e) =>
               update('downloadStripLayout', e.target.value as AppSettingsPublic['downloadStripLayout'])
             }
+            disabled={(draft.downloadStripVisibility ?? 'off') === 'off'}
           >
             <option value="horizontal">{t('settings.options.stripLayoutRow')}</option>
             <option value="grid">{t('settings.options.stripLayoutGrid')}</option>

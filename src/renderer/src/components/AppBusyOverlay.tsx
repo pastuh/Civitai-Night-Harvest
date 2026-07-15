@@ -28,21 +28,22 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
   const progress = syncProgress ?? null
   const total = progress?.total ?? 0
   const current = progress?.current ?? 0
-  const hasTotal = total > 0
+  const hasTotal = Boolean(progress) && total > 0
   const pct = hasTotal ? Math.min(100, Math.round((current / total) * 100)) : 0
-  const phase = progress?.phase ?? 'checking'
-  const phaseLabel = phaseLabels[phase]
-  const modelLine = progress?.modelName?.trim() ? trimBusyLine(progress.modelName) : '…'
-  const actionLine = progress?.action?.trim() ? trimBusyLine(progress.action, 40) : null
+  const phaseLabel = progress ? phaseLabels[progress.phase] : t('appBusy.phasePreparing')
+  const modelLine = progress?.modelName?.trim() ? trimBusyLine(progress.modelName) : null
+  const actionLine = progress?.action?.trim() ? trimBusyLine(progress.action, 48) : null
 
   const contextHint =
-    phase === 'rename'
+    progress?.phase === 'rename'
       ? t('appBusy.renameHint')
-      : phase === 'preview'
+      : progress?.phase === 'preview'
         ? t('appBusy.previewHint')
-        : progress
-          ? t('appBusy.syncHint')
-          : null
+        : progress?.phase === 'checking'
+          ? t('appBusy.checkingHint')
+          : progress
+            ? t('appBusy.syncHint')
+            : t('appBusy.preparingHint')
 
   return (
     <div className="app-busy-overlay" role="alertdialog" aria-modal="true" aria-busy="true">
@@ -50,23 +51,26 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
         <strong>{message}</strong>
         {subMessage && <p className="app-busy-submessage muted">{subMessage}</p>}
 
-        <div className="app-busy-sync-progress">
+        <div className={`app-busy-sync-progress${progress ? '' : ' is-preparing'}`}>
           <div className="app-busy-sync-head">
             <span className="app-busy-phase-label">{phaseLabel}</span>
-            <span className="app-busy-pct">{hasTotal ? `${pct}%` : '—'}</span>
+            <span className="app-busy-pct">{hasTotal ? `${pct}%` : progress ? '…' : '—'}</span>
           </div>
           <div
-            className="app-busy-progress-bar"
+            className={`app-busy-progress-bar${hasTotal ? '' : ' is-indeterminate'}`}
             role="progressbar"
-            aria-valuenow={pct}
+            aria-valuenow={hasTotal ? pct : undefined}
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <div className="app-busy-progress-fill" style={{ width: `${hasTotal ? pct : 0}%` }} />
+            <div
+              className="app-busy-progress-fill"
+              style={hasTotal ? { width: `${pct}%` } : undefined}
+            />
           </div>
           <div className="app-busy-sync-meta">
             <span className="app-busy-sync-count">
-              {hasTotal ? `${current} / ${total}` : '—'}
+              {hasTotal ? `${current} / ${total}` : progress ? '…' : '—'}
             </span>
             {actionLine && (
               <span className="muted app-busy-sync-action" title={progress?.action}>
@@ -74,9 +78,11 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
               </span>
             )}
           </div>
-          <p className="muted app-busy-sync-file" title={progress?.modelName}>
-            {modelLine}
-          </p>
+          {modelLine && (
+            <p className="muted app-busy-sync-file" title={progress?.modelName}>
+              {modelLine}
+            </p>
+          )}
         </div>
 
         <div className="app-busy-hint-stack">

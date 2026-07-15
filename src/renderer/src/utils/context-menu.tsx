@@ -9,7 +9,11 @@ export function contextMenuButtonProps(onAction: () => void) {
       if (e.button !== 0) return
       e.preventDefault()
       e.stopPropagation()
-      onAction()
+      // Close + run on the next task so the menu unmounts immediately,
+      // even if onAction starts a slow IPC call.
+      window.setTimeout(() => {
+        onAction()
+      }, 0)
     }
   }
 }

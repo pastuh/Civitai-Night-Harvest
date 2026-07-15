@@ -26,6 +26,7 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
   { refKey: 'browseSettledDimPercent', fieldKey: 'settings.fields.browseSettledDimPercent' },
   { refKey: 'queueGridSize', fieldKey: 'settings.fields.queueGridSize' },
+  { refKey: 'downloadStripVisibility', fieldKey: 'settings.fields.downloadStripVisibility' },
   { refKey: 'downloadStripLayout', fieldKey: 'settings.fields.downloadStripLayout' },
   { refKey: 'hashVerify', fieldKey: 'settings.fields.hashVerify' }
 ]

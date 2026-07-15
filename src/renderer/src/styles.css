@@ -215,10 +215,27 @@ label {
 
 .tabs {
   display: flex;
-  gap: 4px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 20px 0;
   border-bottom: 1px solid var(--chrome-border, var(--border));
   background: var(--chrome-bg, var(--header-bg, var(--bg)));
+}
+
+.tabs-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tabs-trailing {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding-bottom: 6px;
 }
 
 .tab {
@@ -838,12 +855,27 @@ th {
   margin: 10px 0 8px;
 }
 
+.app-busy-progress-bar.is-indeterminate .app-busy-progress-fill {
+  width: 40%;
+  min-width: 40%;
+  animation: app-busy-indeterminate 1.1s ease-in-out infinite;
+}
+
 .app-busy-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 85%, #000), var(--accent));
   border-radius: 4px;
   transition: width 0.25s ease-out;
   min-width: 2px;
+}
+
+@keyframes app-busy-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
 }
 
 .app-busy-sync-meta {

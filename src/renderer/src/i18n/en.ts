@@ -117,6 +117,7 @@ export const en = {
       hashVerify: 'Library hash verify',
       galleryGridSize: 'Gallery card size (px)',
       queueGridSize: 'Download strip card size (px)',
+      downloadStripVisibility: 'Download queue strip',
       downloadStripLayout: 'Download strip layout',
       slugFormat: 'File naming (slug)',
       activityLogVerbosity: 'Logging detail',
@@ -130,6 +131,10 @@ export const en = {
       themeGothic: 'Gothic',
       themeCandy: 'Candy',
       themeAroma: 'Aroma',
+      stripVisibilityOff: 'Hidden (Clear queue in tabs)',
+      stripVisibilityBrowse: 'Browse tab',
+      stripVisibilityBrowseLibrary: 'Browse + Library',
+      stripVisibilityAlways: 'All tabs',
       stripLayoutRow: 'Row (horizontal scroll)',
       stripLayoutGrid: 'Grid (wrapped rows)',
       stripLayoutMinimal: 'Minimal (compact list with inline progress)',
@@ -318,6 +323,8 @@ export const en = {
         'Browse Results — dim settled cards (0% = off). Hover restores brightness; search matches stay fully visible.',
       queueGridSize:
         'Download strip card width (thumbnail size) for Row and Grid layouts. Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).',
+      downloadStripVisibility:
+        'Default Hidden: no top queue strip — Clear queue sits on the right of the tab bar. Enable Browse / Browse+Library / All tabs to show the full download strip (Clear queue moves into the strip).',
       downloadStripLayout:
         'Row = horizontal scroll cards · Grid = wrapped card grid · Minimal = vertical list with thumbnail, status column, separator, and name; progress fill stops at the separator when complete.'
     },
@@ -555,7 +562,7 @@ export const en = {
   },
   activity: {
     title: 'Activity log',
-    lead: 'Click a model name to open it in Library (if downloaded). Use filters or search to narrow results.',
+    lead: 'By default only this session is shown. Pick a date (or All time) for older entries. Click a model name to open it in Library.',
     searchPlaceholder: 'Search message, model ID, keyword…',
     timePreset: 'Time range',
     dateFrom: 'From',
@@ -582,6 +589,7 @@ export const en = {
       error: 'Error'
     },
     time: {
+      session: 'This session',
       all: 'All time',
       today: 'Today',
       '24h': 'Last 24 hours',
@@ -620,6 +628,7 @@ export const en = {
     busyCheckingRules: 'Checking enabled Browse rules…',
     busySyncingLibrary: 'Syncing library with disk…',
     bgCheckingPreviews: 'Checking library preview images…',
+    bgScanningDisk: 'Scanning folders for new models…',
     previewsRestored: 'restored {count} preview image(s)',
     ratingsRestored: 'filled {count} rating(s)',
     librarySyncPrefix: 'Library sync:',
@@ -636,12 +645,16 @@ export const en = {
     apiRunning: '{label} · API request running'
   },
   appBusy: {
+    phasePreparing: 'Preparing…',
     phaseImport: 'Scanning disk for models',
-    phaseChecking: 'Checking files on disk',
+    phaseChecking: 'Checking library files',
     phaseMetadata: 'Reading file metadata',
     phaseHash: 'Computing SHA256 hashes',
     phaseRename: 'Renaming library files',
     phasePreview: 'Checking library previews',
+    preparingHint: 'Loading settings and inventory — progress appears when the disk check starts.',
+    checkingHint:
+      'Verifying that each library model file still exists on disk (e.g. 250 / 1200). Deleted files are removed from the inventory.',
     renameHint: 'Renaming model files on disk — this runs once and finishes when the summary appears.',
     syncHint:
       'Library sync matches your inventory with files on disk — removes entries for deleted files, fills in size/resolution, and computes missing SHA256 hashes (for verification later).',
@@ -905,7 +918,7 @@ export const en = {
     ratingUnknown: '{count} unknown',
     detailMore: '(+{count} more)',
     bytesReceived: '{bytes} received',
-    readyWaitingFetch: 'Ready — waiting for Scan or Harvest'
+    readyWaitingFetch: 'Ready — waiting for first Browse page from Civitai…'
   }
 } as const
 

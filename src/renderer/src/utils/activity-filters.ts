@@ -19,7 +19,7 @@ export const ACTIVITY_SOURCES: ActivitySource[] = [
   'system'
 ]
 
-export type ActivityTimePreset = 'all' | 'today' | '24h' | '7d'
+export type ActivityTimePreset = 'session' | 'all' | 'today' | '24h' | '7d'
 
 export function categoriesPresentInLog(entries: ActivityEntry[]): ActivityCategory[] {
   const set = new Set<ActivityCategory>()
@@ -61,11 +61,12 @@ export function preFilterForCounts(
   search: string,
   timePreset: ActivityTimePreset,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  sessionStartedAt = 0
 ): ActivityEntry[] {
   const q = search.trim().toLowerCase()
   return entries.filter((entry) => {
-    if (!passesTimeFilter(entry, timePreset, dateFrom, dateTo)) return false
+    if (!passesTimeFilter(entry, timePreset, dateFrom, dateTo, sessionStartedAt)) return false
     if (!q) return true
     const haystack = [
       entry.message,
@@ -136,7 +137,8 @@ export function passesTimeFilter(
   entry: ActivityEntry,
   preset: ActivityTimePreset,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  sessionStartedAt = 0
 ): boolean {
   const ts = Date.parse(entry.timestamp)
   if (Number.isNaN(ts)) return true
@@ -152,6 +154,9 @@ export function passesTimeFilter(
   if (dateFrom || dateTo) return true
 
   if (preset === 'all') return true
+  if (preset === 'session') {
+    return sessionStartedAt > 0 ? ts >= sessionStartedAt : true
+  }
   const now = Date.now()
   if (preset === '24h') return now - ts <= 86_400_000
   if (preset === '7d') return now - ts <= 7 * 86_400_000
@@ -173,9 +178,11 @@ export function filterActivityEntries(
     levels: Record<ActivityLevel, boolean>
     sources: Record<ActivitySource, boolean>
     categories: Record<ActivityCategory, boolean>
+    sessionStartedAt?: number
   }
 ): ActivityEntry[] {
   const q = options.search.trim().toLowerCase()
+  const sessionStartedAt = options.sessionStartedAt ?? 0
 
   return entries.filter((entry) => {
     const level = entry.level
@@ -184,7 +191,17 @@ export function filterActivityEntries(
     const source = entry.source ?? 'system'
     if (!options.sources[source]) return false
 
-    if (!passesTimeFilter(entry, options.timePreset, options.dateFrom, options.dateTo)) return false
+    if (
+      !passesTimeFilter(
+        entry,
+        options.timePreset,
+        options.dateFrom,
+        options.dateTo,
+        sessionStartedAt
+      )
+    ) {
+      return false
+    }
 
     const cats = classifyActivityEntry(entry)
     if (!cats.some((c) => options.categories[c] !== false)) return false

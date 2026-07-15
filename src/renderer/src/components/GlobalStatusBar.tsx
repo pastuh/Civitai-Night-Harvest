@@ -778,9 +778,11 @@ export function GlobalStatusBar({
 
     const parts: string[] = []
 
-    if (summary) parts.push(summary)
+    // Always show scan/fetch/idle labels — even in minimal UI (otherwise the bar
+    // stays empty while Civitai is loading the first Browse page).
+    if (activityLabel) parts.push(activityLabel)
 
-    if (uiExtended && activityLabel) parts.unshift(activityLabel)
+    if (summary && summary !== activityLabel) parts.push(summary)
 
     if (uiExtended && detail) {
 

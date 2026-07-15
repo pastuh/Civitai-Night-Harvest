@@ -9,6 +9,8 @@ const WRITE_HIGH_WATER_MARK = 4 * 1024 * 1024
 const MULTIPART_MIN_BYTES = 2 * 1024 * 1024
 const DEFAULT_STREAMS = 8
 const MAX_STREAMS = 32
+/** Cap progress callbacks so UI/IPC stays light during fast single-stream transfers. */
+const PROGRESS_REPORT_MS = 250
 
 const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -187,7 +189,7 @@ async function downloadMultipart(
   const report = () => {
     const received = partDone.reduce((sum, n) => sum + n, 0)
     const now = Date.now()
-    if (received >= total || now - lastReportAt >= 250) {
+    if (received >= total || now - lastReportAt >= PROGRESS_REPORT_MS) {
       lastReportAt = now
       onProgress?.(Math.min(received, total), total)
     }
@@ -265,6 +267,7 @@ async function downloadSingle(
     const fileStream = createWriteStream(tmpPath, { highWaterMark: WRITE_HIGH_WATER_MARK })
     let received = 0
     let checkedHtml = false
+    let lastReportAt = 0
 
     const progressTap = new Transform({
       transform(chunk, _encoding, callback) {
@@ -277,13 +280,18 @@ async function downloadSingle(
         }
         clearTimeout(firstByteTimer)
         received += chunk.length
-        onProgress?.(received, total)
+        const now = Date.now()
+        if (now - lastReportAt >= PROGRESS_REPORT_MS || (total > 0 && received >= total)) {
+          lastReportAt = now
+          onProgress?.(received, total)
+        }
         callback(null, chunk)
       }
     })
 
     try {
       await pipeline(nodeBody, progressTap, fileStream)
+      onProgress?.(received, total)
     } catch (err) {
       if (!checkedHtml && existsSync(tmpPath)) {
         try {

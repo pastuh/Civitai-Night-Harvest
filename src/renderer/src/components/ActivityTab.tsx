@@ -25,6 +25,8 @@ interface Props {
   inventory?: InventoryRecord[]
   watchRules?: WatchRule[]
   onJumpToModel?: (modelId: number) => void
+  /** Renderer session start (ms) — default time filter shows only this session. */
+  sessionStartedAt?: number
 }
 
 const SOURCE_LABELS: Record<ActivitySource, string> = {
@@ -125,14 +127,21 @@ function ActivityEntryMeta({
   )
 }
 
-export function ActivityTab({ entries, status, inventory = [], watchRules = [], onJumpToModel }: Props) {
+export function ActivityTab({
+  entries,
+  status,
+  inventory = [],
+  watchRules = [],
+  onJumpToModel,
+  sessionStartedAt = 0
+}: Props) {
   const t = useT()
   const nameToModelId = useMemo(() => buildModelNameIndex(inventory), [inventory])
 
   const presentCategories = useMemo(() => categoriesPresentInLog(entries), [entries])
 
   const [search, setSearch] = useState('')
-  const [timePreset, setTimePreset] = useState<ActivityTimePreset>('all')
+  const [timePreset, setTimePreset] = useState<ActivityTimePreset>('session')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [levels, setLevels] = useState(defaultLevels)
@@ -150,8 +159,8 @@ export function ActivityTab({ entries, status, inventory = [], watchRules = [], 
   )
 
   const countPool = useMemo(
-    () => preFilterForCounts(entries, search, timePreset, dateFrom, dateTo),
-    [entries, search, timePreset, dateFrom, dateTo]
+    () => preFilterForCounts(entries, search, timePreset, dateFrom, dateTo, sessionStartedAt),
+    [entries, search, timePreset, dateFrom, dateTo, sessionStartedAt]
   )
 
   const levelCounts = useMemo(() => countByLevel(countPool), [countPool])
@@ -167,23 +176,24 @@ export function ActivityTab({ entries, status, inventory = [], watchRules = [], 
         dateTo,
         levels,
         sources,
-        categories
+        categories,
+        sessionStartedAt
       }),
-    [entries, search, timePreset, dateFrom, dateTo, levels, sources, categories]
+    [entries, search, timePreset, dateFrom, dateTo, levels, sources, categories, sessionStartedAt]
   )
 
   const isAtDefaults = useMemo(() => {
     if (search.trim()) return false
-    if (timePreset !== 'all' || dateFrom || dateTo) return false
+    if (timePreset !== 'session' || dateFrom || dateTo) return false
     if (!recordsEqual(levels, defaultLevels())) return false
     if (!recordsEqual(sources, defaultSources())) return false
     if (Object.keys(categoryOverrides).length > 0) return false
     return true
-  }, [search, timePreset, dateFrom, dateTo, levels, categoryOverrides])
+  }, [search, timePreset, dateFrom, dateTo, levels, sources, categoryOverrides])
 
   const applyDefaults = () => {
     setSearch('')
-    setTimePreset('all')
+    setTimePreset('session')
     setDateFrom('')
     setDateTo('')
     setLevels(defaultLevels())
@@ -231,10 +241,11 @@ export function ActivityTab({ entries, status, inventory = [], watchRules = [], 
               disabled={Boolean(dateFrom || dateTo)}
               title={t('activity.timePreset')}
             >
-              <option value="all">{t('activity.time.all')}</option>
+              <option value="session">{t('activity.time.session')}</option>
               <option value="today">{t('activity.time.today')}</option>
               <option value="24h">{t('activity.time.24h')}</option>
               <option value="7d">{t('activity.time.7d')}</option>
+              <option value="all">{t('activity.time.all')}</option>
             </select>
             <label className="activity-date-field activity-date-field-compact">
               <span className="muted">{t('activity.dateFrom')}</span>

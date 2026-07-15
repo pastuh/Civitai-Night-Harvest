@@ -119,6 +119,7 @@ export const lt: Messages = {
       hashVerify: 'Bibliotekos hash tikrinimas',
       galleryGridSize: 'Galerijos kortelės dydis (px)',
       queueGridSize: 'Download juostos kortelės dydis (px)',
+      downloadStripVisibility: 'Download queue juosta',
       downloadStripLayout: 'Download juostos išdėstymas',
       slugFormat: 'Failų pavadinimai (slug)',
       activityLogVerbosity: 'Logavimo detalumas',
@@ -132,6 +133,10 @@ export const lt: Messages = {
       themeGothic: 'Gothic',
       themeCandy: 'Candy',
       themeAroma: 'Aroma',
+      stripVisibilityOff: 'Paslėpta (Clear queue tab juostoje)',
+      stripVisibilityBrowse: 'Browse skirtukas',
+      stripVisibilityBrowseLibrary: 'Browse + Library',
+      stripVisibilityAlways: 'Visi skirtukai',
       stripLayoutRow: 'Eilė (horizontalus scroll)',
       stripLayoutGrid: 'Tinklelis (kelios eilės)',
       stripLayoutMinimal: 'Minimal (kompaktinis sąrašas su progresu)',
@@ -322,6 +327,8 @@ export const lt: Messages = {
         'Browse Results — pritemdyti settled korteles (0% = išjungta). Hover atstatyti ryškumą; paieška lieka ryški.',
       queueGridSize:
         'Download juostos kortelės plotis (miniatiūra) Row ir Grid režimams. Didesnėms kortelėms reikia aukštesnės juostos.',
+      downloadStripVisibility:
+        'Pagal nutylėjimą juostos nėra — Clear queue dešinėje prie tabų. Įjunkite Browse / Browse+Library / Visus tabus, kad matytumėte pilną download juostą (Clear queue tada bus juostoje).',
       downloadStripLayout:
         'Row = horizontalus scroll · Grid = kortelių tinklelis · Minimal = vertikalus sąrašas su miniatiūra, statuso stulpeliu, skirtuku ir pavadinimu; progresas baigiasi ties skirtuku.'
     },
@@ -562,7 +569,7 @@ export const lt: Messages = {
   },
   activity: {
     title: 'Veiklos logas',
-    lead: 'Spustelėkite modelio pavadinimą Library (jei atsisiųstas). Naudokite filtrus ar paiešką.',
+    lead: 'Pagal nutylėjimą rodoma tik ši sesija. Senesniems įrašams pasirinkite datą arba „Visas laikas“. Spustelėkite modelio pavadinimą Library.',
     searchPlaceholder: 'Ieškoti žinutėje, modelio ID, raktažodyje…',
     timePreset: 'Laiko intervalas',
     dateFrom: 'Nuo',
@@ -589,6 +596,7 @@ export const lt: Messages = {
       error: 'Klaida'
     },
     time: {
+      session: 'Ši sesija',
       all: 'Visas laikas',
       today: 'Šiandien',
       '24h': 'Paskutinės 24 val.',
@@ -627,6 +635,7 @@ export const lt: Messages = {
     busyCheckingRules: 'Tikrinamos įjungtos Browse taisyklės…',
     busySyncingLibrary: 'Sinchronizuojama biblioteka su disku…',
     bgCheckingPreviews: 'Tikrinamos bibliotekos preview nuotraukos…',
+    bgScanningDisk: 'Skenuojami aplankai naujiems modeliams…',
     previewsRestored: 'atstatyta {count} preview nuotrauka(-os)',
     ratingsRestored: 'užpildyta {count} reitingo(-ų)',
     librarySyncPrefix: 'Bibliotekos sync:',
@@ -643,12 +652,16 @@ export const lt: Messages = {
     apiRunning: '{label} · vyksta API užklausa'
   },
   appBusy: {
+    phasePreparing: 'Ruošiamasi…',
     phaseImport: 'Skenuojamas diskas dėl modelių',
-    phaseChecking: 'Tikrinami failai diske',
+    phaseChecking: 'Tikrinami bibliotekos failai',
     phaseMetadata: 'Skaitomi failų metaduomenys',
     phaseHash: 'Skaičiuojami SHA256 hash',
     phaseRename: 'Pervadinami bibliotekos failai',
     phasePreview: 'Tikrinamos bibliotekos preview',
+    preparingHint: 'Kraunami nustatymai ir inventorius — progress pasirodys, kai prasidės disko tikrinimas.',
+    checkingHint:
+      'Tikrinama, ar kiekvienas bibliotekos modelio failas dar yra diske (pvz. 250 / 1200). Ištrinti failai pašalinami iš inventoriaus.',
     renameHint: 'Pervadinami modelių failai diske — baigsis, kai pasirodys santrauka.',
     syncHint:
       'Bibliotekos sync suderina inventorių su failais diske — pašalina ištrintus, papildo dydį/raišką ir skaičiuoja trūkstamus SHA256 hash.',
@@ -914,6 +927,6 @@ export const lt: Messages = {
     ratingUnknown: '{count} nežinoma',
     detailMore: '(+{count} daugiau)',
     bytesReceived: 'gauta {bytes}',
-    readyWaitingFetch: 'Paruošta — laukia Scan arba Harvest'
+    readyWaitingFetch: 'Paruošta — laukiama pirmo Browse puslapio iš Civitai…'
   }
 }

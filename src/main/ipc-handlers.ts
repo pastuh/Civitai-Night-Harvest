@@ -520,7 +520,14 @@ export function initIpc(): void {
     'inventory:getAll',
     async (
       _e,
-      options?: { repairPreviews?: boolean; maxRepairs?: number; syncDisk?: boolean; skipHashBackfill?: boolean }
+      options?: {
+        repairPreviews?: boolean
+        maxRepairs?: number
+        syncDisk?: boolean
+        skipHashBackfill?: boolean
+        skipDiskImport?: boolean
+        diskImportOnly?: boolean
+      }
     ) => {
       let removedMissing = 0
       let enrichedMeta = 0
@@ -533,13 +540,15 @@ export function initIpc(): void {
         const emitSync = createThrottledProgressEmitter(
           () => mainWindow,
           'library:syncProgress',
-          300
+          200
         )
         const settings = getSettings()
         const sync = await syncInventoryWithDiskAsync(emitSync, {
           loraFolder: settings.loraOutputFolder,
           checkpointFolder: settings.checkpointOutputFolder,
-          tagRules: getTagRules()
+          tagRules: getTagRules(),
+          skipDiskImport: options.skipDiskImport,
+          diskImportOnly: options.diskImportOnly
         })
         removedMissing = sync.removedMissing
         enrichedMeta = sync.enrichedMeta
@@ -547,7 +556,7 @@ export function initIpc(): void {
         importedFromDisk = sync.importedFromDisk
         relinkedFromDisk = sync.relinkedFromDisk
         diskScanned = sync.diskScanned
-        if (!options?.skipHashBackfill) {
+        if (!options?.skipHashBackfill && !options?.diskImportOnly) {
           hashesBackfilled = await backfillMissingHashes(50, (p) =>
             emitSync({
               phase: 'hash',

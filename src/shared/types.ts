@@ -13,6 +13,9 @@ export type AppTheme = 'dark' | 'light' | 'gothic' | 'candy' | 'aroma'
 /** Download strip card layout */
 export type DownloadStripLayout = 'horizontal' | 'grid' | 'minimal'
 
+/** Where the top download-queue card strip is shown. Clear-queue stays available when off. */
+export type DownloadStripVisibility = 'off' | 'browse' | 'browseAndLibrary' | 'always'
+
 /** Filename slug pattern for downloads and rename sync */
 export type SlugFormat = 'compact' | 'versionName' | 'modelTitle'
 
@@ -77,6 +80,8 @@ export interface AppSettings {
   queueGridMinPx: number
   /** Download strip cards: horizontal scroll row or wrapped grid */
   downloadStripLayout: DownloadStripLayout
+  /** Which tabs show the download-queue strip (default off — reduces UI work while downloading) */
+  downloadStripVisibility: DownloadStripVisibility
   /** Filename slug pattern for new downloads and rename sync */
   slugFormat: SlugFormat
   /** How much to write to the activity log (SQLite + UI) */
@@ -131,6 +136,7 @@ export interface AppSettingsPublic {
   galleryGridMinPx: number
   queueGridMinPx: number
   downloadStripLayout: DownloadStripLayout
+  downloadStripVisibility: DownloadStripVisibility
   slugFormat: SlugFormat
   activityLogVerbosity: ActivityLogVerbosity
   activityLogTopics?: Partial<ActivityLogTopicFlags>
@@ -171,6 +177,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   galleryGridMinPx: 160,
   queueGridMinPx: 160,
   downloadStripLayout: 'minimal',
+  downloadStripVisibility: 'off',
   slugFormat: 'versionName',
   activityLogVerbosity: 'minimal',
   browseSettledToEnd: false,
@@ -675,6 +682,16 @@ export interface InventoryGetOptions {
   syncDisk?: boolean
   /** Skip SHA256 backfill during sync (faster startup background sync) */
   skipHashBackfill?: boolean
+  /**
+   * Skip walking output folders for new/orphan files.
+   * Useful for fast startup — still verifies inventory paths exist.
+   */
+  skipDiskImport?: boolean
+  /**
+   * Only walk disk for new models (no per-inventory existsSync pass).
+   * Used as a background follow-up after a fast startup check.
+   */
+  diskImportOnly?: boolean
   repairPreviews?: boolean
   maxRepairs?: number
 }

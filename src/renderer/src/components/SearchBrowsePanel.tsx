@@ -221,6 +221,8 @@ export function SearchBrowsePanel({
   const [queuingId, setQueuingId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
   const [localBanned, setLocalBanned] = useState<Set<number>>(new Set())
+  /** Optimistic unban overrides — m.isBanned from crawl data can stay stale until remapped. */
+  const [localUnbanned, setLocalUnbanned] = useState<Set<number>>(new Set())
   const [previewOverrides, setPreviewOverrides] = useState<
     Record<number, { previewUrl?: string; previewUrls: string[] }>
   >({})
@@ -439,7 +441,11 @@ export function SearchBrowsePanel({
     })
   }
 
-  const isBanned = (m: WatchRuleTestModel) => m.isBanned || localBanned.has(m.id)
+  const isBanned = (m: WatchRuleTestModel) => {
+    if (localBanned.has(m.id)) return true
+    if (localUnbanned.has(m.id)) return false
+    return Boolean(m.isBanned)
+  }
 
   const ownedVersionIds = useMemo(
     () => new Set(inventory.map((r) => r.versionId)),
@@ -489,7 +495,7 @@ export function SearchBrowsePanel({
         isBanned: isBanned(m),
         inInventory: m.inInventory || ownedVersionIds.has(m.versionId)
       })),
-    [modelsWithPreviews, localBanned, ownedVersionIds]
+    [modelsWithPreviews, localBanned, localUnbanned, ownedVersionIds]
   )
 
   const ruleKeywordExtras = useMemo(() => {
@@ -755,7 +761,7 @@ export function SearchBrowsePanel({
     }
     return aggregateResultTags(models)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tagCatalogTick bumps when pages merge
-  }, [tagCatalogTick, localBanned, ownedVersionIds, queue, isBanned])
+  }, [tagCatalogTick, localBanned, localUnbanned, ownedVersionIds, queue, isBanned])
 
   const filteredTagCatalog = useMemo(() => {
     const q = tagSearch.trim()
@@ -840,17 +846,23 @@ export function SearchBrowsePanel({
   const deferredCount = deferredAwaitingCount
 
   const awaitingFirstCrawlData =
-    Boolean(result.crawlSource) &&
     result.sampleModels.length === 0 &&
-    (appStatus === 'scanning' || appStatus === 'checking') &&
-    crawlPageMeta?.catalogComplete !== true
+    crawlPageMeta?.catalogComplete !== true &&
+    (Boolean(result.crawlSource) ||
+      browseGalleryAwaiting ||
+      appStatus === 'scanning' ||
+      appStatus === 'checking' ||
+      crawlProgress != null ||
+      crawlFetching)
 
   const resultsUpdating =
     loadingMore ||
     awaitingFirstCrawlData ||
     crawlProgress?.phase === 'fetching' ||
     crawlProgress?.phase === 'fetching-tags' ||
-    (crawlFetching && !crawlProgress && gridModels.length === 0)
+    crawlProgress?.phase === 'waiting' ||
+    (crawlFetching && gridModels.length === 0) ||
+    (browseGalleryAwaiting && gridModels.length === 0 && ruleScopedModels.length === 0)
 
   const resultsAwaitingReload =
     browseGalleryAwaiting &&
@@ -858,20 +870,27 @@ export function SearchBrowsePanel({
     ruleScopedModels.length === 0 &&
     !resultsUpdating
 
+  const galleryLoadingEmpty =
+    !gridModels.length &&
+    ruleScopedModels.length === 0 &&
+    (resultsUpdating || resultsAwaitingReload)
+
   const galleryAwaitingDetailKey = (() => {
     const harvestActive =
       nightMode &&
       (crawlProgress?.phase === 'fetching' ||
         crawlProgress?.phase === 'fetching-tags' ||
         crawlProgress?.phase === 'waiting' ||
-        crawlFetching)
+        crawlFetching ||
+        browseGalleryAwaiting)
     if (harvestActive) return 'browse.galleryAwaitingDetailHarvest'
     const fetchActive =
       appStatus === 'scanning' ||
       appStatus === 'checking' ||
       crawlProgress?.phase === 'fetching' ||
       crawlProgress?.phase === 'fetching-tags' ||
-      crawlProgress?.phase === 'waiting'
+      crawlProgress?.phase === 'waiting' ||
+      resultsUpdating
     if (fetchActive) return 'browse.galleryAwaitingDetailActive'
     return 'browse.galleryAwaitingDetail'
   })()
@@ -934,7 +953,7 @@ export function SearchBrowsePanel({
         owned++
         continue
       }
-      if (m.isBanned || localBanned.has(m.id)) {
+      if (isBanned(m)) {
         excluded++
         continue
       }
@@ -965,7 +984,7 @@ export function SearchBrowsePanel({
       ownedOfDownloadablePct:
         owned + missingEligible > 0 ? Math.round((owned / (owned + missingEligible)) * 100) : 0
     }
-  }, [ruleScopedModels, hiddenTags, awaitingAccessVersionIds, localBanned])
+  }, [ruleScopedModels, hiddenTags, awaitingAccessVersionIds, localBanned, localUnbanned])
 
   const showBrowseStatsDebug =
     uiExtended && (eligibleNotQueuedCount > 0 || failedCount > 0 || downloadingCount > 0)
@@ -1053,8 +1072,10 @@ export function SearchBrowsePanel({
   )
 
   const enqueueModel = useCallback(
-    async (model: WatchRuleTestModel) => {
-      if (model.inInventory || isBanned(model)) return
+    async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean }) => {
+      if (model.inInventory) return
+      if (!opts?.allowAfterUnban && isBanned(model)) return
+      setContextMenu(null)
 
       const existing = queueItemFor(model)
       if (existing?.status === 'queued') {
@@ -1138,6 +1159,11 @@ export function SearchBrowsePanel({
 
   const banModel = async (model: WatchRuleTestModel) => {
     setLocalBanned((prev) => new Set(prev).add(model.id))
+    setLocalUnbanned((prev) => {
+      const next = new Set(prev)
+      next.delete(model.id)
+      return next
+    })
     onBrowseModelBanChange?.(model.id, true)
     setMessage(t('gallery.banned', { name: model.name }))
     setContextMenu(null)
@@ -1166,6 +1192,11 @@ export function SearchBrowsePanel({
       }
       void (async () => {
         setLocalBanned((prev) => new Set(prev).add(modelId))
+        setLocalUnbanned((prev) => {
+          const next = new Set(prev)
+          next.delete(modelId)
+          return next
+        })
         onBrowseModelBanChange?.(modelId, true)
         setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
         try {
@@ -1187,16 +1218,27 @@ export function SearchBrowsePanel({
 
   const unbanModel = async (model: WatchRuleTestModel) => {
     setContextMenu(null)
+    setLocalBanned((prev) => {
+      const next = new Set(prev)
+      next.delete(model.id)
+      return next
+    })
+    setLocalUnbanned((prev) => new Set(prev).add(model.id))
+    onBrowseModelBanChange?.(model.id, false)
+    setMessage(t('gallery.unbanned', { name: model.name }))
     try {
       await window.api.unbanModel(model.id)
-      setLocalBanned((prev) => {
+      // “Unban — allow downloads”: queue + start when downloads aren’t paused.
+      if (!model.inInventory) {
+        await enqueueModel({ ...model, isBanned: false }, { allowAfterUnban: true })
+      }
+    } catch (err) {
+      setLocalUnbanned((prev) => {
         const next = new Set(prev)
         next.delete(model.id)
         return next
       })
-      onBrowseModelBanChange?.(model.id, false)
-      setMessage(t('gallery.unbanned', { name: model.name }))
-    } catch (err) {
+      onBrowseModelBanChange?.(model.id, true)
       setMessage(err instanceof Error ? err.message : String(err))
     }
   }
@@ -1220,7 +1262,11 @@ export function SearchBrowsePanel({
   }
 
   return (
-    <div className="search-browse search-browse-layout browse-results-panel">
+    <div
+      className={`search-browse search-browse-layout browse-results-panel${
+        galleryLoadingEmpty ? ' is-loading-empty' : ''
+      }`}
+    >
       <div className="search-browse-header">
         <div className="search-browse-header-main">
         <div className="search-browse-title">
@@ -1272,6 +1318,14 @@ export function SearchBrowsePanel({
                 />
                 {t('browse.hideExcluded')}
               </label>
+              <label className="checkbox-field" title={t('browse.hideAwaitingTitle')}>
+                <input
+                  type="checkbox"
+                  checked={hideAwaitingAccess}
+                  onChange={(e) => setHideAwaitingAccess(e.target.checked)}
+                />
+                {t('browse.hideAwaitingAccess')}
+              </label>
               {hiddenTags.length > 0 && (
                 <label className="checkbox-field" title={t('browse.showBlockedTitle')}>
                   <input
@@ -1282,14 +1336,6 @@ export function SearchBrowsePanel({
                   {t('browse.showBlocked')}
                 </label>
               )}
-              <label className="checkbox-field" title={t('browse.hideAwaitingTitle')}>
-                <input
-                  type="checkbox"
-                  checked={hideAwaitingAccess}
-                  onChange={(e) => setHideAwaitingAccess(e.target.checked)}
-                />
-                {t('browse.hideAwaitingAccess')}
-              </label>
               {onBanFunctionModeChange && (
                 <button
                   type="button"
@@ -1744,12 +1790,14 @@ export function SearchBrowsePanel({
           </div>
         </div>
 
-      <div className="search-browse-body">
+      <div className={`search-browse-body${galleryLoadingEmpty ? ' is-loading-empty' : ''}`}>
         <div className="gallery-main search-browse-main">
-          {resultsAwaitingReload && (
-            <div className="browse-gallery-awaiting-banner" role="status">
+          {galleryLoadingEmpty && (
+            <div className="browse-gallery-loading" role="status" aria-live="polite">
+              <span className="browse-gallery-loading-spinner" aria-hidden />
+              <strong>{t('browse.fetchingFirstPage')}</strong>
               <p className="muted">{t(galleryAwaitingDetailKey)}</p>
-              {onRunScan && (
+              {resultsAwaitingReload && onRunScan && (
                 <button type="button" className="btn-sm primary" onClick={() => void onRunScan()}>
                   {t('header.scan')}
                 </button>

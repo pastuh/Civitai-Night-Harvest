@@ -156,6 +156,14 @@ export function getSettings(): AppSettings {
   ) {
     raw.downloadStripLayout = 'minimal'
   }
+  if (
+    raw.downloadStripVisibility !== 'off' &&
+    raw.downloadStripVisibility !== 'browse' &&
+    raw.downloadStripVisibility !== 'browseAndLibrary' &&
+    raw.downloadStripVisibility !== 'always'
+  ) {
+    raw.downloadStripVisibility = 'off'
+  }
   if (raw.banFunctionMode === undefined) {
     raw.banFunctionMode = false
   }

@@ -73,6 +73,7 @@ export function repairBrokenInventoryPaths(): number {
 
 export function resetLibraryDiskSyncCache(): void {
   lastDiskSyncAt = 0
+  lastFullImportAt = 0
 }
 
 /** Re-download preview.jpg for on-disk models missing a preview image; backfill missing ratings. */
@@ -264,9 +265,19 @@ export function syncInventoryWithDisk(): { removedMissing: number; enrichedMeta:
   }
 }
 
+type LibraryDiskSyncOptions = {
+  loraFolder?: string
+  checkpointFolder?: string
+  tagRules?: TagFolderRule[]
+  /** Skip walking folders for new files (fast startup check). */
+  skipDiskImport?: boolean
+  /** Only import new on-disk models; skip inventory existsSync / metadata pass. */
+  diskImportOnly?: boolean
+}
+
 export async function syncInventoryWithDiskAsync(
   onProgress?: (p: LibrarySyncProgress) => void,
-  options?: { loraFolder?: string; checkpointFolder?: string; tagRules?: TagFolderRule[] }
+  options?: LibraryDiskSyncOptions
 ): Promise<{
   removedMissing: number
   enrichedMeta: number
@@ -287,10 +298,11 @@ let diskSyncPromise: Promise<{
   diskScanned: number
 }> | null = null
 let lastDiskSyncAt = 0
+let lastFullImportAt = 0
 
 async function runLibraryDiskSync(
   onProgress?: (p: LibrarySyncProgress) => void,
-  options?: { loraFolder?: string; checkpointFolder?: string; tagRules?: TagFolderRule[] }
+  options?: LibraryDiskSyncOptions
 ): Promise<{
   removedMissing: number
   enrichedMeta: number
@@ -302,7 +314,13 @@ async function runLibraryDiskSync(
   if (diskSyncPromise) return diskSyncPromise
 
   const now = Date.now()
-  if (now - lastDiskSyncAt < 60_000 && !options?.loraFolder && !options?.checkpointFolder) {
+  // Coalesce duplicate full syncs within 60s (same process).
+  if (
+    now - lastDiskSyncAt < 60_000 &&
+    now - lastFullImportAt < 60_000 &&
+    !options?.diskImportOnly &&
+    !options?.skipDiskImport
+  ) {
     const records = inventory.getAllVersions()
     return {
       removedMissing: 0,
@@ -316,6 +334,7 @@ async function runLibraryDiskSync(
 
   diskSyncPromise = syncInventoryWithDiskInner(onProgress, options).finally(() => {
     lastDiskSyncAt = Date.now()
+    if (!options?.skipDiskImport) lastFullImportAt = lastDiskSyncAt
     diskSyncPromise = null
   })
   return diskSyncPromise
@@ -323,7 +342,7 @@ async function runLibraryDiskSync(
 
 async function syncInventoryWithDiskInner(
   onProgress?: (p: LibrarySyncProgress) => void,
-  options?: { loraFolder?: string; checkpointFolder?: string; tagRules?: TagFolderRule[] }
+  options?: LibraryDiskSyncOptions
 ): Promise<{
   removedMissing: number
   enrichedMeta: number
@@ -335,17 +354,38 @@ async function syncInventoryWithDiskInner(
   let importedFromDisk = 0
   let relinkedFromDisk = 0
   let diskScanned = 0
+  const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
-  if (options?.loraFolder || options?.checkpointFolder) {
-    const imported = await importModelsFromDisk(
-      options.loraFolder ?? '',
-      options.checkpointFolder ?? '',
-      options.tagRules ?? [],
-      onProgress
-    )
-    importedFromDisk = imported.imported
-    relinkedFromDisk = imported.updated
-    diskScanned = imported.scanned
+  const shouldImport =
+    !options?.skipDiskImport &&
+    Boolean(options?.loraFolder || options?.checkpointFolder)
+
+  if (shouldImport) {
+    // Avoid repeating a full folder walk twice close together (startup light + follow-up).
+    const recentlyImported = Date.now() - lastFullImportAt < 120_000
+    if (!recentlyImported || options?.diskImportOnly) {
+      const imported = await importModelsFromDisk(
+        options?.loraFolder ?? '',
+        options?.checkpointFolder ?? '',
+        options?.tagRules ?? [],
+        onProgress
+      )
+      importedFromDisk = imported.imported
+      relinkedFromDisk = imported.updated
+      diskScanned = imported.scanned
+      lastFullImportAt = Date.now()
+    }
+  }
+
+  if (options?.diskImportOnly) {
+    return {
+      removedMissing: 0,
+      enrichedMeta: 0,
+      checked: inventory.getAllVersions().length,
+      importedFromDisk,
+      relinkedFromDisk,
+      diskScanned
+    }
   }
 
   repairBrokenInventoryPaths()
@@ -353,20 +393,16 @@ async function syncInventoryWithDiskInner(
   const total = records.length
   let removedMissing = 0
 
-  const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
-
-  if (total > 0) {
-    onProgress?.({
-      phase: 'checking',
-      current: 0,
-      total,
-      modelName: records[0]?.modelName ?? '…',
-      action: 'Starting library scan'
-    })
-  }
+  onProgress?.({
+    phase: 'checking',
+    current: 0,
+    total: Math.max(total, 1),
+    modelName: records[0]?.modelName ?? '…',
+    action: total > 0 ? `Verifying ${total} library file(s)` : 'Library empty'
+  })
 
   for (let i = 0; i < records.length; i++) {
-    if (i > 0 && i % 64 === 0) await yieldToEventLoop()
+    if (i > 0 && i % 16 === 0) await yieldToEventLoop()
     const record = records[i]
     onProgress?.({
       phase: 'checking',
@@ -382,12 +418,33 @@ async function syncInventoryWithDiskInner(
   }
 
   const afterCheck = inventory.getAllVersions()
-  const metaTotal = afterCheck.length
+  const needsMeta = afterCheck.filter((r) => !r.fileSizeBytes || !r.trainingResolution)
   let enrichedMeta = 0
 
-  for (let i = 0; i < afterCheck.length; i++) {
-    if (i > 0 && i % 64 === 0) await yieldToEventLoop()
-    const record = afterCheck[i]
+  // Nothing to enrich — skip metadata phase (avoids a flash of "100%").
+  if (needsMeta.length === 0) {
+    return {
+      removedMissing,
+      enrichedMeta: 0,
+      checked: total,
+      importedFromDisk,
+      relinkedFromDisk,
+      diskScanned
+    }
+  }
+
+  const metaTotal = needsMeta.length
+  onProgress?.({
+    phase: 'metadata',
+    current: 0,
+    total: metaTotal,
+    modelName: needsMeta[0]?.modelName ?? '…',
+    action: `Reading metadata for ${metaTotal} model(s)`
+  })
+
+  for (let i = 0; i < needsMeta.length; i++) {
+    if (i > 0 && i % 16 === 0) await yieldToEventLoop()
+    const record = needsMeta[i]
     const patch: Parameters<typeof inventory.patchVersionFileMeta>[1] = {}
     if (!record.fileSizeBytes && existsSync(record.modelPath)) {
       patch.fileSizeBytes = statSync(record.modelPath).size
@@ -411,7 +468,7 @@ async function syncInventoryWithDiskInner(
       current: i + 1,
       total: metaTotal,
       modelName: record.modelName,
-      action: updated ? 'Updated file metadata' : 'Metadata OK'
+      action: updated ? 'Updated file metadata' : 'Metadata unavailable'
     })
   }
 

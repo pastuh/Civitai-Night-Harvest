@@ -278,9 +278,9 @@ export class DownloadQueue {
   }
 
   start(): void {
-    if (!this.paused) return
+    const wasPaused = this.paused
     this.paused = false
-    this.broadcast()
+    if (wasPaused) this.broadcast()
     void this.pump()
   }
 
@@ -1380,8 +1380,9 @@ export class DownloadQueue {
           }
           if (p.totalBytes > 0) item.totalBytes = p.totalBytes
           item.phase = p.phase
+          // Queue broadcast is throttled (~400ms). Do not also fire per-chunk
+          // download:progress IPC — renderer uses download:queue only.
           this.broadcastProgress()
-          sendToRenderer(this.getWindow, 'download:progress', p)
         }
 
       const result = await this.downloadService.downloadModel(

@@ -6,6 +6,7 @@ import type {
   AppSettingsSave,
   AppStatus,
   DownloadQueueItem,
+  DownloadStripVisibility,
   InventoryRecord,
   LibrarySyncProgress,
   PendingVersion,
@@ -30,7 +31,7 @@ import { GalleryTab } from './components/GalleryTab'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
-import { ActiveDownloadsStrip } from './components/ActiveDownloadsStrip'
+import { ActiveDownloadsStrip, StripClearQueueButton } from './components/ActiveDownloadsStrip'
 import { AppBusyOverlay } from './components/AppBusyOverlay'
 import { HelpTab } from './components/HelpTab'
 import { I18nProvider, getMessages, translate } from './i18n/context'
@@ -39,7 +40,24 @@ import { formatLibrarySyncSummary } from './utils/library-sync-summary'
 import { collectTagSuggestions } from '../../shared/tag-routing'
 import { applyAppearanceToDocument, appearanceFromSettings } from '../../shared/appearance'
 
+/** Wall-clock when this renderer session started — Activity log default filter. */
+const APP_SESSION_STARTED_AT = Date.now()
+
 type Tab = 'gallery' | 'download' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'activity' | 'help' | 'settings'
+
+function shouldShowDownloadStrip(visibility: DownloadStripVisibility, tab: Tab): boolean {
+  switch (visibility) {
+    case 'browse':
+      return tab === 'watch'
+    case 'browseAndLibrary':
+      return tab === 'watch' || tab === 'gallery'
+    case 'always':
+      return true
+    case 'off':
+    default:
+      return false
+  }
+}
 
 interface BusyState {
   message: string
@@ -158,9 +176,8 @@ export default function App() {
   useEffect(() => {
     if (!window.api) return
     return window.api.onLibrarySyncProgress((p) => {
-      if (!busyRef.current && !previewRepairRef.current) return
       setSyncProgress(p)
-      if (!busyRef.current) return
+      if (!busyRef.current && !previewRepairRef.current) return
       setBusy((prev) => {
         if (!prev) return prev
         const loc = settings?.locale ?? 'en'
@@ -313,7 +330,12 @@ export default function App() {
         syncProgress: null
       })
       setSyncProgress(null)
-      const synced = await window.api.getInventory({ syncDisk: true, skipHashBackfill: true })
+      // Fast startup: verify inventory paths only (no full folder walk).
+      const synced = await window.api.getInventory({
+        syncDisk: true,
+        skipHashBackfill: true,
+        skipDiskImport: true
+      })
       setInventory(synced.items)
       setSyncMessage(formatLibrarySyncSummary(synced, loc))
       const qAfter = await window.api.reconcileDownloadQueue()
@@ -325,6 +347,30 @@ export default function App() {
 
       setStartupReady(true)
       void window.api.notifyRendererReady()
+
+      // Background: scan folders for manually copied models (non-blocking).
+      void (async () => {
+        setBackgroundStatus(translate(loc, 'app.bgScanningDisk'))
+        try {
+          const imported = await window.api.getInventory({
+            syncDisk: true,
+            skipHashBackfill: true,
+            diskImportOnly: true
+          })
+          if (
+            (imported.importedFromDisk ?? 0) > 0 ||
+            (imported.relinkedFromDisk ?? 0) > 0
+          ) {
+            setInventory(imported.items)
+            setSyncMessage(formatLibrarySyncSummary(imported, loc))
+          }
+        } catch {
+          /* ignore background import errors */
+        } finally {
+          setBackgroundStatus(null)
+          setSyncProgress(null)
+        }
+      })()
     }, translate('en', 'load.loadingSettings')).catch((err) => {
       setLoadError(err instanceof Error ? err.message : String(err))
       setStartupReady(true)
@@ -961,21 +1007,32 @@ export default function App() {
       )}
 
       <nav className="tabs">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={`tab ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-            {t.badge != null && t.badge > 0 ? (
-              <span className="tab-badge">
-                {t.badgePrefix ?? ''}
-                {t.badge}
-              </span>
-            ) : null}
-          </button>
-        ))}
+        <div className="tabs-list">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className={`tab ${tab === t.id ? 'active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              {t.badge != null && t.badge > 0 ? (
+                <span className="tab-badge">
+                  {t.badgePrefix ?? ''}
+                  {t.badge}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+        {hasPipelineQueue &&
+          !shouldShowDownloadStrip(settings.downloadStripVisibility ?? 'off', tab) && (
+            <div className="tabs-trailing">
+              <StripClearQueueButton
+                clearing={clearQueueBusy}
+                onClearQueue={clearDownloadQueue}
+              />
+            </div>
+          )}
       </nav>
 
       {actionError && (
@@ -987,37 +1044,38 @@ export default function App() {
         </div>
       )}
 
-      {(tab === 'watch' || tab === 'gallery') && hasPipelineQueue && (
-        <div className="downloads-strip-dock">
-          <ActiveDownloadsStrip
-            queue={queue}
-            queuePaused={queuePaused}
-            deferred={deferred}
-            stripLayout={settings.downloadStripLayout ?? 'minimal'}
-            banFunctionMode={settings.banFunctionMode ?? false}
-            onClearQueue={tab === 'watch' ? clearDownloadQueue : undefined}
-            clearQueueBusy={clearQueueBusy}
-            onRetryFailed={async (id) => {
-              const state = await window.api.retryFailedDownload(id)
-              setQueue(state.items)
-              setQueuePaused(state.paused)
-              if (!state.paused) setStatus(await window.api.getScanStatus())
-            }}
-            onDismissFailed={async (id) => {
-              const state = await window.api.dismissDownload(id)
-              setQueue(state.items)
-              setQueuePaused(state.paused)
-            }}
-            onPrioritizeDownload={async (id) => {
-              const state = await window.api.prioritizeDownload(id)
-              setQueue(state.items)
-              setQueuePaused(state.paused)
-              if (!state.paused) setStatus(await window.api.getScanStatus())
-            }}
-            onBrowseModelBanChange={markBrowseModelBan}
-          />
-        </div>
-      )}
+      {hasPipelineQueue &&
+        shouldShowDownloadStrip(settings.downloadStripVisibility ?? 'off', tab) && (
+          <div className="downloads-strip-dock">
+            <ActiveDownloadsStrip
+              queue={queue}
+              queuePaused={queuePaused}
+              deferred={deferred}
+              stripLayout={settings.downloadStripLayout ?? 'minimal'}
+              banFunctionMode={settings.banFunctionMode ?? false}
+              onClearQueue={clearDownloadQueue}
+              clearQueueBusy={clearQueueBusy}
+              onRetryFailed={async (id) => {
+                const state = await window.api.retryFailedDownload(id)
+                setQueue(state.items)
+                setQueuePaused(state.paused)
+                if (!state.paused) setStatus(await window.api.getScanStatus())
+              }}
+              onDismissFailed={async (id) => {
+                const state = await window.api.dismissDownload(id)
+                setQueue(state.items)
+                setQueuePaused(state.paused)
+              }}
+              onPrioritizeDownload={async (id) => {
+                const state = await window.api.prioritizeDownload(id)
+                setQueue(state.items)
+                setQueuePaused(state.paused)
+                if (!state.paused) setStatus(await window.api.getScanStatus())
+              }}
+              onBrowseModelBanChange={markBrowseModelBan}
+            />
+          </div>
+        )}
 
       <main className={`content ${tab === 'gallery' ? 'content-gallery' : ''}`}>
         <div className={tab === 'gallery' ? '' : 'tab-hidden'}>
@@ -1129,6 +1187,7 @@ export default function App() {
             status={status}
             inventory={inventory}
             watchRules={watchRules}
+            sessionStartedAt={APP_SESSION_STARTED_AT}
             onJumpToModel={(modelId) => {
               setGalleryFocusModelId(modelId)
               setTab('gallery')
@@ -1157,7 +1216,7 @@ export default function App() {
         deferredDownloads={deferred}
         inventory={inventory}
         extraMessage={backgroundStatus}
-        syncProgress={busy || previewRepairActive ? syncProgress : null}
+        syncProgress={busy || previewRepairActive || backgroundStatus ? syncProgress : null}
         showReadyIdle={startupReady && browseGalleryAwaiting && status === 'idle' && !busy}
         suppressIdlePipeline={suppressIdlePipeline}
         versionScanning={versionScanning}

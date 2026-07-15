@@ -109,6 +109,7 @@ function emptyCrawlBrowsePlaceholder(): WatchRuleTestResult {
     pageSize: 0,
     currentPage: 0,
     nextCursor: null,
+    crawlSource: 'night',
     enums: {
       modelTypes: [],
       baseModels: [],
@@ -235,17 +236,14 @@ export function WatchRulesTab({
 
   const browseResult = liveCrawlBrowse ?? testResult
   const hasEnabledRules = draft.some((r) => r.enabled)
+  // Empty gallery + awaiting first page (incl. idle gap after startup before status=scanning).
   const showBrowseLoading =
-    (settings.nightMode &&
-      (settings.updateBrowseOnCrawl ?? true) &&
-      !browseResult?.sampleModels?.length &&
-      (browseGalleryAwaiting ||
-        status === 'scanning' ||
-        status === 'checking' ||
-        crawlProgress != null)) ||
-    (browseGalleryAwaiting &&
-      !browseResult?.sampleModels?.length &&
-      (status === 'scanning' || status === 'checking' || crawlProgress != null))
+    !browseResult?.sampleModels?.length &&
+    (browseGalleryAwaiting ||
+      status === 'scanning' ||
+      status === 'checking' ||
+      crawlProgress != null ||
+      testingId != null)
   const browsePanelResult =
     browseResult ??
     (hasEnabledRules || showBrowseLoading || testingId != null || crawlProgress != null || status === 'scanning' || status === 'checking'

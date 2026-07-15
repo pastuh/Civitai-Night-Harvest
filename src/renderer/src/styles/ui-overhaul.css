@@ -2498,6 +2498,47 @@ label.field-label {
   background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
 }
 
+.browse-gallery-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  margin: 12px 0;
+  padding: 24px 16px;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+}
+
+.browse-gallery-loading strong {
+  font-size: 14px;
+}
+
+.browse-gallery-loading p {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.browse-gallery-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: browse-gallery-spin 0.75s linear infinite;
+}
+
+@keyframes browse-gallery-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .browse-gallery-awaiting-banner p {
   margin: 0;
   flex: 1;

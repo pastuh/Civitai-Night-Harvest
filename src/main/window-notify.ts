@@ -67,15 +67,20 @@ export function createThrottledProgressEmitter<T>(
   getWindow: () => BrowserWindow | null,
   channel: string,
   intervalMs = 300
-): (payload: T & { current?: number; total?: number }) => void {
+): (payload: T & { current?: number; total?: number; phase?: string }) => void {
   let lastAt = 0
+  let lastPhase: string | undefined
   return (payload) => {
     const current = payload.current ?? 0
     const total = payload.total ?? 0
+    const phase = typeof payload.phase === 'string' ? payload.phase : undefined
     const isFinal = total > 0 && current >= total
+    const phaseChanged = phase !== undefined && phase !== lastPhase
     const now = Date.now()
-    if (!isFinal && now - lastAt < intervalMs) return
+    // Always emit phase changes / start / finish so the UI doesn't jump to 100%.
+    if (!isFinal && !phaseChanged && current !== 0 && now - lastAt < intervalMs) return
     lastAt = now
+    if (phase !== undefined) lastPhase = phase
     sendToRenderer(getWindow, channel, payload)
   }
 }
