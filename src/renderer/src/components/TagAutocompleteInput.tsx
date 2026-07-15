@@ -7,8 +7,21 @@ interface Props {
   suggestions: string[]
   placeholder?: string
   id?: string
+  className?: string
+  disabled?: boolean
+  autoFocus?: boolean
+  onBlur?: () => void
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
+  /** Optional inline confirm control (e.g. folder name commit). */
+  onConfirm?: () => void
+  confirmLabel?: string
+  /** Show × to clear the field when it has text. */
+  clearable?: boolean
+  clearLabel?: string
   /** Single tag field — do not append ", " after picking a suggestion. */
   singleTag?: boolean
+  /** `fuzzy` for Civitai tags; `substring` for folder names and literal labels. */
+  matchMode?: 'fuzzy' | 'substring'
 }
 
 function tokenBeforeCursor(value: string, cursor: number): { prefix: string; token: string; start: number } {
@@ -25,7 +38,17 @@ export function TagAutocompleteInput({
   suggestions,
   placeholder,
   id,
-  singleTag = false
+  className,
+  disabled = false,
+  autoFocus = false,
+  onBlur,
+  onKeyDown: onKeyDownProp,
+  onConfirm,
+  confirmLabel,
+  clearable = false,
+  clearLabel,
+  singleTag = false,
+  matchMode = 'fuzzy'
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -42,6 +65,18 @@ export function TagAutocompleteInput({
   const matchLimit = singleTag ? 24 : 12
 
   const matches = useMemo(() => {
+    if (matchMode === 'substring') {
+      if (!queryToken) return suggestions.slice(0, matchLimit)
+      const q = queryToken
+      const starts: string[] = []
+      const contains: string[] = []
+      for (const s of suggestions) {
+        const lower = s.toLowerCase()
+        if (lower.startsWith(q)) starts.push(s)
+        else if (lower.includes(q)) contains.push(s)
+      }
+      return [...starts, ...contains].slice(0, matchLimit)
+    }
     if (!queryToken) {
       return suggestions.slice(0, matchLimit)
     }
@@ -54,7 +89,7 @@ export function TagAutocompleteInput({
       }
     }
     return [...starts, ...contains].slice(0, matchLimit)
-  }, [suggestions, queryToken, matchLimit])
+  }, [suggestions, queryToken, matchLimit, matchMode])
 
   useEffect(() => {
     setActiveIndex(0)
@@ -85,45 +120,102 @@ export function TagAutocompleteInput({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (!open || !matches.length) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setActiveIndex((i) => (i + 1) % matches.length)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveIndex((i) => (i - 1 + matches.length) % matches.length)
-    } else if (e.key === 'Enter' && matches[activeIndex]) {
-      e.preventDefault()
-      applySuggestion(matches[activeIndex])
-    } else if (e.key === 'Escape') {
-      setOpen(false)
+    if (open && matches.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setActiveIndex((i) => (i + 1) % matches.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setActiveIndex((i) => (i - 1 + matches.length) % matches.length)
+        return
+      }
+      if (e.key === 'Enter' && matches[activeIndex]) {
+        e.preventDefault()
+        applySuggestion(matches[activeIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        setOpen(false)
+      }
     }
+    onKeyDownProp?.(e)
   }
 
   const showDropdown = open && matches.length > 0
+  const showClear = clearable && value.length > 0
+  const fieldMods = [
+    onConfirm ? 'has-confirm' : '',
+    showClear ? 'has-clear' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const clearValue = () => {
+    onChange('')
+    setOpen(false)
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      setCursor(0)
+    })
+  }
 
   return (
-    <div className="tag-autocomplete">
-      <input
-        ref={inputRef}
-        id={id}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => {
-          onChange(e.target.value)
-          setCursor(e.target.selectionStart ?? e.target.value.length)
-          setOpen(true)
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => {
-          window.setTimeout(() => setOpen(false), 120)
-        }}
-        onClick={(e) => setCursor(e.currentTarget.selectionStart ?? value.length)}
-        onKeyUp={(e) => setCursor(e.currentTarget.selectionStart ?? value.length)}
-        onKeyDown={onKeyDown}
-        autoComplete="off"
-        spellCheck={false}
-      />
+    <div className={className ? `tag-autocomplete ${className}` : 'tag-autocomplete'}>
+      <div className={`tag-autocomplete-field${fieldMods ? ` ${fieldMods}` : ''}`}>
+        <input
+          ref={inputRef}
+          id={id}
+          value={value}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoFocus={autoFocus}
+          onChange={(e) => {
+            onChange(e.target.value)
+            setCursor(e.target.selectionStart ?? e.target.value.length)
+            setOpen(true)
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => {
+            window.setTimeout(() => {
+              setOpen(false)
+              onBlur?.()
+            }, 120)
+          }}
+          onClick={(e) => setCursor(e.currentTarget.selectionStart ?? value.length)}
+          onKeyUp={(e) => setCursor(e.currentTarget.selectionStart ?? value.length)}
+          onKeyDown={onKeyDown}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {showClear && (
+          <button
+            type="button"
+            className="tag-autocomplete-clear"
+            title={clearLabel}
+            aria-label={clearLabel}
+            disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={clearValue}
+          >
+            ×
+          </button>
+        )}
+        {onConfirm && (
+          <button
+            type="button"
+            className="tag-autocomplete-confirm"
+            title={confirmLabel}
+            aria-label={confirmLabel}
+            disabled={disabled || !value.trim()}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onConfirm()}
+          >
+            ✓
+          </button>
+        )}
+      </div>
       {showDropdown && (
         <ul className="tag-autocomplete-list" role="listbox">
           {matches.map((tag, i) => (

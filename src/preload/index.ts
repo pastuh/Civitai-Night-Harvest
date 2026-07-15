@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import {
+  applyAppearanceToDocument,
+  DEFAULT_APPEARANCE,
+  type AppearanceBootstrap
+} from '../shared/appearance'
 import type {
   AppSettingsPublic,
   AppSettingsSave,
@@ -37,7 +42,22 @@ import type {
   WatchRuleTestResult
 } from '../shared/types'
 
+function readAppearanceBootstrapSync(): AppearanceBootstrap {
+  try {
+    const value = ipcRenderer.sendSync('appearance:getBootstrapSync') as AppearanceBootstrap | undefined
+    if (value && typeof value.theme === 'string' && typeof value.uiMode === 'string') {
+      return value
+    }
+  } catch {
+    /* main process not ready — use defaults */
+  }
+  return DEFAULT_APPEARANCE
+}
+
+let initialAppearance: AppearanceBootstrap = DEFAULT_APPEARANCE
+
 const api = {
+  getInitialAppearance: (): AppearanceBootstrap => initialAppearance,
   getSettings: (): Promise<AppSettingsPublic> => ipcRenderer.invoke('settings:get'),
   saveSettings: (partial: AppSettingsSave): Promise<AppSettingsPublic> =>
     ipcRenderer.invoke('settings:save', partial),
@@ -77,7 +97,7 @@ const api = {
   assignByCivitaiTag: (
     civitaiTag: string,
     routingTag: string
-  ): Promise<{ moved: number; queueUpdated: number; versionIds: number[] }> =>
+  ): Promise<{ moved: number; skipped: number; queueUpdated: number; versionIds: number[] }> =>
     ipcRenderer.invoke('inventory:assignByCivitaiTag', { civitaiTag, routingTag }),
 
   deleteInventoryVersion: (
@@ -278,5 +298,15 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+
+try {
+  initialAppearance = readAppearanceBootstrapSync()
+  if (document.documentElement) {
+    applyAppearanceToDocument(document, initialAppearance)
+    document.documentElement.classList.add('appearance-ready')
+  }
+} catch (err) {
+  console.error('[preload] appearance bootstrap failed:', err)
+}
 
 export type Api = typeof api

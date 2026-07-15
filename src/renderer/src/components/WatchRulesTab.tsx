@@ -860,6 +860,8 @@ export function WatchRulesTab({
           onRunScan={onRunScan}
           browseSettledToEnd={settings.browseSettledToEnd ?? false}
           browseSettledDimPercent={settings.browseSettledDimPercent ?? 0}
+          loraFolder={settings.loraOutputFolder}
+          checkpointFolder={settings.checkpointOutputFolder}
         />
       ) : settings.nightMode ? (
         <NightCrawlQuietPanel

@@ -8,6 +8,7 @@ import { clampGridSizePx, DEFAULT_GALLERY_GRID_MIN_PX, DEFAULT_QUEUE_GRID_MIN_PX
 import { normalizeHiddenTags } from '../shared/tag-routing'
 import { getCheckpointFolder, getLoraFolder, hasAllOutputFolders } from '../shared/utils'
 import { applyLaunchAtLogin } from './launch-at-login'
+import { appearanceFromSettings, type AppearanceBootstrap } from '../shared/appearance'
 
 interface StoreSchema {
   settings: AppSettings
@@ -179,6 +180,10 @@ export function saveSettings(partial: Partial<AppSettings>): AppSettings {
   }
   store.set('settings', next)
   return next
+}
+
+export function getAppearanceBootstrap(): AppearanceBootstrap {
+  return appearanceFromSettings(getSettings())
 }
 
 export function toPublicSettings(settings: AppSettings): AppSettingsPublic {

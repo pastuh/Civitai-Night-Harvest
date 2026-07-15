@@ -37,6 +37,7 @@ import { I18nProvider, getMessages, translate } from './i18n/context'
 import { hasAllOutputFolders } from '../../shared/utils'
 import { formatLibrarySyncSummary } from './utils/library-sync-summary'
 import { collectTagSuggestions } from '../../shared/tag-routing'
+import { applyAppearanceToDocument, appearanceFromSettings } from '../../shared/appearance'
 
 type Tab = 'gallery' | 'download' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'activity' | 'help' | 'settings'
 
@@ -69,6 +70,8 @@ export default function App() {
   const [versionScanning, setVersionScanning] = useState(false)
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null)
+  const [sessionDownloadIds, setSessionDownloadIds] = useState<number[]>([])
+  const [libraryHighlightIds, setLibraryHighlightIds] = useState<number[]>([])
   const [startupReady, setStartupReady] = useState(false)
   const [browseGalleryAwaiting, setBrowseGalleryAwaiting] = useState(true)
   const [watchRulesSaveState, setWatchRulesSaveState] = useState<'saved' | 'saving' | 'unsaved'>('saved')
@@ -93,8 +96,49 @@ export default function App() {
   const busyRef = useRef(false)
   const previewRepairRef = useRef(false)
   previewRepairRef.current = previewRepairActive
-  const seenLibraryVersionIdsRef = useRef<Set<number> | null>(null)
-  const [librarySeenTick, setLibrarySeenTick] = useState(0)
+  const sessionBaselineRef = useRef<Set<number> | null>(null)
+  const libraryBadgeSeenRef = useRef<Set<number> | null>(null)
+  const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
+
+  useEffect(() => {
+    if (!startupReady) return
+    const ids = inventory.map((i) => i.versionId)
+    if (sessionBaselineRef.current === null) {
+      sessionBaselineRef.current = new Set(ids)
+      return
+    }
+    const newIds = ids.filter((id) => !sessionBaselineRef.current!.has(id))
+    if (!newIds.length) return
+    for (const id of newIds) sessionBaselineRef.current!.add(id)
+    setSessionDownloadIds((prev) => {
+      const next = [...prev]
+      for (const id of newIds) if (!next.includes(id)) next.push(id)
+      return next
+    })
+    setLibraryHighlightIds((prev) => {
+      const next = [...prev]
+      for (const id of newIds) if (!next.includes(id)) next.push(id)
+      return next
+    })
+  }, [inventory, startupReady])
+
+  useEffect(() => {
+    if (tab !== 'gallery') {
+      setLibraryHighlightIds([])
+    }
+  }, [tab])
+
+  useEffect(() => {
+    if (!startupReady || libraryBadgeSeenRef.current !== null) return
+    libraryBadgeSeenRef.current = new Set(inventory.map((i) => i.versionId))
+    setLibraryBadgeTick((n) => n + 1)
+  }, [startupReady, inventory])
+
+  useEffect(() => {
+    if (tab !== 'gallery' || !startupReady) return
+    libraryBadgeSeenRef.current = new Set(inventory.map((i) => i.versionId))
+    setLibraryBadgeTick((n) => n + 1)
+  }, [tab, inventory, startupReady])
 
   useEffect(() => {
     busyRef.current = Boolean(busy)
@@ -102,27 +146,17 @@ export default function App() {
   }, [busy])
 
   useEffect(() => {
-    if (!startupReady || seenLibraryVersionIdsRef.current !== null) return
-    seenLibraryVersionIdsRef.current = new Set(inventory.map((i) => i.versionId))
-    setLibrarySeenTick((n) => n + 1)
-  }, [startupReady, inventory])
-
-  useEffect(() => {
-    if (tab !== 'gallery' || !startupReady) return
-    seenLibraryVersionIdsRef.current = new Set(inventory.map((i) => i.versionId))
-    setLibrarySeenTick((n) => n + 1)
-  }, [tab, inventory, startupReady])
-
-  useEffect(() => {
     void window.api?.getAppIconDataUrl().then(setAppIconUrl).catch(() => {})
   }, [])
 
   useEffect(() => {
+    if (!window.api) return
     void window.api.isFullScreen().then(setWindowFullscreen).catch(() => {})
     return window.api.onFullscreenChange(setWindowFullscreen)
   }, [])
 
   useEffect(() => {
+    if (!window.api) return
     return window.api.onLibrarySyncProgress((p) => {
       if (!busyRef.current && !previewRepairRef.current) return
       setSyncProgress(p)
@@ -410,21 +444,9 @@ export default function App() {
   }, [refreshAfterScan, refreshInventory, withBusy])
 
   useEffect(() => {
-    const theme = settings?.theme ?? 'dark'
-    document.documentElement.classList.toggle('theme-light', theme === 'light')
-    document.documentElement.classList.toggle('theme-gothic', theme === 'gothic')
-    document.documentElement.classList.toggle('theme-candy', theme === 'candy')
-    document.documentElement.classList.toggle('theme-aroma', theme === 'aroma')
-  }, [settings?.theme])
-
-  useEffect(() => {
-    const root = document.documentElement
-    const gallery = settings?.galleryGridMinPx ?? 160
-    const queue = settings?.queueGridMinPx ?? 160
-    root.style.setProperty('--gallery-grid-min', `${gallery}px`)
-    root.style.setProperty('--queue-grid-min', `${queue}px`)
-    root.style.setProperty('--queue-card-width', `${queue}px`)
-  }, [settings?.galleryGridMinPx, settings?.queueGridMinPx])
+    if (!settings) return
+    applyAppearanceToDocument(document, appearanceFromSettings(settings))
+  }, [settings])
 
   useEffect(() => {
     if (!settings?.nightMode) {
@@ -474,14 +496,14 @@ export default function App() {
 
   const newLibraryCount = useMemo(() => {
     if (tab === 'gallery' || !startupReady) return 0
-    const seen = seenLibraryVersionIdsRef.current
+    const seen = libraryBadgeSeenRef.current
     if (!seen) return 0
     let count = 0
     for (const item of inventory) {
       if (!seen.has(item.versionId)) count++
     }
     return count
-  }, [inventory, tab, startupReady, librarySeenTick])
+  }, [inventory, tab, startupReady, libraryBadgeTick])
 
   const enabledRuleNames = useMemo(
     () => watchRules.filter((r) => r.enabled).map((r) => r.name),
@@ -1018,6 +1040,11 @@ export default function App() {
             onRepairPreviews={repairLibraryPreviews}
             previewRepairBusy={previewRepairActive}
             syncMessage={syncMessage}
+            loraFolder={settings.loraOutputFolder}
+            checkpointFolder={settings.checkpointOutputFolder}
+            sessionDownloadIds={sessionDownloadIds}
+            highlightVersionIds={libraryHighlightIds}
+            isActive={tab === 'gallery'}
           />
         </div>
         <div className={tab === 'download' ? '' : 'tab-hidden'}>
@@ -1064,7 +1091,11 @@ export default function App() {
             rules={tagRules}
             tagSuggestions={tagSuggestions}
             inventory={inventory}
+            loraFolder={settings?.loraOutputFolder ?? ''}
+            checkpointFolder={settings?.checkpointOutputFolder ?? ''}
             onSave={saveTagRules}
+            onRefresh={refresh}
+            onMoveStatus={setBackgroundStatus}
             onFilterLibrary={(tag) => {
               setGalleryFocusCivitaiTag(tag)
               setTab('gallery')
@@ -1143,6 +1174,8 @@ export default function App() {
         <PostDownloadTagModal
           prompt={tagPromptQueue[0]}
           tagRules={tagRules}
+          loraFolder={settings?.loraOutputFolder ?? ''}
+          checkpointFolder={settings?.checkpointOutputFolder ?? ''}
           onSaveTagRules={saveTagRules}
           onDismiss={() => setTagPromptQueue((prev) => prev.slice(1))}
           onAssigned={() => {

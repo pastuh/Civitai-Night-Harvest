@@ -12,6 +12,7 @@ import type {
   DeferredDownload,
   DeferredFailureKind
 } from '../shared/types'
+import { expandCivitaiTagNames } from '../shared/tag-routing'
 
 let db: Database.Database | null = null
 
@@ -152,13 +153,17 @@ function migrateInventorySchema(database: Database.Database): void {
   if (!hasCol('nsfw_level')) {
     database.exec(`ALTER TABLE versions ADD COLUMN nsfw_level INTEGER`)
   }
+  if (!hasCol('routing_locked')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN routing_locked INTEGER NOT NULL DEFAULT 0`)
+  }
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
   if (typeof raw !== 'string' || !raw) return []
   try {
     const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : []
+    const list = Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : []
+    return expandCivitaiTagNames(list)
   } catch {
     return []
   }
@@ -176,6 +181,7 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     author: row.author as string,
     baseModel: row.base_model as string,
     routingTag: row.routing_tag as string,
+    routingLocked: Boolean(row.routing_locked),
     outputFolder: row.output_folder as string,
     modelPath: row.model_path as string,
     previewPath: row.preview_path as string,
@@ -290,11 +296,11 @@ export function addVersion(record: InventoryRecord): void {
     .prepare(
       `INSERT OR REPLACE INTO versions (
         model_id, version_id, slug, model_name, version_name, author, base_model,
-        routing_tag, output_folder, model_path, preview_path, swarm_path, downloaded_at, ignored,
+        routing_tag, routing_locked, output_folder, model_path, preview_path, swarm_path, downloaded_at, ignored,
         civitai_tags, file_size_bytes, file_fp, file_variant, training_resolution, is_nsfw,
         nsfw_level, awaiting_since, civitai_domain, download_count, thumbs_up_count, checkpoint_type,
         civitai_mode, file_hash_sha256
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       record.modelId,
@@ -305,6 +311,7 @@ export function addVersion(record: InventoryRecord): void {
       record.author,
       record.baseModel,
       record.routingTag,
+      record.routingLocked ? 1 : 0,
       record.outputFolder,
       record.modelPath,
       record.previewPath,

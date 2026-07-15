@@ -30,7 +30,7 @@ import {
   type RatingFilter
 } from '../../../shared/rating-filter'
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
-import { folderForTag, findRuleForTag, modelHasHiddenTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
+import { displayFolderForTag, findRuleForTag, modelHasHiddenTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { PreviewThumb } from './PreviewThumb'
 import { ModelDetailModal, type ModelDetailTarget } from './ModelDetailModal'
@@ -136,6 +136,8 @@ interface Props {
   browseRule?: WatchRule | null
   browseSettledToEnd?: boolean
   browseSettledDimPercent?: number
+  loraFolder?: string
+  checkpointFolder?: string
 }
 
 interface ContextMenuState {
@@ -186,7 +188,9 @@ export function SearchBrowsePanel({
   onRunScan,
   browseRule = null,
   browseSettledToEnd = false,
-  browseSettledDimPercent = 0
+  browseSettledDimPercent = 0,
+  loraFolder = '',
+  checkpointFolder = ''
 }: Props) {
   const t = useT()
   const awaitingAccessVersionIds = useMemo(
@@ -1473,8 +1477,10 @@ export function SearchBrowsePanel({
                               type="button"
                               className={`tag-action-btn ${routingTag === tag.name ? 'active-route' : ''}`}
                               title={
-                                folderForTag(tag.name, tagRules)
-                                  ? t('browse.tagRouteTo', { folder: folderForTag(tag.name, tagRules)! })
+                                displayFolderForTag(tag.name, tagRules, loraFolder, checkpointFolder)
+                                  ? t('browse.tagRouteTo', {
+                                      folder: displayFolderForTag(tag.name, tagRules, loraFolder, checkpointFolder)!
+                                    })
                                   : t('browse.tagRouteCreate')
                               }
                               onClick={() => void routeTagAsFolder(tag.name)}

@@ -2745,6 +2745,17 @@ code {
   gap: 8px;
 }
 
+.confirm-modal {
+  width: min(440px, 100%);
+}
+
+.confirm-modal-message {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--text);
+  font-size: 14px;
+}
+
 .tag-assignment-current {
   font-size: 12px;
   margin: 4px 0 0;

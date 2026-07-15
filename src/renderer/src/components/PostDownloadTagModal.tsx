@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import type { TagAssignmentPrompt, TagFolderRule } from '../../../shared/types'
-import { folderForTag, ruleCoversTag } from '../../../shared/tag-routing'
+import { displayFolderForTag, findRuleForTag, ruleCoversTag } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
 
 interface Props {
   prompt: TagAssignmentPrompt
   tagRules: TagFolderRule[]
+  loraFolder?: string
+  checkpointFolder?: string
   onDismiss: () => void
   onAssigned: () => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
@@ -14,6 +16,8 @@ interface Props {
 export function PostDownloadTagModal({
   prompt,
   tagRules,
+  loraFolder = '',
+  checkpointFolder = '',
   onDismiss,
   onAssigned,
   onSaveTagRules
@@ -52,13 +56,13 @@ export function PostDownloadTagModal({
   }
 
   const currentFolder = prompt.currentRoutingTag
-    ? folderForTag(prompt.currentRoutingTag, tagRules)
+    ? displayFolderForTag(prompt.currentRoutingTag, tagRules, loraFolder, checkpointFolder)
     : undefined
 
   const folderOptions =
     prompt.matchingFolderTags.length > 0
       ? prompt.matchingFolderTags
-      : prompt.tags.filter((t) => folderForTag(t, tagRules))
+      : prompt.tags.filter((t) => findRuleForTag(t, tagRules))
 
   return (
     <div className="modal-overlay">
@@ -110,7 +114,7 @@ export function PostDownloadTagModal({
 
         <div className="tag-assignment-list">
           {folderOptions.map((tag) => {
-            const mapped = folderForTag(tag, tagRules)
+            const mapped = displayFolderForTag(tag, tagRules, loraFolder, checkpointFolder)
             const isCurrent = prompt.currentRoutingTag.toLowerCase() === tag.toLowerCase()
             return (
               <div key={tag} className={`tag-assignment-row ${isCurrent ? 'current' : ''}`}>

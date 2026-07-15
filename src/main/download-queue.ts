@@ -47,6 +47,7 @@ export interface EnqueueMeta {
   previewUrl?: string
   routingTag?: string
   modelType?: string
+  baseModel?: string
   author?: string
   civitaiTags?: string[]
   fileSizeBytes?: number
@@ -561,6 +562,7 @@ export class DownloadQueue {
       checkpointFolder: settings.checkpointOutputFolder,
       modelType,
       routingTag: routingTag || undefined,
+      baseModel: meta.baseModel,
       tagRules
     })
 
@@ -579,6 +581,7 @@ export class DownloadQueue {
       previewUrl: meta.previewUrl ?? deferred?.previewUrl,
       routingTag: routingTag || deferred?.routingTag || '',
       modelType: meta.modelType ?? deferred?.modelType ?? modelType,
+      baseModel: meta.baseModel,
       author: meta.author,
       civitaiTags: meta.civitaiTags,
       fileSizeBytes: meta.fileSizeBytes,
@@ -732,6 +735,7 @@ export class DownloadQueue {
         checkpointFolder: settings.checkpointOutputFolder,
         modelType: item.modelType,
         routingTag,
+        baseModel: item.baseModel,
         tagRules
       })
       updated++
@@ -755,6 +759,7 @@ export class DownloadQueue {
       checkpointFolder: settings.checkpointOutputFolder,
       modelType: item.modelType,
       routingTag,
+      baseModel: item.baseModel,
       tagRules
     })
     this.broadcast()

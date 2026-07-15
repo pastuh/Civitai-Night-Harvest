@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { AppSettingsPublic, TagFolderRule } from '../../../shared/types'
 import { getDefaultFolderForType, pickPreviewImage, resolveVersionPreviewCandidates } from '../../../shared/utils'
-import { findRuleForTag, parseTagRuleNames } from '../../../shared/tag-routing'
+import { findRuleForTag, parseTagRuleNames, resolveFolderForTag } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 
 interface Props {
@@ -149,7 +149,12 @@ export function DownloadTab({ settings, tagRules, onRefresh, onOpenTagSettings }
             {routingTag ? (
               <p className="muted">
                 →{' '}
-                {findRuleForTag(routingTag, tagRules)?.folderPath ?? t('downloadTab.noFolderMapped')}
+                {resolveFolderForTag(
+                  routingTag,
+                  tagRules,
+                  settings.loraOutputFolder,
+                  settings.checkpointOutputFolder
+                ) ?? t('downloadTab.defaultTagFolder', { folder: `\\${routingTag}` })}
               </p>
             ) : (
               <p className="muted">

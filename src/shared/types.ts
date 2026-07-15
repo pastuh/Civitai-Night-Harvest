@@ -187,7 +187,10 @@ export interface ScanScheduleInfo {
 export interface TagFolderRule {
   id: string
   tagName: string
+  /** Empty = auto under {type}/{baseModel}/{subfolder}. Set only for fully custom disk paths. */
   folderPath: string
+  /** Disk subfolder under each base model (e.g. "style"). Defaults to tag name when empty. */
+  subfolderName?: string
 }
 
 export interface WatchRule {
@@ -366,6 +369,8 @@ export interface DownloadQueueItem {
   previewUrl?: string
   routingTag: string
   modelType: string
+  /** Civitai base model (e.g. Krea 2) for `{typeRoot}/{baseModel}/{tag}` layout. */
+  baseModel?: string
   author?: string
   civitaiTags?: string[]
   /** Expected file size when known (browse / Civitai API). */
@@ -683,6 +688,8 @@ export interface InventoryRecord {
   author: string
   baseModel: string
   routingTag: string
+  /** When true, tag bulk-assign must not move this model (Library manual placement). */
+  routingLocked?: boolean
   outputFolder: string
   modelPath: string
   previewPath: string

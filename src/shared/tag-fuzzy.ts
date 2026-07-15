@@ -33,9 +33,39 @@ export function pluralVariants(token: string): string[] {
   return [...out]
 }
 
+/** Case-insensitive exact tag equality. */
+export function tagsEqual(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/**
+ * Rule alias match: exact tag or plural/singular of the **whole** tag string only.
+ * Does not match substrings (e.g. "style" ≠ "doggystyle", "man" ≠ "woman").
+ * Use for folder rules, checkbox state, and bulk assign — not for browse search.
+ */
+export function tagAliasMatch(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase()
+  const y = b.trim().toLowerCase()
+  if (!x || !y) return false
+  if (x === y) return true
+  for (const v of pluralVariants(a)) {
+    if (v === y) return true
+  }
+  for (const v of pluralVariants(b)) {
+    if (v === x) return true
+  }
+  return false
+}
+
+export function modelHasExactTag(modelTags: string[] | undefined, needle: string): boolean {
+  if (!needle.trim()) return false
+  return (modelTags ?? []).some((t) => tagAliasMatch(needle, t))
+}
+
 /**
  * Fuzzy tag match: exact, substring (≥3 chars), word token, plural/singular.
  * "character" matches "characters", "fantasy character"; "tool" matches "tools".
+ * For search / hide-tag UI only — not folder routing.
  */
 export function fuzzyTagMatch(needle: string, modelTag: string): boolean {
   const n = norm(needle)

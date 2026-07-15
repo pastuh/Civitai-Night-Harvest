@@ -13,7 +13,7 @@ import type {
 } from './types'
 import { fuzzyTagMatch, modelHasAnyFuzzyTag } from './tag-fuzzy'
 
-export { fuzzyTagMatch, modelHasFuzzyTag, modelHasAnyFuzzyTag, apiTagSearchVariants } from './tag-fuzzy'
+export { fuzzyTagMatch, modelHasFuzzyTag, modelHasAnyFuzzyTag, apiTagSearchVariants, tagsEqual, tagAliasMatch, modelHasExactTag } from './tag-fuzzy'
 
 export function joinFolderPath(root: string, segment: string): string {
   const sep = root.includes('\\') ? '\\' : '/'

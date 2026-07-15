@@ -140,7 +140,8 @@ function resolveModelFileUrl(
 function resolveOutputFolder(
   request: DownloadRequest,
   tagRules: TagFolderRule[],
-  modelType: string
+  modelType: string,
+  baseModel?: string
 ): string {
   const settings = getSettings()
   return resolveModelOutputFolder({
@@ -148,6 +149,7 @@ function resolveOutputFolder(
     checkpointFolder: settings.checkpointOutputFolder,
     modelType,
     routingTag: request.routingTag,
+    baseModel,
     tagRules
   })
 }
@@ -363,7 +365,8 @@ export class DownloadService {
       const outputFolder = resolveOutputFolder(
         { ...request, routingTag },
         tagRules,
-        model.type
+        model.type,
+        version.baseModel
       )
       if (!outputFolder) {
         return {

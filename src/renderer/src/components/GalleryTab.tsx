@@ -19,7 +19,19 @@ import {
   type RatingFilter
 } from '../../../shared/rating-filter'
 import { useT } from '../i18n/context'
-import { folderForTag, findRuleForTag, formatTagRuleLabel, namesForRoutingFilter, parseTagRuleNames, ruleCoversTag, countInventoryInFolder } from '../../../shared/tag-routing'
+import {
+  findRuleForTag,
+  formatTagRuleLabel,
+  namesForRoutingFilter,
+  parseTagRuleNames,
+  ruleCoversTag,
+  countInventoryInFolder,
+  countInventoryInTagSubfolder,
+  collectTagSubfolderRoutes,
+  displayFolderForTag,
+  recordMatchesTagSubfolder,
+  subfolderNameForRule
+} from '../../../shared/tag-routing'
 import {
   buildTagClusters,
   isTagAssignedToRecord,
@@ -48,6 +60,11 @@ interface Props {
   previewRepairBusy?: boolean
   onBusyAction?: <T>(message: string, action: () => Promise<T>, subMessage?: string) => Promise<T>
   syncMessage?: string | null
+  loraFolder?: string
+  checkpointFolder?: string
+  sessionDownloadIds?: number[]
+  highlightVersionIds?: number[]
+  isActive?: boolean
 }
 
 interface ContextMenuState {
@@ -71,9 +88,11 @@ type LibraryFilter =
   | { type: 'untagged' }
   | { type: 'banned' }
   | { type: 'routing'; name: string }
+  | { type: 'subfolder'; name: string }
   | { type: 'civitai'; name: string }
   | { type: 'cluster'; key: string }
   | { type: 'baseModel'; name: string }
+  | { type: 'session' }
 
 type LibrarySort = 'default' | 'folder' | 'tagGroup' | 'downloads'
 
@@ -120,7 +139,12 @@ export function GalleryTab({
   onRepairPreviews,
   previewRepairBusy = false,
   onBusyAction,
-  syncMessage
+  syncMessage,
+  loraFolder = '',
+  checkpointFolder = '',
+  sessionDownloadIds = [],
+  highlightVersionIds = [],
+  isActive = false
 }: Props) {
   const t = useT()
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -140,6 +164,16 @@ export function GalleryTab({
   const [previewRecord, setPreviewRecord] = useState<InventoryRecord | null>(null)
   const [highlightVersionId, setHighlightVersionId] = useState<number | null>(null)
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+
+  const highlightSet = useMemo(() => new Set(highlightVersionIds), [highlightVersionIds])
+  const sessionSet = useMemo(() => new Set(sessionDownloadIds), [sessionDownloadIds])
+
+  useEffect(() => {
+    if (!isActive) return
+    if (highlightVersionIds.length > 0) {
+      setLibraryFilter({ type: 'session' })
+    }
+  }, [isActive, highlightVersionIds])
 
   const bannedIds = useMemo(() => new Set(bannedList.map((b) => b.modelId)), [bannedList])
   const modelTags = useMemo(() => aggregateModelTags(inventory), [inventory])
@@ -191,9 +225,25 @@ export function GalleryTab({
     if (!q) return tagRules
     return tagRules.filter((r) => {
       const names = parseTagRuleNames(r.tagName)
-      return names.some((n) => n.toLowerCase().includes(q)) || r.folderPath.toLowerCase().includes(q)
+      const subfolder = subfolderNameForRule(r).toLowerCase()
+      return (
+        names.some((n) => n.toLowerCase().includes(q)) ||
+        r.folderPath.toLowerCase().includes(q) ||
+        subfolder.includes(q)
+      )
     })
   }, [tagRules, tagSearch])
+
+  const filteredTagSubfolders = useMemo(() => {
+    const routes = collectTagSubfolderRoutes(tagRules, loraFolder, checkpointFolder)
+    const q = tagSearch.trim().toLowerCase()
+    if (!q) return routes
+    return routes.filter(
+      (route) =>
+        route.name.toLowerCase().includes(q) ||
+        route.display.toLowerCase().includes(q)
+    )
+  }, [tagRules, tagSearch, loraFolder, checkpointFolder])
 
   const modelSearchLetters = useMemo(() => {
     const set = new Set<string>()
@@ -255,6 +305,11 @@ export function GalleryTab({
         list = list.filter((r) => names.has(r.routingTag.toLowerCase()))
         break
       }
+      case 'subfolder':
+        list = list.filter((r) =>
+          recordMatchesTagSubfolder(r, libraryFilter.name, tagRules, loraFolder, checkpointFolder)
+        )
+        break
       case 'civitai':
         list = list.filter((r) =>
           r.civitaiTags?.some((t) => t.toLowerCase() === libraryFilter.name.toLowerCase())
@@ -269,6 +324,9 @@ export function GalleryTab({
         list = list.filter(
           (r) => r.baseModel.trim().toLowerCase() === libraryFilter.name.trim().toLowerCase()
         )
+        break
+      case 'session':
+        list = list.filter((r) => sessionSet.has(r.versionId))
         break
       default:
         break
@@ -286,19 +344,20 @@ export function GalleryTab({
     }
     list = list.filter((r) => matchesModelSearch(r))
     return list
-  }, [inventory, libraryFilter, showBannedInGallery, bannedIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter, hideFolderAssigned])
+  }, [inventory, libraryFilter, showBannedInGallery, bannedIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter, hideFolderAssigned, sessionSet])
 
   const sortedInventory = useMemo(() => {
     const list = [...filteredInventory]
     switch (librarySort) {
       case 'folder':
-        return list.sort(
+        list.sort(
           (a, b) =>
             (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
             a.modelName.localeCompare(b.modelName)
         )
+        break
       case 'tagGroup':
-        return list.sort(
+        list.sort(
           (a, b) =>
             primaryClusterKey(a.civitaiTags, tagClusters).localeCompare(
               primaryClusterKey(b.civitaiTags, tagClusters)
@@ -306,16 +365,27 @@ export function GalleryTab({
             (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
             a.modelName.localeCompare(b.modelName)
         )
+        break
       case 'downloads':
-        return list.sort(
+        list.sort(
           (a, b) =>
             (b.downloadCount ?? 0) - (a.downloadCount ?? 0) ||
             a.modelName.localeCompare(b.modelName)
         )
+        break
       default:
-        return list
+        break
     }
-  }, [filteredInventory, librarySort, tagClusters])
+    if (highlightSet.size > 0) {
+      list.sort((a, b) => {
+        const ah = highlightSet.has(a.versionId) ? 0 : 1
+        const bh = highlightSet.has(b.versionId) ? 0 : 1
+        if (ah !== bh) return ah - bh
+        return b.downloadedAt.localeCompare(a.downloadedAt)
+      })
+    }
+    return list
+  }, [filteredInventory, librarySort, tagClusters, highlightSet])
 
   const bannedCount = inventory.filter((r) => isBanned(r.modelId)).length
 
@@ -342,6 +412,14 @@ export function GalleryTab({
             )
             return names.has(rec.routingTag.toLowerCase())
           }
+          case 'subfolder':
+            return recordMatchesTagSubfolder(
+              rec,
+              libraryFilter.name,
+              tagRules,
+              loraFolder,
+              checkpointFolder
+            )
           case 'civitai':
             return (
               rec.civitaiTags?.some((t) => fuzzyTagMatch(libraryFilter.name, t)) ?? false
@@ -364,7 +442,7 @@ export function GalleryTab({
         }
       }, 50)
     },
-    [inventory, showBannedInGallery, libraryFilter, bannedIds, tagClusters, tagRules]
+    [inventory, showBannedInGallery, libraryFilter, bannedIds, tagClusters, tagRules, loraFolder, checkpointFolder]
   )
 
   useEffect(() => {
@@ -505,8 +583,7 @@ export function GalleryTab({
   }
 
   const ensureTagFolder = async (tagName: string): Promise<boolean> => {
-    const mapped = folderForTag(tagName, tagRules)
-    if (mapped) return true
+    if (findRuleForTag(tagName, tagRules)) return true
     const path = await window.api.pickFolder()
     if (!path) return false
     const existing = tagRules.filter((r) => !ruleCoversTag(r, tagName))
@@ -574,11 +651,15 @@ export function GalleryTab({
   const filterActive = (f: LibraryFilter): boolean => {
     if (libraryFilter.type !== f.type) return false
     if (f.type === 'routing' && libraryFilter.type === 'routing') return libraryFilter.name === f.name
+    if (f.type === 'subfolder' && libraryFilter.type === 'subfolder') {
+      return libraryFilter.name.toLowerCase() === f.name.toLowerCase()
+    }
     if (f.type === 'civitai' && libraryFilter.type === 'civitai') return libraryFilter.name === f.name
     if (f.type === 'cluster' && libraryFilter.type === 'cluster') return libraryFilter.key === f.key
     if (f.type === 'baseModel' && libraryFilter.type === 'baseModel') {
       return libraryFilter.name.toLowerCase() === f.name.toLowerCase()
     }
+    if (f.type === 'session' && libraryFilter.type === 'session') return true
     return true
   }
 
@@ -598,7 +679,7 @@ export function GalleryTab({
   }
 
   const renderClusterVariant = (tag: { name: string; count: number }, indent = false) => {
-    const mapped = folderForTag(tag.name, tagRules)
+    const mapped = displayFolderForTag(tag.name, tagRules, loraFolder, checkpointFolder)
     return (
       <div key={tag.name} className={`sidebar-tag-row ${indent ? 'tag-cluster-variant' : ''}`}>
         <button
@@ -777,7 +858,7 @@ export function GalleryTab({
                   <div
                     key={record.versionId}
                     ref={(el) => setCardRef(record.versionId, el)}
-                    className={`gallery-card library-card ${selected.has(record.versionId) ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlightVersionId === record.versionId ? 'highlight' : ''}`}
+                    className={`gallery-card library-card ${selected.has(record.versionId) ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlightVersionId === record.versionId ? 'highlight' : ''} ${highlightSet.has(record.versionId) ? 'session-new' : ''}`}
                     onClick={() => toggleSelect(record.versionId)}
                     onContextMenu={(e) =>
                       openContextMenu(e, record.modelId, record.modelName, record.versionId)
@@ -952,6 +1033,16 @@ export function GalleryTab({
           >
             {t('gallery.untaggedFolder')}
           </button>
+          {sessionDownloadIds.length > 0 && (
+            <button
+              type="button"
+              className={`sidebar-tag ${filterActive({ type: 'session' }) ? 'active' : ''}`}
+              onClick={() => setLibraryFilter({ type: 'session' })}
+            >
+              <span className="tag-name">{t('gallery.sessionDownloads')}</span>
+              <span className="muted tag-count-inline">{sessionDownloadIds.length}</span>
+            </button>
+          )}
           {bannedCount > 0 && showBannedInGallery && (
             <button
               type="button"
@@ -979,6 +1070,32 @@ export function GalleryTab({
             </>
           )}
 
+          {filteredTagSubfolders.length > 0 && (
+            <>
+              <h4 className="sidebar-section-title">{t('gallery.tagFolders')}</h4>
+              {filteredTagSubfolders.map((route) => (
+                <button
+                  key={route.name}
+                  type="button"
+                  className={`sidebar-tag ${filterActive({ type: 'subfolder', name: route.name }) ? 'active' : ''}`}
+                  onClick={() => setLibraryFilter({ type: 'subfolder', name: route.name })}
+                  title={route.display}
+                >
+                  <span className="tag-name">{route.name}</span>
+                  <span className="muted tag-count-inline">
+                    {countInventoryInTagSubfolder(
+                      route.name,
+                      inventory,
+                      tagRules,
+                      loraFolder,
+                      checkpointFolder
+                    )}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+
           {filteredFolderRules.length > 0 && (
           <>
             <h4 className="sidebar-section-title">{t('gallery.folderRoutes')}</h4>
@@ -993,11 +1110,16 @@ export function GalleryTab({
                       name: parseTagRuleNames(rule.tagName)[0] ?? rule.tagName
                     })
                   }
-                  title={rule.folderPath}
+                  title={displayFolderForTag(
+                    parseTagRuleNames(rule.tagName)[0] ?? rule.tagName,
+                    tagRules,
+                    loraFolder,
+                    checkpointFolder
+                  ) ?? rule.folderPath}
                 >
                   {formatTagRuleLabel(rule)}
                   <span className="muted tag-count-inline">
-                    {countInventoryInFolder(rule, inventory)}
+                    {countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)}
                   </span>
                 </button>
                 {selected.size > 0 && (
@@ -1006,7 +1128,14 @@ export function GalleryTab({
                     className="sidebar-move"
                     disabled={moving}
                     onClick={() => void moveSelectedToTag(parseTagRuleNames(rule.tagName)[0] ?? rule.tagName)}
-                    title={rule.folderPath}
+                    title={
+                      displayFolderForTag(
+                        parseTagRuleNames(rule.tagName)[0] ?? rule.tagName,
+                        tagRules,
+                        loraFolder,
+                        checkpointFolder
+                      ) ?? rule.folderPath
+                    }
                   >
                     {t('gallery.move')}
                   </button>

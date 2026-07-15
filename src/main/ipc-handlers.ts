@@ -14,6 +14,8 @@ import type {
 } from '../shared/types'
 import { buildModelSlug, parseModelId, apiNsfwParam, apiEarlyAccessParam, apiTagSearchVariants, matchesContentFilter, resolveSearchDomains, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, domainLabel, civitaiSearchParamsFromRule, parseRuleFilterTags, getDefaultFolderForType } from '../shared/utils'
 import { modelHasHiddenTag, normalizeHiddenTags } from '../shared/tag-routing'
+import { modelHasExactTag } from '../shared/tag-fuzzy'
+import { shouldSkipTagBulkMove } from '../shared/tag-routing'
 import { resolveSearchNextCursor, sanitizeCrawlCursor } from '../shared/civitai-pagination'
 import { enrichDeferredDownloads } from '../shared/early-access'
 import { DownloadQueue } from './download-queue'
@@ -34,6 +36,7 @@ import { getAppIconDataUrl } from './tray-icon'
 import { ScanScheduler } from './scheduler'
 import {
   getSettings,
+  getAppearanceBootstrap,
   getTagRules,
   getWatchRules,
   saveSettings,
@@ -321,6 +324,10 @@ export function registerMediaProtocol(): void {
 
 export function initIpc(): void {
   clearIpcHandlers()
+  ipcMain.removeAllListeners('appearance:getBootstrapSync')
+  ipcMain.on('appearance:getBootstrapSync', (event) => {
+    event.returnValue = getAppearanceBootstrap()
+  })
   scheduler?.stop()
   setRendererReady(false)
   schedulerStarted = false
@@ -655,7 +662,9 @@ export function initIpc(): void {
   ipcMain.handle(
     'inventory:assignTag',
     (_e, payload: { versionIds: number[]; tagName: string }) => {
-      const moved = moveRecordsToTagFolder(payload.versionIds, payload.tagName, getTagRules())
+      const moved = moveRecordsToTagFolder(payload.versionIds, payload.tagName, getTagRules(), {
+        lockRouting: true
+      })
       for (const versionId of payload.versionIds) {
         downloadQueue.updateRoutingForVersion(versionId, payload.tagName)
       }
@@ -669,17 +678,37 @@ export function initIpc(): void {
       const routingTag = payload.routingTag.trim()
       const civitaiTag = payload.civitaiTag.trim()
       if (!routingTag || !civitaiTag) {
-        return { moved: 0, queueUpdated: 0, versionIds: [] as number[] }
+        return { moved: 0, skipped: 0, queueUpdated: 0, versionIds: [] as number[] }
       }
-      const versionIds = inventory
+      const settings = getSettings()
+      const tagRules = getTagRules()
+      const candidates = inventory
         .getAllVersions()
-        .filter((r) => r.civitaiTags?.some((t) => t.toLowerCase() === civitaiTag.toLowerCase()))
+        .filter((r) => modelHasExactTag(r.civitaiTags, civitaiTag))
+      const skipped = candidates.filter((r) =>
+        shouldSkipTagBulkMove(
+          r,
+          tagRules,
+          settings.loraOutputFolder,
+          settings.checkpointOutputFolder
+        )
+      ).length
+      const versionIds = candidates
+        .filter(
+          (r) =>
+            !shouldSkipTagBulkMove(
+              r,
+              tagRules,
+              settings.loraOutputFolder,
+              settings.checkpointOutputFolder
+            )
+        )
         .map((r) => r.versionId)
       const moved = versionIds.length
-        ? moveRecordsToTagFolder(versionIds, routingTag, getTagRules())
+        ? moveRecordsToTagFolder(versionIds, routingTag, tagRules, { lockRouting: false })
         : []
       const queueUpdated = downloadQueue.reassignRoutingByCivitaiTag(civitaiTag, routingTag)
-      return { moved: moved.length, queueUpdated, versionIds }
+      return { moved: moved.length, skipped, queueUpdated, versionIds }
     }
   )
 
