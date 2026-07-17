@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import type {
   BannedModel,
-  DownloadQueueItem,
   InventoryRecord,
   TagFolderRule
 } from '../../../shared/types'
 import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
 import { ModelDetailModal } from './ModelDetailModal'
-import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown } from '../../../shared/civitai-meta'
-import { aggregateResultTags, formatAuthorWithWeight, formatWaitDuration, getModelPageUrl, domainLabel } from '../../../shared/utils'
+import { LibraryModelCard } from './LibraryModelCard'
+import { aggregateResultTags, domainLabel, getModelPageUrl } from '../../../shared/utils'
 import type { CivitaiDomain, CivitaiDomainSetting } from '../../../shared/types'
-import { describeNsfwRating } from '../../../shared/nsfw-rating'
 import {
   countModelsByRatingFilter,
   matchesRatingFilter,
@@ -34,16 +32,21 @@ import {
 } from '../../../shared/tag-routing'
 import {
   buildTagClusters,
-  isTagAssignedToRecord,
   primaryClusterKey,
   recordMatchesCluster,
   type TagCluster
 } from '../../../shared/tag-cluster'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
+import { useResultsWindow } from '../hooks/useResultsWindow'
+import { ResultsPager } from './ResultsPager'
+import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
+import {
+  normalizeResultsDisplayMode,
+  normalizeResultsPageSize
+} from '../../../shared/results-display'
 
 interface Props {
   inventory: InventoryRecord[]
-  queue: DownloadQueueItem[]
   tagRules: TagFolderRule[]
   domain: CivitaiDomainSetting
   defaultLinkDomain: CivitaiDomain
@@ -55,6 +58,8 @@ interface Props {
   onFocusHandled?: () => void
   focusCivitaiTag?: string | null
   onFocusTagHandled?: () => void
+  /** Open Tag folders with this Civitai tag prefilled in search. */
+  onOpenTagFolders?: (tag: string) => void
   onRefresh: () => Promise<void>
   onRepairPreviews?: () => Promise<void>
   previewRepairBusy?: boolean
@@ -65,6 +70,8 @@ interface Props {
   sessionDownloadIds?: number[]
   highlightVersionIds?: number[]
   isActive?: boolean
+  resultsDisplayMode?: import('../../../shared/results-display').ResultsDisplayMode
+  resultsPageSize?: import('../../../shared/results-display').ResultsPageSize
 }
 
 interface ContextMenuState {
@@ -73,14 +80,6 @@ interface ContextMenuState {
   modelId: number
   modelName: string
   versionId?: number
-}
-
-function inventoryMetaExtra(record: InventoryRecord): string {
-  const parts: string[] = []
-  if (record.trainingResolution) parts.push(record.trainingResolution)
-  if (record.fileFp) parts.push(record.fileFp)
-  if (record.fileVariant) parts.push(record.fileVariant)
-  return parts.join(' · ')
 }
 
 type LibraryFilter =
@@ -95,13 +94,6 @@ type LibraryFilter =
   | { type: 'session' }
 
 type LibrarySort = 'default' | 'folder' | 'tagGroup' | 'downloads'
-
-function routingTagShownSeparately(record: InventoryRecord): string | null {
-  const rt = record.routingTag?.trim()
-  if (!rt) return null
-  if (record.civitaiTags?.some((t) => isTagAssignedToRecord(rt, t))) return null
-  return rt
-}
 
 function aggregateModelTags(inventory: InventoryRecord[]): Array<{ name: string; count: number }> {
   const map = new Map<string, number>()
@@ -121,9 +113,8 @@ function newId(): string {
   return crypto.randomUUID()
 }
 
-export function GalleryTab({
+function GalleryTabInner({
   inventory,
-  queue,
   tagRules,
   domain,
   defaultLinkDomain,
@@ -135,6 +126,7 @@ export function GalleryTab({
   onFocusHandled,
   focusCivitaiTag,
   onFocusTagHandled,
+  onOpenTagFolders,
   onRefresh,
   onRepairPreviews,
   previewRepairBusy = false,
@@ -144,9 +136,13 @@ export function GalleryTab({
   checkpointFolder = '',
   sessionDownloadIds = [],
   highlightVersionIds = [],
-  isActive = false
+  isActive = false,
+  resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
+  resultsPageSize: resultsPageSizeProp = 100
 }: Props) {
   const t = useT()
+  const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
+  const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>({ type: 'all' })
   const [librarySort, setLibrarySort] = useState<LibrarySort>('tagGroup')
@@ -167,9 +163,13 @@ export function GalleryTab({
 
   const highlightSet = useMemo(() => new Set(highlightVersionIds), [highlightVersionIds])
   const sessionSet = useMemo(() => new Set(sessionDownloadIds), [sessionDownloadIds])
+  const libraryWasActiveRef = useRef(false)
 
+  // Auto-select "New models" only when opening Library (not while already viewing another filter).
   useEffect(() => {
-    if (!isActive) return
+    const justOpened = isActive && !libraryWasActiveRef.current
+    libraryWasActiveRef.current = isActive
+    if (!justOpened) return
     if (highlightVersionIds.length > 0) {
       setLibraryFilter({ type: 'session' })
     }
@@ -387,6 +387,73 @@ export function GalleryTab({
     return list
   }, [filteredInventory, librarySort, tagClusters, highlightSet])
 
+  const libraryDisplayMode =
+    resultsDisplayMode === 'autoAdvance' ? 'lazy' : resultsDisplayMode
+  const libraryResetKey = useMemo(
+    () =>
+      [
+        libraryFilter.type,
+        libraryFilter.type === 'routing' ||
+        libraryFilter.type === 'civitai' ||
+        libraryFilter.type === 'folder' ||
+        libraryFilter.type === 'tagSubfolder'
+          ? libraryFilter.name
+          : '',
+        modelSearch,
+        modelLetter ?? '',
+        nsfwFilter,
+        librarySort,
+        hideFolderAssigned ? 1 : 0,
+        sortedInventory.length,
+        libraryDisplayMode,
+        resultsPageSize
+      ].join('|'),
+    [
+      libraryFilter,
+      modelSearch,
+      modelLetter,
+      nsfwFilter,
+      librarySort,
+      hideFolderAssigned,
+      sortedInventory.length,
+      libraryDisplayMode,
+      resultsPageSize
+    ]
+  )
+  const resultsWindow = useResultsWindow(
+    sortedInventory,
+    libraryDisplayMode,
+    resultsPageSize,
+    libraryResetKey
+  )
+  const gridRecords = resultsWindow.visible
+  const gridSentinelRef = useRef<HTMLDivElement>(null)
+  const resultsTopRef = useRef<HTMLDivElement>(null)
+  const pageScrollReadyRef = useRef(false)
+
+  useEffect(() => {
+    if (libraryDisplayMode !== 'pages') {
+      pageScrollReadyRef.current = false
+      return
+    }
+    if (!pageScrollReadyRef.current) {
+      pageScrollReadyRef.current = true
+      return
+    }
+    scrollResultsAnchorIntoView(resultsTopRef.current)
+  }, [resultsWindow.page, libraryDisplayMode])
+
+  useEffect(() => {
+    if (libraryDisplayMode === 'pages') return
+    const el = gridSentinelRef.current
+    if (!el || !resultsWindow.hasMoreLazy) return
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) resultsWindow.expandLazy()
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [libraryDisplayMode, resultsWindow.hasMoreLazy, resultsWindow.expandLazy, gridRecords.length])
+
   const bannedCount = inventory.filter((r) => isBanned(r.modelId)).length
 
   const scrollToModel = useCallback(
@@ -400,21 +467,21 @@ export function GalleryTab({
         setMessage(t('gallery.enableShowBanned'))
         return
       }
-      const matchesFilter = (rec: InventoryRecord): boolean => {
+      const matchesFilter = (row: InventoryRecord): boolean => {
         switch (libraryFilter.type) {
           case 'untagged':
-            return !rec.routingTag
+            return !row.routingTag
           case 'banned':
-            return bannedIds.has(rec.modelId)
+            return bannedIds.has(row.modelId)
           case 'routing': {
             const names = new Set(
               namesForRoutingFilter(libraryFilter.name, tagRules).map((n) => n.toLowerCase())
             )
-            return names.has(rec.routingTag.toLowerCase())
+            return names.has(row.routingTag.toLowerCase())
           }
           case 'subfolder':
             return recordMatchesTagSubfolder(
-              rec,
+              row,
               libraryFilter.name,
               tagRules,
               loraFolder,
@@ -422,17 +489,19 @@ export function GalleryTab({
             )
           case 'civitai':
             return (
-              rec.civitaiTags?.some((t) => fuzzyTagMatch(libraryFilter.name, t)) ?? false
+              row.civitaiTags?.some((t) => fuzzyTagMatch(libraryFilter.name, t)) ?? false
             )
           case 'cluster': {
             const cluster = tagClusters.find((c) => c.key === libraryFilter.key)
-            return cluster ? recordMatchesCluster(rec.civitaiTags, cluster) : false
+            return cluster ? recordMatchesCluster(row.civitaiTags, cluster) : false
           }
           default:
             return true
         }
       }
       if (!matchesFilter(rec)) setLibraryFilter({ type: 'all' })
+      const idx = sortedInventory.findIndex((r) => r.versionId === rec.versionId)
+      if (idx >= 0) resultsWindow.ensureIndexVisible(idx)
       window.setTimeout(() => {
         const el = cardRefs.current.get(rec.versionId)
         if (el) {
@@ -440,9 +509,21 @@ export function GalleryTab({
           setHighlightVersionId(rec.versionId)
           window.setTimeout(() => setHighlightVersionId(null), 2500)
         }
-      }, 50)
+      }, 80)
     },
-    [inventory, showBannedInGallery, libraryFilter, bannedIds, tagClusters, tagRules, loraFolder, checkpointFolder]
+    [
+      inventory,
+      showBannedInGallery,
+      libraryFilter,
+      bannedIds,
+      tagClusters,
+      tagRules,
+      loraFolder,
+      checkpointFolder,
+      sortedInventory,
+      resultsWindow,
+      t
+    ]
   )
 
   useEffect(() => {
@@ -458,11 +539,6 @@ export function GalleryTab({
     setModelLetter(null)
     onFocusTagHandled?.()
   }, [focusCivitaiTag, onFocusTagHandled])
-
-  const openContextMenu = (e: MouseEvent, modelId: number, modelName: string, versionId?: number) => {
-    e.preventDefault()
-    setContextMenu({ x: e.clientX, y: e.clientY, modelId, modelName, versionId })
-  }
 
   const banModel = async (modelId: number, modelName: string) => {
     setBannedList((prev) => [
@@ -555,14 +631,27 @@ export function GalleryTab({
     }
   }
 
-  const toggleSelect = (versionId: number) => {
+  const toggleSelect = useCallback((versionId: number) => {
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(versionId)) next.delete(versionId)
       else next.add(versionId)
       return next
     })
-  }
+  }, [])
+
+  const setCardRef = useCallback((versionId: number, el: HTMLDivElement | null) => {
+    if (el) cardRefs.current.set(versionId, el)
+    else cardRefs.current.delete(versionId)
+  }, [])
+
+  const openContextMenu = useCallback(
+    (e: MouseEvent, modelId: number, modelName: string, versionId?: number) => {
+      e.preventDefault()
+      setContextMenu({ x: e.clientX, y: e.clientY, modelId, modelName, versionId })
+    },
+    []
+  )
 
   const moveSelectedToTag = async (tagName: string) => {
     if (!selected.size) return
@@ -600,53 +689,12 @@ export function GalleryTab({
     await moveSelectedToTag(tagName)
   }
 
-  const assignCivitaiTagToFolder = async (civitaiTag: string, versionId: number) => {
-    setMoving(true)
-    setMessage('')
-    try {
-      if (!(await ensureTagFolder(civitaiTag))) return
-
-      const libCount = inventory.filter((r) =>
-        r.civitaiTags?.some((t) => t.toLowerCase() === civitaiTag.toLowerCase())
-      ).length
-      const queueCount = queue.filter(
-        (i) =>
-          (i.status === 'queued' || i.status === 'downloading') &&
-          i.civitaiTags?.some((t) => t.toLowerCase() === civitaiTag.toLowerCase())
-      ).length
-      const total = libCount + queueCount
-
-      let moveAll = false
-      if (total > 1) {
-        moveAll = window.confirm(
-          t('gallery.assignConfirm', {
-            tag: civitaiTag,
-            libCount,
-            queueCount
-          })
-        )
-      }
-
-      if (moveAll) {
-        const result = await window.api.assignByCivitaiTag(civitaiTag, civitaiTag)
-        setMessage(
-          t('gallery.folderMoved', {
-            tag: civitaiTag,
-            moved: result.moved,
-            queueUpdated: result.queueUpdated
-          })
-        )
-      } else {
-        await window.api.assignTag([versionId], civitaiTag)
-        setMessage(t('gallery.assignedOne', { tag: civitaiTag }))
-      }
-      await onRefresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setMoving(false)
-    }
-  }
+  const openTagInFolders = useCallback(
+    (civitaiTag: string) => {
+      onOpenTagFolders?.(civitaiTag)
+    },
+    [onOpenTagFolders]
+  )
 
   const filterActive = (f: LibraryFilter): boolean => {
     if (libraryFilter.type !== f.type) return false
@@ -703,11 +751,6 @@ export function GalleryTab({
         )}
       </div>
     )
-  }
-
-  const setCardRef = (versionId: number, el: HTMLDivElement | null) => {
-    if (el) cardRefs.current.set(versionId, el)
-    else cardRefs.current.delete(versionId)
   }
 
   const menuBanned = contextMenu ? isBanned(contextMenu.modelId) : false
@@ -845,158 +888,46 @@ export function GalleryTab({
                 : t('gallery.emptyNone')}
             </p>
           ) : (
+            <>
+            <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
             <div className="gallery-grid">
-              {sortedInventory.map((record) => {
-                const banned = isBanned(record.modelId)
-                const metaExtra = inventoryMetaExtra(record)
-                const ratingInfo =
-                  record.isNsfw != null || record.nsfwLevel
-                    ? describeNsfwRating(record.isNsfw, record.nsfwLevel)
-                    : null
-                const separateRoutingTag = routingTagShownSeparately(record)
-                return (
-                  <div
-                    key={record.versionId}
-                    ref={(el) => setCardRef(record.versionId, el)}
-                    className={`gallery-card library-card ${selected.has(record.versionId) ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlightVersionId === record.versionId ? 'highlight' : ''} ${highlightSet.has(record.versionId) ? 'session-new' : ''}`}
-                    onClick={() => toggleSelect(record.versionId)}
-                    onContextMenu={(e) =>
-                      openContextMenu(e, record.modelId, record.modelName, record.versionId)
-                    }
-                  >
-                    {ratingInfo ? (
-                      <span
-                        className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
-                        title={`Content: ${ratingInfo.label}`}
-                      >
-                        {ratingInfo.label}
-                      </span>
-                    ) : null}
-                    <input
-                      type="checkbox"
-                      checked={selected.has(record.versionId)}
-                      onChange={() => toggleSelect(record.versionId)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="gallery-check"
-                    />
-                    {civitaiModeBadgeLabel(record.civitaiMode) && (
-                      <span
-                        className={`civitai-mode-badge ${isModelTakenDown(record.civitaiMode) ? 'taken-down' : 'archived'}`}
-                      >
-                        {civitaiModeBadgeLabel(record.civitaiMode)}
-                      </span>
-                    )}
-                    <div className="gallery-thumb-wrap" aria-hidden="true">
-                      {record.previewPath ? (
-                        <img
-                          src={window.api.toMediaUrl(record.previewPath)}
-                          alt=""
-                          className="gallery-thumb"
-                        />
-                      ) : (
-                        <div className="gallery-thumb placeholder" />
-                      )}
-                    </div>
-                    <div className="gallery-card-body">
-                      <div className="gallery-card-title-row">
-                        <strong title={record.modelName}>{record.modelName}</strong>
-                        <button
-                          type="button"
-                          className="gallery-detail-btn"
-                          title={t('gallery.modelDetails')}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setPreviewRecord(record)
-                          }}
-                        >
-                          ℹ
-                        </button>
-                        <button
-                          type="button"
-                          className="gallery-web-btn-inline"
-                          title={t('gallery.openOnCivitai')}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void window.api.openExternal(
-                              getModelPageUrl(
-                                record.civitaiDomain ?? defaultLinkDomain,
-                                record.modelId,
-                                record.versionId
-                              )
-                            )
-                          }}
-                        >
-                          ↗
-                        </button>
-                      </div>
-                      <div className="muted">{record.versionName}</div>
-                      {!hideBaseModelOnCards && (
-                        <div className="muted library-base-model-line">
-                          {record.baseModel}
-                          {record.checkpointType && (
-                            <span className="checkpoint-badge" title={t('gallery.checkpointType')}>
-                              {record.checkpointType}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {(record.downloadCount != null || record.thumbsUpCount != null) && (
-                        <div className="model-stats-line muted">
-                          {record.downloadCount != null && (
-                            <span title={t('gallery.statDownloads')}>↓ {formatCompactCount(record.downloadCount)}</span>
-                          )}
-                          {record.thumbsUpCount != null && (
-                            <span title={t('gallery.statThumbsUp')}>👍 {formatCompactCount(record.thumbsUpCount)}</span>
-                          )}
-                        </div>
-                      )}
-                      {(record.author || (record.fileSizeBytes != null && record.fileSizeBytes > 0)) && (
-                        <div className="muted">{formatAuthorWithWeight(record.author, record.fileSizeBytes)}</div>
-                      )}
-                      {metaExtra && <div className="gallery-meta-line muted">{metaExtra}</div>}
-                      {record.awaitingSince && (
-                        <div className="muted" style={{ fontSize: 11 }}>
-                          {t('gallery.earlyAccessWait')}{' '}
-                          {formatWaitDuration(record.awaitingSince, record.downloadedAt)}
-                        </div>
-                      )}
-                      {separateRoutingTag ? (
-                        <span className="tag-chip selected">{separateRoutingTag}</span>
-                      ) : !record.routingTag?.trim() ? (
-                        <span className="muted">{t('gallery.defaultFolder')}</span>
-                      ) : null}
-                      {(record.civitaiTags?.length ?? 0) > 0 && (
-                        <div className="tag-row library-card-tags">
-                          {record.civitaiTags!.map((tag) => {
-                            const assigned = isTagAssignedToRecord(record.routingTag, tag)
-                            return (
-                              <button
-                                key={tag}
-                                type="button"
-                                className={`tag-chip ${assigned ? 'selected' : ''}`}
-                                title={
-                                  assigned
-                                    ? t('gallery.assignedToFolder')
-                                    : t('gallery.assignFolderHint', { tag })
-                                }
-                                disabled={moving}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (assigned) return
-                                  void assignCivitaiTagToFolder(tag, record.versionId)
-                                }}
-                              >
-                                {tag}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+              {gridRecords.map((record) => (
+                <LibraryModelCard
+                  key={record.versionId}
+                  record={record}
+                  selected={selected.has(record.versionId)}
+                  banned={isBanned(record.modelId)}
+                  highlight={highlightVersionId === record.versionId}
+                  sessionNew={highlightSet.has(record.versionId)}
+                  hideBaseModelOnCards={hideBaseModelOnCards}
+                  defaultLinkDomain={defaultLinkDomain}
+                  tagRules={tagRules}
+                  loraFolder={loraFolder}
+                  checkpointFolder={checkpointFolder}
+                  onToggleSelect={toggleSelect}
+                  onOpenContextMenu={openContextMenu}
+                  onOpenDetails={setPreviewRecord}
+                  onCivitaiTagClick={openTagInFolders}
+                  setCardRef={setCardRef}
+                />
+              ))}
             </div>
+            <ResultsPager
+              mode={libraryDisplayMode}
+              page={resultsWindow.page}
+              totalPages={resultsWindow.totalPages}
+              totalItems={resultsWindow.totalItems}
+              pageSize={resultsPageSize}
+              shownCount={gridRecords.length}
+              hasMoreLazy={resultsWindow.hasMoreLazy}
+              onPrev={resultsWindow.prevPage}
+              onNext={resultsWindow.nextPage}
+              onExpandLazy={resultsWindow.expandLazy}
+            />
+            {libraryDisplayMode !== 'pages' && resultsWindow.hasMoreLazy && (
+              <div ref={gridSentinelRef} className="browse-load-sentinel" />
+            )}
+            </>
           )}
           </div>
         </section>
@@ -1347,3 +1278,5 @@ export function GalleryTab({
     </div>
   )
 }
+
+export const GalleryTab = memo(GalleryTabInner)

@@ -3,12 +3,15 @@ import type {
   CivitaiDomain,
   CivitaiFile,
   CivitaiModel,
-  CivitaiModelVersion
+  CivitaiModelVersion,
+  OnDiskVerifyMode
 } from '../shared/types'
-import { extractModelFileMeta } from '../shared/utils'
+import { extractModelFileMeta, parseSwarmDescriptionModelId, parseSwarmDescriptionVersionId } from '../shared/utils'
 import { modelStatsFromSearch, checkpointTypeLabel } from '../shared/civitai-meta'
 import * as inventory from './inventory'
 import { sha256File } from './library-hash-verify'
+import { readCivitaiSidecar, readIdsFromSwarm, writeCivitaiSidecar } from './model-sidecar'
+import { getSettings } from './settings-store'
 
 export type AdoptOnDiskResult =
   | { ok: true; slug: string; linked: boolean }
@@ -16,17 +19,12 @@ export type AdoptOnDiskResult =
 
 function parseSwarmSourceVersionId(swarm: Record<string, unknown>): number | null {
   const desc = typeof swarm['modelspec.description'] === 'string' ? swarm['modelspec.description'] : ''
-  const fromQuery = desc.match(/modelVersionId=(\d+)/i)
-  if (fromQuery) return Number(fromQuery[1])
-  const fromPath = desc.match(/\/model-versions\/(\d+)/i)
-  if (fromPath) return Number(fromPath[1])
-  return null
+  return parseSwarmDescriptionVersionId(desc)
 }
 
 function parseSwarmSourceModelId(swarm: Record<string, unknown>): number | null {
   const desc = typeof swarm['modelspec.description'] === 'string' ? swarm['modelspec.description'] : ''
-  const m = desc.match(/\/models\/(\d+)/i)
-  return m ? Number(m[1]) : null
+  return parseSwarmDescriptionModelId(desc)
 }
 
 function swarmMatchesRequest(
@@ -51,16 +49,17 @@ function swarmMatchesRequest(
   return false
 }
 
-async function verifyFileHash(modelPath: string, primaryFile: CivitaiFile): Promise<boolean> {
-  const expected =
-    primaryFile.hashes?.SHA256?.toUpperCase() ?? primaryFile.hashes?.sha256?.toUpperCase()
-  if (!expected) return false
+async function fileSha256OrNull(modelPath: string): Promise<string | null> {
   try {
-    const hash = (await sha256File(modelPath)).toUpperCase()
-    return hash === expected
+    return (await sha256File(modelPath)).toUpperCase()
   } catch {
-    return false
+    return null
   }
+}
+
+function apiFileSha256(primaryFile: CivitaiFile): string | null {
+  const h = primaryFile.hashes?.SHA256 ?? primaryFile.hashes?.sha256
+  return h ? h.toUpperCase() : null
 }
 
 function readSwarm(swarmPath: string): Record<string, unknown> | null {
@@ -70,6 +69,80 @@ function readSwarm(swarmPath: string): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+function resolveStoredIdentity(
+  modelPath: string,
+  swarmPath: string
+): { modelId?: number; versionId?: number; sha256?: string } | null {
+  const sidecar = readCivitaiSidecar(modelPath)
+  if (sidecar) {
+    return { modelId: sidecar.modelId, versionId: sidecar.versionId, sha256: sidecar.sha256 }
+  }
+  return readIdsFromSwarm(swarmPath)
+}
+
+/**
+ * Decide whether on-disk bytes are the requested Civitai version.
+ * Returns match=true to adopt; false so caller can download under a unique slug.
+ */
+async function verifyOnDiskMatch(params: {
+  mode: OnDiskVerifyMode
+  modelPath: string
+  swarmPath: string
+  modelId: number
+  versionId: number
+  expectedHash: string | null
+}): Promise<{ match: boolean; diskHash?: string; reasonIfMismatch?: string }> {
+  const { mode, modelPath, swarmPath, modelId, versionId, expectedHash } = params
+  const identity = resolveStoredIdentity(modelPath, swarmPath)
+
+  const hashCheck = async (): Promise<{ match: boolean; diskHash?: string; reasonIfMismatch?: string }> => {
+    const diskHash = await fileSha256OrNull(modelPath)
+    if (!diskHash) {
+      return { match: false, reasonIfMismatch: 'Cannot read on-disk file for SHA256 check' }
+    }
+    if (!expectedHash) {
+      if (identity?.versionId != null && identity.versionId !== versionId) {
+        return {
+          match: false,
+          diskHash,
+          reasonIfMismatch: `On-disk identity is version ${identity.versionId}, not ${versionId}`
+        }
+      }
+      return { match: true, diskHash }
+    }
+    if (diskHash !== expectedHash) {
+      return {
+        match: false,
+        diskHash,
+        reasonIfMismatch: `On-disk file SHA256 does not match Civitai version ${versionId}. A different file already occupies this path.`
+      }
+    }
+    return { match: true, diskHash }
+  }
+
+  if (mode === 'sha256') {
+    return hashCheck()
+  }
+
+  if (identity?.versionId != null) {
+    if (identity.versionId === versionId && (identity.modelId == null || identity.modelId === modelId)) {
+      if (mode === 'auto' && identity.sha256 && expectedHash && identity.sha256 !== expectedHash) {
+        return hashCheck()
+      }
+      return { match: true }
+    }
+    if (mode === 'sidecar') {
+      return {
+        match: false,
+        reasonIfMismatch: `On-disk identity is version ${identity.versionId}, not ${versionId}`
+      }
+    }
+    return hashCheck()
+  }
+
+  return hashCheck()
 }
 
 /** Register an on-disk model file as owned inventory when download target already exists. */
@@ -105,33 +178,44 @@ export async function tryAdoptExistingModelOnDisk(params: {
   const existing = inventory.getVersion(versionId)
   if (existing) return { ok: true, slug: existing.slug, linked: false }
 
+  const expectedHash = apiFileSha256(primaryFile)
+  const mode = getSettings().onDiskVerifyMode ?? 'auto'
+  const verified = await verifyOnDiskMatch({
+    mode,
+    modelPath,
+    swarmPath,
+    modelId,
+    versionId,
+    expectedHash
+  })
+  if (!verified.match) {
+    return {
+      ok: false,
+      reason:
+        verified.reasonIfMismatch ??
+        `On-disk file does not match Civitai version ${versionId}`
+    }
+  }
+
+  if (!expectedHash && !resolveStoredIdentity(modelPath, swarmPath)) {
+    const swarm = readSwarm(swarmPath)
+    if (swarm && !swarmMatchesRequest(swarm, modelId, versionId, model.name, version.name)) {
+      const swarmMid = parseSwarmSourceModelId(swarm)
+      if (swarmMid != null && swarmMid !== modelId) {
+        return { ok: false, reason: 'On-disk swarm metadata does not match this model' }
+      }
+    }
+  }
+
   const otherAtPath = inventory
     .getAllVersions()
     .find((v) => v.modelPath === modelPath && v.versionId !== versionId)
-  if (otherAtPath) {
-    return { ok: false, reason: 'On-disk file belongs to another library version' }
-  }
-
-  const swarm = readSwarm(swarmPath)
-  if (swarm) {
-    const swarmVid = parseSwarmSourceVersionId(swarm)
-    if (swarmVid != null && swarmVid !== versionId) {
-      return { ok: false, reason: `On-disk swarm points to version ${swarmVid}` }
+  if (otherAtPath && !(expectedHash && verified.diskHash === expectedHash)) {
+    return {
+      ok: false,
+      reason: `Same file path already belongs to library version ${otherAtPath.versionId} (“${otherAtPath.modelName}”). Remove or move that file before downloading another version here.`
     }
   }
-
-  let verified = swarm ? swarmMatchesRequest(swarm, modelId, versionId, model.name, version.name) : false
-  if (!verified) verified = await verifyFileHash(modelPath, primaryFile)
-
-  if (!verified && swarm) {
-    const swarmMid = parseSwarmSourceModelId(swarm)
-    if (swarmMid != null && swarmMid !== modelId) {
-      return { ok: false, reason: 'On-disk swarm metadata does not match this model' }
-    }
-    verified = true
-  }
-
-  if (!verified) verified = true
 
   const author = model.creator?.username ?? 'unknown'
   const fileMeta = extractModelFileMeta(primaryFile)
@@ -142,16 +226,9 @@ export async function tryAdoptExistingModelOnDisk(params: {
     /* keep API size */
   }
 
-  let fileHashSha256 =
-    primaryFile.hashes?.SHA256?.toUpperCase() ?? primaryFile.hashes?.sha256?.toUpperCase()
-  if (!fileHashSha256) {
-    try {
-      fileHashSha256 = await sha256File(modelPath)
-    } catch {
-      /* optional */
-    }
-  }
+  const fileHashSha256 = expectedHash ?? verified.diskHash
 
+  const swarm = readSwarm(swarmPath)
   let trainingResolution = fileMeta.trainingResolution
   if (!trainingResolution && swarm) {
     const res = swarm['modelspec.resolution']
@@ -191,6 +268,16 @@ export async function tryAdoptExistingModelOnDisk(params: {
     civitaiMode: model.mode ?? undefined,
     fileHashSha256
   })
+
+  try {
+    writeCivitaiSidecar(modelPath, {
+      modelId,
+      versionId,
+      sha256: fileHashSha256
+    })
+  } catch {
+    /* sidecar is best-effort */
+  }
 
   inventory.removeDeferredDownload(versionId)
   return { ok: true, slug, linked: true }

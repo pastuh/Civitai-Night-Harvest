@@ -48,6 +48,34 @@ import {
   toPublicSettings,
   outputFoldersConfigured
 } from './settings-store'
+import { checkConfiguredOutputFoldersReachable, clearOutputPathReachCache, probeConfiguredOutputFolders, isOutputPathRootReachable, isConfiguredOutputOffline } from './output-paths'
+
+let storageAlertSent = false
+
+/** Tell the renderer — never use native dialog.showMessageBox (it freezes the UI). */
+function notifyOutputStorageUnavailable(message: string): void {
+  applyOutputStorageOfflinePolicy()
+  sendToRenderer(() => mainWindow, 'app:storageError', message)
+  if (storageAlertSent) return
+  storageAlertSent = true
+}
+
+function resetStorageAlertGate(): void {
+  storageAlertSent = false
+}
+
+/** Pause downloads and turn off Harvest while output drive is missing. */
+function applyOutputStorageOfflinePolicy(): void {
+  if (!isConfiguredOutputOffline()) return
+  downloadQueue?.pause()
+  const prev = getSettings()
+  if (prev.nightMode || prev.crawlAutoDownload !== false) {
+    saveSettings({ nightMode: false, crawlAutoDownload: false })
+  }
+  if (scheduler) void scheduler.stopContinuousCrawl().catch(() => {})
+  scheduler?.setStatus('idle')
+  sendToRenderer(() => mainWindow, 'settings:changed', toPublicSettings(getSettings()))
+}
 
 let mainWindow: BrowserWindow | null = null
 let mainWindowChromeBoundId: number | null = null
@@ -312,6 +340,11 @@ export function registerMediaProtocol(): void {
     protocol.registerFileProtocol('media', (request, callback) => {
       try {
         const url = decodeURIComponent(request.url.replace(/^media:\/\//, ''))
+        // Never let Chromium open files on a missing drive — freezes the app.
+        if (!isOutputPathRootReachable(url)) {
+          callback({ error: -6 /* net::ERR_FILE_NOT_FOUND */ })
+          return
+        }
         callback({ path: url })
       } catch {
         callback({ error: -2 })
@@ -341,7 +374,8 @@ export function initIpc(): void {
       sched?.log(level, message, undefined, { source: 'download', modelId: meta?.modelId, versionId: meta?.versionId }),
     onAllIdle: () => {
       sched?.setStatus('idle')
-      setImmediate(() => sched?.fillBrowseDownloadPipeline('crawl'))
+      // Do not refill browse pipeline here — when items finish/link/skip quickly,
+      // refill caused queue count thrash (8→4→8). Crawl / Start / page hooks top up.
     },
     onQueueMutated: () => {
       const pipeline = downloadQueue
@@ -366,19 +400,33 @@ export function initIpc(): void {
         ? normalizeHiddenTags(getSettings().hiddenTags ?? [])
         : null
     const next = saveSettingsFromUi(partial)
+    resetStorageAlertGate()
+    clearOutputPathReachCache()
+    const reach = checkConfiguredOutputFoldersReachable()
+    if (!reach.ok) {
+      notifyOutputStorageUnavailable(reach.message)
+      downloadQueue.pause()
+    } else {
+      resetStorageAlertGate()
+      ensureSchedulerStarted()
+      sendToRenderer(() => mainWindow, 'settings:changed', toPublicSettings(next))
+    }
     clientPool.update(next.domain, next.apiKey)
     if (partial.hiddenTags !== undefined && prevHiddenTags) {
       sched.onHiddenTagsChanged(prevHiddenTags, normalizeHiddenTags(next.hiddenTags))
     }
     scheduler.onSettingsChanged()
-    if (next.apiKey) {
-      const me = await refreshCivitaiMe(clientPool, true)
-      saveSettings({
-        civitaiUsername: me.civitaiUsername,
-        civitaiUserTier: me.civitaiUserTier
-      })
-    } else if (hadKey) {
-      saveSettings({ civitaiUsername: undefined, civitaiUserTier: undefined })
+    // Refresh Civitai profile only when the API key itself changes — not on Pause / every save.
+    if (partial.apiKey !== undefined) {
+      if (next.apiKey) {
+        const me = await refreshCivitaiMe(clientPool, true)
+        saveSettings({
+          civitaiUsername: me.civitaiUsername,
+          civitaiUserTier: me.civitaiUserTier
+        })
+      } else if (hadKey) {
+        saveSettings({ civitaiUsername: undefined, civitaiUserTier: undefined })
+      }
     }
     return toPublicSettings(getSettings())
   })
@@ -527,6 +575,7 @@ export function initIpc(): void {
         skipHashBackfill?: boolean
         skipDiskImport?: boolean
         diskImportOnly?: boolean
+        skipIdentityBackfill?: boolean
       }
     ) => {
       let removedMissing = 0
@@ -536,43 +585,70 @@ export function initIpc(): void {
       let importedFromDisk = 0
       let relinkedFromDisk = 0
       let diskScanned = 0
+      let storageError: string | undefined
       if (options?.syncDisk) {
-        const emitSync = createThrottledProgressEmitter(
-          () => mainWindow,
-          'library:syncProgress',
-          200
-        )
-        const settings = getSettings()
-        const sync = await syncInventoryWithDiskAsync(emitSync, {
-          loraFolder: settings.loraOutputFolder,
-          checkpointFolder: settings.checkpointOutputFolder,
-          tagRules: getTagRules(),
-          skipDiskImport: options.skipDiskImport,
-          diskImportOnly: options.diskImportOnly
-        })
-        removedMissing = sync.removedMissing
-        enrichedMeta = sync.enrichedMeta
-        checked = sync.checked
-        importedFromDisk = sync.importedFromDisk
-        relinkedFromDisk = sync.relinkedFromDisk
-        diskScanned = sync.diskScanned
-        if (!options?.skipHashBackfill && !options?.diskImportOnly) {
-          hashesBackfilled = await backfillMissingHashes(50, (p) =>
-            emitSync({
-              phase: 'hash',
-              current: p.current,
-              total: p.total,
-              modelName: p.modelName,
-              action: 'Computing SHA256'
-            })
+        const reach = await probeConfiguredOutputFolders()
+        if (!reach.ok) {
+          storageError = reach.message
+          notifyOutputStorageUnavailable(reach.message)
+          downloadQueue.pause()
+        } else {
+          const emitSync = createThrottledProgressEmitter(
+            () => mainWindow,
+            'library:syncProgress',
+            100
           )
+          const settings = getSettings()
+          const sync = await syncInventoryWithDiskAsync(emitSync, {
+            loraFolder: settings.loraOutputFolder,
+            checkpointFolder: settings.checkpointOutputFolder,
+            tagRules: getTagRules(),
+            skipDiskImport: options.skipDiskImport,
+            diskImportOnly: options.diskImportOnly,
+            skipIdentityBackfill: options.skipIdentityBackfill
+          })
+          removedMissing = sync.removedMissing
+          enrichedMeta = sync.enrichedMeta
+          checked = sync.checked
+          importedFromDisk = sync.importedFromDisk
+          relinkedFromDisk = sync.relinkedFromDisk
+          diskScanned = sync.diskScanned
+          if (sync.storageError) {
+            storageError = sync.storageError
+            notifyOutputStorageUnavailable(sync.storageError)
+            downloadQueue.pause()
+          }
+          if (!options?.skipHashBackfill && !options?.diskImportOnly) {
+            hashesBackfilled = await backfillMissingHashes(50, (p) =>
+              emitSync({
+                phase: 'hash',
+                current: p.current,
+                total: p.total,
+                modelName: p.modelName,
+                action: 'Computing SHA256'
+              })
+            )
+          }
+          downloadQueue.syncWithInventory()
         }
-        downloadQueue.syncWithInventory()
       }
       let items = inventory.getAllVersions()
       let repairedPreviews = 0
       let repairedRatings = 0
-      if (options?.repairPreviews) {
+      const offline = Boolean(storageError) || isConfiguredOutputOffline()
+      if (offline) {
+        // Avoid media:// loads on offline roots (Chromium open of F:\ freezes the app).
+        items = items.map((r) =>
+          isOutputPathRootReachable(r.previewPath || r.modelPath || r.outputFolder)
+            ? r
+            : { ...r, previewPath: '' }
+        )
+        if (!storageError) {
+          const reach = checkConfiguredOutputFoldersReachable()
+          if (!reach.ok) storageError = reach.message
+        }
+      }
+      if (options?.repairPreviews && !offline) {
         const emitPreview = createThrottledProgressEmitter(
           () => mainWindow,
           'library:syncProgress',
@@ -606,24 +682,28 @@ export function initIpc(): void {
         checked,
         importedFromDisk,
         relinkedFromDisk,
-        diskScanned
+        diskScanned,
+        storageError
       }
     }
   )
 
   ipcMain.handle('model:ban', (_e, payload: { modelId: number; modelName?: string }) => {
+    // Keep this path cheap — ban is clicked from Browse during harvest and must not
+    // serialize the full banned list or thrash the download queue when the model isn't queued.
     inventory.banModel(payload.modelId, payload.modelName ?? '')
     inventory.removePendingForModel(payload.modelId)
     scheduler.dismissPendingForModel(payload.modelId)
+    scheduler.removeModelFromBrowseGallery(payload.modelId)
     downloadQueue.cancelByModelId(payload.modelId)
     scheduler.log('info', `Excluded model ${payload.modelId} from downloads`)
-    return inventory.getBannedModels()
+    return { modelId: payload.modelId }
   })
 
   ipcMain.handle('model:unban', (_e, modelId: number) => {
     inventory.unbanModel(modelId)
     scheduler.log('info', `Removed exclusion for model ${modelId}`)
-    return inventory.getBannedModels()
+    return { modelId }
   })
 
   ipcMain.handle('model:getBanned', () => inventory.getBannedModels())
@@ -637,6 +717,7 @@ export function initIpc(): void {
         inventory.banModel(record.modelId, record.modelName)
         inventory.removePendingForModel(record.modelId)
         scheduler.dismissPendingForModel(record.modelId)
+        scheduler.removeModelFromBrowseGallery(record.modelId)
         downloadQueue.cancelByModelId(record.modelId)
         scheduler.log('info', `Deleted and excluded: ${record.modelName}`, undefined, {
           source: 'library',
@@ -784,17 +865,21 @@ export function initIpc(): void {
   })
 
   ipcMain.handle('download:reconcile', () => {
+    // Only sync queue ↔ inventory. Do NOT refill the browse pipeline here —
+    // refreshInventory runs on many queue events and refill caused oscillate
+    // (enqueue → fail/remove → refill → …). Pipeline fill stays on crawl/start/tags.
     downloadQueue.syncWithInventory()
-    if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
-      const allowOutsideNightMode = !getSettings().nightMode
-      scheduler.fillBrowseDownloadPipeline('system', allowOutsideNightMode)
-    }
     return downloadQueue.getState()
   })
 
-  ipcMain.handle('download:start', () => {
+  ipcMain.handle('download:start', async () => {
     if (!outputFoldersConfigured()) {
       throw new Error('Set LoRA and Checkpoint folders in Settings first')
+    }
+    const reach = await probeConfiguredOutputFolders()
+    if (!reach.ok) {
+      notifyOutputStorageUnavailable(reach.message)
+      throw new Error(reach.message)
     }
     if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
       const allowOutsideNightMode = !getSettings().nightMode
@@ -857,8 +942,8 @@ export function initIpc(): void {
 
   ipcMain.handle('browse:getGallery', () => scheduler.getBrowseGallerySnapshot())
 
-  ipcMain.handle('app:rendererReady', () => {
-    onRendererReady()
+  ipcMain.handle('app:rendererReady', async () => {
+    await onRendererReady()
   })
 
   ipcMain.handle('app:iconDataUrl', () => getAppIconDataUrl(32))
@@ -1017,25 +1102,30 @@ export function initIpc(): void {
   })
 }
 
-export function onRendererReady(): void {
+export async function onRendererReady(): Promise<void> {
   bindRendererWindow(() => mainWindow)
   setRendererReady(true)
   flushDeferredRendererMessages()
-  ensureSchedulerStarted()
+  await ensureSchedulerStarted()
 }
 
 export function onRendererUnload(): void {
   setRendererReady(false)
 }
 
-export function ensureSchedulerStarted(): void {
+export async function ensureSchedulerStarted(): Promise<void> {
   if (schedulerStarted || !scheduler) return
+  // Do not start crawl/downloads while output drive is missing — keeps UI responsive.
+  if (isConfiguredOutputOffline()) {
+    applyOutputStorageOfflinePolicy()
+    return
+  }
   schedulerStarted = true
-  scheduler.start()
+  await scheduler.start()
 }
 
 export function startScheduler(): void {
-  ensureSchedulerStarted()
+  void ensureSchedulerStarted()
 }
 
 export function stopScheduler(): void {

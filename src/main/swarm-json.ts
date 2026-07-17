@@ -11,6 +11,10 @@ export interface SwarmJsonPayload {
   'modelspec.trigger_phrase'?: string
   trainedWords?: string[]
   'modelspec.resolution'?: string
+  /** Stable identity for this app — do not parse from description text */
+  'civitai.model_id'?: string
+  'civitai.version_id'?: string
+  'civitai.sha256'?: string
 }
 
 function htmlToPlain(text: string): string {
@@ -104,7 +108,8 @@ export function buildSwarmJson(
   version: CivitaiModelVersion,
   sourceUrl: string,
   thumbnailBase64: string,
-  mimeType = 'image/jpeg'
+  mimeType = 'image/jpeg',
+  fileSha256?: string
 ): SwarmJsonPayload {
   const author = model.creator?.username ?? 'Unknown'
   const typeTag = model.type?.toUpperCase() ?? 'LORA'
@@ -113,6 +118,10 @@ export function buildSwarmJson(
   const triggers = version.trainedWords?.map((w) => w.trim()).filter(Boolean) ?? []
   const primary = pickPrimaryFile(version.files)
   const usageHint = buildUsageHint(model, version, triggers)
+  const apiHash =
+    fileSha256?.toUpperCase() ||
+    primary?.hashes?.SHA256?.toUpperCase() ||
+    primary?.hashes?.sha256?.toUpperCase()
 
   const payload: SwarmJsonPayload = {
     'modelspec.title': `${model.name} - ${version.name}`,
@@ -121,8 +130,12 @@ export function buildSwarmJson(
     'modelspec.author': author,
     'modelspec.tags': tagParts.join(', '),
     'modelspec.thumbnail': `data:${mimeType};base64,${thumbnailBase64}`,
-    'modelspec.usage_hint': usageHint
+    'modelspec.usage_hint': usageHint,
+    'civitai.model_id': String(model.id),
+    'civitai.version_id': String(version.id)
   }
+
+  if (apiHash) payload['civitai.sha256'] = apiHash
 
   if (triggers.length) {
     payload['modelspec.trigger_phrase'] = triggers.join(', ')

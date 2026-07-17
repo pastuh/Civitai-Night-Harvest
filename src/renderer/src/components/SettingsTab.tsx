@@ -1,8 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppLocale } from '../../../shared/locale'
 import type { AppSettingsPublic, AppSettingsSave, ContentFilter, LibraryHashVerifyProgress } from '../../../shared/types'
 import { DEFAULT_ACTIVITY_LOG_TOPICS, resolveActivityLogTopics, type ActivityLogTopic } from '../../../shared/activity-log-policy'
 import { GRID_SIZE_MAX_PX, GRID_SIZE_MIN_PX, clampGridSizePx } from '../../../shared/grid-size'
+import {
+  computeOptimizationScore,
+  diffOptimizationSettings,
+  nearestOptimizationRing,
+  settingsForOptimizationScore,
+  sliceOptimizationSettings,
+  type OptimizationChange
+} from '../../../shared/optimization-score'
 import { domainLabel } from '../../../shared/utils'
 import { formatLibrarySyncSummary } from '../utils/library-sync-summary'
 import { useT } from '../i18n/context'
@@ -31,11 +39,15 @@ export function SettingsTab({
   const [hashBusy, setHashBusy] = useState(false)
   const [hashResult, setHashResult] = useState<string | null>(null)
   const [hashProgress, setHashProgress] = useState<LibraryHashVerifyProgress | null>(null)
-  const [hashVerifyDomain, setHashVerifyDomain] = useState<'auto' | 'com' | 'red'>('auto')
   const [slugSyncBusy, setSlugSyncBusy] = useState(false)
   const [slugSyncResult, setSlugSyncResult] = useState<string | null>(null)
   const [diskSyncBusy, setDiskSyncBusy] = useState(false)
   const [diskSyncResult, setDiskSyncResult] = useState<string | null>(null)
+  const [optimizationChanges, setOptimizationChanges] = useState<OptimizationChange[]>([])
+  /** When set, slider thumb follows the preset rung (avoids jump vs computed score). */
+  const [optimizationTarget, setOptimizationTarget] = useState<number | null>(null)
+  /** Settings before this slider gesture — diffs stay meaningful while dragging. */
+  const optimizationBaselineRef = useRef<ReturnType<typeof sliceOptimizationSettings> | null>(null)
 
   useEffect(() => {
     return window.api.onLibraryHashProgress((p) => setHashProgress(p))
@@ -44,6 +56,9 @@ export function SettingsTab({
   useEffect(() => {
     setDraft(settings)
     setNewApiKey('')
+    setOptimizationChanges([])
+    setOptimizationTarget(null)
+    optimizationBaselineRef.current = null
   }, [settings])
 
   useEffect(() => {
@@ -57,6 +72,22 @@ export function SettingsTab({
 
   const update = <K extends keyof AppSettingsPublic>(key: K, value: AppSettingsPublic[K]) => {
     setDraft((d) => ({ ...d, [key]: value }))
+    setSaved(false)
+    setOptimizationChanges([])
+    setOptimizationTarget(null)
+    optimizationBaselineRef.current = null
+  }
+
+  const applyOptimizationSlider = (rawScore: number) => {
+    const target = nearestOptimizationRing(rawScore)
+    if (!optimizationBaselineRef.current) {
+      optimizationBaselineRef.current = sliceOptimizationSettings(draft)
+    }
+    const next = settingsForOptimizationScore(target)
+    const changes = diffOptimizationSettings(optimizationBaselineRef.current, next)
+    setOptimizationTarget(target)
+    setOptimizationChanges(changes)
+    setDraft((d) => ({ ...d, ...next }))
     setSaved(false)
   }
 
@@ -127,6 +158,9 @@ export function SettingsTab({
     return t(keyMap[topic])
   }
 
+  const optimization = useMemo(() => computeOptimizationScore(draft), [draft])
+  const optimizationSliderValue = optimizationTarget ?? optimization.score
+
   const topicEnabled = (topic: ActivityLogTopic): boolean => {
     const custom = draft.activityLogTopics?.[topic]
     if (draft.activityLogVerbosity === 'custom') {
@@ -142,6 +176,9 @@ export function SettingsTab({
       activityLogTopics: { ...DEFAULT_ACTIVITY_LOG_TOPICS, ...d.activityLogTopics, [topic]: enabled }
     }))
     setSaved(false)
+    setOptimizationChanges([])
+    setOptimizationTarget(null)
+    optimizationBaselineRef.current = null
   }
 
   const saveRow = (extraClass?: string) => (
@@ -393,6 +430,20 @@ export function SettingsTab({
           <span className="muted settings-field-note">{t('settings.notes.slugFormat')}</span>
         </div>
         <div className="field">
+          <label className="field-label">{t('settings.fields.onDiskVerifyMode')}</label>
+          <select
+            value={draft.onDiskVerifyMode ?? 'auto'}
+            onChange={(e) =>
+              update('onDiskVerifyMode', e.target.value as AppSettingsPublic['onDiskVerifyMode'])
+            }
+          >
+            <option value="auto">{t('settings.options.verifyAuto')}</option>
+            <option value="sha256">{t('settings.options.verifySha256')}</option>
+            <option value="sidecar">{t('settings.options.verifySidecar')}</option>
+          </select>
+          <span className="muted settings-field-note">{t('settings.notes.onDiskVerifyMode')}</span>
+        </div>
+        <div className="field">
           <button
             type="button"
             className="btn-sm"
@@ -543,15 +594,46 @@ export function SettingsTab({
           step={1}
           onChange={(v) => update('downloadStreams', v)}
         />
+        <div className="field">
+          <label htmlFor="results-display-mode">{t('settings.fields.resultsDisplayMode')}</label>
+          <select
+            id="results-display-mode"
+            value={draft.resultsDisplayMode ?? 'autoAdvance'}
+            onChange={(e) =>
+              update(
+                'resultsDisplayMode',
+                e.target.value as AppSettingsPublic['resultsDisplayMode']
+              )
+            }
+          >
+            <option value="lazy">{t('settings.options.resultsLazy')}</option>
+            <option value="pages">{t('settings.options.resultsPages')}</option>
+            <option value="autoAdvance">{t('settings.options.resultsAutoAdvance')}</option>
+          </select>
+          <p className="muted settings-field-note">{t('settings.notes.resultsDisplayMode')}</p>
+        </div>
+        <div className="field">
+          <label htmlFor="results-page-size">{t('settings.fields.resultsPageSize')}</label>
+          <select
+            id="results-page-size"
+            value={draft.resultsPageSize ?? 100}
+            onChange={(e) => update('resultsPageSize', Number(e.target.value) as 60 | 100)}
+          >
+            <option value={60}>60</option>
+            <option value={100}>100</option>
+          </select>
+          <p className="muted settings-field-note">{t('settings.notes.resultsPageSize')}</p>
+        </div>
         <div className="field field-checkbox">
           <label>
             <input
               type="checkbox"
-              checked={draft.updateBrowseOnCrawl ?? true}
+              checked={draft.updateBrowseOnCrawl ?? false}
               onChange={(e) => update('updateBrowseOnCrawl', e.target.checked)}
             />
             {t('settings.fields.updateBrowseOnCrawl')}
           </label>
+          <p className="muted settings-field-note">{t('settings.notes.updateBrowseOnCrawl')}</p>
         </div>
         <div className="field field-checkbox">
           <label>
@@ -586,11 +668,13 @@ export function SettingsTab({
               const value = e.target.value as AppSettingsPublic['activityLogVerbosity']
               if (value === 'custom') {
                 const prev = draft.activityLogVerbosity ?? 'minimal'
+                const seedVerbosity =
+                  prev === 'custom' || prev === 'off' ? 'minimal' : prev
                 setDraft((d) => ({
                   ...d,
                   activityLogVerbosity: value,
                   activityLogTopics: resolveActivityLogTopics({
-                    verbosity: prev === 'custom' ? 'normal' : prev
+                    verbosity: seedVerbosity
                   })
                 }))
               } else {
@@ -599,12 +683,14 @@ export function SettingsTab({
               setSaved(false)
             }}
           >
+            <option value="off">{t('settings.options.activityLogOff')}</option>
             <option value="minimal">{t('settings.options.activityLogMinimal')}</option>
             <option value="normal">{t('settings.options.activityLogNormal')}</option>
             <option value="verbose">{t('settings.options.activityLogVerbose')}</option>
             <option value="custom">{t('settings.options.activityLogCustom')}</option>
           </select>
           <span className="muted settings-field-note">
+            {draft.activityLogVerbosity === 'off' && t('settings.notes.activityLogOff')}
             {draft.activityLogVerbosity === 'minimal' && t('settings.notes.activityLogMinimal')}
             {draft.activityLogVerbosity === 'normal' && t('settings.notes.activityLogNormal')}
             {draft.activityLogVerbosity === 'verbose' && t('settings.notes.activityLogVerbose')}
@@ -657,10 +743,15 @@ export function SettingsTab({
             <input
               type="checkbox"
               checked={draft.banFunctionMode ?? false}
-              onChange={(e) => update('banFunctionMode', e.target.checked)}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                update('banFunctionMode', enabled)
+                void onSave({ banFunctionMode: enabled })
+              }}
             />
             {t('settings.fields.banFunctionMode')}
           </label>
+          <p className="muted settings-field-note">{t('settings.notes.banFunctionMode')}</p>
         </div>
         <div className="field field-checkbox">
           <label>
@@ -675,7 +766,7 @@ export function SettingsTab({
         </div>
         <RangeSlider
           label={t('settings.fields.browseSettledDimPercent')}
-          value={draft.browseSettledDimPercent ?? 0}
+          value={draft.browseSettledDimPercent ?? 50}
           min={0}
           max={100}
           step={5}
@@ -699,18 +790,6 @@ export function SettingsTab({
         <section className="settings-section">
           <h3>{t('settings.fields.hashVerify')}</h3>
           <p className="muted settings-field-note">{t('help.settingsRef.hashVerify')}</p>
-          <label className="hash-verify-domain">
-            {t('settings.notes.apiDomain')}
-            <select
-              value={hashVerifyDomain}
-              disabled={hashBusy}
-              onChange={(e) => setHashVerifyDomain(e.target.value as 'auto' | 'com' | 'red')}
-            >
-              <option value="auto">{t('settings.options.hashAuto')}</option>
-              <option value="com">{t('settings.options.hashCom')}</option>
-              <option value="red">{t('settings.options.hashRed')}</option>
-            </select>
-          </label>
           <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
             <button
               type="button"
@@ -722,7 +801,7 @@ export function SettingsTab({
                 void window.api
                   .verifyLibraryHashes({
                     maxFiles: 80,
-                    domain: hashVerifyDomain === 'auto' ? undefined : hashVerifyDomain
+                    domain: 'red'
                   })
                   .then((r) => {
                     const domains =
@@ -777,7 +856,51 @@ export function SettingsTab({
         </section>
       )}
 
-      {saveRow()}
+      <section className="settings-section settings-optimization">
+        <h3>{t('settings.sections.optimization')}</h3>
+        <p className="muted settings-section-note">{t('settings.optimization.lead')}</p>
+        <div className="settings-optimization-score">
+          <div className="settings-optimization-score-head">
+            <span>{t('settings.optimization.scoreLabel')}</span>
+            <strong>
+              {t('settings.optimization.scoreValue', { score: optimizationSliderValue })}
+            </strong>
+          </div>
+          <div className="settings-optimization-slider-labels">
+            <span>{t('settings.optimization.comfort')}</span>
+            <span>{t('settings.optimization.speed')}</span>
+          </div>
+          <input
+            type="range"
+            className="range-slider-input settings-optimization-slider"
+            min={0}
+            max={100}
+            step={1}
+            value={optimizationSliderValue}
+            aria-label={t('settings.optimization.scoreLabel')}
+            onChange={(e) => applyOptimizationSlider(Number(e.target.value))}
+          />
+        </div>
+        {optimizationTarget !== null && (
+          <div className="settings-optimization-applied">
+            <p className="settings-optimization-applied-title">{t('settings.optimization.appliedTitle')}</p>
+            {optimizationChanges.length > 0 ? (
+              <ul className="settings-optimization-tips">
+                {optimizationChanges.map((c) => (
+                  <li key={`${c.field}-${c.changeKey}`}>
+                    {t(`settings.optimization.changes.${c.changeKey}`, c.vars)}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted settings-field-note">{t('settings.optimization.appliedNone')}</p>
+            )}
+            <p className="muted settings-field-note">{t('settings.optimization.appliedHint')}</p>
+          </div>
+        )}
+      </section>
+
+      {saveRow('settings-save-row-bottom')}
     </div>
   )
 }

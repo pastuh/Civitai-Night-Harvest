@@ -12,7 +12,7 @@ import type {
   DownloadResult,
   TagFolderRule
 } from '../shared/types'
-import { extractModelFileMeta, buildModelSlug, pickPrimaryFile, resolveUniqueSlug, resolveVersionPreviewCandidates } from '../shared/utils'
+import { extractModelFileMeta, buildModelSlug, pickPrimaryFile, resolveUniqueSlug, resolveUniqueSlugForVersion, resolveVersionPreviewCandidates } from '../shared/utils'
 import { resolveModelOutputFolder } from '../shared/tag-routing'
 import { findRuleForTag } from '../shared/tag-routing'
 import {
@@ -42,6 +42,8 @@ import { getPlaceholderPreview } from './placeholder-preview'
 import { downloadToFile } from './download-file'
 import { getSettings, getTagRules } from './settings-store'
 import { tryAdoptExistingModelOnDisk } from './adopt-on-disk'
+import { writeCivitaiSidecar } from './model-sidecar'
+import { describeUnreachableOutputPath } from './output-paths'
 
 type ProgressCallback = (progress: DownloadProgress) => void
 
@@ -98,7 +100,13 @@ async function resolvePreviewFile(
 }
 
 function ensureDir(dir: string): void {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  if (existsSync(dir)) return
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err)
+    throw new Error(describeUnreachableOutputPath(dir) ?? raw)
+  }
 }
 
 function cleanupPartialDownload(paths: Array<string | undefined>): void {
@@ -377,10 +385,21 @@ export class DownloadService {
         }
       }
 
+      const unreachable = describeUnreachableOutputPath(outputFolder)
+      if (unreachable) {
+        return {
+          status: 'failed',
+          reason: unreachable,
+          modelId: model.id,
+          versionId
+        }
+      }
+
       const author = model.creator?.username ?? 'unknown'
       const slugFormat = getSettings().slugFormat ?? 'versionName'
       const baseSlug = buildModelSlug(slugFormat, model.name, version.name, version.baseModel, author)
-      const slug = resolveUniqueSlug(baseSlug, inventory.getSlugsInFolder(outputFolder))
+      const folderSlugs = inventory.getSlugsInFolder(outputFolder)
+      let slug = resolveUniqueSlug(baseSlug, folderSlugs)
 
       const primaryFile = pickPrimaryFile(version.files) as CivitaiFile | null
       if (!primaryFile) {
@@ -434,13 +453,16 @@ export class DownloadService {
             connectionsUsed: 1
           }
         }
-        return {
-          status: 'skipped',
-          reason: adopted.reason ?? 'File already exists on disk',
-          modelId: model.id,
+        // Same preferred name, different SHA256 → keep old file, download new version under a unique name.
+        slug = resolveUniqueSlugForVersion({
+          baseSlug,
           versionId,
-          slug
-        }
+          existingSlugs: folderSlugs,
+          pathTaken: (s) => existsSync(join(outputFolder, `${s}.${ext}`))
+        })
+        modelPath = join(outputFolder, `${slug}.${ext}`)
+        previewPath = join(outputFolder, `${slug}.preview.jpg`)
+        swarmPath = join(outputFolder, `${slug}.swarm.json`)
       }
 
       let downloadUrl = preferredDownloadUrl ?? resolveModelFileUrl(client, versionId, primaryFile)
@@ -609,15 +631,6 @@ export class DownloadService {
       })
 
       const sourceUrl = client.getModelPageUrl(model.id, versionId)
-      const swarm = buildSwarmJson(model, version, sourceUrl, thumbnailBase64, mime)
-      writeFileSync(swarmPath, JSON.stringify(swarm, null, 2), 'utf-8')
-
-      const fileMeta = extractModelFileMeta(primaryFile)
-      const deferredEntry = inventory.getDeferredDownload(versionId)
-      const actualBytes = modelBytes > 0 ? modelBytes : fileMeta.fileSizeBytes
-      const stats = modelStatsFromSearch(model, versionId)
-      const checkpointType = checkpointTypeLabel(version.baseModelType) ?? undefined
-
       let fileHashSha256: string | undefined =
         primaryFile.hashes?.SHA256?.toUpperCase() ?? primaryFile.hashes?.sha256?.toUpperCase()
       if (!fileHashSha256) {
@@ -627,6 +640,24 @@ export class DownloadService {
           /* ignore hash failure */
         }
       }
+
+      const swarm = buildSwarmJson(model, version, sourceUrl, thumbnailBase64, mime, fileHashSha256)
+      writeFileSync(swarmPath, JSON.stringify(swarm, null, 2), 'utf-8')
+      try {
+        writeCivitaiSidecar(modelPath, {
+          modelId: model.id,
+          versionId,
+          sha256: fileHashSha256
+        })
+      } catch {
+        /* best-effort */
+      }
+
+      const fileMeta = extractModelFileMeta(primaryFile)
+      const deferredEntry = inventory.getDeferredDownload(versionId)
+      const actualBytes = modelBytes > 0 ? modelBytes : fileMeta.fileSizeBytes
+      const stats = modelStatsFromSearch(model, versionId)
+      const checkpointType = checkpointTypeLabel(version.baseModelType) ?? undefined
 
       inventory.addVersion({
         modelId: model.id,

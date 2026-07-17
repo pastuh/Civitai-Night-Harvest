@@ -98,11 +98,13 @@ function scoreProbe(
 }
 
 function domainsToProbe(pool: CivitaiClientPool, preferred: CivitaiDomain): CivitaiDomain[] {
-  if (pool.getSetting() !== 'both') {
-    return [pool.getSetting() === 'red' ? 'red' : 'com']
+  const setting = pool.getSetting()
+  // Single-host search mode: still allow mature downloads to fall back to the other host.
+  if (setting === 'com') {
+    return preferred === 'red' ? ['red', 'com'] : ['com', 'red']
   }
-  const alt: CivitaiDomain = preferred === 'com' ? 'red' : 'com'
-  return preferred === alt ? ['com', 'red'] : [preferred, alt]
+  // red (and legacy both): prefer red, then com for SFW-only edge cases
+  return preferred === 'com' ? ['com', 'red'] : ['red', 'com']
 }
 
 async function probeDomain(

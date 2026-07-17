@@ -17,20 +17,21 @@ import type {
   WatchRuleTestModel,
   WatchRuleTestResult
 } from '../shared/types'
-import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearCatalogPass, clearRuleCrawlState, msUntilNewestPeekAllowed } from './crawl-state'
+import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearRuleCrawlState, msUntilNewestPeekAllowed, clearLegacyUnscopedCursor, resetCatalogSessionForAppStart } from './crawl-state'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { enrichTestModelPreviews } from './preview-enrich'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
 import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, type RulePageQueueResult } from './rule-queue'
 import { DownloadQueue } from './download-queue'
 import * as inventory from './inventory'
-import { getSettings, getWatchRules, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, outputFoldersConfigured } from './settings-store'
+import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, outputFoldersConfigured, toPublicSettings } from './settings-store'
+import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
 import { modelHasHiddenTag } from '../shared/tag-routing'
 import { sendToRenderer } from './window-notify'
 import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, modelMatchesRuleKeywords } from '../shared/utils'
 import { watchRuleCrawlSignature, watchRulesCrawlChanged } from '../shared/watch-rule-crawl'
-import { syncInventoryWithDiskAsync } from './library-sync'
+import { syncInventoryWithDiskAsync, wasLibrarySyncedRecently } from './library-sync'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -61,6 +62,40 @@ export class ScanScheduler {
   private pendingActivityEmits: ActivityEntry[] = []
   private activityEmitTimer: ReturnType<typeof setTimeout> | null = null
   private wasNightMode = getSettings().nightMode
+  private wasDomain = getSettings().domain
+  private wasCrawlAutoDownload = shouldCrawlAutoDownload()
+  /** Delay "fetching page N" status so fast pages only show as loaded. */
+  private fetchStatusTimer: ReturnType<typeof setTimeout> | null = null
+  private fetchStatusToken = 0
+
+  private cancelPendingFetchingStatus(): void {
+    this.fetchStatusToken += 1
+    if (this.fetchStatusTimer) {
+      clearTimeout(this.fetchStatusTimer)
+      this.fetchStatusTimer = null
+    }
+  }
+
+  private scheduleFetchingStatus(payload: {
+    ruleId: string
+    ruleName: string
+    pageNumber: number
+    domain?: import('../shared/types').CivitaiDomain
+  }): void {
+    this.cancelPendingFetchingStatus()
+    const token = this.fetchStatusToken
+    this.fetchStatusTimer = setTimeout(() => {
+      if (token !== this.fetchStatusToken) return
+      this.fetchStatusTimer = null
+      this.emitCrawlProgress({
+        ruleId: payload.ruleId,
+        ruleName: payload.ruleName,
+        phase: 'fetching',
+        pageNumber: payload.pageNumber,
+        domain: payload.domain
+      })
+    }, 1200)
+  }
 
   clearCrawlBrowseAccum(ruleId?: string): void {
     if (ruleId) {
@@ -310,6 +345,36 @@ export class ScanScheduler {
   ): boolean {
     const merged = this.crawlBrowseModels(rule.id)
     if (!merged.length) return false
+    const settings = getSettings()
+    // Quiet harvest: do not push the full in-memory gallery into the renderer.
+    if (settings.updateBrowseOnCrawl === false) {
+      const stats = this.browseGalleryStats(merged)
+      const emptyResult = buildWatchRuleTestResult(
+        [],
+        {
+          pageSize: meta?.pageModelsOnPage ?? 0,
+          currentPage: meta?.pageNumber ?? 1,
+          nextCursor: meta?.nextCursor ?? null,
+          totalItems: merged.length
+        },
+        this.browseEnumsOrFallback()
+      )
+      emptyResult.crawlSource = 'night'
+      emptyResult.tagsInResults = []
+      this.emit('crawl:page', {
+        ruleId: rule.id,
+        ruleName: rule.name,
+        pageNumber: meta?.pageNumber ?? 1,
+        pageModelsAdded: 0,
+        pageModelsOnPage: meta?.pageModelsOnPage ?? 0,
+        galleryTotal: merged.length,
+        galleryStats: stats,
+        catalogComplete: meta?.catalogComplete,
+        pageQueued: meta?.pageQueued ?? 0,
+        result: emptyResult
+      })
+      return true
+    }
     const result = buildWatchRuleTestResult(
       merged,
       {
@@ -329,6 +394,7 @@ export class ScanScheduler {
       pageModelsAdded: 0,
       pageModelsOnPage: meta?.pageModelsOnPage ?? 0,
       galleryTotal: merged.length,
+      galleryStats: this.browseGalleryStats(merged),
       catalogComplete: meta?.catalogComplete,
       pageQueued: meta?.pageQueued ?? 0,
       result
@@ -336,13 +402,19 @@ export class ScanScheduler {
     return true
   }
 
-  /** Top up download queue when pipeline is thin (e.g. after dismiss or between crawl pages). */
+  private lastPipelineFillAt = 0
+
+  /** Top up download queue only when empty (e.g. after dismiss). Never refill mid-drain. */
   maybeFillDownloadQueue(): void {
     if (!getSettings().nightMode || !shouldCrawlAutoDownload()) return
     const pipeline = this.downloadQueue
       .getItems()
       .filter((i) => i.status === 'queued' || i.status === 'downloading').length
-    if (pipeline >= 5) return
+    // Refilling at <5 caused the UI count loop: 8→7→6→5→4→8…
+    if (pipeline > 0) return
+    const now = Date.now()
+    if (now - this.lastPipelineFillAt < 12_000) return
+    this.lastPipelineFillAt = now
     const filled = this.fillBrowseDownloadPipeline()
     if (filled === 0) {
       this.maybeStartAutoDownloads()
@@ -505,23 +577,56 @@ export class ScanScheduler {
     return [...this.pendingVersions]
   }
 
-  start(): void {
-    void this.startAfterLibraryReady()
+  private startupPromise: Promise<void> | null = null
+
+  /** Finish startup prep (queue purge / optional scan). Does not wait for continuous crawl. */
+  start(): Promise<void> {
+    if (!this.startupPromise) {
+      this.startupPromise = this.startAfterLibraryReady().finally(() => {
+        this.startupPromise = null
+      })
+    }
+    return this.startupPromise
   }
 
-  /** Sync disk ↔ library before first crawl so owned models are not re-queued. */
+  /**
+   * Library ↔ disk sync, then session prep.
+   * UI keeps the busy popup open until this returns (via app:rendererReady).
+   */
   private async startAfterLibraryReady(): Promise<void> {
     void this.browseEnumsForUi().catch(() => {})
     this.clearCrawlBrowseAccum()
     this.emit('crawl:browseReset')
+    // Each app launch: full rule catalog once, then peek-only (do not inherit prior "done").
+    resetCatalogSessionForAppStart()
+    this.crawler.resetPaginationHints()
+    this.log('info', 'Starting session catalog backfill for enabled Browse rules…', undefined, {
+      source: 'crawl'
+    })
     const settings = getSettings()
     if (outputFoldersConfigured()) {
-      try {
-        await syncInventoryWithDiskAsync()
-        this.downloadQueue.syncWithInventory()
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        this.log('warn', `Library sync before crawl failed: ${msg}`, undefined, { source: 'system' })
+      const reach = await probeConfiguredOutputFolders()
+      if (!reach.ok) {
+        this.log('error', reach.message, undefined, { source: 'system' })
+        this.downloadQueue.pause()
+      } else {
+        try {
+          // UI startup already walks disk under the busy popup — do not repeat that scan.
+          if (wasLibrarySyncedRecently()) {
+            this.log('info', 'Library disk sync skipped — already completed during startup popup', undefined, {
+              source: 'system'
+            })
+            this.downloadQueue.syncWithInventory()
+          } else {
+            await syncInventoryWithDiskAsync((p) => {
+              this.emit('library:syncProgress', p)
+            })
+            this.downloadQueue.syncWithInventory()
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          this.log('warn', `Library sync before crawl failed: ${msg}`, undefined, { source: 'system' })
+        }
       }
     }
     this.downloadQueue.purgeBrowseSessionOnStartup()
@@ -530,6 +635,7 @@ export class ScanScheduler {
     }
     this.restartInterval()
     this.startEarlyAccessWatcher()
+    // Harvest runs after startup prep — UI overlay must not wait for the full catalog walk.
     this.ensureContinuousCrawl()
   }
 
@@ -577,44 +683,79 @@ export class ScanScheduler {
 
   private startEarlyAccessWatcher(): void {
     if (this.earlyAccessTimerId) clearInterval(this.earlyAccessTimerId)
+    const peekMinutes = Math.max(getSettings().newestPeekIntervalMinutes || 15, 5)
+    const intervalMs = peekMinutes * 60 * 1000
     this.earlyAccessTimerId = setInterval(() => {
       if (getSettings().autoRetryDeferred === false) return
+      // Peek loop already requeues deferred after each maintenance pass — skip while Harvest crawl runs.
+      if (shouldRunContinuousCrawl()) return
       const count = this.downloadQueue.requeueDeferred()
       if (count > 0) {
         this.log('info', `Early access ready — re-queued ${count} model(s) for download`)
         this.maybeStartAutoDownloads()
       }
-    }, 60_000)
+    }, intervalMs)
   }
 
   onSettingsChanged(): void {
     const settings = getSettings()
     const nightTurnedOff = this.wasNightMode && !settings.nightMode
+    const nightTurnedOn = !this.wasNightMode && settings.nightMode
+    const domainChanged = this.wasDomain !== settings.domain
+    const autoDlNow = shouldCrawlAutoDownload()
+    const autoDlChanged = this.wasCrawlAutoDownload !== autoDlNow
+
     this.applyCrawlAutoDownloadPolicy()
     this.restartInterval()
+    this.startEarlyAccessWatcher()
+    if (domainChanged) {
+      this.clearCrawlBrowseAccum()
+      this.crawler.resetPaginationHints()
+      resetCatalogSessionForAppStart()
+      this.emit('crawl:browseReset')
+      this.cancelPendingFetchingStatus()
+      this.emitCrawlProgress(null)
+      this.log('info', `Search domain changed to ${settings.domain} — browse gallery cleared`, undefined, {
+        source: 'system'
+      })
+    }
     if (settings.nightMode) {
-      if (!this.validateNightModePrereqs()) return
-      if (shouldRunContinuousCrawl()) {
+      if (!this.validateNightModePrereqs()) {
+        void this.stopContinuousCrawl()
+        this.cancelPendingFetchingStatus()
+        this.emitCrawlProgress(null)
+        this.setStatus(
+          this.downloadQueue.getItems().some((i) => i.status === 'downloading') ? 'downloading' : 'idle'
+        )
+      } else if (shouldRunContinuousCrawl()) {
         this.ensureContinuousCrawl()
+        // Full scan only when Harvest turns on or domain changes — not on Pause toggle.
+        if (nightTurnedOn || domainChanged) {
+          void this.runScan()
+        }
+        if (autoDlChanged && autoDlNow) {
+          const filled = this.fillBrowseDownloadPipeline()
+          if (filled > 0) {
+            this.log('info', `Night settings changed — queued ${filled} from browse gallery`, undefined, {
+              source: 'system'
+            })
+          }
+        }
       } else {
         void this.stopContinuousCrawl()
-      }
-      void this.runScan()
-      if (shouldCrawlAutoDownload()) {
-        const filled = this.fillBrowseDownloadPipeline()
-        if (filled > 0) {
-          this.log('info', `Night settings changed — queued ${filled} from browse gallery`, undefined, {
-            source: 'system'
-          })
-        }
       }
     } else {
       void this.stopContinuousCrawl()
       if (nightTurnedOff) {
         this.clearCrawlBrowseAccum()
+        this.emit('crawl:browseReset')
+        this.cancelPendingFetchingStatus()
+        this.emitCrawlProgress(null)
       }
     }
     this.wasNightMode = settings.nightMode
+    this.wasDomain = settings.domain
+    this.wasCrawlAutoDownload = autoDlNow
   }
 
   /** Restart crawl when saved Browse rules change search criteria. */
@@ -648,6 +789,25 @@ export class ScanScheduler {
     this.downloadQueue.purgeStaleAutoQueued()
     this.downloadQueue.purgeNonMatchingWatchRules()
 
+    const enabledNext = next.filter((r) => r.enabled)
+    if (!enabledNext.length) {
+      await this.stopContinuousCrawl()
+      this.cancelPendingFetchingStatus()
+      this.emitCrawlProgress(null)
+      this.setStatus('idle')
+      if (getSettings().nightMode) {
+        saveSettings({ nightMode: false })
+        this.wasNightMode = false
+        sendToRenderer(this.window, 'settings:changed', toPublicSettings(getSettings()))
+        this.log('info', 'All Browse rules disabled — Harvest turned off', undefined, {
+          source: 'system'
+        })
+      } else {
+        this.log('info', 'All Browse rules disabled — crawl idle', undefined, { source: 'system' })
+      }
+      return
+    }
+
     const settings = getSettings()
     const wasCrawling = Boolean(this.continuousCrawlPromise)
     if (wasCrawling) {
@@ -671,6 +831,11 @@ export class ScanScheduler {
     const settings = getSettings()
     if (!outputFoldersConfigured()) {
       this.log('warn', 'Set LoRA and Checkpoint folders in Settings before harvest')
+      return false
+    }
+    const reach = checkConfiguredOutputFoldersReachable()
+    if (!reach.ok) {
+      this.log('error', reach.message)
       return false
     }
     const enabled = getWatchRules().filter((r) => r.enabled)
@@ -769,7 +934,49 @@ export class ScanScheduler {
   }
 
   private emitCrawlProgress(payload: import('../shared/types').CrawlProgressPayload | null): void {
+    if (payload && payload.galleryTotal != null && payload.galleryStats == null && payload.ruleId) {
+      payload = {
+        ...payload,
+        galleryStats: this.browseGalleryStats(this.crawlBrowseModels(payload.ruleId))
+      }
+    }
     this.emit('crawl:progress', payload)
+  }
+
+  private browseGalleryStats(models: WatchRuleTestModel[]): import('../shared/types').BrowseGalleryStats {
+    const hidden = getSettings().hiddenTags ?? []
+    let owned = 0
+    let excluded = 0
+    let skipTag = 0
+    let awaiting = 0
+    let missing = 0
+    for (const m of models) {
+      if (m.inInventory) {
+        owned++
+        continue
+      }
+      if (m.isBanned) {
+        excluded++
+        continue
+      }
+      if (modelHasHiddenTag(m.tags ?? [], hidden)) {
+        skipTag++
+        continue
+      }
+      if (m.isEarlyAccess) {
+        awaiting++
+        continue
+      }
+      missing++
+    }
+    return {
+      owned,
+      excluded,
+      skipTag,
+      awaiting,
+      missing,
+      total: models.length
+    }
   }
 
   private async emitCrawlPage(
@@ -778,10 +985,13 @@ export class ScanScheduler {
     page: RulePageQueueResult,
     source: 'night' | 'queue',
     client: CivitaiClient,
-    catalogComplete = false
+    catalogComplete = false,
+    hasMorePages?: boolean
   ): Promise<void> {
     void this.browseEnumsForUi().catch(() => {})
     const filter = rule.contentFilter ?? getSettings().contentFilter
+    const morePages =
+      hasMorePages ?? (catalogComplete ? false : Boolean(page.nextCursor))
 
     // sampleModels are already filtered in queueModelsFromPage — do not re-filter them away
     let pageModels: WatchRuleTestModel[] = []
@@ -797,18 +1007,9 @@ export class ScanScheduler {
       (page.apiReturnCount ?? 0) > 0 ||
       page.pageModels > 0
 
+    // Merge into gallery BEFORE preview enrich so status "N in gallery" matches cards immediately.
     let added = 0
     if (pageModels.length > 0) {
-      const previewFilled = await enrichTestModelPreviews(this.pool, pageModels, filter)
-      if (previewFilled > 0) {
-        this.log(
-          'info',
-          `Resolved preview images for ${previewFilled} model(s) on API page ${pageNumber}`,
-          rule.id,
-          { source: 'crawl' }
-        )
-      }
-
       const bucket = this.crawlBrowseRuleBucket(rule.id)
       const order = this.crawlBrowseRuleOrder(rule.id)
       for (const m of pageModels) {
@@ -833,62 +1034,129 @@ export class ScanScheduler {
       }
     }
 
-    const merged = this.crawlBrowseModels(rule.id)
-    const modelsForUi = merged.length > 0 ? merged : pageModels
+    const emitGalleryPage = (modelsForUi: WatchRuleTestModel[], pageModelsAdded: number): void => {
+      const galleryStats = this.browseGalleryStats(modelsForUi)
+      const quiet = source === 'night' && getSettings().updateBrowseOnCrawl === false
 
-    if (modelsForUi.length === 0) {
-      if (!pageHasApiData) return
-      const emptyResult = buildWatchRuleTestResult(
-        [],
+      // Quiet harvest: still emit page meta + stats so the Browse progress bar updates,
+      // but skip cloning thousands of cards into the renderer.
+      if (quiet) {
+        const emptyResult = buildWatchRuleTestResult(
+          [],
+          {
+            pageSize: page.pageModels,
+            currentPage: pageNumber,
+            nextCursor: page.nextCursor ?? null,
+            totalItems: modelsForUi.length
+          },
+          this.browseEnumsOrFallback()
+        )
+        emptyResult.crawlSource = source
+        emptyResult.tagsInResults = []
+        this.emit('crawl:page', {
+          ruleId: rule.id,
+          ruleName: rule.name,
+          pageNumber,
+          pageModelsAdded,
+          pageModelsOnPage: pageModels.length,
+          galleryTotal: modelsForUi.length,
+          galleryStats,
+          catalogComplete,
+          hasMorePages: morePages,
+          pageQueued: page.queued,
+          result: emptyResult
+        })
+        return
+      }
+
+      if (modelsForUi.length === 0) {
+        if (!pageHasApiData) return
+        const emptyResult = buildWatchRuleTestResult(
+          [],
+          {
+            pageSize: page.pageModels,
+            currentPage: pageNumber,
+            nextCursor: page.nextCursor ?? null,
+            totalItems: 0
+          },
+          this.browseEnumsOrFallback()
+        )
+        emptyResult.crawlSource = source
+        emptyResult.tagsInResults = []
+        this.emit('crawl:page', {
+          ruleId: rule.id,
+          ruleName: rule.name,
+          pageNumber,
+          pageModelsAdded: 0,
+          pageModelsOnPage: pageModels.length,
+          galleryTotal: 0,
+          galleryStats,
+          catalogComplete,
+          hasMorePages: morePages,
+          pageQueued: page.queued,
+          result: emptyResult
+        })
+        return
+      }
+
+      const result = buildWatchRuleTestResult(
+        modelsForUi,
         {
-          pageSize: page.pageModels,
+          pageSize: page.pageModels || modelsForUi.length,
           currentPage: pageNumber,
           nextCursor: page.nextCursor ?? null,
-          totalItems: 0
+          totalItems: modelsForUi.length
         },
         this.browseEnumsOrFallback()
       )
-      emptyResult.crawlSource = source
-      emptyResult.tagsInResults = []
-      this.emit('crawl:page', {
+      result.crawlSource = source
+      result.tagsInResults = aggregateResultTags(modelsForUi)
+
+      const payload: CrawlPagePayload = {
         ruleId: rule.id,
         ruleName: rule.name,
         pageNumber,
-        pageModelsAdded: 0,
+        pageModelsAdded,
         pageModelsOnPage: pageModels.length,
-        galleryTotal: 0,
+        galleryTotal: modelsForUi.length,
+        galleryStats,
         catalogComplete,
+        hasMorePages: morePages,
         pageQueued: page.queued,
-        result: emptyResult
+        result
+      }
+      this.emit('crawl:page', payload)
+    }
+
+    const merged = this.crawlBrowseModels(rule.id)
+    const modelsForUi = merged.length > 0 ? merged : pageModels
+    emitGalleryPage(modelsForUi, added)
+
+    if (pageModels.length > 0) {
+      void (async () => {
+        const previewFilled = await enrichTestModelPreviews(this.pool, pageModels, filter)
+        if (previewFilled <= 0) return
+        this.log(
+          'info',
+          `Resolved preview images for ${previewFilled} model(s) on API page ${pageNumber}`,
+          rule.id,
+          { source: 'crawl' }
+        )
+        const bucket = this.crawlBrowseRuleBucket(rule.id)
+        for (const m of pageModels) {
+          const key = this.crawlModelKey(m)
+          const prev = bucket.get(key)
+          bucket.set(key, prev ? preferBrowseModel(prev, m) : m)
+        }
+        emitGalleryPage(this.crawlBrowseModels(rule.id), 0)
+      })().catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        this.log('warn', `Preview enrich failed on page ${pageNumber}: ${msg}`, rule.id, {
+          source: 'crawl'
+        })
       })
-      return
     }
 
-    const result = buildWatchRuleTestResult(
-      modelsForUi,
-      {
-        pageSize: page.pageModels || modelsForUi.length,
-        currentPage: pageNumber,
-        nextCursor: page.nextCursor ?? null,
-        totalItems: modelsForUi.length
-      },
-      this.browseEnumsOrFallback()
-    )
-    result.crawlSource = source
-    result.tagsInResults = aggregateResultTags(modelsForUi)
-
-    const payload: CrawlPagePayload = {
-      ruleId: rule.id,
-      ruleName: rule.name,
-      pageNumber,
-      pageModelsAdded: added,
-      pageModelsOnPage: pageModels.length,
-      galleryTotal: modelsForUi.length,
-      catalogComplete,
-      pageQueued: page.queued,
-      result
-    }
-    this.emit('crawl:page', payload)
     this.downloadQueue.syncWithInventory()
 
     if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
@@ -936,14 +1204,23 @@ export class ScanScheduler {
       page: RulePageQueueResult
       client: CivitaiClient
       catalogComplete?: boolean
-    }): void => {
-      void this.emitCrawlPage(
+    }): void | Promise<void> => {
+      const domain = info.client.getDomain()
+      const thisDomainEnded = Boolean(info.catalogComplete)
+      // Pass not incremented yet when this fires — treat this domain as done if the page ended.
+      const otherDomainsPending = this.ruleSearchDomains(info.rule).some(
+        (d) => d !== domain && !isCatalogBackfillDone(info.rule.id, d)
+      )
+      const ruleFullyDone = thisDomainEnded && !otherDomainsPending
+      const hasMorePages = Boolean(info.page.nextCursor) || otherDomainsPending
+      return this.emitCrawlPage(
         info.rule,
         info.pageNumber,
         info.page,
         source,
         info.client,
-        info.catalogComplete
+        ruleFullyDone,
+        hasMorePages
       ).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err)
         this.log('error', `Browse gallery update failed: ${msg}`, info.rule.id, { source: 'crawl' })
@@ -966,20 +1243,26 @@ export class ScanScheduler {
       onDownloadsStarted: () => this.setStatus('downloading'),
       onCrawlPage: this.crawlPageHandler(source),
       onCrawlFetchStart: ({ rule, pageNumber, domain }) => {
-        this.emitCrawlProgress({
+        const domains = this.ruleSearchDomains(rule)
+        const ruleLabel =
+          domains.length > 1 ? `${rule.name} · ${domainLabel(domain)}` : rule.name
+        this.scheduleFetchingStatus({
           ruleId: rule.id,
-          ruleName: rule.name,
-          phase: 'fetching',
+          ruleName: ruleLabel,
           pageNumber,
           domain
         })
       },
       onCrawlWaiting: ({ rule, waitMs, domain }) => {
-        const catalogDone = isCatalogBackfillDone(rule.id, domain)
-        this.emitBrowseGallerySnapshot(rule, { catalogComplete: catalogDone })
+        this.cancelPendingFetchingStatus()
+        const domains = this.ruleSearchDomains(rule)
+        const catalogDone = domains.every((d) => isCatalogBackfillDone(rule.id, d))
+        const ruleLabel =
+          domains.length > 1 ? `${rule.name} · ${domainLabel(domain)}` : rule.name
+        // Progress only — re-sending the full gallery snapshot on every wait froze the UI.
         this.emitCrawlProgress({
           ruleId: rule.id,
-          ruleName: rule.name,
+          ruleName: ruleLabel,
           phase: 'waiting',
           waitMs,
           waitUntil: Date.now() + waitMs,
@@ -989,7 +1272,8 @@ export class ScanScheduler {
           galleryTotal: this.crawlBrowseModels(rule.id).length
         })
       },
-      onCrawlFetchDone: ({ rule, pageNumber, page, errors, catalogComplete }) => {
+      onCrawlFetchDone: ({ rule, pageNumber, page, errors, catalogComplete, domain }) => {
+        this.cancelPendingFetchingStatus()
         const galleryTotal = this.crawlBrowseModels(rule.id).length
         const fromApi = page.apiReturnCount ?? page.pageModels
         if (errors.length) {
@@ -1013,22 +1297,31 @@ export class ScanScheduler {
         } else if (catalogComplete) {
           this.log(
             'info',
-            `Catalog complete for "${rule.name}" — ${pageNumber} page(s), ${galleryTotal} matching in browse gallery`,
+            `Catalog complete for "${rule.name}" (${domainLabel(domain)}) — ${pageNumber} page(s), ${galleryTotal} matching in browse gallery`,
             rule.id,
             { source: logSource }
           )
         }
         const hasMorePages = Boolean(page.nextCursor)
+        const domains = this.ruleSearchDomains(rule)
+        const otherDomainsPending = domains.some(
+          (d) => d !== domain && !isCatalogBackfillDone(rule.id, d)
+        )
+        // Don't flash "Catalog complete" when another domain for the same rule still needs backfill.
+        const ruleFullyDone = catalogComplete && !otherDomainsPending
+        const multiDomain = domains.length > 1
+        const ruleLabel = multiDomain ? `${rule.name} · ${domainLabel(domain)}` : rule.name
         this.emitCrawlProgress({
           ruleId: rule.id,
-          ruleName: rule.name,
-          phase: hasMorePages ? 'page-done' : 'catalog-complete',
+          ruleName: ruleLabel,
+          phase: hasMorePages || otherDomainsPending ? 'page-done' : 'catalog-complete',
           pageNumber,
           galleryTotal,
-          hasMorePages,
-          catalogComplete: !hasMorePages,
+          hasMorePages: hasMorePages || otherDomainsPending,
+          catalogComplete: ruleFullyDone,
           pageModelsOnPage: page.pageModels,
-          apiModelsOnPage: fromApi
+          apiModelsOnPage: fromApi,
+          domain
         })
       },
       onCatalogPassComplete: (rule, domain) => {
@@ -1044,8 +1337,13 @@ export class ScanScheduler {
 
     this.continuousCrawlPromise = this.runContinuousCrawl().finally(() => {
       this.continuousCrawlPromise = null
-      if (shouldRunContinuousCrawl() && !this.crawler.isRunning()) {
-        this.ensureContinuousCrawl()
+      // Yield before restart — avoids a tight loop when crawl exits immediately (e.g. no rules).
+      if (
+        shouldRunContinuousCrawl() &&
+        !this.continuousCrawlStopRequested &&
+        !this.crawler.isRunning()
+      ) {
+        setTimeout(() => this.ensureContinuousCrawl(), 1500)
       }
     })
   }
@@ -1062,7 +1360,8 @@ export class ScanScheduler {
 
   /** Sleep that exits early when continuous crawl is being stopped (rule change, etc.). */
   private async interruptibleSleep(ms: number): Promise<void> {
-    const step = 400
+    // Long peek waits used to wake every 400ms for 15+ minutes — pointless event-loop churn.
+    const step = ms > 30_000 ? 5_000 : ms > 5_000 ? 1_000 : 400
     let left = ms
     while (left > 0 && !this.continuousCrawlStopRequested) {
       await sleep(Math.min(step, left))
@@ -1124,6 +1423,17 @@ export class ScanScheduler {
           if (rule.modelId && rule.modelId > 0) continue
           for (const domain of this.ruleSearchDomains(rule)) {
             if (!shouldRunContinuousCrawl() || this.continuousCrawlStopRequested) return
+            // Already finished one full catalog — peek-only handles page 1 on interval.
+            if (getSettings().backfillCatalog && isCatalogBackfillDone(rule.id, domain)) continue
+            const domains = this.ruleSearchDomains(rule)
+            if (domains.length > 1) {
+              this.log(
+                'info',
+                `Catalog walk: "${rule.name}" on ${domainLabel(domain)}…`,
+                rule.id,
+                { source: 'crawl' }
+              )
+            }
             const client = this.pool.forDomain(domain)
             try {
               await this.crawler.crawlRule(
@@ -1161,7 +1471,7 @@ export class ScanScheduler {
           const pipeline = this.downloadQueue
             .getItems()
             .filter((i) => i.status === 'queued' || i.status === 'downloading').length
-          if (pipeline < 10) {
+          if (pipeline === 0) {
             const filled = this.fillBrowseDownloadPipeline('crawl')
             if (filled > 0) {
               startDownloadsIfQueued(this.downloadQueue, filled, () => this.setStatus('downloading'))
@@ -1181,7 +1491,7 @@ export class ScanScheduler {
           })
           for (const rule of rules) {
             const galleryTotal = this.crawlBrowseModels(rule.id).length
-            this.emitBrowseGallerySnapshot(rule, { catalogComplete: true })
+            // Do not re-push the entire browse gallery every peek wait — status bar is enough.
             this.emitCrawlProgress({
               ruleId: rule.id,
               ruleName: rule.name,
@@ -1197,6 +1507,7 @@ export class ScanScheduler {
           continue
         }
 
+        // Still have incomplete rule/domain catalogs — continue backfill without treating it as a full restart.
         if (getSettings().autoRetryDeferred !== false) {
           const requeued = this.downloadQueue.requeueDeferred()
           if (requeued > 0) {
@@ -1205,10 +1516,10 @@ export class ScanScheduler {
           }
         }
 
-        this.log('info', 'Full catalog pass complete — starting next round…', undefined, {
+        this.log('info', 'Continuing catalog backfill for remaining rules/domains…', undefined, {
           source: 'crawl'
         })
-        await this.interruptibleSleep(15_000)
+        await this.interruptibleSleep(2_000)
       }
     } finally {
       if (!this.crawler.isRunning() && !this.downloadQueue.isBusy()) {
@@ -1231,16 +1542,24 @@ export class ScanScheduler {
       if (rule.modelId && rule.modelId > 0) continue
       for (const domain of this.ruleSearchDomains(rule)) {
         if (!isCatalogBackfillDone(rule.id, domain)) continue
+        const galleryEmpty = this.crawlBrowseModels(rule.id).length === 0
         const waitMs = msUntilNewestPeekAllowed(
           rule.id,
           getSettings().newestPeekIntervalMinutes,
           domain
         )
-        if (waitMs > 0) continue
+        // Always seed Browse gallery after restart (accum is in-memory and cleared on start).
+        if (waitMs > 0 && !galleryEmpty) continue
 
         const client = this.pool.forDomain(domain)
         const queueOpts = this.crawlQueueOptions(requireTagMatch, true, 'crawl')
         try {
+          this.scheduleFetchingStatus({
+            ruleId: rule.id,
+            ruleName: rule.name,
+            pageNumber: 1,
+            domain
+          })
           const { combined } = await runDualRulePageCheck(
             client,
             this.downloadQueue,
@@ -1249,13 +1568,19 @@ export class ScanScheduler {
             undefined,
             this.pendingVersions,
             this.pendingChangeHandler,
-            { skipBackfill: true, respectPeekCooldown: true }
+            {
+              skipBackfill: true,
+              // Empty gallery after app restart must refresh page 1 even inside peek cooldown.
+              respectPeekCooldown: !galleryEmpty
+            }
           )
+          this.cancelPendingFetchingStatus()
+          await this.emitCrawlPage(rule, 1, combined, 'night', client, true)
           if (combined.queued > 0) {
-            clearCatalogPass(rule.id, domain)
+            // Queue newest hits only — do NOT clear catalog pass (that re-walked pages 1…N).
             this.log(
               'info',
-              `Peek found ${combined.queued} new model(s) for "${rule.name}" — resuming backfill on next round`,
+              `Peek queued ${combined.queued} new model(s) for "${rule.name}" — staying on peek-only`,
               rule.id,
               { source: 'crawl' }
             )
@@ -1264,6 +1589,7 @@ export class ScanScheduler {
             )
           }
         } catch (err) {
+          this.cancelPendingFetchingStatus()
           const msg = err instanceof Error ? err.message : String(err)
           this.log('warn', `Peek failed for "${rule.name}" (${domainLabel(domain)}): ${msg}`, rule.id, {
             source: 'crawl'
@@ -1394,6 +1720,14 @@ export class ScanScheduler {
       { source: manual ? 'manual' : 'scheduled' }
     )
 
+    // Manual Scan: replace gallery with a fresh newest-page fetch (do not keep harvest backlog).
+    if (manual) {
+      this.clearCrawlBrowseAccum()
+      this.cancelPendingFetchingStatus()
+      this.emitCrawlProgress(null)
+      this.emit('crawl:browseReset')
+    }
+
     const results: ScanResult[] = []
 
     if (continuousCrawl) {
@@ -1416,7 +1750,7 @@ export class ScanScheduler {
         }
         const domains = this.ruleSearchDomains(rule)
         for (const domain of domains) {
-          const result = await this.scanRule(rule, domain)
+          const result = await this.scanRule(rule, domain, { manual })
           if (domains.length > 1) {
             result.ruleName = `${rule.name} (${domainLabel(domain)})`
           }
@@ -1461,11 +1795,17 @@ export class ScanScheduler {
     }
   }
 
-  private async scanRule(rule: WatchRule, domain: CivitaiDomain): Promise<ScanResult> {
+  private async scanRule(
+    rule: WatchRule,
+    domain: CivitaiDomain,
+    opts?: { manual?: boolean }
+  ): Promise<ScanResult> {
+    const manual = opts?.manual === true
     const settings = getSettings()
     const nightMode = settings.nightMode
     const client = this.pool.forDomain(domain)
     const domainSuffix = resolveSearchDomains(settings.domain).length > 1 ? ` · ${domainLabel(domain)}` : ''
+    const logSource: ActivitySource = manual ? 'manual' : 'scheduled'
 
     const result: ScanResult = {
       ruleId: rule.id,
@@ -1479,9 +1819,9 @@ export class ScanScheduler {
 
     this.log(
       'info',
-      `Scheduled scan — rule "${rule.name}"${domainSuffix}${rule.modelId ? ` (model #${rule.modelId})` : ''}…`,
+      `${manual ? 'Manual' : 'Scheduled'} scan — rule "${rule.name}"${domainSuffix}${rule.modelId ? ` (model #${rule.modelId})` : ''}…`,
       rule.id,
-      { source: 'scheduled' }
+      { source: logSource }
     )
     this.setStatus('checking')
 
@@ -1491,29 +1831,43 @@ export class ScanScheduler {
       const page =
         rule.modelId && rule.modelId > 0
           ? await (async () => {
-              this.log('info', `API GET /models/${rule.modelId}`, rule.id, { source: 'scheduled' })
+              this.log('info', `API GET /models/${rule.modelId}`, rule.id, { source: logSource })
               return queuePinnedModel(
-              client,
-              this.downloadQueue,
-              rule,
-              {
-                queueEnabled: nightMode && shouldAutoQueue(),
-                requireTagMatch: crawlRequireTagMatch(),
-                includeNewVersions: false,
-                log: this.ruleQueueLog('scheduled')
-              },
-              this.pendingVersions,
-              this.pendingChangeHandler
-            )
+                client,
+                this.downloadQueue,
+                rule,
+                {
+                  queueEnabled: nightMode && shouldAutoQueue(),
+                  requireTagMatch: crawlRequireTagMatch(),
+                  includeNewVersions: false,
+                  log: this.ruleQueueLog(logSource)
+                },
+                this.pendingVersions,
+                this.pendingChangeHandler
+              )
             })()
           : await (async () => {
-              const skipBackfill = !settings.backfillCatalog
-              const cursor = getCrawlCursor(rule.id, domain) ?? undefined
-              const nextPageNumber = getBackfillPage(rule.id, domain) + 1
-              this.emitCrawlProgress({
+              // Manual Scan always loads the newest page into a cleared gallery.
+              const skipBackfill = manual || !settings.backfillCatalog
+              if (!manual && !skipBackfill && isCatalogBackfillDone(rule.id, domain)) {
+                return {
+                  queued: 0,
+                  newModels: 0,
+                  newVersions: 0,
+                  upToDate: 0,
+                  deferredEarlyAccess: 0,
+                  errors: [] as string[],
+                  pageModels: 0,
+                  sampleModels: [],
+                  rawModels: [],
+                  nextCursor: null as string | null
+                }
+              }
+              const cursor = skipBackfill ? undefined : getCrawlCursor(rule.id, domain) ?? undefined
+              const nextPageNumber = skipBackfill ? 1 : getBackfillPage(rule.id, domain) + 1
+              this.scheduleFetchingStatus({
                 ruleId: rule.id,
                 ruleName: rule.name,
-                phase: 'fetching',
                 pageNumber: nextPageNumber,
                 domain
               })
@@ -1529,13 +1883,13 @@ export class ScanScheduler {
                 'info',
                 `API search — "${rule.name}"${domainSuffix}: ${apiCalls} request(s) (${apiDetail})`,
                 rule.id,
-                { source: 'scheduled' }
+                { source: logSource }
               )
               const queueOpts = {
                 queueEnabled: nightMode && shouldAutoQueue(),
                 requireTagMatch: crawlRequireTagMatch(),
                 includeNewVersions: false,
-                log: this.ruleQueueLog('scheduled'),
+                log: this.ruleQueueLog(logSource),
                 onFetchProgress: (p: import('../shared/types').CrawlProgressPayload) =>
                   this.emitCrawlProgress(p)
               }
@@ -1549,39 +1903,32 @@ export class ScanScheduler {
                 this.pendingChangeHandler,
                 { skipBackfill }
               )
+              this.cancelPendingFetchingStatus()
               if (peek?.queued) {
                 startDownloadsIfQueued(this.downloadQueue, peek.queued)
-                this.log('info', `Newest peek: queued ${peek.queued}`, rule.id, { source: 'scheduled' })
+                this.log('info', `Newest peek: queued ${peek.queued}`, rule.id, { source: logSource })
               }
               if (backfill.queued) {
                 startDownloadsIfQueued(this.downloadQueue, backfill.queued)
               }
-              const catalogComplete = !backfill.nextCursor
-              if (backfill.nextCursor) {
-                setCrawlCursor(rule.id, backfill.nextCursor, domain)
-                setBackfillPage(rule.id, nextPageNumber, domain)
-              } else if (cursor || backfill.pageModels > 0 || nextPageNumber > 1) {
-                setCrawlCursor(rule.id, null, domain)
-                const pass = incrementCatalogPass(rule.id, domain)
-                setBackfillPage(rule.id, 0, domain)
-                this.log(
-                  'info',
-                  `Rule "${rule.name}": full catalog checked (pass ${pass}) — backfill done until next cycle`,
-                  rule.id,
-                  { source: 'scheduled' }
-                )
+              // Manual newest-page refresh must not advance / complete night backfill state.
+              if (!manual) {
+                if (backfill.nextCursor) {
+                  setCrawlCursor(rule.id, backfill.nextCursor, domain)
+                  setBackfillPage(rule.id, nextPageNumber, domain)
+                } else if (cursor || backfill.pageModels > 0 || nextPageNumber > 1) {
+                  setCrawlCursor(rule.id, null, domain)
+                  clearLegacyUnscopedCursor(rule.id)
+                  const pass = incrementCatalogPass(rule.id, domain)
+                  setBackfillPage(rule.id, 0, domain)
+                  this.log(
+                    'info',
+                    `Rule "${rule.name}": full catalog checked (pass ${pass}) — backfill done until next cycle`,
+                    rule.id,
+                    { source: 'scheduled' }
+                  )
+                }
               }
-              const hasMorePages = Boolean(backfill.nextCursor)
-              this.emitCrawlProgress({
-                ruleId: rule.id,
-                ruleName: rule.name,
-                phase: hasMorePages ? 'page-done' : 'catalog-complete',
-                pageNumber: nextPageNumber,
-                galleryTotal: this.crawlBrowseModels(rule.id).length,
-                hasMorePages,
-                catalogComplete: !hasMorePages,
-                pageModelsOnPage: backfill.pageModels
-              })
               scanPageNumber = nextPageNumber
               return combined
             })()
@@ -1600,22 +1947,51 @@ export class ScanScheduler {
         rule,
         scanPageNumber,
         page,
-        'night',
+        manual ? 'queue' : 'night',
         client,
-        !page.nextCursor && page.pageModels > 0
+        manual ? false : !page.nextCursor && page.pageModels > 0,
+        manual ? Boolean(page.nextCursor) : undefined
       )
+
+      const galleryTotal = this.crawlBrowseModels(rule.id).length
+      if (manual) {
+        this.emitCrawlProgress({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          phase: 'page-done',
+          pageNumber: scanPageNumber,
+          galleryTotal,
+          hasMorePages: Boolean(page.nextCursor),
+          catalogComplete: false,
+          pageModelsOnPage: page.pageModels,
+          domain
+        })
+      } else {
+        const hasMorePages = Boolean(page.nextCursor)
+        this.emitCrawlProgress({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          phase: hasMorePages ? 'page-done' : 'catalog-complete',
+          pageNumber: scanPageNumber,
+          galleryTotal,
+          hasMorePages,
+          catalogComplete: !hasMorePages,
+          pageModelsOnPage: page.pageModels,
+          domain
+        })
+      }
 
       const autoMsg = result.autoQueued > 0 ? `, ${result.autoQueued} auto-queued` : ''
       this.log(
         'success',
         `Rule "${rule.name}": ${result.newModels} new, ${result.newVersions} new versions, ${result.upToDate} up-to-date${autoMsg}`,
         rule.id,
-        { source: 'scheduled' }
+        { source: logSource }
       )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       result.errors.push(msg)
-      this.log('error', `Rule "${rule.name}" error: ${msg}`, rule.id, { source: 'scheduled' })
+      this.log('error', `Rule "${rule.name}" error: ${msg}`, rule.id, { source: logSource })
     }
 
     return result
@@ -1642,9 +2018,30 @@ export class ScanScheduler {
     this.emit('pending:versions', this.pendingVersions)
   }
 
+  /** Drop a model from the in-memory Browse crawl gallery (all rules). */
+  removeModelFromBrowseGallery(modelId: number): void {
+    for (const [ruleId, bucket] of this.crawlBrowseAccumByRule) {
+      const order = this.crawlBrowseOrderByRule.get(ruleId)
+      if (!order?.length) continue
+      let removed = false
+      for (const key of [...bucket.keys()]) {
+        const m = bucket.get(key)
+        if (!m || m.id !== modelId) continue
+        bucket.delete(key)
+        removed = true
+      }
+      if (!removed) continue
+      this.crawlBrowseOrderByRule.set(
+        ruleId,
+        order.filter((key) => bucket.has(key))
+      )
+    }
+  }
+
   banModel(modelId: number, modelName = ''): void {
     inventory.banModel(modelId, modelName)
     this.dismissPendingForModel(modelId)
+    this.removeModelFromBrowseGallery(modelId)
     this.log('info', `Excluded model ${modelId} from future downloads`)
   }
 

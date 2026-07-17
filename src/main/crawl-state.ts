@@ -102,17 +102,31 @@ export function incrementCatalogPass(ruleId: string, domain?: import('../shared/
   return next
 }
 
-/** True after a full catalog walk finished (cursor cleared, at least one pass recorded). */
+/** True after a full catalog walk finished (at least one pass recorded, no active cursor). */
 export function isCatalogBackfillDone(
   ruleId: string,
   domain?: import('../shared/types').CivitaiDomain
 ): boolean {
-  const id = domain ? crawlScopeId(ruleId, domain) : ruleId
   const cursors = store.get('cursors')
   const passes = store.get('catalogPass')
-  const passCount = passes[id] ?? passes[ruleId] ?? 0
-  const hasCursor = Boolean(cursors[id] ?? (domain ? cursors[ruleId] : undefined))
-  return passCount > 0 && !hasCursor
+  if (domain) {
+    const id = crawlScopeId(ruleId, domain)
+    const passCount = passes[id] ?? 0
+    if (passCount <= 0) return false
+    // Ignore legacy unscoped cursor — it must not force another full catalog walk.
+    return !cursors[id]
+  }
+  const passCount = passes[ruleId] ?? 0
+  if (passCount <= 0) return false
+  return !cursors[ruleId]
+}
+
+/** Drop legacy unscoped cursor key so domain-scoped "done" is not blocked. */
+export function clearLegacyUnscopedCursor(ruleId: string): void {
+  const cursors = { ...store.get('cursors') }
+  if (!(ruleId in cursors)) return
+  delete cursors[ruleId]
+  store.set('cursors', cursors)
 }
 
 /** Resume full backfill after peek finds new models. */
@@ -122,6 +136,16 @@ export function clearCatalogPass(ruleId: string, domain?: import('../shared/type
   delete catalogPass[id]
   if (domain) delete catalogPass[ruleId]
   store.set('catalogPass', catalogPass)
+}
+
+/**
+ * App launch: forget "catalog already done" so Harvest walks all rule pages once,
+ * then switches to peek-only for the rest of the session.
+ */
+export function resetCatalogSessionForAppStart(): void {
+  store.set('catalogPass', {})
+  store.set('backfillPages', {})
+  store.set('cursors', {})
 }
 
 function keysForRule(storeKey: Record<string, unknown>, ruleId: string): string[] {

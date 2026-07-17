@@ -18,6 +18,8 @@ export type DownloadStripVisibility = 'off' | 'browse' | 'browseAndLibrary' | 'a
 
 /** Filename slug pattern for downloads and rename sync */
 export type SlugFormat = 'compact' | 'versionName' | 'modelTitle'
+/** How to decide if an on-disk file is already the Civitai version we want. */
+export type OnDiskVerifyMode = 'auto' | 'sha256' | 'sidecar'
 
 export type { ActivityLogTopic, ActivityLogTopicFlags, ActivityLogVerbosity } from './activity-log-policy'
 export { DEFAULT_ACTIVITY_LOG_VERBOSITY, DEFAULT_ACTIVITY_LOG_TOPICS } from './activity-log-policy'
@@ -84,6 +86,13 @@ export interface AppSettings {
   downloadStripVisibility: DownloadStripVisibility
   /** Filename slug pattern for new downloads and rename sync */
   slugFormat: SlugFormat
+  /**
+   * How to verify an existing file before re-download:
+   * - auto: prefer .civitai.json / swarm civitai.* ids, else SHA256
+   * - sha256: always hash local file vs Civitai API
+   * - sidecar: only modelId/versionId from sidecar/swarm (fast; falls back to sha256 if missing)
+   */
+  onDiskVerifyMode: OnDiskVerifyMode
   /** How much to write to the activity log (SQLite + UI) */
   activityLogVerbosity: ActivityLogVerbosity
   /** Per-topic overrides when activityLogVerbosity is custom */
@@ -92,11 +101,27 @@ export interface AppSettings {
   browseSettledToEnd: boolean
   /** Dim settled Browse cards (0 = off, 1–100 = opacity %) */
   browseSettledDimPercent: number
+  /**
+   * How Browse & Library present large lists:
+   * - lazy: infinite / chunked scroll
+   * - pages: classic Prev/Next pages
+   * - autoAdvance: lazy + skip empty “all owned” API pages (Browse)
+   */
+  resultsDisplayMode: import('./results-display').ResultsDisplayMode
+  /** Items per page / lazy chunk (60 or 100) */
+  resultsPageSize: import('./results-display').ResultsPageSize
 }
 
 export type CivitaiSort = 'Newest' | 'Most Downloaded' | 'Highest Rated'
 export type CivitaiPeriod = 'AllTime' | 'Year' | 'Month'
 export type CheckpointType = 'Standard' | 'Trained' | 'Merge'
+export type { ResultsDisplayMode, ResultsPageSize } from './results-display'
+export {
+  RESULTS_DISPLAY_MODES,
+  RESULTS_PAGE_SIZE_OPTIONS,
+  normalizeResultsDisplayMode,
+  normalizeResultsPageSize
+} from './results-display'
 
 /** Returned to renderer — API key never leaves main process */
 export interface AppSettingsPublic {
@@ -138,10 +163,13 @@ export interface AppSettingsPublic {
   downloadStripLayout: DownloadStripLayout
   downloadStripVisibility: DownloadStripVisibility
   slugFormat: SlugFormat
+  onDiskVerifyMode: OnDiskVerifyMode
   activityLogVerbosity: ActivityLogVerbosity
   activityLogTopics?: Partial<ActivityLogTopicFlags>
   browseSettledToEnd: boolean
   browseSettledDimPercent: number
+  resultsDisplayMode: import('./results-display').ResultsDisplayMode
+  resultsPageSize: import('./results-display').ResultsPageSize
 }
 
 /** Partial save from renderer; omit apiKey or send empty to keep existing */
@@ -149,7 +177,7 @@ export type AppSettingsSave = Partial<AppSettingsPublic> & { apiKey?: string }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
-  domain: 'com',
+  domain: 'red',
   scanIntervalMinutes: 0,
   downloadConcurrency: 2,
   downloadStreams: 2,
@@ -170,7 +198,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   newestPeekIntervalMinutes: 15,
   backfillCatalog: true,
-  updateBrowseOnCrawl: true,
+  updateBrowseOnCrawl: false,
   uiMode: 'minimal',
   theme: 'dark',
   locale: 'en',
@@ -179,9 +207,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   downloadStripLayout: 'minimal',
   downloadStripVisibility: 'off',
   slugFormat: 'versionName',
+  onDiskVerifyMode: 'auto',
   activityLogVerbosity: 'minimal',
   browseSettledToEnd: false,
-  browseSettledDimPercent: 0
+  browseSettledDimPercent: 50,
+  resultsDisplayMode: 'autoAdvance',
+  resultsPageSize: 100
 }
 
 export interface ScanScheduleInfo {
@@ -592,11 +623,25 @@ export interface CrawlPagePayload {
   pageModelsOnPage?: number
   /** Total models in accumulated browse gallery */
   galleryTotal?: number
+  /** Owned / new / excluded breakdown for the progress bar (works even when gallery cards are quiet). */
+  galleryStats?: BrowseGalleryStats
   /** Backfill reached catalog end on this page */
   catalogComplete?: boolean
+  /** More catalog pages remain (this domain cursor or another search domain) */
+  hasMorePages?: boolean
   /** Models queued for download from this API page */
   pageQueued?: number
   result: WatchRuleTestResult
+}
+
+/** Counts for Browse progress bar — computed on main so quiet harvest can update UI without cards. */
+export interface BrowseGalleryStats {
+  owned: number
+  excluded: number
+  skipTag: number
+  awaiting: number
+  missing: number
+  total: number
 }
 
 export interface CrawlProgressPayload {
@@ -605,6 +650,7 @@ export interface CrawlProgressPayload {
   phase: 'fetching' | 'waiting' | 'fetching-tags' | 'page-done' | 'catalog-complete'
   pageNumber?: number
   galleryTotal?: number
+  galleryStats?: BrowseGalleryStats
   domain?: CivitaiDomain
   /** After a page finishes — Civitai has more catalog pages */
   hasMorePages?: boolean
@@ -675,6 +721,8 @@ export interface InventoryGetResult {
   relinkedFromDisk?: number
   /** On-disk model files scanned for import */
   diskScanned?: number
+  /** Set when LoRA/Checkpoint drive is offline — sync was skipped */
+  storageError?: string
 }
 
 export interface InventoryGetOptions {
@@ -682,6 +730,11 @@ export interface InventoryGetOptions {
   syncDisk?: boolean
   /** Skip SHA256 backfill during sync (faster startup background sync) */
   skipHashBackfill?: boolean
+  /**
+   * Skip writing .civitai.json / swarm civitai.* identity files.
+   * Startup uses this — downloads already write IDs; manual Sync still backfills legacy files.
+   */
+  skipIdentityBackfill?: boolean
   /**
    * Skip walking output folders for new/orphan files.
    * Useful for fast startup — still verifies inventory paths exist.
@@ -766,7 +819,7 @@ export interface CivitaiModelDetail {
 }
 
 export interface LibrarySyncProgress {
-  phase: 'import' | 'checking' | 'metadata' | 'hash' | 'rename' | 'preview'
+  phase: 'import' | 'checking' | 'metadata' | 'identity' | 'hash' | 'rename' | 'preview'
   current: number
   total: number
   modelName: string

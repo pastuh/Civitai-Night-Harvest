@@ -14,6 +14,7 @@ interface Props {
   domain: 'com' | 'red' | 'both'
   hasApiKey: boolean
   onRefresh: () => Promise<void>
+  isActive?: boolean
 }
 
 function modelPageUrl(domain: 'com' | 'red' | 'both', modelId: number, versionId: number): string {
@@ -30,21 +31,23 @@ function sortDeferred(items: DeferredDownload[]): DeferredDownload[] {
   })
 }
 
-export function DeferredTab({ deferred, domain, hasApiKey, onRefresh }: Props) {
+export function DeferredTab({ deferred, domain, hasApiKey, onRefresh, isActive = false }: Props) {
   const t = useT()
   const [, setTick] = useState(0)
 
   useEffect(() => {
+    if (!isActive) return
     void window.api
       .enrichDeferred()
       .then(() => onRefresh())
       .catch(() => {})
-  }, [onRefresh])
+  }, [isActive, onRefresh])
 
   useEffect(() => {
+    if (!isActive) return
     const id = setInterval(() => setTick((tick) => tick + 1), 30_000)
     return () => clearInterval(id)
-  }, [])
+  }, [isActive])
 
   const sorted = useMemo(() => sortDeferred(deferred), [deferred])
 

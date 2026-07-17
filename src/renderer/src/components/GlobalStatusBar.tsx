@@ -87,6 +87,8 @@ function syncProgressLabel(
 
     metadata: t('appBusy.phaseMetadata'),
 
+    identity: t('appBusy.phaseIdentity'),
+
     hash: t('appBusy.phaseHash'),
 
     rename: t('appBusy.phaseRename'),
@@ -219,7 +221,7 @@ function primaryActivityLabel(
 
 
 
-  if (status === 'scanning') {
+  if (status === 'scanning' || crawlProgress != null) {
 
     const rules = formatRuleNames(
       crawlProgress?.ruleName
@@ -243,6 +245,14 @@ function primaryActivityLabel(
           ? t('globalStatus.scanningApiWaitingRule', { rules, time: label })
           : t('globalStatus.scanningApiWaiting', { time: label })
       }
+      // Between pages (catalog not done) — still show wait, not a blank bar.
+      const ms = remainingWaitMs ?? crawlProgress.waitMs ?? 0
+      const min = ms >= 60_000 ? Math.max(1, Math.ceil(ms / 60_000)) : 0
+      const label =
+        min > 0 ? `${min} min` : t('globalStatus.peekCountdownUnderMin')
+      return rules
+        ? t('globalStatus.scanningApiWaitingRule', { rules, time: label })
+        : t('globalStatus.scanningApiWaiting', { time: label })
     }
 
     if (crawlProgress?.phase === 'fetching-tags') {
@@ -266,10 +276,10 @@ function primaryActivityLabel(
         : t('globalStatus.scanningApiFetching', { page: fetchPage })
     }
 
-    if (crawlProgress?.phase === 'catalog-complete' || crawlCatalogComplete) {
-      const donePage = crawlProgress?.pageNumber ?? page ?? 1
-      const apiOnPage = crawlProgress?.apiModelsOnPage ?? 0
-      const matchedOnPage = crawlProgress?.pageModelsOnPage ?? 0
+    if (crawlProgress?.phase === 'catalog-complete') {
+      const donePage = crawlProgress.pageNumber ?? page ?? 1
+      const apiOnPage = crawlProgress.apiModelsOnPage ?? 0
+      const matchedOnPage = crawlProgress.pageModelsOnPage ?? 0
       if (total === 0 && apiOnPage > 0 && matchedOnPage === 0) {
         return rules
           ? t('globalStatus.scanningCatalogCompleteFilteredRule', {
@@ -288,17 +298,27 @@ function primaryActivityLabel(
         : t('globalStatus.scanningCatalogComplete', { page: donePage, total })
     }
 
-    if (crawlProgress?.phase === 'page-done' && crawlProgress.hasMorePages) {
-      const donePage = crawlProgress.pageNumber ?? page ?? 1
-      const onPage = crawlProgress.pageModelsOnPage ?? 0
+    // Stale crawlPageMeta must not flash "Catalog complete" while another domain/page is still loading.
+    if (crawlCatalogComplete && !crawlProgress) {
+      const donePage = page ?? 1
       return rules
-        ? t('globalStatus.scanningPageDoneMoreRule', {
+        ? t('globalStatus.scanningCatalogCompleteRule', {
             page: donePage,
-            onPage,
             total,
             rules
           })
-        : t('globalStatus.scanningPageDoneMore', { page: donePage, onPage, total })
+        : t('globalStatus.scanningCatalogComplete', { page: donePage, total })
+    }
+
+    if (crawlProgress?.phase === 'page-done' && crawlProgress.hasMorePages) {
+      const donePage = crawlProgress.pageNumber ?? page ?? 1
+      return rules
+        ? t('globalStatus.scanningPageDoneMoreRule', {
+            page: donePage,
+            total,
+            rules
+          })
+        : t('globalStatus.scanningPageDoneMore', { page: donePage, total })
     }
 
     if (crawlHasMorePages && page != null && rules) {
@@ -547,7 +567,7 @@ export function GlobalStatusBar({
 
   useEffect(() => {
     if (crawlProgress?.phase !== 'waiting') return
-    const id = window.setInterval(() => setWaitTick((n) => n + 1), 1000)
+    const id = window.setInterval(() => setWaitTick((n) => n + 1), 5000)
     return () => window.clearInterval(id)
   }, [crawlProgress?.phase, crawlProgress?.waitUntil, crawlProgress?.ruleId])
 

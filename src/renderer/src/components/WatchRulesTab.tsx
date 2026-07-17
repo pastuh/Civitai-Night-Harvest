@@ -109,7 +109,7 @@ function emptyCrawlBrowsePlaceholder(): WatchRuleTestResult {
     pageSize: 0,
     currentPage: 0,
     nextCursor: null,
-    crawlSource: 'night',
+    // Do not set crawlSource — that made Browse think a night fetch was in progress.
     enums: {
       modelTypes: [],
       baseModels: [],
@@ -136,7 +136,10 @@ interface Props {
     pageModelsAdded: number
     pageModelsOnPage: number
     galleryTotal: number
+    galleryStats?: import('../../../shared/types').BrowseGalleryStats
     catalogComplete?: boolean
+    hasMorePages?: boolean
+    pageQueued?: number
   } | null
   crawlProgress?: CrawlProgressPayload | null
   browseGalleryAwaiting?: boolean
@@ -146,11 +149,13 @@ interface Props {
   onStartDownloads: () => Promise<void>
   onRetryDeferred?: () => Promise<void>
   onJumpToGallery?: (modelId: number) => void
+  onOpenTagFolders?: (tag: string) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onRefreshInventory?: () => Promise<void>
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
   onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
   onOpenActivity?: () => void
+  onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void
 }
 
 function newId(): string {
@@ -203,11 +208,13 @@ export function WatchRulesTab({
   onStartDownloads,
   onRetryDeferred,
   onJumpToGallery,
+  onOpenTagFolders,
   onSaveTagRules,
   onRefreshInventory,
   onSaveSettings,
   onBrowseModelBanChange,
-  onOpenActivity
+  onOpenActivity,
+  onBrowseSnapshot
 }: Props) {
   const t = useT()
   const [draft, setDraft] = useState<WatchRule[]>(rules)
@@ -235,26 +242,47 @@ export function WatchRulesTab({
   testRuleIdRef.current = testRuleId
 
   const browseResult = liveCrawlBrowse ?? testResult
+  const browseResultRef = useRef(browseResult)
+  browseResultRef.current = browseResult
   const hasEnabledRules = draft.some((r) => r.enabled)
-  // Empty gallery + awaiting first page (incl. idle gap after startup before status=scanning).
+  // Empty gallery loading only while something is actually fetching from Civitai.
   const showBrowseLoading =
+    hasEnabledRules &&
     !browseResult?.sampleModels?.length &&
     (browseGalleryAwaiting ||
       status === 'scanning' ||
       status === 'checking' ||
       crawlProgress != null ||
-      testingId != null)
+      testingId != null) &&
+    (Boolean(settings.nightMode) ||
+      status === 'scanning' ||
+      status === 'checking' ||
+      testingId != null ||
+      crawlProgress != null)
+  // Quiet actions strip only — Browse results (and progress bar) stay visible during harvest.
+  const showQuietActions =
+    Boolean(settings.nightMode) &&
+    hasEnabledRules &&
+    settings.updateBrowseOnCrawl === false &&
+    !testResult &&
+    testingId == null
+
   const browsePanelResult =
     browseResult ??
-    (hasEnabledRules || showBrowseLoading || testingId != null || crawlProgress != null || status === 'scanning' || status === 'checking'
+    (hasEnabledRules &&
+    (showBrowseLoading ||
+      testingId != null ||
+      crawlProgress != null ||
+      status === 'scanning' ||
+      status === 'checking' ||
+      Boolean(settings.nightMode))
       ? emptyCrawlBrowsePlaceholder()
       : null)
   const crawlFetching =
     showBrowseLoading ||
     testingId != null ||
     crawlProgress?.phase === 'fetching' ||
-    crawlProgress?.phase === 'fetching-tags' ||
-    crawlProgress?.phase === 'waiting'
+    crawlProgress?.phase === 'fetching-tags'
 
   const activeRule =
     draft.find((r) => r.id === testRuleId) ?? draft.find((r) => r.enabled) ?? draft[0] ?? null
@@ -333,15 +361,22 @@ export function WatchRulesTab({
           draft.find((r) => r.enabled)?.id ??
           draft[0]?.id ??
           null
-        if (id && all[id]) setCrawlStatus(all[id])
-        else setCrawlStatus(null)
+        if (id && (all[id] || all[`${id}:red`] || all[`${id}:com`])) {
+          setCrawlStatus(all[id] ?? all[`${id}:red`] ?? all[`${id}:com`] ?? null)
+        } else setCrawlStatus(null)
       })
     }
     refreshCrawl()
-    const ms = settings.nightMode && !testResult ? 5000 : 20_000
+    // Quiet harvest needs fresher status than 30s — page/cursor otherwise stuck on "starting…".
+    const ms =
+      settings.nightMode && !testResult && settings.updateBrowseOnCrawl === false
+        ? 5_000
+        : settings.nightMode && !testResult
+          ? 15_000
+          : 60_000
     const t = setInterval(refreshCrawl, ms)
     return () => clearInterval(t)
-  }, [testRuleId, draft, settings.nightMode, testResult])
+  }, [testRuleId, draft, settings.nightMode, settings.updateBrowseOnCrawl, testResult, crawlProgress?.pageNumber, crawlProgress?.phase])
 
   const add = () => {
     userEditedRef.current = true
@@ -381,29 +416,11 @@ export function WatchRulesTab({
     }
   }
 
-  const handleDomainChange = async (domain: AppSettingsPublic['domain']) => {
-    if (domain === settings.domain) return
-    await onSaveSettings({ domain })
-    setTestResult(null)
-    setLoadMoreError(null)
-  }
-
-  const domainSelect = (
-    <select
-      className="browse-domain-select"
-      value={settings.domain}
-      onChange={(e) => void handleDomainChange(e.target.value as AppSettingsPublic['domain'])}
-      title="Civitai domain for rules search, preview, and night crawl"
-      aria-label="Civitai domain"
-    >
-      <option value="com">civitai.com</option>
-      <option value="red">civitai.red</option>
-      <option value="both">Both (.com + .red)</option>
-    </select>
-  )
-
   const searchRule = useCallback(
-    async (rule: WatchRule, options: WatchRuleSearchOptions & { append?: boolean } = {}) => {
+    async (
+      rule: WatchRule,
+      options: WatchRuleSearchOptions & { append?: boolean } = {}
+    ): Promise<WatchRuleTestResult | null> => {
       const { page = 1, cursor, apiTag, domainCursors, append = false } = options
       setTestingId(rule.id)
       setTestRuleId(rule.id)
@@ -415,8 +432,12 @@ export function WatchRulesTab({
       }
       try {
         const result = await window.api.testWatchRule(rule, { page, cursor, apiTag, domainCursors })
+        let merged: WatchRuleTestResult = result
         setTestResult((prev) => {
-          if (!append || !prev) return result
+          if (!append || !prev) {
+            merged = result
+            return result
+          }
           const byKey = new Map<string, WatchRuleTestModel>()
           for (const m of prev.sampleModels) byKey.set(browseModelDedupeKey(m), m)
           for (const m of result.sampleModels) {
@@ -424,17 +445,20 @@ export function WatchRulesTab({
             const existing = byKey.get(key)
             byKey.set(key, existing ? preferBrowseModel(existing, m) : m)
           }
-          const merged = [...byKey.values()]
-          return {
+          const models = [...byKey.values()]
+          merged = {
             ...result,
             currentPage: Math.max(prev.currentPage, result.currentPage),
-            sampleModels: merged,
-            tagsInResults: aggregateResultTags(merged),
+            sampleModels: models,
+            tagsInResults: aggregateResultTags(models),
             domainCursors: { ...prev.domainCursors, ...result.domainCursors },
-            searchApiTag: result.searchApiTag ?? prev.searchApiTag ?? null
+            searchApiTag: result.searchApiTag ?? prev.searchApiTag ?? null,
+            crawlSource: prev.crawlSource ?? result.crawlSource
           }
+          return merged
         })
         if (!append) setFiltersOpen(false)
+        return merged
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err)
         const msg = previewErrorMessage(t, raw)
@@ -443,6 +467,7 @@ export function WatchRulesTab({
         } else {
           setPreviewError(msg)
         }
+        return null
       } finally {
         setTestingId(null)
         setLoadingMore(false)
@@ -455,8 +480,13 @@ export function WatchRulesTab({
 
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current) return
-    const prev = testResultRef.current
-    const ruleId = testRuleIdRef.current
+    const prev = browseResultRef.current
+    const ruleId =
+      testRuleIdRef.current ??
+      crawlPageMeta?.ruleId ??
+      crawlProgress?.ruleId ??
+      draft.find((r) => r.enabled)?.id ??
+      null
     if (!prev || !ruleId) return
     if (!browseHasMorePages(prev)) return
 
@@ -470,27 +500,29 @@ export function WatchRulesTab({
     setLoadMoreError(null)
 
     if (domainCursors && Object.keys(domainCursors).length > 0) {
-      await searchRule(rule, {
+      const merged = await searchRule(rule, {
         domainCursors,
         apiTag: prev.searchApiTag ?? undefined,
         append: true
       })
+      if (merged) onBrowseSnapshot?.(merged)
       return
     }
 
     if (prev.nextCursor && prev.nextCursor !== 'both') {
-      await searchRule(rule, {
+      const merged = await searchRule(rule, {
         cursor: prev.nextCursor,
         apiTag: prev.searchApiTag ?? undefined,
         append: true
       })
+      if (merged) onBrowseSnapshot?.(merged)
       return
     }
 
     setLoadMoreError('No more pages — catalog cursor missing')
     loadingMoreRef.current = false
     setLoadingMore(false)
-  }, [draft, searchRule, settings.domain])
+  }, [draft, searchRule, settings.domain, crawlPageMeta?.ruleId, crawlProgress?.ruleId, onBrowseSnapshot])
 
   const searchWithTag = async (tag: string) => {
     const rule = draft.find((r) => r.id === testRuleId)
@@ -560,7 +592,6 @@ export function WatchRulesTab({
               ▸ Rules
               {draft.length > 0 ? ` (${draft.filter((r) => r.enabled).length}/${draft.length})` : ''}
             </button>
-            {domainSelect}
           </div>
           <span
             className="browse-filters-summary muted"
@@ -587,7 +618,6 @@ export function WatchRulesTab({
               >
                 ▾ Rules
               </button>
-              {domainSelect}
               <span className="browse-rules-count muted">{draft.length}</span>
             </div>
             <div className="browse-filters-panel-actions">
@@ -813,6 +843,22 @@ export function WatchRulesTab({
         </div>
       )}
 
+      {showQuietActions && (
+        <NightCrawlQuietPanel
+          settings={settings}
+          enabledRules={draft.filter((r) => r.enabled)}
+          queue={queue}
+          queuePaused={queuePaused}
+          onStartDownloads={onStartDownloads}
+          onOpenActivity={onOpenActivity}
+          onRunScan={onRunScan}
+          onShowBrowseSnapshot={async () => {
+            const gallery = await window.api.getBrowseGallery()
+            if (gallery) onBrowseSnapshot?.(gallery)
+          }}
+        />
+      )}
+
       {browsePanelResult ? (
         <SearchBrowsePanel
           key={browseRule?.id ?? 'browse'}
@@ -832,6 +878,7 @@ export function WatchRulesTab({
           onSearchWithTag={(tag) => void searchWithTag(tag)}
           searchingTag={searchingTag}
           onJumpToGallery={onJumpToGallery}
+          onOpenTagFolders={onOpenTagFolders}
           onSaveTagRules={onSaveTagRules}
           onQueueAll={() => void queueAll()}
           queueAllLoading={queueAllLoading}
@@ -843,7 +890,7 @@ export function WatchRulesTab({
           backfillCatalog={settings.backfillCatalog ?? true}
           nightDownloadAll={settings.nightDownloadAll ?? false}
           nightMode={settings.nightMode ?? false}
-          updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? true}
+          updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? false}
           deferredAwaitingCount={deferred.length}
           deferredVersionIds={deferredVersionIds}
           banFunctionMode={settings.banFunctionMode ?? false}
@@ -852,26 +899,30 @@ export function WatchRulesTab({
           appStatus={status}
           uiExtended={settings.uiMode === 'extended'}
           crawlPageMeta={crawlPageMeta}
-          civitaiDomain={settings.domain}
+          civitaiDomain="red"
           browseRule={browseRule}
-          browseGalleryAwaiting={browseGalleryAwaiting}
+          browseGalleryAwaiting={browseGalleryAwaiting && hasEnabledRules}
           onRunScan={onRunScan}
           browseSettledToEnd={settings.browseSettledToEnd ?? false}
-          browseSettledDimPercent={settings.browseSettledDimPercent ?? 0}
+          browseSettledDimPercent={settings.browseSettledDimPercent ?? 50}
           loraFolder={settings.loraOutputFolder}
           checkpointFolder={settings.checkpointOutputFolder}
+          resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
+          resultsPageSize={settings.resultsPageSize ?? 100}
         />
       ) : settings.nightMode ? (
         <NightCrawlQuietPanel
           settings={settings}
           enabledRules={draft.filter((r) => r.enabled)}
-          crawlByRule={crawlByRule}
           queue={queue}
           queuePaused={queuePaused}
           onStartDownloads={onStartDownloads}
           onOpenActivity={onOpenActivity}
-          browseGalleryAwaiting={browseGalleryAwaiting}
           onRunScan={onRunScan}
+          onShowBrowseSnapshot={async () => {
+            const gallery = await window.api.getBrowseGallery()
+            if (gallery) onBrowseSnapshot?.(gallery)
+          }}
         />
       ) : (
         <section className="browse-results-empty">

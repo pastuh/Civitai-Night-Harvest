@@ -41,6 +41,7 @@ import * as inventory from './inventory'
 import { getSettings, getTagRules, getWatchRules } from './settings-store'
 import { sendToRenderer } from './window-notify'
 import { repairBrokenInventoryPaths } from './library-sync'
+import { checkConfiguredOutputFoldersReachable } from './output-paths'
 
 export interface EnqueueMeta {
   modelName?: string
@@ -85,6 +86,12 @@ export class DownloadQueue {
   private runningIds = new Set<string>()
   private progressBroadcastTimer: ReturnType<typeof setTimeout> | null = null
   private progressBroadcastDirty = false
+  private lastQueueMaintainAt = 0
+  private static readonly QUEUE_MAINTAIN_MIN_MS = 5_000
+  /** Auto-queue cooldown after a version finishes/fails — stops same IDs cycling. */
+  private autoQueueCooldownUntil = new Map<number, number>()
+  private static readonly AUTO_QUEUE_COOLDOWN_MS = 30 * 60_000
+  private storageBlockedLogged = false
 
   constructor(
     downloadService: DownloadService,
@@ -96,7 +103,8 @@ export class DownloadQueue {
     this.log = options.log
     this.onAllIdle = options.onAllIdle
     this.onQueueMutated = options.onQueueMutated
-    this.retryIntervalId = setInterval(() => this.tickAutoRetries(), 15_000)
+    // Failed-row retries only — early-access/deferred is handled by peek / early-access watcher.
+    this.retryIntervalId = setInterval(() => this.tickAutoRetries(), 60_000)
   }
 
   getItems(): DownloadQueueItem[] {
@@ -111,8 +119,26 @@ export class DownloadQueue {
     return this.items.some(
       (i) =>
         i.versionId === versionId &&
-        (i.status === 'queued' || i.status === 'downloading' || i.status === 'deferred')
+        (i.status === 'queued' ||
+          i.status === 'downloading' ||
+          i.status === 'deferred' ||
+          i.status === 'failed')
     )
+  }
+
+  private noteAutoQueueCooldown(versionId: number): void {
+    if (!versionId) return
+    this.autoQueueCooldownUntil.set(versionId, Date.now() + DownloadQueue.AUTO_QUEUE_COOLDOWN_MS)
+  }
+
+  private isAutoQueueCoolingDown(versionId: number): boolean {
+    const until = this.autoQueueCooldownUntil.get(versionId)
+    if (!until) return false
+    if (Date.now() >= until) {
+      this.autoQueueCooldownUntil.delete(versionId)
+      return false
+    }
+    return true
   }
 
   getState(): { items: DownloadQueueItem[]; paused: boolean } {
@@ -190,21 +216,8 @@ export class DownloadQueue {
       }
     }
 
-    let requeuedExisting = 0
-    for (const item of this.items) {
-      if (item.status !== 'failed' || !item.versionId) continue
-      if (inventory.hasVersion(item.versionId)) continue
-      const reason = (item.reason ?? '').toLowerCase()
-      if (!reason.includes('already exists')) continue
-      item.status = 'queued'
-      item.reason = undefined
-      item.failureKind = undefined
-      item.completedAt = undefined
-      item.bytesReceived = 0
-      item.totalBytes = 0
-      item.phase = 'model'
-      requeuedExisting++
-    }
+    // Do not auto-requeue "already exists" failures — that caused instant
+    // fail→refill thrash when adopt could not claim the on-disk file.
 
     this.reconcileOwnedInQueue()
     this.pruneFailedNowOwned()
@@ -240,12 +253,6 @@ export class DownloadQueue {
       )
       this.flushPersist()
     }
-    if (requeuedExisting > 0) {
-      this.log?.(
-        'info',
-        `Re-queued ${requeuedExisting} download(s) with on-disk files — will link to library`
-      )
-    }
 
     if (saved || this.items.length > 0) {
       this.broadcast()
@@ -278,6 +285,14 @@ export class DownloadQueue {
   }
 
   start(): void {
+    const reach = checkConfiguredOutputFoldersReachable()
+    if (!reach.ok) {
+      this.paused = true
+      this.log?.('error', reach.message)
+      this.broadcast()
+      return
+    }
+    this.storageBlockedLogged = false
     const wasPaused = this.paused
     this.paused = false
     if (wasPaused) this.broadcast()
@@ -474,7 +489,9 @@ export class DownloadQueue {
 
   pause(): void {
     this.paused = true
-    this.broadcast()
+    // Light update — full broadcast() walks the whole queue (reconcile/prune) and spiked CPU on Pause.
+    this.schedulePersist()
+    sendToRenderer(this.getWindow, 'download:queue', this.getState())
   }
 
   /** Remove all queue rows and cancel active downloads. */
@@ -525,7 +542,8 @@ export class DownloadQueue {
       cancelled++
     }
 
-    this.broadcast()
+    this.schedulePersist()
+    sendToRenderer(this.getWindow, 'download:queue', this.getState())
     this.checkIdle()
     return { cancelled, finishing }
   }
@@ -535,6 +553,9 @@ export class DownloadQueue {
     if (request.versionId && inventory.hasVersion(request.versionId)) return ''
     const settings = getSettings()
     if (settings.manualQueueMode && meta.manual !== true) return ''
+    if (meta.manual !== true && request.versionId && this.isAutoQueueCoolingDown(request.versionId)) {
+      return ''
+    }
     if (meta.manual !== true && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
       return ''
     }
@@ -549,9 +570,16 @@ export class DownloadQueue {
       const existing = this.items.find(
         (i) =>
           i.versionId === request.versionId &&
-          (i.status === 'queued' || i.status === 'downloading' || i.status === 'deferred')
+          (i.status === 'queued' ||
+            i.status === 'downloading' ||
+            i.status === 'deferred' ||
+            i.status === 'failed')
       )
       return existing?.id ?? ''
+    }
+
+    if (meta.manual === true && request.versionId) {
+      this.autoQueueCooldownUntil.delete(request.versionId)
     }
 
     const tagRules = getTagRules()
@@ -813,6 +841,7 @@ export class DownloadQueue {
   retryFailed(id: string): void {
     const item = this.items.find((i) => i.id === id)
     if (!item || item.status !== 'failed') return
+    if (item.versionId) this.autoQueueCooldownUntil.delete(item.versionId)
     item.status = 'queued'
     item.bytesReceived = 0
     item.totalBytes = 0
@@ -894,6 +923,11 @@ export class DownloadQueue {
   }
 
   cancelByModelId(modelId: number): void {
+    const hasItem = this.items.some((i) => i.modelId === modelId)
+    if (!hasItem) {
+      inventory.removeDeferredForModel(modelId)
+      return
+    }
     for (const item of this.items) {
       if (item.modelId !== modelId) continue
       if (item.status === 'downloading') {
@@ -913,14 +947,30 @@ export class DownloadQueue {
     }
   }
 
-  private broadcast(): void {
-    this.recoverStuckDownloads()
-    this.reconcileOwnedInQueue()
-    this.syncDeferredInQueue()
-    this.ensurePumpHealthy()
-    this.pruneQueue()
+  /** Emit queue state to renderer without walking inventory/reconcile (cheap). */
+  private emitQueueState(): void {
     this.schedulePersist()
     sendToRenderer(this.getWindow, 'download:queue', this.getState())
+  }
+
+  /**
+   * Structural queue changes. Reconcile/prune is rate-limited so Pause / status
+   * churn does not burn CPU walking the whole queue + inventory every event.
+   */
+  private broadcast(options?: { forceMaintain?: boolean }): void {
+    const now = Date.now()
+    const due =
+      options?.forceMaintain === true ||
+      now - this.lastQueueMaintainAt >= DownloadQueue.QUEUE_MAINTAIN_MIN_MS
+    if (due) {
+      this.lastQueueMaintainAt = now
+      this.recoverStuckDownloads()
+      this.reconcileOwnedInQueue()
+      this.syncDeferredInQueue()
+      this.ensurePumpHealthy()
+      this.pruneQueue()
+    }
+    this.emitQueueState()
   }
 
   /** Throttle high-frequency progress updates — avoids cross-cancel side effects. */
@@ -931,9 +981,8 @@ export class DownloadQueue {
       this.progressBroadcastTimer = null
       if (!this.progressBroadcastDirty) return
       this.progressBroadcastDirty = false
-      this.schedulePersist()
-      sendToRenderer(this.getWindow, 'download:queue', this.getState())
-    }, 400)
+      this.emitQueueState()
+    }, 750)
   }
 
   private schedulePersist(): void {
@@ -1201,14 +1250,15 @@ export class DownloadQueue {
   }
 
   private tickAutoRetries(): void {
-    if (getSettings().autoRetryDeferred === false) return
-    const fromDeferred = this.requeueDeferred()
+    // Deferred/early-access is owned by peek loop + early-access watcher (peek interval).
+    // This tick only recovers retryable failed rows so we do not double-scan deferred every few seconds.
+    if (this.paused) return
+    if (!this.items.some((i) => i.status === 'failed')) return
     const fromFailed = this.requeueRetryableFailed()
-    const total = fromDeferred + fromFailed
-    if (total > 0) {
-      this.log?.('info', `Auto-retry: re-queued ${total} download(s)`)
-      this.broadcast()
-      if (!this.paused) void this.pump()
+    if (fromFailed > 0) {
+      this.log?.('info', `Auto-retry: re-queued ${fromFailed} failed download(s)`)
+      this.broadcast({ forceMaintain: true })
+      void this.pump()
     }
   }
 
@@ -1254,6 +1304,16 @@ export class DownloadQueue {
 
   private async pump(): Promise<void> {
     if (this.paused) return
+    const reach = checkConfiguredOutputFoldersReachable()
+    if (!reach.ok) {
+      this.paused = true
+      if (!this.storageBlockedLogged) {
+        this.storageBlockedLogged = true
+        this.log?.('error', reach.message)
+      }
+      this.broadcast()
+      return
+    }
     const concurrency = Math.max(1, getSettings().downloadConcurrency)
     while (!this.paused) {
       const busy = this.items.filter((i) => i.status === 'downloading').length
@@ -1294,6 +1354,8 @@ export class DownloadQueue {
     try {
       if (item.versionId && inventory.hasVersion(item.versionId)) {
         inventory.removeDeferredDownload(item.versionId)
+        logItem('info', `Skip ${itemLabel()} — already in library`)
+        this.noteAutoQueueCooldown(item.versionId)
         this.items = this.items.filter((i) => i.id !== item.id)
         this.broadcast()
         this.checkIdle()
@@ -1411,6 +1473,7 @@ export class DownloadQueue {
       if (result.status === 'downloaded') {
         item.status = 'done'
         item.phase = 'done'
+        if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
         const deferredEntry = inventory.getDeferredDownload(item.versionId)
         inventory.removeDeferredDownload(item.versionId)
         this.emitDeferred()
@@ -1471,10 +1534,20 @@ export class DownloadQueue {
         logItem('warn', `${itemLabel()}: ${result.reason ?? 'Awaiting access'} — kept in queue for retry`)
         if (result.failureKind === 'interrupted') this.scheduleQuickRetry()
       } else if (result.status === 'skipped') {
-        item.status = 'failed'
-        item.reason = result.reason ?? 'Skipped'
-        item.completedAt = new Date().toISOString()
-        logItem('warn', `Skipped ${itemLabel()}: ${item.reason}`)
+        const reason = result.reason ?? 'Skipped'
+        const quiet =
+          /already in inventory|already exists|excluded from downloads/i.test(reason)
+        if (quiet) {
+          if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
+          logItem('info', `Skip ${itemLabel()}: ${reason}`)
+          this.items = this.items.filter((i) => i.id !== item.id)
+        } else {
+          item.status = 'failed'
+          item.reason = reason
+          item.completedAt = new Date().toISOString()
+          if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
+          logItem('warn', `Skipped ${itemLabel()}: ${item.reason}`)
+        }
       } else {
         const rawReason = result.reason ?? ''
         const classified = classifyDownloadFailure(rawReason)
@@ -1502,6 +1575,7 @@ export class DownloadQueue {
         } else {
           item.status = 'failed'
           item.reason = result.reason
+          if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
           logItem('error', `Failed ${itemLabel()}: ${result.reason ?? 'unknown error'}`)
         }
       }
@@ -1573,6 +1647,7 @@ export class DownloadQueue {
         } else {
           item.status = 'failed'
           item.reason = message
+          if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
           logItem('error', `Failed ${itemLabel()}: ${message}`)
         }
       }

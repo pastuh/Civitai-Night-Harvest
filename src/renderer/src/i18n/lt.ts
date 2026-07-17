@@ -37,6 +37,8 @@ export const lt: Messages = {
     downloadsPauseBtn: '⏸',
     downloadsPaused: '⏸ Pauzė',
     blur: 'Sulieti',
+    browseLiveOn: '👁',
+    browseLiveOff: '👁',
     scan: 'Skenuoti',
     quickStart: 'Greitas startas:',
     setModelsRoot: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose.',
@@ -55,11 +57,15 @@ export const lt: Messages = {
     tooltipDownloadsPause: 'Pauzuoti siuntimus (scan tęsiasi)',
     tooltipDownloadsResume: 'Tęsti siuntimus',
     tooltipBlur: 'Sulieti preview nuotraukas',
-    tooltipScan: 'Skenuoti visas įjungtas Browse taisykles ir atnaujinti rezultatus',
+    tooltipBrowseLiveOn:
+      'Browse gyvai ĮJUNGTA — galerija atsinaujina su harvest puslapiais. Spauskite quiet režimui (tik siuntimai).',
+    tooltipBrowseLiveOff:
+      'Browse gyvai IŠJUNGTA — harvest siunčia fone. Spauskite gyvai galerijai, arba Scan / Show Browse snapshot.',
+    tooltipScan: 'Vieną kartą skenuoti įjungtas Browse taisykles ir parodyti rezultatus',
     tooltipScanNight:
-      'Skenuoti taisykles — Night mode metu harvest crawl taip pat automatiškai pildo galeriją',
+      'Paleisti vieną scan ir įkelti surinktus modelius į Browse (net kai gyva galerija išjungta)',
     tooltipScanBusy: 'Scan jau vyksta — palaukite',
-    tooltipScanBusyNight: 'Vyksta scan arba harvest — galerija atsinaujins kai ateis puslapiai',
+    tooltipScanBusyNight: 'Vyksta scan arba harvest — palaukite',
     tooltipScheduledScan: 'Kitas automatinis harvest scan (tik Night mode)',
     hideWindow: 'Slėpti langą',
     tooltipHideWindow: 'Slėpti į system tray — programa toliau veikia fone',
@@ -87,7 +93,8 @@ export const lt: Messages = {
       crawl: 'Browse ir crawl',
       activityLog: 'Veiklos logas',
       appearance: 'Išvaizda',
-      tools: 'Įrankiai'
+      tools: 'Įrankiai',
+      optimization: 'Optimizacija'
     },
     fields: {
       language: 'Kalba',
@@ -115,6 +122,8 @@ export const lt: Messages = {
       banFunctionMode: 'Ban function (× šalia kortelės pavadinimo)',
       browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
       browseSettledDimPercent: 'Pritemdyti settled Browse korteles',
+      resultsDisplayMode: 'Rezultatų rodymas (Browse ir Library)',
+      resultsPageSize: 'Rezultatų puslapio / bloko dydis',
       launchAtLogin: 'Paleisti su Windows (tray)',
       hashVerify: 'Bibliotekos hash tikrinimas',
       galleryGridSize: 'Galerijos kortelės dydis (px)',
@@ -122,6 +131,7 @@ export const lt: Messages = {
       downloadStripVisibility: 'Download queue juosta',
       downloadStripLayout: 'Download juostos išdėstymas',
       slugFormat: 'Failų pavadinimai (slug)',
+      onDiskVerifyMode: 'Esančių failų tikrinimas',
       activityLogVerbosity: 'Logavimo detalumas',
       activityLogTopics: 'Loguojamos temos'
     },
@@ -145,9 +155,9 @@ export const lt: Messages = {
       contentAll: 'Visi (SFW + NSFW)',
       contentSfw: 'Tik SFW',
       contentNsfw: 'Tik NSFW',
-      domainCom: 'civitai.com',
-      domainRed: 'civitai.red',
-      domainBoth: 'Abu (.com + .red)',
+      domainCom: 'civitai.com (SFW orientuota)',
+      domainRed: 'civitai.red (pilnas katalogas — SFW + NSFW)',
+      domainBoth: 'civitai.red (senasis both → red)',
       hashAuto: 'Auto (pagal failą)',
       hashCom: 'Force civitai.com',
       hashRed: 'Force civitai.red',
@@ -155,10 +165,17 @@ export const lt: Messages = {
       dimOff: 'Išjungta',
       slugVersionName: 'Versijos pavadinimas (Civitai variantas)',
       slugModelTitle: 'Pilnas modelio pavadinimas',
+      verifyAuto: 'Auto — pirmiau ID failas, tada SHA256',
+      verifySha256: 'SHA256 — visada hash (lėčiausia, tikriausia)',
+      verifySidecar: 'ID failas — .civitai.json / swarm id (greita)',
       activityLogMinimal: 'Esminiai — atsisiuntimai, klaidos, naujos versijos',
+      activityLogOff: 'Išjungta — nieko nerašo į veiklos logą',
       activityLogNormal: 'Standartinis — scan santraukos, eilės įvykiai',
       activityLogVerbose: 'Detalus — viskas (puslapių progresas, kiekvienas modelis)',
-      activityLogCustom: 'Pasirinktinis — temos žemiau'
+      activityLogCustom: 'Pasirinktinis — temos žemiau',
+      resultsLazy: 'Lazy scroll — krauti daugiau slenkant',
+      resultsPages: 'Puslapiai — Ankstesnis / Kitas',
+      resultsAutoAdvance: 'Auto-advance — lazy + praleisti tuščius Hide owned (Browse)'
     },
     placeholders: {
       apiKeyNew: '••••••••  (įveskite naują raktą)',
@@ -181,6 +198,8 @@ export const lt: Messages = {
       gridSizeRange: '{min}–{max} px · Browse, Library ir download juosta',
       slugFormat:
         'Nauji atsisiuntimai naudoja šį formatą. Version name slugina pilną Civitai title iš .swarm.json (pvz. Oiled Skin - Krea 2 v1.0 → oiled_skin_krea_2_v1_0). Kompaktinis sutrumpina.',
+      onDiskVerifyMode:
+        'Kai atsisiuntimo kelyje failas jau yra: Auto skaito modelId/versionId iš .civitai.json (arba civitai.* swarm.json), jei reikia — SHA256. SHA256 visada skaičiuoja hash. ID failas greičiausias, bet reikia sidecar, kurį rašo ši app.',
       slugSyncDone:
         'Baigta ({format}) · Pervardinta {renamed} · Jau atitiko {matched} · Nepavyko {failed}{errors}',
       slugSyncFinished: 'Laukti nereikia — procesas baigtas.',
@@ -192,6 +211,7 @@ export const lt: Messages = {
       diskSyncDone: 'Disko sync baigtas — santrauka Library skirtuke.',
       activityLogHint:
         'Valdo, kas rašoma į veiklos logą ir SQLite. Mažiau logų = mažiau disko rašymo ir UI atnaujinimų ilgų crawl metu.',
+      activityLogOff: 'Nieko nerašoma į Activity skirtuką ar logų bazę.',
       activityLogMinimal:
         'Palieka atsisiuntimų rezultatus, klaidas, naujas versijas ir scan pabaigą — praleidžia puslapių crawl triukšmą ir „rastas, bet praleistas“ eilutes.',
       activityLogNormal:
@@ -201,13 +221,52 @@ export const lt: Messages = {
       browseSettledToEnd:
         'Turimi, excluded (banned) ir awaiting-access kortelės perkeliamos į Browse Results galą. Paieškos atitikmenys lieka savo vietoje.',
       browseSettledDimPercent:
-        'Kiek stipriai pritemdomos settled kortelės (0% = išjungta, 100% = labiausiai). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.'
+        'Kiek stipriai pritemdomos settled kortelės (0% = išjungta, 100% = labiausiai). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.',
+      resultsDisplayMode:
+        'Browse ir Library naudoja tą patį režimą jau įkrautiems rezultatams. Lazy = infinite scroll blokais. Puslapiai = Ankstesnis/Kitas. Auto-advance = lazy, o kai Hide owned palieka Browse tuščią — gali krauti kitą Civitai puslapį, jei jis prieinamas (Library Auto-advance = Lazy).',
+      resultsPageSize: 'Kiek kortelių puslapyje (Pages) arba scroll bloke (Lazy / Auto-advance).',
+      updateBrowseOnCrawl:
+        'Tas pats kaip 👁 mygtukas šalia Blur antraštėje. Off = tylesnis UI (atsisiuntimai vis tiek vyksta); On = gyvas Browse tinklelis.',
+      domain:
+        'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.'
     },
     actions: {
       slugSync: 'Pervardinti bibliotekos failus pagal formatą',
       slugSyncBusy: 'Pervadinama…',
       diskSync: 'Sinchronizuoti biblioteką iš disko',
       diskSyncBusy: 'Sinchronizuojama…'
+    },
+    optimization: {
+      lead:
+        'Tempkite link Greičio tolygiais žingsniais (10…100). Juostos layout: Grid → Row → Minimal; logai lieka Minimal iki 90 (Off). Gyva Browse galerija išjungiama tik ties 100.',
+      scoreLabel: 'UI optimizacija',
+      scoreValue: '{score} / 100',
+      comfort: 'Komfortas',
+      speed: 'Greitis',
+      appliedTitle: 'Pritaikyta iš sliderio',
+      appliedNone: 'Šiame žingsnyje nustatymai nepasikeitė.',
+      appliedHint:
+        'Peržiūrėkite sąrašą ir, jei reikia, pataisykite atskirus laukus aukščiau. Baigę — Išsaugoti.',
+      changes: {
+        uiExtended: 'Sąsaja → Išplėsta',
+        uiMinimal: 'Sąsaja → Minimali',
+        displayAuto: 'Rezultatų rodymas → Auto-advance',
+        displayLazy: 'Rezultatų rodymas → Lazy scroll',
+        displayPages: 'Rezultatų rodymas → Puslapiai',
+        stripAlways: 'Download juosta → Visi skirtukai',
+        stripBrowseLibrary: 'Download juosta → Browse + Library',
+        stripBrowse: 'Download juosta → Tik Browse',
+        stripOff: 'Download juosta → Paslėpta',
+        layoutGrid: 'Download juostos layout → Grid',
+        layoutRow: 'Download juostos layout → Row',
+        layoutMinimal: 'Download juostos layout → Minimal',
+        logMinimal: 'Veiklos logas → Minimal',
+        logOff: 'Veiklos logas → Išjungta',
+        concurrency: 'Lygiagūs atsisiuntimai → {n}',
+        streams: 'Ryšiai per failą → {n}',
+        liveBrowseOn: 'Gyvas Browse tinklelis (👁) → Įjungta',
+        liveBrowseOff: 'Gyvas Browse tinklelis (👁) → Išjungta'
+      }
     }
   },
   skippedTags: {
@@ -255,7 +314,7 @@ export const lt: Messages = {
     headerBlur: 'Blur — slėpti preview miniatiūras',
     browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort); domenas virš Results',
     browseResults:
-      'Results — paieška pagal pavadinimą/autorių; filtrų juosta (turinys, hide owned, ban); Sort ir Tags dešinėje; spustelėkite kortelę į eilę / pašalinti',
+      'Results — paieška pagal pavadinimą/autorių; filtrų juosta (turinys, hide owned, ban); Sort ir Tags dešinėje; spustelėkite kortelę į eilę / pašalinti. Rodymo režimas (lazy / puslapiai / auto-advance) — Settings.',
     browseTags:
       'Tags langas — filtruoti grid · 🚫 blokuoti tag nuo auto-queue · blokuoti tagai rodomi viršuje',
     browseManualQueue:
@@ -267,9 +326,10 @@ export const lt: Messages = {
       'Dešinis pelės mygtukas ant modelio → Skip tag — blokuoti tag nuo auto-queue (spauskite tag chip; jau blokuoti — pritemę)',
     libraryFolders: 'Tag Folders — Civitai tag → poaplankis po LoRA/Checkpoint keliais',
     libraryBadge: 'Library skilties **+N** — nauji modeliai nuo paskutinio apsilankymo; ženkliukas dingsta atidarius Library',
-    librarySort: 'Sort — folder tag, Civitai downloads, tag group arba download order',
+    librarySort:
+      'Sort — folder tag, Civitai downloads, tag group arba download order. Tas pats Settings rezultatų rodymas (lazy / puslapiai) kaip Browse.',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
-    libraryTags: 'Spustelėkite tag ant kortelės perkelti modelius; dešinis pelės mygtukas — daugiau veiksmų',
+    libraryTags: 'Spustelėkite tag ant kortelės — atidaromi Tag folders su ta paieška',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
     edgeQueued: 'Pilkas viršutinis kraštas — siuntimo eilėje',
     edgeDownloading: 'Žalia juosta ant miniatiūros — aktyviai siunčiama',
@@ -294,7 +354,7 @@ export const lt: Messages = {
     dlActivity:
       'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
-      'Civitai domenas Browse skiltyje (virš Results). Both = atskiri .com ir .red katalogai. Mature turiniui dažnai reikia civitai.red + API rakto.',
+      'Browse naudoja tik civitai.red (pilnas SFW+NSFW katalogas). Brandą valdote taisyklės content filter — .com/.red hosto pasirinkimo nėra.',
     settingsRef: {
       apiKey:
         'Civitai API raktas — civitai.com → Account → API Keys. Reikalingas daugumai NSFW/restricted. Saugoma lokaliai.',
@@ -306,13 +366,17 @@ export const lt: Messages = {
         'Išjungus (aktyvus Pause) eilėje esantys siuntimai pauzuojami iki Pause išjungimo. Auto/Manual tik valdo ar nauji modeliai dedami į eilę.',
       nightDownloadAll:
         'All režimas: eilė visiems naujiems pagal Browse taisykles (ne tik bibliotekos tagus). Blokuojami tagai visada praleidžiami.',
-      scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę × domeną. 0 = off (night mode nustato 60 min jei reikia).',
+      scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = off (night mode nustato 60 min jei reikia).',
       parallelDownloads: 'Kiek modelių siunčiama vienu metu. 1 = vienas failas pilnu greičiu.',
-      domain: 'Both = atskiri katalogai per svetainę. Mature turiniui dažnai reikia civitai.red + API rakto.',
+      domain:
+        'API hostas fiksuotas: civitai.red. SFW/NSFW — per Browse taisyklės content filter.',
       backfill: 'Peržiūri visą katalogą kartą, tada tik newest puslapį. Atsisiuntimai tarp puslapių.',
       newestPeek: 'Night crawl metu page 1 tikrinamas ne dažniau nei nurodytas intervalas.',
       connections: 'Multi-stream tik tiesioginiams CDN linkams. Civitai API — vienas stream.',
       updateBrowse: 'Prideda kiekvieną crawl puslapį į Browse rezultatus. Off = tik crawl; žiūrėkite Activity.',
+      resultsDisplayMode:
+        'Kaip Browse ir Library langina jau įkrautus rezultatus: lazy scroll, klasikiniai puslapiai arba auto-advance pro tuščius Hide owned Browse puslapius.',
+      resultsPageSize: 'Kortelių skaičius puslapyje arba scroll bloke (60 arba 100).',
       scanOnStartup: 'Vienas scan atidarius programą.',
       autoRetryDeferred: 'Po kiekvieno scan bando pakartoti Laukia prieigos modelius (403 laukia ~4h).',
       blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
@@ -339,6 +403,23 @@ export const lt: Messages = {
       gray: 'Pilka = laukia prieigos',
       empty: 'Tuščia = dar siųsti'
     }
+  },
+  resultsPager: {
+    label: 'Rezultatų navigacija',
+    prev: 'Ankstesnis',
+    next: 'Kitas',
+    pageOf: 'Puslapis {page} / {totalPages}',
+    showing: '{from}–{to} iš {total}',
+    loaded: 'Rodoma {shown} iš {visible} matomų',
+    loadedFiltered: '{loaded} įkelta · {owned} paslėpta (owned) · {visible} matoma',
+    noVisibleYet: 'Matomų modelių dar nėra',
+    emptyOwnedHint: 'Visi įkelti modeliai jau turimi — spauskite Kitas / Load more kitam Civitai puslapiui.',
+    crawlPage: 'Harvest Civitai puslapyje {page} — Kitas leidžia praleisti rankiniu būdu.',
+    moreApi: 'daugiau Civitai',
+    showMore: 'Rodyti daugiau',
+    loadMoreApi: 'Krauti kitą Civitai puslapį',
+    autoAdvanceOwned: 'Hide owned paliko puslapį tuščią — kraunamas kitas…',
+    autoAdvanceStop: 'Auto-advance sustabdytas po daugelio tuščių puslapių — kraukite rankiniu būdu.'
   },
   browse: {
     results: 'Rezultatai',
@@ -437,6 +518,10 @@ export const lt: Messages = {
     tagUniqueCount: '{count} unikalių tagų',
     scrollForMore: '↓ slinkite žemyn',
     loadingMoreModels: 'Kraunami modeliai…',
+    loadingMoreHarvest:
+      'Iš Civitai kraunami dar modeliai… (galerijoje jau {count})',
+    loadingMoreHarvestPage: 'Kraunamas {page} puslapis — „{rule}“… (galerijoje {count})',
+    moreModelsIncomingTitle: 'Į šią galeriją dar bus įkelta modelių',
     loadingNextPage: 'Kraunamas kitas puslapis…',
     showingGridCount: 'Rodoma {shown} iš {total} — slinkite žemyn',
     fetchingFirstPage: 'Kraunami modeliai iš Civitai API…',
@@ -464,6 +549,8 @@ export const lt: Messages = {
     hideOwned: 'Slėpti turimus',
     hideOwnedTitle: 'Slėpti modelius, kurie jau bibliotekoje',
     badgeOwnedTitle: 'Jau bibliotekoje',
+    openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti aplanką',
+    tagRoleUnmappedHint: 'Nepriskirta — „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
     badgeNewTitle: 'Dar neturite',
     badgeQueuedShort: 'Eilė',
     badgeQueuedTitle: 'Automatiškai eilėje siuntimui — laukia pipeline',
@@ -490,6 +577,8 @@ export const lt: Messages = {
       "Galerijoje dar nėra modelių. Spauskite 'Scan' arba 'Harvest' antraštėje, kad užkrautumėte modelius pagal įjungtas taisykles.",
     galleryAwaitingDetailActive: 'Galerijoje dar nėra modelių. Vyksta užklausa…',
     galleryAwaitingDetailHarvest: 'Galerijoje dar nėra modelių. Night harvest krauna pirmą puslapį…',
+    galleryPausedOffline:
+      'Browse neveikia — išvesties diskas nepasiekiamas. Pataisykite LoRA/Checkpoint aplankus Nustatymuose prieš skenuojant.',
     emptyPreview: 'Preview „{name}“',
     rulePreview: 'Peržiūra',
     rulePreviewTitle:
@@ -538,6 +627,7 @@ export const lt: Messages = {
     statusQueued: 'eilėje',
     statusQueuedPaused: 'eilėje · pauzė',
     statusFailed: 'nepavyko',
+    statusFailedWithReason: 'nepavyko — {reason}',
     statusPlanned: 'suplanuota',
     statusUnlocksToday: 'atrakina šiandien · {time}',
     progressStalled: 'strigęs {bytes}',
@@ -553,18 +643,21 @@ export const lt: Messages = {
     title: 'Night mode',
     hintUpdateBrowse: 'Scan vyksta fone; nauji modeliai atsiranda apačioje, kai ateina puslapiai.',
     hintNoUpdateBrowse:
-      'Harvest vyksta fone. Įjunkite Nustatymai → „Atnaujinti Browse tinklelį crawl metu“, arba spauskite Skenuoti antraštėje.',
+      'Quiet harvest: siuntimai eina fone be Browse tinklelio atnaujinimo (sklandesnis UI). Gyvai galerijai naudokite 👁 antraštėje, arba „Show Browse snapshot“ / Scan — baninti ir rankiniu būdu dėti į eilę.',
     noOutputFolder: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose.',
     noRules: 'Įjunkite bent vieną Browse taisyklę.',
     previewBrowse: 'Browse peržiūra',
+    showBrowseSnapshot: 'Rodyti Browse snapshot',
     startDownloads: 'Pradėti atsisiuntimus ({count})',
     activityLog: 'Veiklos logas →',
+    queueSummary: 'Siuntimai: {downloading} aktyvūs · {waiting} eilėje',
     ruleNewestOnly: 'tik newest',
     ruleNewestAt: 'newest · {time}',
     ruleBackfillPage: 'backfill p.{page}{pass}',
     ruleCatalogPass: 'katalogo pass {pass}',
     rulePeek: 'peek · {time}',
     ruleStarting: 'startuoja…',
+    ruleHarvesting: 'harvest…',
     queuePausedHint: '{count} eilėje — naudokite ⬇ antraštėje, kad pradėtumėte'
   },
   activity: {
@@ -631,11 +724,17 @@ export const lt: Messages = {
     apiUnavailable: 'Programos API nepasiekiamas — paleiskite programą iš naujo.',
     busyRetrying: 'Bandoma dar kartą…',
     needOutputFolders: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose prieš Scan, Harvest ar atsisiuntimą.',
+    outputDriveMissing:
+      'Išvesties diskas nepasiekiamas — prijunkite diską arba pakeiskite LoRA/Checkpoint aplankus Nustatymuose.',
+    outputDriveMissingTitle: 'Išvesties aplankas nepasiekiamas',
+    harvestPausedNoDisk: 'Harvest ir atsisiuntimai pristabdyti — išvesties diskas nepasiekiamas.',
     busyScanningRules: 'Skenuojamos watch taisyklės',
     busyCheckingRules: 'Tikrinamos įjungtos Browse taisyklės…',
     busySyncingLibrary: 'Sinchronizuojama biblioteka su disku…',
+    busyPreparingSession: 'Sinchronizuojama biblioteka su disku, tada ruošiamas harvest…',
     bgCheckingPreviews: 'Tikrinamos bibliotekos preview nuotraukos…',
     bgScanningDisk: 'Skenuojami aplankai naujiems modeliams…',
+    bgScanSkippedOffline: 'Aplankų skenavimas praleistas — diskas nepasiekiamas',
     previewsRestored: 'atstatyta {count} preview nuotrauka(-os)',
     ratingsRestored: 'užpildyta {count} reitingo(-ų)',
     librarySyncPrefix: 'Bibliotekos sync:',
@@ -653,9 +752,12 @@ export const lt: Messages = {
   },
   appBusy: {
     phasePreparing: 'Ruošiamasi…',
+    phaseStarting: 'Paleidžiama…',
+    filesFound: 'Rasta failų: {count}',
     phaseImport: 'Skenuojamas diskas dėl modelių',
     phaseChecking: 'Tikrinami bibliotekos failai',
     phaseMetadata: 'Skaitomi failų metaduomenys',
+    phaseIdentity: 'Rašomi modelio identity failai',
     phaseHash: 'Skaičiuojami SHA256 hash',
     phaseRename: 'Pervadinami bibliotekos failai',
     phasePreview: 'Tikrinamos bibliotekos preview',
@@ -663,6 +765,9 @@ export const lt: Messages = {
     checkingHint:
       'Tikrinama, ar kiekvienas bibliotekos modelio failas dar yra diske (pvz. 250 / 1200). Ištrinti failai pašalinami iš inventoriaus.',
     renameHint: 'Pervadinami modelių failai diske — baigsis, kai pasirodys santrauka.',
+    importHint: 'Tikrinami LoRA / Checkpoint / tag aplankai dėl modelių, kurių dar nėra bibliotekoje.',
+    metadataHint: 'Skaitomas dydis, raiška ir kiti laukai iš failų, jau esančių bibliotekoje.',
+    identityHint: 'Rašomi .civitai.json / swarm ID laukai, kad modeliai diske liktų susieti su Civitai.',
     syncHint:
       'Bibliotekos sync suderina inventorių su failais diske — pašalina ištrintus, papildo dydį/raišką ir skaičiuoja trūkstamus SHA256 hash.',
     previewHint:
@@ -717,7 +822,7 @@ export const lt: Messages = {
     filterByLetter: 'Filtruoti pagal pirmą raidę',
     allLetters: 'Visi',
     helpText:
-      'Spauskite preview detalėms. Spauskite Civitai tag ant kortelės aplankui (žalia = priskirta). Pažymėkite korteles → Move šoninėje juostoje. Dešinis klavišas — ban / unban / delete.',
+      'Spauskite preview detalėms. Spauskite Civitai tag — Tag folders su paieška. Žalias tagas / „Aplankas:“ eilutė = priskyrimas. Pažymėkite → Move. Dešinis — ban / unban / delete.',
     selectedHint: 'Pažymėta {count} — pasirinkite tag dešinėje → Move',
     emptyFiltered: 'Pagal paiešką ar filtrą modelių nėra.',
     emptyNone: 'Modelių dar nėra. Atsisiųskite per Atsisiuntimo skiltį arba paleiskite watch scan.',
@@ -754,13 +859,21 @@ export const lt: Messages = {
     checkpointType: 'Checkpoint tipas',
     statDownloads: 'Atsisiuntimai',
     statThumbsUp: 'Thumbs up',
-    defaultFolder: 'numatytasis aplankas',
+    defaultFolder: 'Numatytasis aplankas',
     assignedToFolder: 'Priskirta šiam tag aplankui',
     assignFolderHint: 'Priskirti aplanką — spustelėkite: visi su „{tag}" ar tik ši kortelė',
+    openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti dinaminiam aplankui',
+    openTagFoldersAssigned: 'Priskirta — atidaryti Tag folders valdyti „{tag}"',
+    tagRoleFinalHint: 'Galutinis aplanko kelias — „{tag}" nukreipė šį modelį (spauskite → Tag folders)',
+    tagRoleMappedHint: 'Priskirtas tagas — „{tag}" turi folder taisyklę, bet aktyvus kitas tagas',
+    tagRoleUnmappedHint: 'Nepriskirta — „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
+    folderLabel: 'Aplankas: {folder}',
+    folderAssignedTitle: 'Priskirtas aplankas: {folder}',
     earlyAccessWait: 'Early access laukimas:',
     sidebarTitle: 'Filtras ir perkėlimas',
     sidebarSearchPlaceholder: 'Ieškoti tagų…',
-    sidebarHint: 'Filtruokite tinklelį arba spauskite tag ant kortelės aplankui.',
+    sidebarHint:
+      'Tag remeliai (subtilūs): vientisas accent atspalvis = galutinis · vientisas = priskirtas · brūkšninis = nepriskirta. Spauskite → Tag folders.',
     allModels: 'Visi modeliai',
     untaggedFolder: 'Be aplanko tag',
     sessionDownloads: 'Sesijos atsisiuntimai',
@@ -920,9 +1033,8 @@ export const lt: Messages = {
       'Katalogas baigtas · 0 atitiko · API grąžino {api} — tikrink Keywords / Content filter',
     scanningCatalogCompleteFilteredRule:
       'Katalogas baigtas · 0 atitiko · API {api} · {rules} — tikrink Keywords / Content',
-    scanningPageDoneMore: 'Puslapis {page} ({onPage} modeliai) · {total} galerijoje · kitas puslapis…',
-    scanningPageDoneMoreRule:
-      'Puslapis {page} ({onPage} modeliai) · {total} galerijoje · kitas puslapis · {rules}',
+    scanningPageDoneMore: 'Puslapis {page} · {total} galerijoje…',
+    scanningPageDoneMoreRule: 'Puslapis {page} · {total} galerijoje · {rules}',
     scanningCatalogContinuingRule:
       'Puslapis {page} · {total} galerijoje · dar liko puslapių · {rules}',
     checkingLibrary: 'Tikrinama biblioteka dėl naujų versijų',
@@ -940,6 +1052,8 @@ export const lt: Messages = {
     ratingUnknown: '{count} nežinoma',
     detailMore: '(+{count} daugiau)',
     bytesReceived: 'gauta {bytes}',
-    readyWaitingFetch: 'Paruošta — laukiama pirmo Browse puslapio iš Civitai…'
+    readyWaitingFetch: 'Harvest įjungtas — laukiama Civitai aktyvumo…',
+    outputDriveOffline:
+      'Išvesties diskas nepasiekiamas — Harvest išjungtas, atsisiuntimai pauzėje. Pataisykite aplankus Nustatymuose.'
   }
 }

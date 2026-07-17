@@ -33,7 +33,7 @@ export class CivitaiClientPool {
   }
 
   primaryDomain(): CivitaiDomain {
-    return this.setting === 'red' ? 'red' : 'com'
+    return 'red'
   }
 
   activeDomains(): CivitaiDomain[] {

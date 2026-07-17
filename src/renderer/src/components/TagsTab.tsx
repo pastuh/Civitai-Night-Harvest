@@ -29,6 +29,9 @@ interface Props {
   onFilterLibrary?: (tag: string) => void
   onRefresh?: () => Promise<void>
   onMoveStatus?: (message: string | null) => void
+  /** Prefill search from Library card tag click. */
+  focusSearchTag?: string | null
+  onFocusSearchHandled?: () => void
 }
 
 function newId(): string {
@@ -88,7 +91,9 @@ export function TagsTab({
   onSave,
   onFilterLibrary,
   onRefresh,
-  onMoveStatus
+  onMoveStatus,
+  focusSearchTag,
+  onFocusSearchHandled
 }: Props) {
   const t = useT()
   const [draft, setDraft] = useState<TagFolderRule[]>(rules)
@@ -278,6 +283,26 @@ export function TagsTab({
     }
     return [...byKey.values()]
   }, [tagSuggestions, manualTableTags, pinnedAssignLabels, draft])
+
+  useEffect(() => {
+    const raw = focusSearchTag?.trim()
+    if (!raw) return
+    const pool = new Map<string, string>()
+    for (const tag of tableTagPool) {
+      pool.set(tagPinKey(tag), tag)
+    }
+    const canonical = resolveCanonicalTableTag(raw, pool) ?? raw
+    setLibrarySearch(canonical)
+    setLetterFilter(null)
+    setFolderFilter('')
+    pinAssignLabels([canonical])
+    setManualTableTags((prev) => {
+      if (prev.some((t) => tagsEqual(t, canonical))) return prev
+      if (pool.has(tagPinKey(canonical))) return prev
+      return [...prev, canonical]
+    })
+    onFocusSearchHandled?.()
+  }, [focusSearchTag, onFocusSearchHandled, pinAssignLabels, tableTagPool])
 
   useEffect(() => {
     if (saveState !== 'saved') return
@@ -729,6 +754,7 @@ export function TagsTab({
       await persistRules(next)
       pinAssignLabels([tag])
       const result = await moveLibraryByTag(tag, tag)
+      await onRefresh?.()
       if (result) {
         setStatusMessage(
           t('tagsTab.assignedMany', {

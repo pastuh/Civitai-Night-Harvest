@@ -2,15 +2,19 @@ import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 're
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
-export function contextMenuButtonProps(onAction: () => void) {
+/**
+ * Context-menu action button.
+ * Closes the menu synchronously (onClose), then runs onAction on the next task
+ * so slow IPC/state work cannot block menu dismiss.
+ */
+export function contextMenuButtonProps(onAction: () => void, onClose?: () => void) {
   return {
     type: 'button' as const,
     onPointerDown: (e: ReactPointerEvent) => {
       if (e.button !== 0) return
       e.preventDefault()
       e.stopPropagation()
-      // Close + run on the next task so the menu unmounts immediately,
-      // even if onAction starts a slow IPC call.
+      onClose?.()
       window.setTimeout(() => {
         onAction()
       }, 0)

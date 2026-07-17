@@ -17,6 +17,8 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'newestPeek', fieldKey: 'settings.fields.newestPeek' },
   { refKey: 'connections', fieldKey: 'settings.fields.connectionsPerFile' },
   { refKey: 'updateBrowse', fieldKey: 'settings.fields.updateBrowseOnCrawl' },
+  { refKey: 'resultsDisplayMode', fieldKey: 'settings.fields.resultsDisplayMode' },
+  { refKey: 'resultsPageSize', fieldKey: 'settings.fields.resultsPageSize' },
   { refKey: 'scanOnStartup', fieldKey: 'settings.fields.scanOnStartup' },
   { refKey: 'autoRetryDeferred', fieldKey: 'settings.fields.autoRetryDeferred' },
   { refKey: 'blur', fieldKey: 'settings.fields.blurPreviews' },

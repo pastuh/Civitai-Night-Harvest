@@ -1,4 +1,3 @@
-import { existsSync } from 'fs'
 import { join } from 'path'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
@@ -13,6 +12,7 @@ import type {
   DeferredFailureKind
 } from '../shared/types'
 import { expandCivitaiTagNames } from '../shared/tag-routing'
+import { safePathExists } from './output-paths'
 
 let db: Database.Database | null = null
 
@@ -422,7 +422,9 @@ export function pruneMissingOnDisk(): number {
   let removed = 0
   const del = getDb().prepare('DELETE FROM versions WHERE version_id = ?')
   for (const record of records) {
-    if (!existsSync(record.modelPath)) {
+    const exists = safePathExists(record.modelPath)
+    if (exists === 'unreachable') continue
+    if (!exists) {
       del.run(record.versionId)
       removed++
     }

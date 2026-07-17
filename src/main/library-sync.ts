@@ -7,6 +7,11 @@ import { importModelsFromDisk } from './disk-import'
 import { fetchFirstWorkingPreview } from './preview-fetch'
 import { resolvePreviewsForModelWithFallback } from './preview-enrich'
 import { buildSwarmJson } from './swarm-json'
+import {
+  checkConfiguredOutputFoldersReachable,
+  safePathExists
+} from './output-paths'
+import { backfillCivitaiIdentityFiles, invalidateIdentityBackfillCache } from './backfill-civitai-ids'
 
 function pathsForSlug(record: InventoryRecord, slug: string, ext: string): InventoryRecord {
   const folder = record.outputFolder
@@ -20,15 +25,18 @@ function pathsForSlug(record: InventoryRecord, slug: string, ext: string): Inven
 }
 
 function tryRepairRecordPaths(record: InventoryRecord): InventoryRecord | null {
-  if (existsSync(record.modelPath)) return null
-  if (!existsSync(record.outputFolder)) return null
+  const modelExists = safePathExists(record.modelPath)
+  if (modelExists === 'unreachable') return null
+  if (modelExists) return null
+  const folderExists = safePathExists(record.outputFolder)
+  if (folderExists !== true) return null
 
   const ext = basename(record.modelPath).includes('.')
     ? basename(record.modelPath).split('.').pop()!
     : 'safetensors'
 
   const bySlug = join(record.outputFolder, `${record.slug}.${ext}`)
-  if (existsSync(bySlug)) return pathsForSlug(record, record.slug, ext)
+  if (safePathExists(bySlug) === true) return pathsForSlug(record, record.slug, ext)
 
   const expectedTitle = `${record.modelName} - ${record.versionName}`
   let entries: string[]
@@ -43,7 +51,7 @@ function tryRepairRecordPaths(record: InventoryRecord): InventoryRecord | null {
     const slug = name.slice(0, -(ext.length + 1))
     const modelPath = join(record.outputFolder, name)
     const swarmPath = join(record.outputFolder, `${slug}.swarm.json`)
-    if (!existsSync(swarmPath)) continue
+    if (safePathExists(swarmPath) !== true) continue
     try {
       const swarm = JSON.parse(readFileSync(swarmPath, 'utf-8')) as Record<string, unknown>
       const title = typeof swarm['modelspec.title'] === 'string' ? swarm['modelspec.title'] : ''
@@ -273,6 +281,8 @@ type LibraryDiskSyncOptions = {
   skipDiskImport?: boolean
   /** Only import new on-disk models; skip inventory existsSync / metadata pass. */
   diskImportOnly?: boolean
+  /** Skip .civitai.json / swarm identity backfill (startup). */
+  skipIdentityBackfill?: boolean
 }
 
 export async function syncInventoryWithDiskAsync(
@@ -285,6 +295,7 @@ export async function syncInventoryWithDiskAsync(
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  storageError?: string
 }> {
   return runLibraryDiskSync(onProgress, options)
 }
@@ -296,9 +307,15 @@ let diskSyncPromise: Promise<{
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  storageError?: string
 }> | null = null
 let lastDiskSyncAt = 0
 let lastFullImportAt = 0
+
+/** True when a disk sync finished recently (startup UI already did the walk). */
+export function wasLibrarySyncedRecently(withinMs = 90_000): boolean {
+  return lastDiskSyncAt > 0 && Date.now() - lastDiskSyncAt < withinMs
+}
 
 async function runLibraryDiskSync(
   onProgress?: (p: LibrarySyncProgress) => void,
@@ -310,6 +327,7 @@ async function runLibraryDiskSync(
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  storageError?: string
 }> {
   if (diskSyncPromise) return diskSyncPromise
 
@@ -350,11 +368,33 @@ async function syncInventoryWithDiskInner(
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  storageError?: string
 }> {
   let importedFromDisk = 0
   let relinkedFromDisk = 0
   let diskScanned = 0
+  let foundModelPaths: Set<string> | undefined
   const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  const reach = checkConfiguredOutputFoldersReachable()
+  if (!reach.ok) {
+    onProgress?.({
+      phase: 'checking',
+      current: 0,
+      total: 1,
+      modelName: '…',
+      action: reach.message
+    })
+    return {
+      removedMissing: 0,
+      enrichedMeta: 0,
+      checked: inventory.getAllVersions().length,
+      importedFromDisk: 0,
+      relinkedFromDisk: 0,
+      diskScanned: 0,
+      storageError: reach.message
+    }
+  }
 
   const shouldImport =
     !options?.skipDiskImport &&
@@ -373,7 +413,11 @@ async function syncInventoryWithDiskInner(
       importedFromDisk = imported.imported
       relinkedFromDisk = imported.updated
       diskScanned = imported.scanned
+      foundModelPaths = imported.foundModelPaths
       lastFullImportAt = Date.now()
+      if (importedFromDisk > 0 || relinkedFromDisk > 0) {
+        invalidateIdentityBackfillCache()
+      }
     }
   }
 
@@ -404,25 +448,57 @@ async function syncInventoryWithDiskInner(
   for (let i = 0; i < records.length; i++) {
     if (i > 0 && i % 16 === 0) await yieldToEventLoop()
     const record = records[i]
-    onProgress?.({
-      phase: 'checking',
-      current: i + 1,
-      total,
-      modelName: record.modelName,
-      action: 'Checking model file on disk'
-    })
-    if (!existsSync(record.modelPath)) {
+    if (foundModelPaths?.has(record.modelPath.toLowerCase())) {
+      if (i === records.length - 1 || i % 48 === 0) {
+        onProgress?.({
+          phase: 'checking',
+          current: i + 1,
+          total,
+          modelName: record.modelName,
+          action: `Verified ${i + 1}/${total} (walk cache)`
+        })
+      }
+      continue
+    }
+    if (i === records.length - 1 || i % 48 === 0) {
+      onProgress?.({
+        phase: 'checking',
+        current: i + 1,
+        total,
+        modelName: record.modelName,
+        action: 'Checking model file on disk'
+      })
+    }
+    const exists = safePathExists(record.modelPath)
+    // Offline drive — never treat as deleted (would wipe the library).
+    if (exists === 'unreachable') continue
+    if (!exists) {
       inventory.removeVersion(record.versionId)
       removedMissing++
     }
   }
 
   const afterCheck = inventory.getAllVersions()
+  // Fast startup (skipDiskImport): path verify only — metadata + ID sidecars run on full Sync.
+  if (options?.skipDiskImport) {
+    return {
+      removedMissing,
+      enrichedMeta: 0,
+      checked: total,
+      importedFromDisk,
+      relinkedFromDisk,
+      diskScanned
+    }
+  }
+
   const needsMeta = afterCheck.filter((r) => !r.fileSizeBytes || !r.trainingResolution)
   let enrichedMeta = 0
 
-  // Nothing to enrich — skip metadata phase (avoids a flash of "100%").
+  // Nothing to enrich — still fill missing identity fields on swarm/sidecar (unless startup skip).
   if (needsMeta.length === 0) {
+    if (!options?.skipIdentityBackfill) {
+      await backfillCivitaiIdentityFiles(onProgress)
+    }
     return {
       removedMissing,
       enrichedMeta: 0,
@@ -446,10 +522,10 @@ async function syncInventoryWithDiskInner(
     if (i > 0 && i % 16 === 0) await yieldToEventLoop()
     const record = needsMeta[i]
     const patch: Parameters<typeof inventory.patchVersionFileMeta>[1] = {}
-    if (!record.fileSizeBytes && existsSync(record.modelPath)) {
+    if (!record.fileSizeBytes && safePathExists(record.modelPath) === true) {
       patch.fileSizeBytes = statSync(record.modelPath).size
     }
-    if (!record.trainingResolution && record.swarmPath && existsSync(record.swarmPath)) {
+    if (!record.trainingResolution && record.swarmPath && safePathExists(record.swarmPath) === true) {
       try {
         const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
         const res = swarm['modelspec.resolution']
@@ -472,6 +548,9 @@ async function syncInventoryWithDiskInner(
     })
   }
 
+  if (!options?.skipIdentityBackfill) {
+    await backfillCivitaiIdentityFiles(onProgress)
+  }
   return { removedMissing, enrichedMeta, checked: total, importedFromDisk, relinkedFromDisk, diskScanned }
 }
 

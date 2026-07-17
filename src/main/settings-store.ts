@@ -9,6 +9,7 @@ import { normalizeHiddenTags } from '../shared/tag-routing'
 import { getCheckpointFolder, getLoraFolder, hasAllOutputFolders } from '../shared/utils'
 import { applyLaunchAtLogin } from './launch-at-login'
 import { appearanceFromSettings, type AppearanceBootstrap } from '../shared/appearance'
+import { normalizeResultsDisplayMode, normalizeResultsPageSize } from '../shared/results-display'
 
 interface StoreSchema {
   settings: AppSettings
@@ -129,7 +130,7 @@ export function getSettings(): AppSettings {
     raw.backfillCatalog = true
   }
   if (raw.updateBrowseOnCrawl === undefined) {
-    raw.updateBrowseOnCrawl = true
+    raw.updateBrowseOnCrawl = false
   }
   if (raw.uiMode !== 'minimal' && raw.uiMode !== 'extended') {
     raw.uiMode = 'minimal'
@@ -143,8 +144,13 @@ export function getSettings(): AppSettings {
   ) {
     raw.theme = 'dark'
   }
-  if (raw.domain !== 'com' && raw.domain !== 'red' && raw.domain !== 'both') {
-    raw.domain = 'com'
+  // Always use civitai.red for search/crawl — no user domain picker.
+  if (raw.domain !== 'red') {
+    raw.domain = 'red'
+    const stored = store.get('settings') as AppSettings
+    if (stored.domain !== 'red') {
+      store.set('settings', { ...stored, domain: 'red' })
+    }
   }
   raw.locale = normalizeLocale(raw.locale)
   raw.galleryGridMinPx = clampGridSizePx(raw.galleryGridMinPx ?? DEFAULT_GALLERY_GRID_MIN_PX)
@@ -170,7 +176,11 @@ export function getSettings(): AppSettings {
   if (raw.slugFormat !== 'compact' && raw.slugFormat !== 'versionName' && raw.slugFormat !== 'modelTitle') {
     raw.slugFormat = 'compact'
   }
+  if (raw.onDiskVerifyMode !== 'auto' && raw.onDiskVerifyMode !== 'sha256' && raw.onDiskVerifyMode !== 'sidecar') {
+    raw.onDiskVerifyMode = 'auto'
+  }
   if (
+    raw.activityLogVerbosity !== 'off' &&
     raw.activityLogVerbosity !== 'minimal' &&
     raw.activityLogVerbosity !== 'normal' &&
     raw.activityLogVerbosity !== 'verbose' &&
@@ -178,11 +188,13 @@ export function getSettings(): AppSettings {
   ) {
     raw.activityLogVerbosity = DEFAULT_ACTIVITY_LOG_VERBOSITY
   }
+  raw.resultsDisplayMode = normalizeResultsDisplayMode(raw.resultsDisplayMode)
+  raw.resultsPageSize = normalizeResultsPageSize(raw.resultsPageSize)
   return raw
 }
 
 export function saveSettings(partial: Partial<AppSettings>): AppSettings {
-  const next = { ...getSettings(), ...partial }
+  const next = { ...getSettings(), ...partial, domain: 'red' as const }
   if (partial.hiddenTags !== undefined) {
     next.hiddenTags = normalizeHiddenTags(partial.hiddenTags)
   }
@@ -272,10 +284,14 @@ function migrateWatchRule(raw: Record<string, unknown>): WatchRule {
 export function saveSettingsFromUi(partial: AppSettingsSave): AppSettings {
   const current = getSettings()
   const { apiKey, ...rest } = partial
-  const next: AppSettings = {
-    ...current,
-    ...rest,
-    apiKey: apiKey?.trim() ? apiKey.trim() : current.apiKey
+  const next: AppSettings = { ...current, domain: 'red' }
+  for (const [key, value] of Object.entries(rest) as Array<[keyof AppSettingsSave, unknown]>) {
+    if (value !== undefined) {
+      ;(next as Record<string, unknown>)[key as string] = value
+    }
+  }
+  if (apiKey?.trim()) {
+    next.apiKey = apiKey.trim()
   }
   if (rest.hiddenTags !== undefined) {
     next.hiddenTags = normalizeHiddenTags(rest.hiddenTags)

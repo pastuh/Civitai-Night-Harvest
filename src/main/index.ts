@@ -143,7 +143,8 @@ function createWindow(): void {
 
   win.webContents.on('did-finish-load', () => {
     if (!shouldStartHidden() && !win.isVisible()) showMainWindow(win)
-    setTimeout(() => ensureSchedulerStarted(), 20_000)
+    // Safety net only if renderer never signals ready (crash/hang). Do not race the startup popup.
+    setTimeout(() => ensureSchedulerStarted(), 90_000)
   })
 
   win.on('ready-to-show', () => {

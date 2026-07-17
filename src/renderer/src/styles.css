@@ -441,6 +441,36 @@ button.tag-chip,
   color: var(--accent);
 }
 
+/* Minimal folder-role marks — same weight, no loud fill (must not overpower the card) */
+.gallery-card .tag-chip.tag-role-final,
+.tag-chip.tag-role-final {
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: inherit;
+  background: transparent;
+}
+
+.gallery-card .tag-chip.tag-role-mapped,
+.tag-chip.tag-role-mapped {
+  border: 1px solid var(--border);
+  color: inherit;
+  background: transparent;
+}
+
+.gallery-card .tag-chip.tag-role-unmapped,
+.tag-chip.tag-role-unmapped {
+  border: 1px dashed color-mix(in srgb, var(--border) 75%, var(--muted));
+  color: var(--muted);
+  background: transparent;
+  opacity: 0.85;
+}
+
+.gallery-card .tag-chip.tag-role-final:hover,
+.gallery-card .tag-chip.tag-role-mapped:hover,
+.gallery-card .tag-chip.tag-role-unmapped:hover {
+  border-color: color-mix(in srgb, var(--border) 60%, var(--accent) 25%);
+  opacity: 1;
+}
+
 .preview-img {
   max-width: 200px;
   max-height: 200px;
@@ -865,7 +895,8 @@ th {
   height: 100%;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 85%, #000), var(--accent));
   border-radius: 4px;
-  transition: width 0.25s ease-out;
+  /* Instant width — animated lag made % and bar disagree during fast ticks. */
+  transition: none;
   min-width: 2px;
 }
 
@@ -1180,6 +1211,7 @@ th {
 
 .gallery-grid {
   display: grid;
+  /* auto-fill + 1fr: cards grow to fill the window; empty tracks keep last-row cards same width */
   grid-template-columns: repeat(auto-fill, minmax(var(--gallery-grid-min, 160px), 1fr));
   gap: 12px;
 }
@@ -1197,9 +1229,18 @@ th {
   overflow: hidden;
   cursor: pointer;
   box-shadow: none;
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
   transition:
     border-top-color 0.15s ease,
     background 0.15s ease;
+}
+
+/* Ban × is injected into already-painted cards — content-visibility can keep stale paint. */
+.search-browse-layout.is-ban-mode .gallery-card {
+  content-visibility: visible;
+  contain: layout style;
 }
 
 .gallery-card:hover {
@@ -1426,11 +1467,87 @@ th {
 }
 
 .browse-load-sentinel {
-  margin: 12px 0 72px;
-  padding: 8px;
+  margin: 0;
+  padding: 0;
+  height: 1px;
+  overflow: hidden;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.browse-load-sentinel-hidden {
+  pointer-events: none;
+}
+
+.results-pager {
+  margin-top: 16px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+
+.results-pager-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 14px;
+}
+
+.results-pager-status {
+  font-size: 13px;
   text-align: center;
-  font-size: 11px;
-  color: var(--muted);
+}
+
+.results-pager-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.results-page-anchor {
+  height: 0;
+  width: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.results-pager .results-pager-btn {
+  min-width: 5.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.results-pager .results-pager-btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.results-pager .results-pager-btn:not(:disabled):active {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+
+.night-quiet-panel-minimal {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.night-quiet-panel-minimal h3,
+.night-quiet-panel-minimal .night-quiet-hint {
+  display: none;
+}
+
+.night-quiet-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.night-quiet-queue-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
 }
 
 .browse-pagination-footer {
@@ -1851,8 +1968,22 @@ th {
 .gallery-card-title-row strong {
   flex: 1;
   min-width: 0;
+  display: block;
   color: rgba(255, 255, 255, 0.94);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+  hyphens: none;
+}
+
+.gallery-card-title-actions {
+  display: flex;
+  flex: none;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
 }
 
 .gallery-card-title-row .gallery-web-btn-inline,
@@ -1952,6 +2083,24 @@ th {
 .gallery-meta-line {
   font-size: 11px;
   margin-top: 2px;
+}
+
+.gallery-folder-line {
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gallery-folder-line.is-assigned {
+  color: var(--success, #4ade80);
+  font-weight: 600;
+}
+
+.gallery-folder-line.is-default {
+  color: var(--muted);
 }
 
 .legend-owned {
@@ -2747,7 +2896,7 @@ code {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 11000;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
@@ -3879,7 +4028,7 @@ code {
 
 .active-queue-minimal-row.is-queued,
 .active-queue-minimal-row.is-downloading:not(.strip-error-waiting) {
-  box-shadow: inset 0 3px 0 0 #fff;
+  box-shadow: inset 0 3px 0 0 var(--strip-queued);
 }
 
 .active-queue-minimal-row + .active-queue-minimal-row {
@@ -3989,13 +4138,34 @@ code {
   color: var(--warn, #e6a817);
 }
 
+.active-queue-minimal-queue-text.is-error,
+.active-queue-strip-progress.is-error {
+  color: var(--error, #f07178);
+}
+
+.active-queue-strip-fail-reason {
+  font-weight: 400;
+  color: var(--error, #f07178);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-menu-error-reason {
+  max-width: 280px;
+  white-space: normal;
+  word-break: break-word;
+  color: var(--error, #f07178);
+  margin: 0 0 6px;
+  line-height: 1.35;
+}
+
 .active-queue-minimal-sep {
   flex: none;
   align-self: stretch;
   width: 1px;
   min-height: 18px;
   margin: auto 8px auto 0;
-  background: color-mix(in srgb, var(--border) 90%, var(--text));
+  background: color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .active-queue-minimal-title-block {
@@ -4616,6 +4786,11 @@ button.danger-btn:hover {
 .gallery-ban-inline-btn:hover {
   opacity: 1;
   filter: brightness(1.1);
+}
+
+.gallery-card-title-row .gallery-ban-inline-btn {
+  flex-shrink: 0;
+  align-self: flex-start;
 }
 
 .model-detail-modal {

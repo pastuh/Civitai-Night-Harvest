@@ -15,10 +15,6 @@ export interface ResolvedPreview {
   previewUrls: string[]
 }
 
-function alternateDomain(domain: CivitaiDomain): CivitaiDomain {
-  return domain === 'red' ? 'com' : 'red'
-}
-
 /** NSFW / R+ models — previews live on civitai.red; .com API omits or blocks them. */
 function previewDomainsToTry(
   pool: CivitaiClientPool,
@@ -28,13 +24,11 @@ function previewDomainsToTry(
   if (isMatureDownloadContent(hints)) return ['red']
 
   const setting = pool.getSetting()
-  if (setting !== 'both') {
-    return [setting === 'red' ? 'red' : 'com']
+  if (setting === 'com') {
+    return preferred === 'red' ? ['red', 'com'] : ['com', 'red']
   }
-
-  const primary = preferred ?? pool.primaryDomain()
-  const alt = alternateDomain(primary)
-  return primary === alt ? [primary] : [primary, alt]
+  // red / legacy both — full catalog host first
+  return preferred === 'com' ? ['com', 'red'] : ['red', 'com']
 }
 
 function hintsFromSeed(

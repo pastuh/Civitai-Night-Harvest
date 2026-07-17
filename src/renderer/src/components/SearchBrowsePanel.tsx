@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition, type MouseEvent } from 'react'
 import type {
   ContentFilter,
   DownloadQueueItem,
@@ -36,6 +36,14 @@ import { PreviewThumb } from './PreviewThumb'
 import { ModelDetailModal, type ModelDetailTarget } from './ModelDetailModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { useT } from '../i18n/context'
+import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole, cardTagFolderRoleClass } from './gallery-card-utils'
+import { useResultsWindow } from '../hooks/useResultsWindow'
+import { ResultsPager } from './ResultsPager'
+import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
+import {
+  normalizeResultsDisplayMode,
+  normalizeResultsPageSize
+} from '../../../shared/results-display'
 
 function previewUrlsFor(model: WatchRuleTestModel): string[] {
   if (model.previewUrls?.length) return model.previewUrls
@@ -98,6 +106,8 @@ interface Props {
   onSearchWithTag?: (tag: string) => void
   searchingTag?: string | null
   onJumpToGallery?: (modelId: number) => void
+  /** Open Tag folders with search prefilled (card tag click). */
+  onOpenTagFolders?: (tag: string) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onQueueAll?: () => Promise<void>
   queueAllLoading?: boolean
@@ -124,7 +134,9 @@ interface Props {
     pageModelsAdded: number
     pageModelsOnPage: number
     galleryTotal: number
+    galleryStats?: import('../../../shared/types').BrowseGalleryStats
     catalogComplete?: boolean
+    hasMorePages?: boolean
     pageQueued?: number
   } | null
   civitaiDomain?: 'com' | 'red' | 'both'
@@ -138,6 +150,8 @@ interface Props {
   browseSettledDimPercent?: number
   loraFolder?: string
   checkpointFolder?: string
+  resultsDisplayMode?: import('../../../shared/results-display').ResultsDisplayMode
+  resultsPageSize?: import('../../../shared/results-display').ResultsPageSize
 }
 
 interface ContextMenuState {
@@ -161,6 +175,7 @@ export function SearchBrowsePanel({
   onSearchWithTag,
   searchingTag,
   onJumpToGallery,
+  onOpenTagFolders,
   onSaveTagRules,
   onQueueAll,
   queueAllLoading,
@@ -188,11 +203,27 @@ export function SearchBrowsePanel({
   onRunScan,
   browseRule = null,
   browseSettledToEnd = false,
-  browseSettledDimPercent = 0,
+  browseSettledDimPercent = 50,
   loraFolder = '',
-  checkpointFolder = ''
+  checkpointFolder = '',
+  resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
+  resultsPageSize: resultsPageSizeProp = 100
 }: Props) {
   const t = useT()
+  const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
+  const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
+  // Optimistic Ban On/Off — settings IPC can lag or be overwritten while harvest runs.
+  const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
+  useEffect(() => {
+    setBanMode(Boolean(banFunctionMode))
+  }, [banFunctionMode])
+
+  const toggleBanMode = useCallback(() => {
+    const next = !banMode
+    setBanMode(next)
+    void onBanFunctionModeChange?.(next)
+  }, [banMode, onBanFunctionModeChange])
+
   const awaitingAccessVersionIds = useMemo(
     () => deferredVersionIds ?? new Set<number>(),
     [deferredVersionIds]
@@ -239,10 +270,12 @@ export function SearchBrowsePanel({
   const [tagCatalogTick, setTagCatalogTick] = useState(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
-  const [detailTarget, setDetailTarget] = useState<ModelDetailTarget | null>(null)
-  const GRID_CHUNK = 60
-  const [gridVisible, setGridVisible] = useState(GRID_CHUNK)
   const gridSentinelRef = useRef<HTMLDivElement>(null)
+  const resultsTopRef = useRef<HTMLDivElement>(null)
+  const pageScrollReadyRef = useRef(false)
+  const [detailTarget, setDetailTarget] = useState<ModelDetailTarget | null>(null)
+  const autoAdvanceAttemptsRef = useRef(0)
+  const [autoAdvanceHint, setAutoAdvanceHint] = useState<string | null>(null)
 
   const hasMore = browseHasMorePages(result)
 
@@ -276,13 +309,46 @@ export function SearchBrowsePanel({
     crawlProgress
   ])
 
+  /** Harvest/crawl still adding pages — used only for invisible load-more sentinel. */
+  const catalogStillGrowing = useMemo(() => {
+    if (crawlPageMeta?.catalogComplete === true) return false
+    if (loadingMore) return true
+    if (nightMode) {
+      return (
+        Boolean(result.crawlSource) ||
+        appStatus === 'scanning' ||
+        appStatus === 'checking' ||
+        crawlProgress != null ||
+        browseGalleryAwaiting ||
+        crawlFetching
+      )
+    }
+    if (!result.crawlSource) return false
+    return (
+      appStatus === 'scanning' ||
+      appStatus === 'checking' ||
+      crawlProgress != null ||
+      browseGalleryAwaiting ||
+      crawlFetching
+    )
+  }, [
+    crawlPageMeta?.catalogComplete,
+    result.crawlSource,
+    nightMode,
+    appStatus,
+    crawlProgress,
+    browseGalleryAwaiting,
+    crawlFetching,
+    loadingMore
+  ])
+
+  const showLoadMoreSentinel = canLoadMorePages || catalogStillGrowing || loadingMore
+
   const showQueueAll =
     Boolean(onQueueAll) &&
     !nightMode &&
     !result.crawlSource &&
     canLoadMorePages
-
-  hasMoreRef.current = canLoadMorePages
 
   useEffect(() => {
     if (result.crawlSource && !updateBrowseOnCrawl) return
@@ -323,24 +389,26 @@ export function SearchBrowsePanel({
           ratingFilterToApiContent(ratingFilter)
         )
         let filled = 0
-        setPreviewOverrides((prev) => {
-          const next = { ...prev }
-          const resolvedIds = new Set<number>()
-          for (const r of resolved) {
-            resolvedIds.add(r.versionId)
-            if (r.previewUrls.length) {
-              next[r.versionId] = { previewUrl: r.previewUrl, previewUrls: r.previewUrls }
-              filled++
-            } else {
-              previewFetchStarted.current.delete(r.versionId)
+        startTransition(() => {
+          setPreviewOverrides((prev) => {
+            const next = { ...prev }
+            const resolvedIds = new Set<number>()
+            for (const r of resolved) {
+              resolvedIds.add(r.versionId)
+              if (r.previewUrls.length) {
+                next[r.versionId] = { previewUrl: r.previewUrl, previewUrls: r.previewUrls }
+                filled++
+              } else {
+                previewFetchStarted.current.delete(r.versionId)
+              }
             }
-          }
-          for (const m of missing) {
-            if (!resolvedIds.has(m.versionId)) {
-              previewFetchStarted.current.delete(m.versionId)
+            for (const m of missing) {
+              if (!resolvedIds.has(m.versionId)) {
+                previewFetchStarted.current.delete(m.versionId)
+              }
             }
-          }
-          return next
+            return next
+          })
         })
         return filled
       } catch {
@@ -441,15 +509,33 @@ export function SearchBrowsePanel({
     })
   }
 
-  const isBanned = (m: WatchRuleTestModel) => {
-    if (localBanned.has(m.id)) return true
-    if (localUnbanned.has(m.id)) return false
-    return Boolean(m.isBanned)
-  }
+  const isBanned = useCallback(
+    (m: WatchRuleTestModel) => {
+      if (localBanned.has(m.id)) return true
+      if (localUnbanned.has(m.id)) return false
+      return Boolean(m.isBanned)
+    },
+    [localBanned, localUnbanned]
+  )
 
   const ownedVersionIds = useMemo(
     () => new Set(inventory.map((r) => r.versionId)),
     [inventory]
+  )
+
+  /** Stable key for queue membership (not byte progress) — avoids refiltering gallery on every download tick. */
+  const queueActiveMembershipKey = useMemo(
+    () =>
+      queue
+        .filter(
+          (i) =>
+            i.status === 'queued' ||
+            i.status === 'downloading' ||
+            i.status === 'failed'
+        )
+        .map((i) => `${i.versionId}:${i.modelId}:${i.status}:${i.manual ? 1 : 0}`)
+        .join('|'),
+    [queue]
   )
 
   const queueLookup = useMemo(() => {
@@ -474,6 +560,18 @@ export function SearchBrowsePanel({
     [queueLookup]
   )
 
+  const queueActiveForFilter = useMemo(() => {
+    const byVersion = new Set<number>()
+    const byModel = new Set<number>()
+    for (const item of queue) {
+      if (item.status !== 'queued' && item.status !== 'downloading') continue
+      if (item.versionId > 0) byVersion.add(item.versionId)
+      byModel.add(item.modelId)
+    }
+    return { byVersion, byModel }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [queueActiveMembershipKey])
+
   const modelsWithPreviews = useMemo(
     () =>
       result.sampleModels.map((m) => {
@@ -488,15 +586,21 @@ export function SearchBrowsePanel({
     [result.sampleModels, previewOverrides]
   )
 
-  const enrichedModels = useMemo(
-    () =>
-      modelsWithPreviews.map((m) => ({
-        ...m,
-        isBanned: isBanned(m),
-        inInventory: m.inInventory || ownedVersionIds.has(m.versionId)
-      })),
-    [modelsWithPreviews, localBanned, localUnbanned, ownedVersionIds]
-  )
+  const enrichedModels = useMemo(() => {
+    const out: WatchRuleTestModel[] = []
+    for (const m of modelsWithPreviews) {
+      const banned = isBanned(m)
+      if (hideBanned && banned) continue
+      const inInventory = m.inInventory || ownedVersionIds.has(m.versionId)
+      // Reuse the same object when flags unchanged — ModelCard memo can skip re-renders.
+      if (banned === Boolean(m.isBanned) && inInventory === Boolean(m.inInventory)) {
+        out.push(m)
+      } else {
+        out.push({ ...m, isBanned: banned, inInventory })
+      }
+    }
+    return out
+  }, [modelsWithPreviews, isBanned, ownedVersionIds, hideBanned])
 
   const ruleKeywordExtras = useMemo(() => {
     const extras: string[] = []
@@ -580,11 +684,11 @@ export function SearchBrowsePanel({
   const filtered = useMemo(() => {
     const byKey = new Map<string, WatchRuleTestModel>()
     for (const m of ruleScopedModels) {
-      const q = queueItemFor(m)
-      if (q?.status === 'deferred') continue
       if (!matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) continue
 
-      const inActiveQueue = q ? q.status === 'queued' || q.status === 'downloading' : false
+      const inActiveQueue =
+        (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
+        queueActiveForFilter.byModel.has(m.id)
 
       if (!inActiveQueue) {
         if (hideBanned && m.isBanned) continue
@@ -616,7 +720,7 @@ export function SearchBrowsePanel({
     hiddenTags,
     tagFilter,
     searchQuery,
-    queueItemFor,
+    queueActiveForFilter,
     result.crawlSource
   ])
 
@@ -706,7 +810,6 @@ export function SearchBrowsePanel({
   }, [
     filtered,
     result.crawlSource,
-    queue,
     ownedVersionIds,
     awaitingAccessVersionIds,
     isBanned,
@@ -715,35 +818,138 @@ export function SearchBrowsePanel({
     routingTag,
     browseSettledToEnd,
     searchQuery,
-    ratingFilter
+    ratingFilter,
+    queueActiveMembershipKey
   ])
 
-  const gridModels = useMemo(
-    () => displayModels.slice(0, gridVisible),
-    [displayModels, gridVisible]
+  /** Lazy/pages: manual next page when Hide owned hides everything (don't wait for harvest backfill). */
+  const canManualLoadMore = useMemo(() => {
+    if (!result.crawlSource) return false
+    if (resultsDisplayMode === 'autoAdvance') return false
+    if (!onlyMissing || displayModels.length > 0) return false
+    if (crawlPageMeta?.catalogComplete === true) return false
+    const moreFromMeta = crawlPageMeta?.hasMorePages ?? hasMore
+    if (!moreFromMeta && !result.nextCursor) return false
+    return ruleScopedModels.length > 0 || Boolean(moreFromMeta)
+  }, [
+    result.crawlSource,
+    result.nextCursor,
+    resultsDisplayMode,
+    onlyMissing,
+    displayModels.length,
+    crawlPageMeta?.catalogComplete,
+    crawlPageMeta?.hasMorePages,
+    hasMore,
+    ruleScopedModels.length
+  ])
+
+  const effectiveCanLoadMore = canLoadMorePages || canManualLoadMore
+  const catalogPageNumber = crawlProgress?.pageNumber ?? crawlPageMeta?.pageNumber ?? null
+
+  useEffect(() => {
+    hasMoreRef.current = effectiveCanLoadMore
+  }, [effectiveCanLoadMore])
+
+  const resultsResetKey = useMemo(
+    () =>
+      [
+        result.crawlSource ? 'crawl' : 'manual',
+        onlyMissing ? 1 : 0,
+        hideBanned ? 1 : 0,
+        searchQuery,
+        tagFilter ?? '',
+        ratingFilter,
+        browseSort,
+        resultsDisplayMode,
+        resultsPageSize,
+        displayModels.length
+      ].join('|'),
+    [
+      result.crawlSource,
+      onlyMissing,
+      hideBanned,
+      searchQuery,
+      tagFilter,
+      ratingFilter,
+      browseSort,
+      resultsDisplayMode,
+      resultsPageSize,
+      displayModels.length
+    ]
   )
-  const hasMoreGrid = gridVisible < displayModels.length
+
+  const resultsWindow = useResultsWindow(
+    displayModels,
+    resultsDisplayMode,
+    resultsPageSize,
+    resultsResetKey
+  )
+  const gridModels = resultsWindow.visible
 
   useEffect(() => {
-    if (!result.crawlSource) setGridVisible(GRID_CHUNK)
-  }, [result.crawlSource])
+    if (resultsDisplayMode !== 'pages') {
+      pageScrollReadyRef.current = false
+      return
+    }
+    if (!pageScrollReadyRef.current) {
+      pageScrollReadyRef.current = true
+      return
+    }
+    scrollResultsAnchorIntoView(resultsTopRef.current)
+  }, [resultsWindow.page, resultsDisplayMode])
 
   useEffect(() => {
-    if (!result.crawlSource) return
-    setGridVisible((prev) => (displayModels.length > prev ? displayModels.length : prev))
-  }, [result.crawlSource, displayModels.length])
+    if (resultsDisplayMode !== 'autoAdvance') {
+      setAutoAdvanceHint(null)
+      autoAdvanceAttemptsRef.current = 0
+      return
+    }
+    if (!onlyMissing) {
+      setAutoAdvanceHint(null)
+      autoAdvanceAttemptsRef.current = 0
+      return
+    }
+    if (displayModels.length > 0) {
+      setAutoAdvanceHint(null)
+      autoAdvanceAttemptsRef.current = 0
+      return
+    }
+    if (!canLoadMorePages || loadingMore) return
+    if (autoAdvanceAttemptsRef.current >= 20) {
+      setAutoAdvanceHint(t('resultsPager.autoAdvanceStop'))
+      return
+    }
+    autoAdvanceAttemptsRef.current += 1
+    setAutoAdvanceHint(t('resultsPager.autoAdvanceOwned'))
+    void onLoadMore()
+  }, [
+    resultsDisplayMode,
+    onlyMissing,
+    displayModels.length,
+    canLoadMorePages,
+    loadingMore,
+    onLoadMore,
+    t
+  ])
 
   useEffect(() => {
+    if (resultsDisplayMode === 'pages') return
     const el = gridSentinelRef.current
-    if (!el || !hasMoreGrid) return
+    if (!el || !resultsWindow.hasMoreLazy) return
+
+    // Only expand the local lazy window. On-demand API fetch is explicit (pager button) —
+    // otherwise a short Hide-owned grid keeps the sentinel on-screen and drains the catalog.
     const obs = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) {
-        setGridVisible((v) => Math.min(v + GRID_CHUNK, displayModels.length))
-      }
+      if (entries[0]?.isIntersecting) resultsWindow.expandLazy()
     })
     obs.observe(el)
     return () => obs.disconnect()
-  }, [hasMoreGrid, displayModels.length])
+  }, [
+    resultsDisplayMode,
+    resultsWindow.hasMoreLazy,
+    resultsWindow.expandLazy,
+    gridModels.length
+  ])
 
   const tagCatalog = useMemo((): TagCount[] => {
     const models: WatchRuleTestModel[] = [...tagCatalogRef.current.values()].map((m) => ({
@@ -848,39 +1054,44 @@ export function SearchBrowsePanel({
   const awaitingFirstCrawlData =
     result.sampleModels.length === 0 &&
     crawlPageMeta?.catalogComplete !== true &&
-    (Boolean(result.crawlSource) ||
-      browseGalleryAwaiting ||
+    ((browseGalleryAwaiting && nightMode) ||
       appStatus === 'scanning' ||
       appStatus === 'checking' ||
-      crawlProgress != null ||
-      crawlFetching)
+      (crawlProgress != null && crawlProgress.phase !== 'waiting') ||
+      (crawlFetching && nightMode))
 
+  // Do not treat peek "waiting" as gallery fetch — status bar already shows the countdown.
   const resultsUpdating =
     loadingMore ||
     awaitingFirstCrawlData ||
     crawlProgress?.phase === 'fetching' ||
     crawlProgress?.phase === 'fetching-tags' ||
-    crawlProgress?.phase === 'waiting' ||
-    (crawlFetching && gridModels.length === 0) ||
-    (browseGalleryAwaiting && gridModels.length === 0 && ruleScopedModels.length === 0)
+    (crawlFetching && displayModels.length === 0) ||
+    (browseGalleryAwaiting &&
+      nightMode &&
+      displayModels.length === 0 &&
+      ruleScopedModels.length === 0)
 
   const resultsAwaitingReload =
     browseGalleryAwaiting &&
-    !gridModels.length &&
+    nightMode &&
+    !displayModels.length &&
     ruleScopedModels.length === 0 &&
     !resultsUpdating
 
   const galleryLoadingEmpty =
-    !gridModels.length &&
+    !displayModels.length &&
     ruleScopedModels.length === 0 &&
     (resultsUpdating || resultsAwaitingReload)
+
+  const galleryIdleEmpty =
+    !displayModels.length && ruleScopedModels.length === 0 && !galleryLoadingEmpty
 
   const galleryAwaitingDetailKey = (() => {
     const harvestActive =
       nightMode &&
       (crawlProgress?.phase === 'fetching' ||
         crawlProgress?.phase === 'fetching-tags' ||
-        crawlProgress?.phase === 'waiting' ||
         crawlFetching ||
         browseGalleryAwaiting)
     if (harvestActive) return 'browse.galleryAwaitingDetailHarvest'
@@ -889,13 +1100,12 @@ export function SearchBrowsePanel({
       appStatus === 'checking' ||
       crawlProgress?.phase === 'fetching' ||
       crawlProgress?.phase === 'fetching-tags' ||
-      crawlProgress?.phase === 'waiting' ||
       resultsUpdating
     if (fetchActive) return 'browse.galleryAwaitingDetailActive'
     return 'browse.galleryAwaitingDetail'
   })()
 
-  const showEmptyHint = !gridModels.length && ruleScopedModels.length > 0
+  const showEmptyHint = !displayModels.length && ruleScopedModels.length > 0
 
   const pipelineVersionIds = useMemo(() => {
     const ids = new Set<number>()
@@ -943,6 +1153,34 @@ export function SearchBrowsePanel({
   const eligibleNotQueuedCount = Math.max(0, notQueuedMissingCount - blockedBySkipTagCount)
 
   const catalogBreakdown = useMemo(() => {
+    const liveStats = crawlProgress?.galleryStats ?? crawlPageMeta?.galleryStats ?? null
+    const useLiveStats =
+      Boolean(liveStats) &&
+      (ruleScopedModels.length === 0 ||
+        (liveStats!.total > ruleScopedModels.length && result.crawlSource && !updateBrowseOnCrawl))
+
+    if (useLiveStats && liveStats) {
+      const total = liveStats.total
+      const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
+      return {
+        owned: liveStats.owned,
+        excluded: liveStats.excluded,
+        skipTag: liveStats.skipTag,
+        awaiting: liveStats.awaiting,
+        missingEligible: liveStats.missing,
+        total,
+        ownedPct: pct(liveStats.owned),
+        excludedPct: pct(liveStats.excluded),
+        skipTagPct: pct(liveStats.skipTag),
+        awaitingPct: pct(liveStats.awaiting),
+        missingPct: pct(liveStats.missing),
+        ownedOfDownloadablePct:
+          liveStats.owned + liveStats.missing > 0
+            ? Math.round((liveStats.owned / (liveStats.owned + liveStats.missing)) * 100)
+            : 0
+      }
+    }
+
     let owned = 0
     let excluded = 0
     let skipTag = 0
@@ -984,7 +1222,18 @@ export function SearchBrowsePanel({
       ownedOfDownloadablePct:
         owned + missingEligible > 0 ? Math.round((owned / (owned + missingEligible)) * 100) : 0
     }
-  }, [ruleScopedModels, hiddenTags, awaitingAccessVersionIds, localBanned, localUnbanned])
+  }, [
+    ruleScopedModels,
+    hiddenTags,
+    awaitingAccessVersionIds,
+    localBanned,
+    localUnbanned,
+    crawlProgress?.galleryStats,
+    crawlPageMeta?.galleryStats,
+    result.crawlSource,
+    updateBrowseOnCrawl,
+    isBanned
+  ])
 
   const showBrowseStatsDebug =
     uiExtended && (eligibleNotQueuedCount > 0 || failedCount > 0 || downloadingCount > 0)
@@ -1075,7 +1324,6 @@ export function SearchBrowsePanel({
     async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean }) => {
       if (model.inInventory) return
       if (!opts?.allowAfterUnban && isBanned(model)) return
-      setContextMenu(null)
 
       const existing = queueItemFor(model)
       if (existing?.status === 'queued') {
@@ -1134,6 +1382,29 @@ export function SearchBrowsePanel({
     [isBanned, queueItemFor, routingTag, tagRules]
   )
 
+  const enqueueModelRef = useRef(enqueueModel)
+  enqueueModelRef.current = enqueueModel
+  const openDetailRef = useRef(openDetail)
+  openDetailRef.current = openDetail
+
+  const onCardEnqueue = useCallback((model: WatchRuleTestModel) => {
+    void enqueueModelRef.current(model)
+  }, [])
+  const onCardViewDetails = useCallback((model: WatchRuleTestModel) => {
+    openDetailRef.current(model)
+  }, [])
+  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+  const onCardContextMenu = useCallback((e: MouseEvent, model: WatchRuleTestModel) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, model })
+  }, [])
+  const onOpenTagFoldersRef = useRef(onOpenTagFolders)
+  onOpenTagFoldersRef.current = onOpenTagFolders
+  const onCardTagClick = useCallback((tag: string) => {
+    if (onOpenTagFoldersRef.current) onOpenTagFoldersRef.current(tag)
+    else setRoutingTag(tag)
+  }, [])
+
   const hideTagFromBrowse = useCallback(
     async (tagName: string) => {
       if (!onHiddenTagsChange) return
@@ -1167,9 +1438,8 @@ export function SearchBrowsePanel({
     onBrowseModelBanChange?.(model.id, true)
     setMessage(t('gallery.banned', { name: model.name }))
     setContextMenu(null)
-    try {
-      await window.api.banModel(model.id, model.name)
-    } catch (err) {
+    // Do not await before paint — main may be busy with harvest; UI is already optimistic.
+    void window.api.banModel(model.id, model.name).catch((err) => {
       setLocalBanned((prev) => {
         const next = new Set(prev)
         next.delete(model.id)
@@ -1177,8 +1447,11 @@ export function SearchBrowsePanel({
       })
       onBrowseModelBanChange?.(model.id, false)
       setMessage(err instanceof Error ? err.message : String(err))
-    }
+    })
   }
+
+  const banModelRef = useRef(banModel)
+  banModelRef.current = banModel
 
   const banModelById = useCallback(
     (modelId: number, modelName: string) => {
@@ -1187,32 +1460,27 @@ export function SearchBrowsePanel({
         displayModels.find((m) => m.id === modelId) ??
         ruleScopedModels.find((m) => m.id === modelId)
       if (model) {
-        void banModel(model)
+        void banModelRef.current(model)
         return
       }
-      void (async () => {
-        setLocalBanned((prev) => new Set(prev).add(modelId))
-        setLocalUnbanned((prev) => {
+      setLocalBanned((prev) => new Set(prev).add(modelId))
+      setLocalUnbanned((prev) => {
+        const next = new Set(prev)
+        next.delete(modelId)
+        return next
+      })
+      onBrowseModelBanChange?.(modelId, true)
+      setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
+      void window.api.banModel(modelId, modelName).catch((err) => {
+        setLocalBanned((prev) => {
           const next = new Set(prev)
           next.delete(modelId)
           return next
         })
-        onBrowseModelBanChange?.(modelId, true)
-        setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
-        try {
-          await window.api.banModel(modelId, modelName)
-        } catch (err) {
-          setLocalBanned((prev) => {
-            const next = new Set(prev)
-            next.delete(modelId)
-            return next
-          })
-          onBrowseModelBanChange?.(modelId, false)
-          setMessage(err instanceof Error ? err.message : String(err))
-        }
-      })()
+        onBrowseModelBanChange?.(modelId, false)
+        setMessage(err instanceof Error ? err.message : String(err))
+      })
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- banModel closes over latest lists
     [gridModels, displayModels, ruleScopedModels, onBrowseModelBanChange, t]
   )
 
@@ -1265,7 +1533,7 @@ export function SearchBrowsePanel({
     <div
       className={`search-browse search-browse-layout browse-results-panel${
         galleryLoadingEmpty ? ' is-loading-empty' : ''
-      }`}
+      }${banMode ? ' is-ban-mode' : ''}`}
     >
       <div className="search-browse-header">
         <div className="search-browse-header-main">
@@ -1339,12 +1607,12 @@ export function SearchBrowsePanel({
               {onBanFunctionModeChange && (
                 <button
                   type="button"
-                  className={`btn-sm browse-ban-toggle ${banFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                  onClick={() => void onBanFunctionModeChange(!banFunctionMode)}
+                  className={`btn-sm browse-ban-toggle ${banMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                  onClick={toggleBanMode}
                   title={t('browse.banModeTitle')}
-                  aria-pressed={banFunctionMode}
+                  aria-pressed={banMode}
                 >
-                  {banFunctionMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                  {banMode ? t('browse.banModeOn') : t('browse.banModeOff')}
                 </button>
               )}
             </div>
@@ -1804,46 +2072,46 @@ export function SearchBrowsePanel({
               )}
             </div>
           )}
+          {galleryIdleEmpty && (
+            <div className="browse-gallery-loading browse-gallery-idle" role="status">
+              <strong>{t('browse.results')}</strong>
+              <p className="muted">
+                {onRunScan ? t('browse.galleryAwaitingDetail') : t('browse.galleryPausedOffline')}
+              </p>
+              {onRunScan && (
+                <button type="button" className="btn-sm primary" onClick={() => void onRunScan()}>
+                  {t('header.scan')}
+                </button>
+              )}
+            </div>
+          )}
           {queueAllNotice && <p className="muted">{queueAllNotice}</p>}
           {loadMoreError && <p className="load-more-error">{loadMoreError}</p>}
 
-          <div
-            className={`gallery-grid compact${onlyMissing ? '' : ' browse-show-owned'}`}
-          >
-            {gridModels.map((m) => {
-              const searchActive = searchQuery.trim().length > 0
-              const matchesSearch = searchActive && modelMatchesBrowseSearch(m, searchQuery)
-              const settled = isBrowseSettledModel(m, awaitingAccessVersionIds)
-              const dimOpacity =
-                browseSettledDimPercent > 0 && settled && !matchesSearch
-                  ? 1 - browseSettledDimPercent / 100
-                  : undefined
-              return (
-              <ModelCard
-                key={`${m.id}-${m.versionId}`}
-                model={m}
-                showRating
-                settledDimOpacity={dimOpacity}
-                queueItem={queueItemFor(m)}
-                queuePaused={queuePaused}
-                awaitingAccess={m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)}
-                queuing={queuingId === m.versionId}
-                routingTag={routingTag}
-                tagSkipBlocked={modelHasHiddenTag(m.tags, hiddenTags)}
-                onTagClick={setRoutingTag}
-                onEnqueue={() => void enqueueModel(m)}
-                onJumpToGallery={onJumpToGallery}
-                onViewDetails={() => openDetail(m)}
-                banFunctionMode={banFunctionMode}
-                onBanModel={banModelById}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  setContextMenu({ x: e.clientX, y: e.clientY, model: m })
-                }}
-              />
-              )
-            })}
-          </div>
+          <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
+
+          <BrowseModelGrid
+            models={gridModels}
+            searchQuery={searchQuery}
+            browseSettledDimPercent={browseSettledDimPercent}
+            awaitingAccessVersionIds={awaitingAccessVersionIds}
+            queueItemFor={queueItemFor}
+            queuePaused={queuePaused}
+            queuingId={queuingId}
+            routingTag={routingTag}
+            tagRules={tagRules}
+            loraFolder={loraFolder}
+            checkpointFolder={checkpointFolder}
+            hiddenTags={hiddenTags}
+            banFunctionMode={banMode}
+            onTagClick={onCardTagClick}
+            onEnqueue={onCardEnqueue}
+            onJumpToGallery={onJumpToGallery}
+            onViewDetails={onCardViewDetails}
+            onBanModel={banModelById}
+            onContextMenu={onCardContextMenu}
+            showOwned={!onlyMissing}
+          />
 
           {!gridModels.length && showEmptyHint && (
             <div className={`browse-empty-hint${resultsUpdating ? ' browse-empty-hint-updating' : ''}`}>
@@ -1908,19 +2176,44 @@ export function SearchBrowsePanel({
             </div>
           )}
 
-          {hasMoreGrid && (
+          <ResultsPager
+            mode={resultsDisplayMode}
+            page={resultsWindow.page}
+            totalPages={resultsWindow.totalPages}
+            totalItems={resultsWindow.totalItems}
+            loadedTotal={ruleScopedModels.length}
+            hiddenOwned={filterBreakdown.owned}
+            catalogPage={catalogPageNumber}
+            pageSize={resultsPageSize}
+            shownCount={gridModels.length}
+            hasMoreLazy={resultsWindow.hasMoreLazy}
+            canLoadMoreApi={effectiveCanLoadMore}
+            loadingMoreApi={loadingMore}
+            onPrev={resultsWindow.prevPage}
+            onNext={resultsWindow.nextPage}
+            onExpandLazy={resultsWindow.expandLazy}
+            onLoadMoreApi={() => void onLoadMore()}
+            autoAdvanceHint={autoAdvanceHint}
+          />
+
+          {resultsDisplayMode !== 'pages' && resultsWindow.hasMoreLazy && (
             <div ref={gridSentinelRef} className="browse-load-sentinel">
-              {t('browse.showingGridCount', { shown: gridModels.length, total: displayModels.length })}
+              {t('browse.showingGridCount', {
+                shown: gridModels.length,
+                total: displayModels.length
+              })}
             </div>
           )}
 
-          {canLoadMorePages && (
-            <div ref={loadMoreSentinelRef} className="browse-load-sentinel">
-              {loadingMore ? t('browse.loadingMoreModels') : t('browse.scrollForMore')}
-            </div>
+          {showLoadMoreSentinel && (
+            <div
+              ref={effectiveCanLoadMore ? loadMoreSentinelRef : undefined}
+              className="browse-load-sentinel browse-load-sentinel-hidden"
+              aria-hidden
+            />
           )}
 
-          {canLoadMorePages && (
+          {effectiveCanLoadMore && (
             <div className="browse-pagination-footer">
               <p className="muted browse-pagination-text">
                 {t('browse.loadedModelsCount', { count: loadedLabel })}
@@ -1949,22 +2242,24 @@ export function SearchBrowsePanel({
           x={contextMenu.x}
           y={contextMenu.y}
           menuRef={contextMenuRef}
-          onClose={() => setContextMenu(null)}
+          onClose={closeContextMenu}
         >
           <div className="context-menu-title">{contextMenu.model.name}</div>
             {contextMenu.model.versionId > 0 && (
               <button
                 {...contextMenuButtonProps(() => {
                   openDetail(contextMenu.model)
-                  setContextMenu(null)
-                })}
+                }, closeContextMenu)}
               >
                 View details
               </button>
             )}
             {queueItemFor(contextMenu.model)?.status === 'queued' ? (
               <button
-                {...contextMenuButtonProps(() => void enqueueModel(contextMenu.model))}
+                {...contextMenuButtonProps(
+                  () => void enqueueModel(contextMenu.model),
+                  closeContextMenu
+                )}
               >
                 Remove from queue
               </button>
@@ -1972,24 +2267,40 @@ export function SearchBrowsePanel({
               !contextMenu.model.inInventory &&
               !isBanned(contextMenu.model) && (
                 <button
-                  {...contextMenuButtonProps(() => void enqueueModel(contextMenu.model))}
+                  {...contextMenuButtonProps(
+                    () => void enqueueModel(contextMenu.model),
+                    closeContextMenu
+                  )}
                 >
                   Add to queue
                 </button>
               )
             )}
             {isBanned(contextMenu.model) ? (
-              <button {...contextMenuButtonProps(() => void unbanModel(contextMenu.model))}>
+              <button
+                {...contextMenuButtonProps(
+                  () => void unbanModel(contextMenu.model),
+                  closeContextMenu
+                )}
+              >
                 Unban — allow downloads
               </button>
             ) : (
-              <button {...contextMenuButtonProps(() => void banModel(contextMenu.model))}>
+              <button
+                {...contextMenuButtonProps(
+                  () => void banModel(contextMenu.model),
+                  closeContextMenu
+                )}
+              >
                 Exclude / ban model
               </button>
             )}
             {contextMenu.model.inInventory && (
               <button
-                {...contextMenuButtonProps(() => void deleteFromLibrary(contextMenu.model))}
+                {...contextMenuButtonProps(
+                  () => void deleteFromLibrary(contextMenu.model),
+                  closeContextMenu
+                )}
                 className="context-menu-danger"
               >
                 Delete files & exclude
@@ -2009,8 +2320,8 @@ export function SearchBrowsePanel({
                         className="tag-chip context-menu-tag-chip"
                         disabled={hidden}
                         onClick={() => {
+                          closeContextMenu()
                           void hideTagFromBrowse(tag)
-                          setContextMenu(null)
                         }}
                       >
                         {tag}
@@ -2024,15 +2335,17 @@ export function SearchBrowsePanel({
               <button
                 {...contextMenuButtonProps(() => {
                   void window.api.openExternal(contextMenu.model.pageUrl!)
-                  setContextMenu(null)
-                })}
+                }, closeContextMenu)}
               >
                 Open on Civitai ↗
               </button>
             )}
             {contextMenu.model.inInventory && onJumpToGallery && (
               <button
-                {...contextMenuButtonProps(() => onJumpToGallery(contextMenu.model.id))}
+                {...contextMenuButtonProps(
+                  () => onJumpToGallery(contextMenu.model.id),
+                  closeContextMenu
+                )}
               >
                 Go to in gallery →
               </button>
@@ -2125,7 +2438,90 @@ function downloadProgressFoot(item: DownloadQueueItem): string {
   return parts.join(' · ')
 }
 
-function ModelCard({
+/** Isolated from SearchBrowsePanel context-menu state — opening a menu must not remap the gallery. */
+const BrowseModelGrid = memo(function BrowseModelGrid({
+  models,
+  searchQuery,
+  browseSettledDimPercent,
+  awaitingAccessVersionIds,
+  queueItemFor,
+  queuePaused,
+  queuingId,
+  routingTag,
+  tagRules,
+  loraFolder,
+  checkpointFolder,
+  hiddenTags,
+  banFunctionMode,
+  onTagClick,
+  onEnqueue,
+  onJumpToGallery,
+  onViewDetails,
+  onBanModel,
+  onContextMenu,
+  showOwned
+}: {
+  models: WatchRuleTestModel[]
+  searchQuery: string
+  browseSettledDimPercent: number
+  awaitingAccessVersionIds: Set<number>
+  queueItemFor: (model: WatchRuleTestModel) => DownloadQueueItem | undefined
+  queuePaused: boolean
+  queuingId: number | null
+  routingTag: string
+  tagRules: TagFolderRule[]
+  loraFolder: string
+  checkpointFolder: string
+  hiddenTags: string[]
+  banFunctionMode: boolean
+  onTagClick: (tag: string) => void
+  onEnqueue: (model: WatchRuleTestModel) => void
+  onJumpToGallery?: (modelId: number) => void
+  onViewDetails?: (model: WatchRuleTestModel) => void
+  onBanModel?: (modelId: number, modelName: string) => void
+  onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
+  showOwned: boolean
+}) {
+  const searchActive = searchQuery.trim().length > 0
+  return (
+    <div className={`gallery-grid compact${showOwned ? ' browse-show-owned' : ''}`}>
+      {models.map((m) => {
+        const matchesSearch = searchActive && modelMatchesBrowseSearch(m, searchQuery)
+        const settled = isBrowseSettledModel(m, awaitingAccessVersionIds)
+        const dimOpacity =
+          browseSettledDimPercent > 0 && settled && !matchesSearch
+            ? 1 - browseSettledDimPercent / 100
+            : undefined
+        return (
+          <ModelCard
+            key={browseModelDedupeKey(m)}
+            model={m}
+            showRating
+            settledDimOpacity={dimOpacity}
+            queueItem={queueItemFor(m)}
+            queuePaused={queuePaused}
+            awaitingAccess={m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)}
+            queuing={queuingId === m.versionId}
+            routingTag={routingTag}
+            tagRules={tagRules}
+            loraFolder={loraFolder}
+            checkpointFolder={checkpointFolder}
+            tagSkipBlocked={modelHasHiddenTag(m.tags, hiddenTags)}
+            onTagClick={onTagClick}
+            onEnqueue={onEnqueue}
+            onJumpToGallery={onJumpToGallery}
+            onViewDetails={onViewDetails}
+            banFunctionMode={banFunctionMode}
+            onBanModel={onBanModel}
+            onContextMenu={onContextMenu}
+          />
+        )
+      })}
+    </div>
+  )
+})
+
+const ModelCard = memo(function ModelCard({
   model,
   showRating,
   queueItem,
@@ -2133,6 +2529,9 @@ function ModelCard({
   awaitingAccess = false,
   queuing,
   routingTag,
+  tagRules = [],
+  loraFolder = '',
+  checkpointFolder = '',
   tagSkipBlocked = false,
   onTagClick,
   onEnqueue,
@@ -2151,12 +2550,15 @@ function ModelCard({
   awaitingAccess?: boolean
   queuing: boolean
   routingTag: string
+  tagRules?: TagFolderRule[]
+  loraFolder?: string
+  checkpointFolder?: string
   tagSkipBlocked?: boolean
   onTagClick: (tag: string) => void
-  onEnqueue: () => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onEnqueue: (model: WatchRuleTestModel) => void
+  onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
   onJumpToGallery?: (modelId: number) => void
-  onViewDetails?: () => void
+  onViewDetails?: (model: WatchRuleTestModel) => void
   banFunctionMode?: boolean
   onBanModel?: (modelId: number, modelName: string) => void
 }) {
@@ -2180,6 +2582,21 @@ function ModelCard({
     !isFailed &&
     !isSkipped &&
     !isDeferred
+
+  const resolvedRoute = resolveModelRoutingTag(
+    model.tags,
+    routingTag,
+    tagRules,
+    model.baseModel
+  ).routingTag.trim()
+  const folderLabel = shortCardFolderLabel(
+    resolvedRoute || null,
+    model.baseModel,
+    tagRules,
+    loraFolder,
+    checkpointFolder
+  )
+  const folderLine = folderLineIfNotDuplicatingTag(folderLabel, model.tags)
 
   let badge = ''
   let badgeClass = ''
@@ -2287,12 +2704,12 @@ function ModelCard({
       style={cardStyle}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, a, input, label, .tag-chip')) return
-        if (isQueued || canQueue) onEnqueue()
+        if (isQueued || canQueue) onEnqueue(model)
       }}
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        onContextMenu(e)
+        onContextMenu(e, model)
       }}
       title={statusHint}
     >
@@ -2360,45 +2777,47 @@ function ModelCard({
       <div className="gallery-card-body">
         <div className="gallery-card-title-row">
           <strong title={model.name}>{model.name}</strong>
-          {model.versionId > 0 && onViewDetails && (
-            <button
-              type="button"
-              className="gallery-detail-btn"
-              title="Model details (license, stats)"
-              onClick={(e) => {
-                e.stopPropagation()
-                onViewDetails()
-              }}
-            >
-              ℹ
-            </button>
-          )}
-          {model.pageUrl && (
-            <button
-              type="button"
-              className="gallery-web-btn-inline"
-              title="Open on Civitai"
-              onClick={(e) => {
-                e.stopPropagation()
-                void window.api.openExternal(model.pageUrl!)
-              }}
-            >
-              ↗
-            </button>
-          )}
-          {banFunctionMode && !model.isBanned && onBanModel && (
-            <button
-              type="button"
-              className="gallery-ban-inline-btn electron-no-drag"
-              title={t('downloadsStrip.excludeBan')}
-              onClick={(e) => {
-                e.stopPropagation()
-                onBanModel(model.id, model.name)
-              }}
-            >
-              ×
-            </button>
-          )}
+          <div className="gallery-card-title-actions">
+            {model.versionId > 0 && onViewDetails && (
+              <button
+                type="button"
+                className="gallery-detail-btn"
+                title="Model details (license, stats)"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onViewDetails(model)
+                }}
+              >
+                ℹ
+              </button>
+            )}
+            {model.pageUrl && (
+              <button
+                type="button"
+                className="gallery-web-btn-inline"
+                title="Open on Civitai"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void window.api.openExternal(model.pageUrl!)
+                }}
+              >
+                ↗
+              </button>
+            )}
+            {banFunctionMode && !model.isBanned && onBanModel && (
+              <button
+                type="button"
+                className="gallery-ban-inline-btn electron-no-drag"
+                title={t('downloadsStrip.excludeBan')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onBanModel(model.id, model.name)
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
         <div className="muted">
           {model.type} · {model.baseModel}
@@ -2422,25 +2841,41 @@ function ModelCard({
         {(model.creator || (model.fileSizeBytes != null && model.fileSizeBytes > 0)) && (
           <div className="muted">{formatAuthorWithWeight(model.creator, model.fileSizeBytes)}</div>
         )}
-        <div className="tag-row">
+        {folderLine ? (
+          <div className="gallery-folder-line is-assigned" title={folderLine}>
+            {folderLine}
+          </div>
+        ) : null}
+        <div className="tag-row library-card-tags">
           {model.tags.slice(0, 6).map((tag) => {
-            const isRouting = routingTag.toLowerCase() === tag.toLowerCase()
+            const role = cardTagFolderRole(tag, {
+              routingTag: resolvedRoute || routingTag,
+              folderLabel,
+              tagRules
+            })
             return (
-            <span
-              key={tag}
-              className={`tag-chip ${isRouting ? 'selected' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onTagClick(tag)
-              }}
-              title="Use as folder routing tag"
-            >
-              {tag}
-            </span>
+              <button
+                key={tag}
+                type="button"
+                className={`tag-chip ${cardTagFolderRoleClass(role)}`}
+                title={
+                  role === 'final'
+                    ? t('gallery.tagRoleFinalHint', { tag })
+                    : role === 'mapped'
+                      ? t('gallery.tagRoleMappedHint', { tag })
+                      : t('browse.tagRoleUnmappedHint', { tag })
+                }
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onTagClick(tag)
+                }}
+              >
+                {tag}
+              </button>
             )
           })}
         </div>
       </div>
     </div>
   )
-}
+})

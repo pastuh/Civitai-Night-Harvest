@@ -35,13 +35,15 @@ function pct(item: DownloadQueueItem): number {
 
 function useDownloadStalls(queue: DownloadQueueItem[]): Set<string> {
   const snapRef = useRef<Map<string, { bytes: number; at: number }>>(new Map())
+  const queueRef = useRef(queue)
+  queueRef.current = queue
   const [stalledIds, setStalledIds] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     const tick = () => {
       const now = Date.now()
       const nextStalled = new Set<string>()
-      for (const item of queue) {
+      for (const item of queueRef.current) {
         if (item.status !== 'downloading') continue
         if (item.bytesReceived <= 0) continue
         const prev = snapRef.current.get(item.id)
@@ -53,12 +55,17 @@ function useDownloadStalls(queue: DownloadQueueItem[]): Set<string> {
           nextStalled.add(item.id)
         }
       }
-      setStalledIds(nextStalled)
+      setStalledIds((prev) => {
+        if (prev.size === nextStalled.size && [...nextStalled].every((id) => prev.has(id))) {
+          return prev
+        }
+        return nextStalled
+      })
     }
     tick()
     const t = window.setInterval(tick, 5000)
     return () => window.clearInterval(t)
-  }, [queue])
+  }, [])
 
   return stalledIds
 }
@@ -102,7 +109,12 @@ function stripStatusLabel(
   if (item.status === 'queued') {
     return queuePaused ? t('downloadsStrip.statusQueuedPaused') : t('downloadsStrip.statusQueued')
   }
-  if (item.status === 'failed') return t('downloadsStrip.statusFailed')
+  if (item.status === 'failed') {
+    const reason = item.reason?.trim()
+    return reason
+      ? t('downloadsStrip.statusFailedWithReason', { reason })
+      : t('downloadsStrip.statusFailed')
+  }
   if (item.status === 'deferred') {
     if (deferred?.failureKind === 'early_access' && deferred.earlyAccessEndsAt) {
       const time = new Date(deferred.earlyAccessEndsAt).toLocaleTimeString(undefined, {
@@ -111,7 +123,12 @@ function stripStatusLabel(
       })
       return t('downloadsStrip.statusUnlocksToday', { time })
     }
-    if (item.failureKind === 'interrupted') return t('downloadsStrip.statusFailed')
+    if (item.failureKind === 'interrupted') {
+      const reason = item.reason?.trim() || deferred?.reason?.trim()
+      return reason
+        ? t('downloadsStrip.statusFailedWithReason', { reason })
+        : t('downloadsStrip.statusFailed')
+    }
     return t('downloadsStrip.statusPlanned')
   }
   return ''
@@ -159,6 +176,7 @@ function DownloadQueueMinimalRow({
     item.status === 'failed' && item.bytesReceived > 0
       ? t('downloadsStrip.receivedBeforeFail', { bytes: formatBytes(item.bytesReceived) })
       : ''
+  const failReason = item.reason?.trim() || deferred?.reason?.trim() || ''
   const queueInfo = progressText || statusText || receivedNote
   const fillPct = minimalFillPct(item)
   const isComplete = fillPct >= 100
@@ -185,6 +203,7 @@ function DownloadQueueMinimalRow({
     <div
       className={cardClass}
       data-state={cardState}
+      title={failReason || undefined}
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -205,7 +224,8 @@ function DownloadQueueMinimalRow({
               <span
                 className={`active-queue-minimal-queue-text${
                   progressText && stalled ? ' stalled' : ''
-                }${!progressText ? ' muted' : ''}`}
+                }${!progressText ? ' muted' : ''}${errorWaiting ? ' is-error' : ''}`}
+                title={failReason || queueInfo}
               >
                 {queueInfo}
               </span>
@@ -350,6 +370,11 @@ function DownloadQueueRichCard({
             {progressText}
           </div>
         )}
+        {errorWaiting && item.reason?.trim() && (
+          <div className="muted active-queue-strip-progress is-error" title={item.reason}>
+            {t('downloadsStrip.statusFailedWithReason', { reason: item.reason.trim() })}
+          </div>
+        )}
         <div className="gallery-card-title-row">
           <strong title={item.modelName}>{item.modelName}</strong>
         </div>
@@ -407,7 +432,7 @@ export function ActiveDownloadsStrip({
     void window.api.getBannedModels().then((list) => {
       setBannedIds(new Set(list.map((b) => b.modelId)))
     })
-  }, [queue])
+  }, [])
 
   const banItem = async (item: DownloadQueueItem) => {
     setBannedIds((prev) => new Set(prev).add(item.modelId))
@@ -520,6 +545,12 @@ export function ActiveDownloadsStrip({
               {primary.status === 'failed' ? (
                 <>
                   {t('downloadsStrip.labelFailed')} <strong>{primary.modelName}</strong>
+                  {primary.reason?.trim() ? (
+                    <span className="active-queue-strip-fail-reason" title={primary.reason}>
+                      {' — '}
+                      {primary.reason.trim()}
+                    </span>
+                  ) : null}
                   {failedCount > 1 ? ` ${t('downloadsStrip.pipelineMore', { count: failedCount - 1 })}` : ''}
                 </>
               ) : primary.status === 'deferred' ? (
@@ -650,6 +681,11 @@ export function ActiveDownloadsStrip({
           onClose={() => setContextMenu(null)}
         >
           <div className="context-menu-title">{contextMenu.item.modelName}</div>
+            {contextMenu.item.reason?.trim() && (
+              <div className="context-menu-label context-menu-error-reason" title={contextMenu.item.reason}>
+                {contextMenu.item.reason.trim()}
+              </div>
+            )}
             {bannedIds.has(contextMenu.item.modelId) ? (
               <button {...contextMenuButtonProps(() => void unbanItem(contextMenu.item))}>
                 {t('downloadsStrip.unban')}

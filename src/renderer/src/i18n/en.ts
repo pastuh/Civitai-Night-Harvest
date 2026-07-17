@@ -35,6 +35,8 @@ export const en = {
     downloadsPauseBtn: '⏸',
     downloadsPaused: '⏸ Paused',
     blur: 'Blur',
+    browseLiveOn: '👁',
+    browseLiveOff: '👁',
     scan: 'Scan',
     quickStart: 'Quick start:',
     setModelsRoot: 'Set LoRA and Checkpoint folders in Settings.',
@@ -53,11 +55,15 @@ export const en = {
     tooltipDownloadsPause: 'Pause downloads (scan continues)',
     tooltipDownloadsResume: 'Resume downloads',
     tooltipBlur: 'Blur previews',
-    tooltipScan: 'Scan all enabled Browse rules and refresh results',
+    tooltipBrowseLiveOn:
+      'Browse live ON — gallery updates as harvest pages arrive. Click to switch to quiet (downloads only).',
+    tooltipBrowseLiveOff:
+      'Browse live OFF — harvest downloads in the background. Click to show live gallery, or press Scan / Show Browse for a snapshot.',
+    tooltipScan: 'Scan all enabled Browse rules once and show results in Browse',
     tooltipScanNight:
-      'Scan enabled rules — during Night mode the harvest crawl also fills the gallery automatically',
+      'Run one scan pass and load the harvested models into Browse (even when live gallery is off)',
     tooltipScanBusy: 'Scan already running — wait for it to finish',
-    tooltipScanBusyNight: 'Scan or harvest in progress — gallery will update when pages arrive',
+    tooltipScanBusyNight: 'Scan or harvest in progress — wait for it to finish',
     tooltipScheduledScan: 'Next automatic harvest scan (Night mode only)',
     hideWindow: 'Hide window',
     tooltipHideWindow: 'Hide to system tray — app keeps running in the background',
@@ -85,7 +91,8 @@ export const en = {
       crawl: 'Browse & crawl',
       activityLog: 'Activity log',
       appearance: 'Appearance',
-      tools: 'Tools'
+      tools: 'Tools',
+      optimization: 'Optimization'
     },
     fields: {
       language: 'Language',
@@ -113,6 +120,8 @@ export const en = {
       banFunctionMode: 'Ban function (× next to card title)',
       browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
       browseSettledDimPercent: 'Dim settled Browse cards',
+      resultsDisplayMode: 'Results display (Browse & Library)',
+      resultsPageSize: 'Results page / chunk size',
       launchAtLogin: 'Start with Windows (tray)',
       hashVerify: 'Library hash verify',
       galleryGridSize: 'Gallery card size (px)',
@@ -120,6 +129,7 @@ export const en = {
       downloadStripVisibility: 'Download queue strip',
       downloadStripLayout: 'Download strip layout',
       slugFormat: 'File naming (slug)',
+      onDiskVerifyMode: 'Verify existing files',
       activityLogVerbosity: 'Logging detail',
       activityLogTopics: 'Log topics'
     },
@@ -143,9 +153,9 @@ export const en = {
       contentAll: 'All (SFW + NSFW)',
       contentSfw: 'SFW only',
       contentNsfw: 'NSFW only',
-      domainCom: 'civitai.com',
-      domainRed: 'civitai.red',
-      domainBoth: 'Both (.com + .red)',
+      domainCom: 'civitai.com (SFW-oriented site)',
+      domainRed: 'civitai.red (full catalog — SFW + NSFW)',
+      domainBoth: 'civitai.red (legacy both → red)',
       hashAuto: 'Auto (per file)',
       hashCom: 'Force civitai.com',
       hashRed: 'Force civitai.red',
@@ -153,10 +163,17 @@ export const en = {
       dimOff: 'Off',
       slugVersionName: 'Version name (Civitai variant title)',
       slugModelTitle: 'Full model title',
+      verifyAuto: 'Auto — ID file first, then SHA256',
+      verifySha256: 'SHA256 — always hash (slowest, most certain)',
+      verifySidecar: 'ID file — .civitai.json / swarm ids (fast)',
       activityLogMinimal: 'Essential — downloads, errors, new versions',
+      activityLogOff: 'Off — write nothing to the activity log',
       activityLogNormal: 'Standard — scan summaries, queue events',
       activityLogVerbose: 'Detailed — everything (page progress, per-model finds)',
-      activityLogCustom: 'Custom — pick topics below'
+      activityLogCustom: 'Custom — pick topics below',
+      resultsLazy: 'Lazy scroll — load more as you scroll',
+      resultsPages: 'Pages — Prev / Next',
+      resultsAutoAdvance: 'Auto-advance — lazy + skip empty Hide owned pages (Browse)'
     },
     placeholders: {
       apiKeyNew: '••••••••  (enter new key to change)',
@@ -179,6 +196,8 @@ export const en = {
       gridSizeRange: '{min}–{max} px · Browse, Library, and download strip',
       slugFormat:
         'New downloads use this pattern. Version name slugifies the full Civitai title from .swarm.json (e.g. Oiled Skin - Krea 2 v1.0 → oiled_skin_krea_2_v1_0). Compact shortens names.',
+      onDiskVerifyMode:
+        'When a file already exists at the download path: Auto reads modelId/versionId from .civitai.json (or civitai.* in swarm.json), then SHA256 if needed. SHA256 always hashes the file. ID file is fastest but needs sidecar written by this app.',
       slugSyncDone:
         'Done ({format}) · Renamed {renamed} · Already matched {matched} · Failed {failed}{errors}',
       slugSyncFinished: 'No need to wait — this process is complete.',
@@ -190,6 +209,7 @@ export const en = {
       diskSyncDone: 'Disk sync finished — see Library tab for the summary.',
       activityLogHint:
         'Controls what is saved to the activity log and SQLite database. Less logging reduces disk writes and UI updates during long crawls.',
+      activityLogOff: 'Nothing is written to the Activity tab or log database.',
       activityLogMinimal:
         'Keeps download outcomes, failures, new versions, and scan completion — skips page-by-page crawl chatter and per-model “found but skipped” lines.',
       activityLogNormal:
@@ -199,13 +219,51 @@ export const en = {
       browseSettledToEnd:
         'Owned, excluded (banned), and awaiting-access cards move to the bottom of Browse Results. Search matches keep their normal position.',
       browseSettledDimPercent:
-        'How strongly settled cards are dimmed (0% = off, 100% = most dim). Hover restores full brightness. Search matches stay fully visible.'
+        'How strongly settled cards are dimmed (0% = off, 100% = most dim). Hover restores full brightness. Search matches stay fully visible.',
+      resultsDisplayMode:
+        'Browse and Library use the same mode on already-loaded results. Lazy = infinite scroll in chunks. Pages = classic Prev/Next. Auto-advance = lazy, and when Hide owned leaves Browse empty it can load the next Civitai page if more pages are available (Library treats Auto-advance as Lazy).',
+      resultsPageSize: 'How many cards per page (Pages) or per scroll chunk (Lazy / Auto-advance).',
+      updateBrowseOnCrawl:
+        'Same as the 👁 button next to Blur in the header. Off = quieter UI (downloads still run); On = live Browse grid.',
+      domain:
+        'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.'
     },
     actions: {
       slugSync: 'Rename library files to match format',
       slugSyncBusy: 'Renaming…',
       diskSync: 'Sync library from disk',
       diskSyncBusy: 'Syncing from disk…'
+    },
+    optimization: {
+      lead:
+        'Drag toward Speed in even steps (10…100). Layout goes Grid → Row → Minimal; logs stay Minimal until 90 (Off). Live Browse gallery turns off only at 100.',
+      scoreLabel: 'UI optimization',
+      scoreValue: '{score} / 100',
+      comfort: 'Comfort',
+      speed: 'Speed',
+      appliedTitle: 'Applied from slider',
+      appliedNone: 'No settings changed at this step.',
+      appliedHint: 'Review the list, then tweak any field above if you prefer a different mix. Save when ready.',
+      changes: {
+        uiExtended: 'Interface → Extended',
+        uiMinimal: 'Interface → Minimal',
+        displayAuto: 'Results display → Auto-advance',
+        displayLazy: 'Results display → Lazy scroll',
+        displayPages: 'Results display → Pages',
+        stripAlways: 'Download strip → All tabs',
+        stripBrowseLibrary: 'Download strip → Browse + Library',
+        stripBrowse: 'Download strip → Browse only',
+        stripOff: 'Download strip → Hidden',
+        layoutGrid: 'Download strip layout → Grid',
+        layoutRow: 'Download strip layout → Row',
+        layoutMinimal: 'Download strip layout → Minimal',
+        logMinimal: 'Activity log → Minimal',
+        logOff: 'Activity log → Off',
+        concurrency: 'Parallel downloads → {n}',
+        streams: 'Connections per file → {n}',
+        liveBrowseOn: 'Live Browse grid (👁) → On',
+        liveBrowseOff: 'Live Browse grid (👁) → Off'
+      }
     }
   },
   skippedTags: {
@@ -253,7 +311,7 @@ export const en = {
     headerBlur: 'Blur — hide preview thumbnails',
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort); pick domain above Results',
     browseResults:
-      'Results — search by name/author; filter toolbar (content, hide owned, ban mode); Sort and Tags in the right toolbar box; click a card to queue or remove',
+      'Results — search by name/author; filter toolbar (content, hide owned, ban mode); Sort and Tags in the right toolbar box; click a card to queue or remove. Display mode (lazy / pages / auto-advance) is set in Settings.',
     browseTags:
       'Tags popover — filter the grid · 🚫 block tag from auto-queue · blocked tags listed at top when any exist',
     browseManualQueue:
@@ -265,9 +323,10 @@ export const en = {
       'Right-click a model → Skip tag — block a tag from auto-queue (click a tag chip; already-blocked tags are dimmed)',
     libraryFolders: 'Tag Folders tab — map Civitai tags to disk subfolders under your LoRA/Checkpoint paths',
     libraryBadge: 'Library tab **+N** — new models downloaded since your last visit; badge clears when you open Library',
-    librarySort: 'Sort — folder tag, Civitai downloads, tag group, or download order',
+    librarySort:
+      'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
-    libraryTags: 'Click a tag on a card to move models; right-click for more actions',
+    libraryTags: 'Click a tag on a card to open Tag folders with that tag in search',
     edgeOwned: 'Green top border — already in your library',
     edgeQueued: 'Gray top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',
@@ -292,7 +351,7 @@ export const en = {
     dlActivity:
       'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:
-      'Set Civitai domain on the Browse tab (above Results). Both = separate .com and .red catalogs. Mature content often needs civitai.red plus an API key.',
+      'Browse uses civitai.red only (full SFW+NSFW catalog). Maturity is controlled per rule via content filter — there is no .com/.red host picker.',
     settingsRef: {
       apiKey: 'Civitai API key — civitai.com → Account → API Keys. Required for most NSFW/restricted downloads. Stored locally.',
       modelsRoot: 'Root folder on disk — use separate LoRA and Checkpoint folders below. Tag Folders can override per model.',
@@ -302,13 +361,17 @@ export const en = {
         'When off (Pause active), queued downloads stay paused until you turn Pause off. Auto/Manual only controls whether new models are added to the queue.',
       nightDownloadAll:
         'All mode: queue every new model matching Browse rules (not only library tags). Blocked tags in Settings/Browse are always skipped.',
-      scanInterval: 'Background API check interval per enabled rule × domain. 0 = off (night mode sets 60 min if needed).',
+      scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
       parallelDownloads: 'How many models download at once. Use 1 for one file at full speed.',
-      domain: 'Both = separate catalogs per site. Mature content often needs civitai.red + API key.',
+      domain:
+        'API host is fixed to civitai.red. Use each Browse rule’s content filter for SFW vs NSFW.',
       backfill: 'Walk full catalog once, then peek newest page only. Downloads run between pages.',
       newestPeek: 'During night crawl, re-check page 1 at most this often for brand-new models.',
       connections: 'Multi-stream on direct CDN links only. Civitai API links use single stream.',
       updateBrowse: 'Append each crawl page to Browse results. Off = crawl downloads only; check Activity log.',
+      resultsDisplayMode:
+        'How Browse and Library window already-loaded results: lazy scroll, classic pages, or auto-advance past empty Hide-owned Browse pages.',
+      resultsPageSize: 'Cards per page or scroll chunk (60 or 100).',
       scanOnStartup: 'Run one scan when the app opens.',
       autoRetryDeferred: 'After each scan, retry Awaiting access models (403 waits ~4h).',
       blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
@@ -335,6 +398,23 @@ export const en = {
       gray: 'Gray = awaiting access',
       empty: 'Empty = still to download'
     }
+  },
+  resultsPager: {
+    label: 'Results navigation',
+    prev: 'Previous',
+    next: 'Next',
+    pageOf: 'Page {page} / {totalPages}',
+    showing: '{from}–{to} of {total}',
+    loaded: 'Showing {shown} of {total} visible',
+    loadedFiltered: '{loaded} loaded · {owned} hidden (owned) · {visible} visible',
+    noVisibleYet: 'No visible models yet',
+    emptyOwnedHint: 'All loaded models are owned — use Next / Load more to fetch the next Civitai page.',
+    crawlPage: 'Harvest is on Civitai page {page} — use Next to skip ahead manually.',
+    moreApi: 'more on Civitai',
+    showMore: 'Show more',
+    loadMoreApi: 'Load next Civitai page',
+    autoAdvanceOwned: 'Hide owned left this page empty — loading next…',
+    autoAdvanceStop: 'Stopped auto-advance after many empty pages — use Load more manually.'
   },
   browse: {
     results: 'Results',
@@ -432,6 +512,10 @@ export const en = {
     tagUniqueCount: '{count} unique tags',
     scrollForMore: '↓ scroll for more',
     loadingMoreModels: 'Loading more models…',
+    loadingMoreHarvest:
+      'More models are still loading from Civitai… ({count} in gallery so far)',
+    loadingMoreHarvestPage: 'Loading page {page} — “{rule}”… ({count} in gallery)',
+    moreModelsIncomingTitle: 'More models are coming into this gallery',
     loadingNextPage: 'Loading next page…',
     showingGridCount: 'Showing {shown} of {total} — scroll for more',
     fetchingFirstPage: 'Fetching models from Civitai API…',
@@ -459,6 +543,8 @@ export const en = {
     hideOwned: 'Hide owned',
     hideOwnedTitle: 'Hide models already in your library',
     badgeOwnedTitle: 'Already in library',
+    openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a folder',
+    tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
     badgeNewTitle: 'Not in library yet',
     badgeQueuedShort: 'Queue',
     badgeQueuedTitle: 'Auto-queued for download — waiting in pipeline',
@@ -483,6 +569,8 @@ export const en = {
       "No models in the gallery yet. Press 'Scan' or 'Harvest' in the header to load models from your enabled rules.",
     galleryAwaitingDetailActive: 'No models in the gallery yet. Fetch in progress…',
     galleryAwaitingDetailHarvest: 'No models in the gallery yet. Night harvest is loading the first page…',
+    galleryPausedOffline:
+      'Browse is idle — output drive is offline. Fix LoRA/Checkpoint folders in Settings before scanning.',
     emptyPreview: 'Preview “{name}”',
     rulePreview: 'Preview',
     rulePreviewTitle:
@@ -531,6 +619,7 @@ export const en = {
     statusQueued: 'queued',
     statusQueuedPaused: 'queued · paused',
     statusFailed: 'failed',
+    statusFailedWithReason: 'failed — {reason}',
     statusPlanned: 'planned',
     statusUnlocksToday: 'unlocks today · {time}',
     progressStalled: 'stalled {bytes}',
@@ -546,18 +635,21 @@ export const en = {
     title: 'Night mode',
     hintUpdateBrowse: 'Scan runs in the background; new models appear below as pages arrive.',
     hintNoUpdateBrowse:
-      'Harvest runs in the background. Enable Settings → “Update Browse grid during crawl”, or press Scan in the header.',
-    noOutputFolder: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose.',
+      'Quiet harvest: downloads run in the background without refreshing Browse (smoother UI). Use 👁 in the header for a live gallery, or Show Browse snapshot / Scan to review models for ban or queue.',
+    noOutputFolder: 'Set LoRA and Checkpoint folders in Settings.',
     noRules: 'Enable at least one Browse rule.',
     previewBrowse: 'Preview Browse',
+    showBrowseSnapshot: 'Show Browse snapshot',
     startDownloads: 'Start downloads ({count})',
     activityLog: 'Activity log →',
+    queueSummary: 'Downloads: {downloading} active · {waiting} queued',
     ruleNewestOnly: 'newest only',
     ruleNewestAt: 'newest · {time}',
     ruleBackfillPage: 'backfill p.{page}{pass}',
     ruleCatalogPass: 'catalog pass {pass}',
-    rulePeek: 'peek {time}',
+    rulePeek: 'peek · {time}',
     ruleStarting: 'starting…',
+    ruleHarvesting: 'harvesting…',
     queuePausedHint: '{count} in queue — use ⬇ in the header to start'
   },
   activity: {
@@ -624,11 +716,17 @@ export const en = {
     apiUnavailable: 'App API not available — restart the application.',
     busyRetrying: 'Retrying…',
     needOutputFolders: 'Set LoRA and Checkpoint folders in Settings before Scan, Harvest, or download.',
+    outputDriveMissing:
+      'Output drive is not available — plug in the disk or update LoRA/Checkpoint folders in Settings.',
+    outputDriveMissingTitle: 'Output folder unavailable',
+    harvestPausedNoDisk: 'Harvest and downloads paused — output drive is not available.',
     busyScanningRules: 'Scanning watch rules',
     busyCheckingRules: 'Checking enabled Browse rules…',
     busySyncingLibrary: 'Syncing library with disk…',
+    busyPreparingSession: 'Syncing library with disk, then preparing harvest…',
     bgCheckingPreviews: 'Checking library preview images…',
     bgScanningDisk: 'Scanning folders for new models…',
+    bgScanSkippedOffline: 'Skipped folder scan — output drive offline',
     previewsRestored: 'restored {count} preview image(s)',
     ratingsRestored: 'filled {count} rating(s)',
     librarySyncPrefix: 'Library sync:',
@@ -646,9 +744,12 @@ export const en = {
   },
   appBusy: {
     phasePreparing: 'Preparing…',
+    phaseStarting: 'Starting…',
+    filesFound: 'Found {count} file(s)',
     phaseImport: 'Scanning disk for models',
     phaseChecking: 'Checking library files',
     phaseMetadata: 'Reading file metadata',
+    phaseIdentity: 'Writing model identity files',
     phaseHash: 'Computing SHA256 hashes',
     phaseRename: 'Renaming library files',
     phasePreview: 'Checking library previews',
@@ -656,6 +757,9 @@ export const en = {
     checkingHint:
       'Verifying that each library model file still exists on disk (e.g. 250 / 1200). Deleted files are removed from the inventory.',
     renameHint: 'Renaming model files on disk — this runs once and finishes when the summary appears.',
+    importHint: 'Walking LoRA / Checkpoint / tag folders for model files not yet in the library.',
+    metadataHint: 'Reading size, resolution, and other fields from files already in your library.',
+    identityHint: 'Writing .civitai.json / swarm ID fields so on-disk models stay linked to Civitai.',
     syncHint:
       'Library sync matches your inventory with files on disk — removes entries for deleted files, fills in size/resolution, and computes missing SHA256 hashes (for verification later).',
     previewHint:
@@ -710,7 +814,7 @@ export const en = {
     filterByLetter: 'Filter by first letter',
     allLetters: 'All',
     helpText:
-      'Click preview for details. Click a Civitai tag on a card to assign that folder (green = assigned). Select cards → sidebar Move for batch. Right-click to ban / unban / delete.',
+      'Click preview for details. Click a Civitai tag to open Tag folders. Green tag + Folder line = assigned. Select cards → sidebar Move. Right-click to ban / unban / delete.',
     selectedHint: '{count} selected — pick a tag on the right → Move',
     emptyFiltered: 'No models match your search or filter.',
     emptyNone: 'No models here yet. Download from the Download tab or run a watch scan.',
@@ -747,13 +851,21 @@ export const en = {
     checkpointType: 'Checkpoint type',
     statDownloads: 'Downloads',
     statThumbsUp: 'Thumbs up',
-    defaultFolder: 'default folder',
+    defaultFolder: 'Default folder',
     assignedToFolder: 'Assigned to this tag folder',
     assignFolderHint: 'Assign folder — click: choose all with "{tag}" or this card only',
+    openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a dynamic folder',
+    openTagFoldersAssigned: 'Assigned — open Tag folders to manage “{tag}”',
+    tagRoleFinalHint: 'Final folder route — “{tag}” is why this model is in its folder (click → Tag folders)',
+    tagRoleMappedHint: 'Mapped tag — “{tag}” has a folder rule, but another tag is the active route',
+    tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
+    folderLabel: 'Folder: {folder}',
+    folderAssignedTitle: 'Assigned folder: {folder}',
     earlyAccessWait: 'Early access wait:',
     sidebarTitle: 'Filter & move',
     sidebarSearchPlaceholder: 'Search tags…',
-    sidebarHint: 'Filter the grid or click a tag on a card to assign a folder route.',
+    sidebarHint:
+      'Tag borders (subtle): solid accent tint = final route · solid = mapped · dashed = unmapped. Click → Tag folders.',
     allModels: 'All models',
     untaggedFolder: 'Untagged folder',
     sessionDownloads: 'Session downloads',
@@ -909,10 +1021,9 @@ export const en = {
       'Catalog done · 0 matched · API had {api} — check Keywords / Content filter',
     scanningCatalogCompleteFilteredRule:
       'Catalog done · 0 matched · API had {api} · {rules} — check Keywords / Content',
-    scanningPageDoneMore: 'Page {page} loaded ({onPage} models) · {total} in gallery · next page…',
-    scanningPageDoneMoreRule:
-      'Page {page} loaded ({onPage} models) · {total} in gallery · next page · {rules}',
-    scanningCatalogContinuingRule: 'Page {page} done · {total} in gallery · more pages remain · {rules}',
+    scanningPageDoneMore: 'Page {page} · {total} in gallery…',
+    scanningPageDoneMoreRule: 'Page {page} · {total} in gallery · {rules}',
+    scanningCatalogContinuingRule: 'Page {page} · {total} in gallery · more pages · {rules}',
     checkingLibrary: 'Checking your library for new versions',
     checkingLibraryProgress: 'Checking library for new versions ({current}/{total})',
     failedPrefix: 'Failed:',
@@ -928,7 +1039,9 @@ export const en = {
     ratingUnknown: '{count} unknown',
     detailMore: '(+{count} more)',
     bytesReceived: '{bytes} received',
-    readyWaitingFetch: 'Ready — waiting for first Browse page from Civitai…'
+    readyWaitingFetch: 'Harvest on — waiting for Civitai activity…',
+    outputDriveOffline:
+      'Output drive offline — Harvest off, downloads paused. Fix folders in Settings.'
   }
 } as const
 

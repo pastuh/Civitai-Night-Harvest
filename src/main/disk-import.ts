@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
+import { readFileSync, readdirSync, statSync } from 'fs'
 import { basename, join } from 'path'
 import type { CivitaiDomain, InventoryRecord, LibrarySyncProgress, TagFolderRule } from '../shared/types'
-import { collectLibraryScanRoots } from '../shared/utils'
+import { collectLibraryScanRoots, parseSwarmDescriptionModelId, parseSwarmDescriptionVersionId } from '../shared/utils'
 import * as inventory from './inventory'
+import { isOutputPathRootReachable, safePathExists } from './output-paths'
 
 const MODEL_EXTENSIONS = new Set(['safetensors', 'ckpt', 'pt'])
 const MAX_SCAN_DEPTH = 8
@@ -19,21 +20,18 @@ export interface DiskImportResult {
   skippedKnown: number
   skippedNoSwarm: number
   skippedUnidentified: number
+  /** Lowercase model paths seen during folder walk — used to skip per-file existence checks. */
+  foundModelPaths: Set<string>
 }
 
 function parseSwarmSourceVersionId(swarm: Record<string, unknown>): number | null {
   const desc = typeof swarm['modelspec.description'] === 'string' ? swarm['modelspec.description'] : ''
-  const fromQuery = desc.match(/modelVersionId=(\d+)/i)
-  if (fromQuery) return Number(fromQuery[1])
-  const fromPath = desc.match(/\/model-versions\/(\d+)/i)
-  if (fromPath) return Number(fromPath[1])
-  return null
+  return parseSwarmDescriptionVersionId(desc)
 }
 
 function parseSwarmSourceModelId(swarm: Record<string, unknown>): number | null {
   const desc = typeof swarm['modelspec.description'] === 'string' ? swarm['modelspec.description'] : ''
-  const m = desc.match(/\/models\/(\d+)/i)
-  return m ? Number(m[1]) : null
+  return parseSwarmDescriptionModelId(desc)
 }
 
 function parseDomain(swarm: Record<string, unknown>): CivitaiDomain {
@@ -70,7 +68,12 @@ function inferRoutingTag(folder: string, tagRules: TagFolderRule[]): string {
 }
 
 function collectScanRoots(loraFolder: string, checkpointFolder: string, tagRules: TagFolderRule[]): string[] {
-  return collectLibraryScanRoots(loraFolder, checkpointFolder, tagRules).filter((p) => p && existsSync(p))
+  return collectLibraryScanRoots(loraFolder, checkpointFolder, tagRules).filter((p) => {
+    if (!p) return false
+    // Never call existsSync on an offline volume — Windows can hang for a long time.
+    if (!isOutputPathRootReachable(p)) return false
+    return safePathExists(p) === true
+  })
 }
 
 function listModelFilesInFolder(folder: string): Array<{ slug: string; modelPath: string; ext: string }> {
@@ -122,7 +125,7 @@ async function walkModelFiles(
 }
 
 function readSwarm(swarmPath: string): Record<string, unknown> | null {
-  if (!existsSync(swarmPath)) return null
+  if (safePathExists(swarmPath) !== true) return null
   try {
     return JSON.parse(readFileSync(swarmPath, 'utf-8')) as Record<string, unknown>
   } catch {
@@ -181,7 +184,7 @@ function buildRecordFromDisk(params: {
     routingTag: inferRoutingTag(folder, tagRules),
     outputFolder: folder,
     modelPath,
-    previewPath: existsSync(previewPath) ? previewPath : '',
+    previewPath: safePathExists(previewPath) === true ? previewPath : '',
     swarmPath,
     downloadedAt,
     ignored: false,
@@ -205,7 +208,8 @@ export async function importModelsFromDisk(
     updated: 0,
     skippedKnown: 0,
     skippedNoSwarm: 0,
-    skippedUnidentified: 0
+    skippedUnidentified: 0,
+    foundModelPaths: new Set<string>()
   }
 
   const roots = collectScanRoots(loraFolder, checkpointFolder, tagRules)
@@ -216,7 +220,7 @@ export async function importModelsFromDisk(
   onProgress?.({
     phase: 'import',
     current: 0,
-    total: 0,
+    total: roots.length,
     modelName: '…',
     action: `Scanning ${roots.length} folder root(s)…`
   })
@@ -225,16 +229,16 @@ export async function importModelsFromDisk(
     const root = roots[r]
     onProgress?.({
       phase: 'import',
-      current: 0,
-      total: 0,
+      current: r + 1,
+      total: roots.length,
       modelName: basename(root),
       action: `Walking folders (${r + 1}/${roots.length})…`
     })
     await walkModelFiles(root, 0, candidates, (found) => {
       onProgress?.({
         phase: 'import',
-        current: found,
-        total: 0,
+        current: r + 1,
+        total: roots.length,
         modelName: basename(root),
         action: `Found ${found} model file(s)…`
       })
@@ -260,6 +264,26 @@ export async function importModelsFromDisk(
 
     const { folder, slug, modelPath } = uniqueCandidates[i]
     result.scanned++
+    const pathKey = modelPath.toLowerCase()
+    result.foundModelPaths.add(pathKey)
+
+    const knownVersionId = pathToVersion.get(pathKey)
+    if (knownVersionId != null) {
+      const existing = inventory.getVersion(knownVersionId)
+      if (existing && existing.modelPath.toLowerCase() === pathKey) {
+        result.skippedKnown++
+        if (i === total - 1 || i % YIELD_EVERY === 0) {
+          onProgress?.({
+            phase: 'import',
+            current: i + 1,
+            total,
+            modelName: existing.modelName,
+            action: `Known on disk (${i + 1}/${total})`
+          })
+        }
+        continue
+      }
+    }
 
     const swarmPath = join(folder, `${slug}.swarm.json`)
     const swarm = readSwarm(swarmPath)
@@ -288,13 +312,15 @@ export async function importModelsFromDisk(
       continue
     }
 
-    onProgress?.({
-      phase: 'import',
-      current: i + 1,
-      total,
-      modelName: record.modelName,
-      action: 'Importing from disk'
-    })
+    if (i === total - 1 || i % YIELD_EVERY === 0) {
+      onProgress?.({
+        phase: 'import',
+        current: i + 1,
+        total,
+        modelName: record.modelName,
+        action: 'Importing from disk'
+      })
+    }
 
     const existing = inventory.getVersion(record.versionId)
     if (existing) {

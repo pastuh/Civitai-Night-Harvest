@@ -164,10 +164,9 @@ export function getSiteBase(domain: CivitaiDomain): string {
   return domain === 'red' ? 'https://civitai.red' : 'https://civitai.com'
 }
 
-export function resolveSearchDomains(setting: CivitaiDomainSetting): CivitaiDomain[] {
-  if (setting === 'com') return ['com']
-  if (setting === 'red') return ['red']
-  return ['com', 'red']
+export function resolveSearchDomains(_setting?: CivitaiDomainSetting): CivitaiDomain[] {
+  // Single catalog API — civitai.red covers SFW+NSFW; maturity via content filter.
+  return ['red']
 }
 
 export function domainLabel(domain: CivitaiDomain): string {
@@ -278,6 +277,42 @@ export function parseVersionId(input: string): number | null {
   return match ? Number(match[1]) : null
 }
 
+/**
+ * Resolve the on-disk swarm “source” version id from modelspec.description.
+ * Prefer an explicit Source: URL — description text often also mentions other models’ versionIds.
+ */
+export function parseSwarmDescriptionVersionId(desc: string): number | null {
+  if (!desc.trim()) return null
+  const fromSource =
+    desc.match(/Source:\s*https?:\/\/\S*?[?&]modelVersionId=(\d+)/i) ||
+    desc.match(/Source:\s*[^\n\r]*?[?&]?modelVersionId=(\d+)/i)
+  if (fromSource) return Number(fromSource[1])
+
+  const modelPageHits = [...desc.matchAll(/\/models\/\d+\?modelVersionId=(\d+)/gi)]
+  if (modelPageHits.length) {
+    return Number(modelPageHits[modelPageHits.length - 1]![1])
+  }
+
+  const all = [...desc.matchAll(/modelVersionId=(\d+)/gi)]
+  if (all.length) return Number(all[all.length - 1]![1])
+
+  const fromPath = desc.match(/\/model-versions\/(\d+)/i)
+  return fromPath ? Number(fromPath[1]) : null
+}
+
+/** Prefer Source: /models/{id} over other model links mentioned in the description body. */
+export function parseSwarmDescriptionModelId(desc: string): number | null {
+  if (!desc.trim()) return null
+  const fromSource =
+    desc.match(/Source:\s*https?:\/\/\S*?\/models\/(\d+)/i) ||
+    desc.match(/Source:\s*[^\n\r]*?\/models\/(\d+)/i)
+  if (fromSource) return Number(fromSource[1])
+
+  const hits = [...desc.matchAll(/\/models\/(\d+)/gi)]
+  if (hits.length) return Number(hits[hits.length - 1]![1])
+  return null
+}
+
 export function sanitizePathSegment(value: string): string {
   return value
     .replace(/[<>:"/\\|?*]/g, '')
@@ -359,6 +394,37 @@ export function resolveUniqueSlug(baseSlug: string, existing: string[]): string 
   let i = 2
   while (existing.includes(`${baseSlug}_${i}`)) i++
   return `${baseSlug}_${i}`
+}
+
+/**
+ * Pick a free model slug when the preferred path is already taken by different bytes.
+ * Prefers `{base}_v{versionId}`, then `{base}_2`, `_3`, …
+ */
+export function resolveUniqueSlugForVersion(options: {
+  baseSlug: string
+  versionId: number
+  existingSlugs: string[]
+  pathTaken: (slug: string) => boolean
+}): string {
+  const { baseSlug, versionId, existingSlugs, pathTaken } = options
+  const taken = new Set(existingSlugs)
+  const trySlug = (slug: string): string | null => {
+    if (taken.has(slug) || pathTaken(slug)) return null
+    return slug
+  }
+  return (
+    trySlug(baseSlug) ??
+    trySlug(`${baseSlug}_v${versionId}`) ??
+    (() => {
+      let i = 2
+      for (;;) {
+        const slug = `${baseSlug}_${i}`
+        const ok = trySlug(slug)
+        if (ok) return ok
+        i++
+      }
+    })()
+  )
 }
 
 export function pickPrimaryFile(files: { name: string; type: string }[]): { name: string; type: string } | null {

@@ -1,8 +1,8 @@
 import type { CivitaiClient } from '../shared/civitai-client'
 import type { PendingVersion, WatchRule, CivitaiDomain } from '../shared/types'
-import { getSettings, shouldCrawlAutoDownload } from './settings-store'
+import { getSettings, getWatchRules, shouldCrawlAutoDownload } from './settings-store'
 import type { DownloadQueue } from './download-queue'
-import { getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass } from './crawl-state'
+import { getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, isCatalogBackfillDone, clearLegacyUnscopedCursor } from './crawl-state'
 import { sanitizeCrawlCursor } from '../shared/civitai-pagination'
 import {
   runDualRulePageCheck,
@@ -41,7 +41,7 @@ export interface CrawlRuleOptions {
     page: import('./rule-queue').RulePageQueueResult
     client: CivitaiClient
     catalogComplete?: boolean
-  }) => void
+  }) => void | Promise<void>
   onCrawlFetchStart?: (info: {
     rule: WatchRule
     pageNumber: number
@@ -54,6 +54,7 @@ export interface CrawlRuleOptions {
     page: import('./rule-queue').RulePageQueueResult
     errors: string[]
     catalogComplete: boolean
+    domain: CivitaiDomain
   }) => void
 }
 
@@ -69,6 +70,16 @@ export interface CrawlRuleSummary {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Long waits must not wake the event loop every 400ms (peek intervals are minutes). */
+async function interruptibleCrawlerSleep(ms: number, stopped: () => boolean): Promise<void> {
+  const step = ms > 30_000 ? 5_000 : ms > 5_000 ? 1_000 : 400
+  let left = ms
+  while (left > 0 && !stopped()) {
+    await sleep(Math.min(step, left))
+    left -= step
+  }
 }
 
 export class RuleCrawler {
@@ -105,6 +116,22 @@ export class RuleCrawler {
 
     let cursor: string | undefined
     const crawlDomain = client.getDomain()
+
+    // Full catalog already walked — do not restart page 1…N; peek is handled by scheduler.
+    if (getSettings().backfillCatalog && isCatalogBackfillDone(rule.id, crawlDomain)) {
+      this.running = false
+      this.stopRequested = false
+      return {
+        pagesProcessed: 0,
+        totalQueued: 0,
+        newModels: 0,
+        newVersions: 0,
+        upToDate: 0,
+        reachedEnd: true,
+        errors: []
+      }
+    }
+
     if (options.startCursor === null || options.startCursor === undefined) {
       const saved = getCrawlCursor(rule.id, crawlDomain)
       cursor = sanitizeCrawlCursor(saved ?? undefined) ?? undefined
@@ -192,20 +219,23 @@ export class RuleCrawler {
           flushPageDownloads(downloadQueue, peek.queued, options.onDownloadsStarted)
         }
 
-        options.onCrawlPage?.({
-          rule,
-          pageNumber: skipBackfill ? pagesProcessed : catalogPage,
-          page: combined,
-          client,
-          catalogComplete: !skipBackfill && !combined.nextCursor && combined.pageModels > 0
-        })
+        await Promise.resolve(
+          options.onCrawlPage?.({
+            rule,
+            pageNumber: skipBackfill ? pagesProcessed : catalogPage,
+            page: combined,
+            client,
+            catalogComplete: !skipBackfill && !combined.nextCursor && combined.pageModels > 0
+          })
+        )
 
         options.onCrawlFetchDone?.({
           rule,
           pageNumber: skipBackfill ? pagesProcessed : catalogPage,
           page: backfill,
           errors: combined.errors,
-          catalogComplete: !backfill.nextCursor
+          catalogComplete: !backfill.nextCursor,
+          domain: crawlDomain
         })
 
         if (backfill.queued > 0) {
@@ -231,6 +261,7 @@ export class RuleCrawler {
         } else if (!skipBackfill) {
           reachedEnd = true
           setCrawlCursor(rule.id, null, crawlDomain)
+          clearLegacyUnscopedCursor(rule.id)
           catalogPage = 0
           setBackfillPage(rule.id, 0, crawlDomain)
           this.lastBackfillHead.delete(backfillHeadKey)
@@ -244,19 +275,11 @@ export class RuleCrawler {
           break
         } else {
           const waitMs = Math.max(getSettings().newestPeekIntervalMinutes, 5) * 60 * 1000
-          let left = waitMs
-          while (left > 0 && !this.stopRequested) {
-            await sleep(Math.min(400, left))
-            left -= 400
-          }
+          await interruptibleCrawlerSleep(waitMs, () => this.stopRequested)
         }
 
         if (!this.stopRequested) {
-          let left = 2_000
-          while (left > 0 && !this.stopRequested) {
-            await sleep(Math.min(400, left))
-            left -= 400
-          }
+          await interruptibleCrawlerSleep(2_000, () => this.stopRequested)
         }
       }
 
@@ -288,5 +311,7 @@ export class RuleCrawler {
 export function shouldRunContinuousCrawl(): boolean {
   const s = getSettings()
   // Page-by-page backfill during night mode — not only when "download all" is on.
-  return Boolean(s.nightMode && (s.nightDownloadAll || s.backfillCatalog))
+  if (!s.nightMode || !(s.nightDownloadAll || s.backfillCatalog)) return false
+  // No enabled rules → do not spin the continuous crawl loop.
+  return getWatchRules().some((r) => r.enabled)
 }

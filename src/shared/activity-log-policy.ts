@@ -1,7 +1,7 @@
 import { classifyActivityEntry, type ActivityCategory } from './activity-log-categories'
 import type { ActivityEntry } from './types'
 
-export type ActivityLogVerbosity = 'minimal' | 'normal' | 'verbose' | 'custom'
+export type ActivityLogVerbosity = 'off' | 'minimal' | 'normal' | 'verbose' | 'custom'
 
 export type ActivityLogTopic = ActivityCategory
 
@@ -30,6 +30,19 @@ export const DEFAULT_ACTIVITY_LOG_TOPICS: ActivityLogTopicFlags = {
 }
 
 const PRESET_TOPICS: Record<Exclude<ActivityLogVerbosity, 'custom'>, ActivityLogTopicFlags> = {
+  off: {
+    banned: false,
+    skipped_find: false,
+    discovery: false,
+    new_version: false,
+    download: false,
+    repair_sync: false,
+    library: false,
+    early_access: false,
+    crawl: false,
+    errors: false,
+    other: false
+  },
   minimal: {
     banned: false,
     skipped_find: false,
@@ -143,6 +156,7 @@ export function shouldPersistActivityLog(
   entry: ActivityEntry,
   config: ActivityLogConfig
 ): boolean {
+  if (config.verbosity === 'off') return false
   if (config.verbosity === 'verbose') return true
   if (isEssentialActivityMessage(entry)) return true
   if (isNoisyActivityMessage(entry.message)) return false

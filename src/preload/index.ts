@@ -144,6 +144,18 @@ const api = {
     return () => ipcRenderer.removeListener('library:syncProgress', handler)
   },
 
+  onStorageError: (cb: (message: string) => void) => {
+    const handler = (_: unknown, message: string) => cb(message)
+    ipcRenderer.on('app:storageError', handler)
+    return () => ipcRenderer.removeListener('app:storageError', handler)
+  },
+
+  onSettingsChanged: (cb: (settings: AppSettingsPublic) => void) => {
+    const handler = (_: unknown, settings: AppSettingsPublic) => cb(settings)
+    ipcRenderer.on('settings:changed', handler)
+    return () => ipcRenderer.removeListener('settings:changed', handler)
+  },
+
   onLibraryHashProgress: (cb: (p: LibraryHashVerifyProgress) => void) => {
     const handler = (_: unknown, p: LibraryHashVerifyProgress) => cb(p)
     ipcRenderer.on('library:hashProgress', handler)

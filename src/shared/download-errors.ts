@@ -73,6 +73,15 @@ const INTERRUPTED_RE =
 /** Turn low-level fetch/stream errors into readable text. */
 export function humanizeDownloadError(rawMessage: string, aborted = false): string {
   if (aborted) return 'Download cancelled'
+  if (/ENOENT:.*no such file or directory.*mkdir/i.test(rawMessage)) {
+    const m = rawMessage.match(/mkdir\s+'([^']+)'|mkdir\s+"([^"]+)"/i)
+    const pathHint = m?.[1] ?? m?.[2] ?? ''
+    const drive = pathHint.match(/^([A-Za-z]:)/)?.[1]
+    if (drive) {
+      return `Output drive ${drive} is not available — plug in the disk or update LoRA/Checkpoint folders in Settings`
+    }
+    return 'Cannot create download folder — output drive may be disconnected. Check folders in Settings.'
+  }
   if (isRetryableNetworkError(rawMessage)) {
     return formatNetworkError(rawMessage)
   }
@@ -81,6 +90,20 @@ export function humanizeDownloadError(rawMessage: string, aborted = false): stri
   }
   if (INTERRUPTED_RE.test(rawMessage)) {
     return 'Download interrupted — connection or redirect failed (retry when ready)'
+  }
+  if (/On-disk file SHA256 does not match/i.test(rawMessage)) {
+    return rawMessage
+  }
+  if (/On-disk swarm points to version\s+(\d+)/i.test(rawMessage)) {
+    const m = rawMessage.match(/On-disk swarm points to version\s+(\d+)/i)
+    const vid = m?.[1] ?? '?'
+    return `Folder already has version ${vid} of this model on disk. Remove/move those files or keep the old version — cannot download a different version into the same path.`
+  }
+  if (/Folder already has version\s+(\d+)/i.test(rawMessage)) {
+    return rawMessage
+  }
+  if (/On-disk file belongs to another library version/i.test(rawMessage)) {
+    return 'Same file path already belongs to another library version. Remove or move that file before downloading here.'
   }
   return rawMessage
 }

@@ -70,16 +70,20 @@ export function createThrottledProgressEmitter<T>(
 ): (payload: T & { current?: number; total?: number; phase?: string }) => void {
   let lastAt = 0
   let lastPhase: string | undefined
+  let lastTotal = -1
   return (payload) => {
     const current = payload.current ?? 0
     const total = payload.total ?? 0
     const phase = typeof payload.phase === 'string' ? payload.phase : undefined
     const isFinal = total > 0 && current >= total
     const phaseChanged = phase !== undefined && phase !== lastPhase
+    const totalChanged = total !== lastTotal && total > 0
+    const isStart = current === 0
     const now = Date.now()
-    // Always emit phase changes / start / finish so the UI doesn't jump to 100%.
-    if (!isFinal && !phaseChanged && current !== 0 && now - lastAt < intervalMs) return
+    // Always emit phase/total changes, start (0), and finish so the bar stays in sync.
+    if (!isFinal && !phaseChanged && !totalChanged && !isStart && now - lastAt < intervalMs) return
     lastAt = now
+    lastTotal = total
     if (phase !== undefined) lastPhase = phase
     sendToRenderer(getWindow, channel, payload)
   }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react'
 import { shouldShowDeferredInDownloadStrip } from '../../shared/early-access'
 import type {
   ActivityEntry,
@@ -33,10 +33,12 @@ import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
 import { ActiveDownloadsStrip, StripClearQueueButton } from './components/ActiveDownloadsStrip'
 import { AppBusyOverlay } from './components/AppBusyOverlay'
+import { ConfirmModal } from './components/ConfirmModal'
 import { HelpTab } from './components/HelpTab'
 import { I18nProvider, getMessages, translate } from './i18n/context'
 import { hasAllOutputFolders } from '../../shared/utils'
 import { formatLibrarySyncSummary } from './utils/library-sync-summary'
+import { mergeInventoryPreserveIdentity } from './utils/inventory-merge'
 import { collectTagSuggestions } from '../../shared/tag-routing'
 import { applyAppearanceToDocument, appearanceFromSettings } from '../../shared/appearance'
 
@@ -80,8 +82,11 @@ export default function App() {
   const [status, setStatus] = useState<AppStatus>('idle')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [storageErrorModal, setStorageErrorModal] = useState<string | null>(null)
+  const [storageOffline, setStorageOffline] = useState(false)
   const [galleryFocusModelId, setGalleryFocusModelId] = useState<number | null>(null)
   const [galleryFocusCivitaiTag, setGalleryFocusCivitaiTag] = useState<string | null>(null)
+  const [tagsFocusSearch, setTagsFocusSearch] = useState<string | null>(null)
   const [scheduleInfo, setScheduleInfo] = useState<ScanScheduleInfo | null>(null)
   const [tagPromptQueue, setTagPromptQueue] = useState<TagAssignmentPrompt[]>([])
   const [versionScanProgress, setVersionScanProgress] = useState<LibraryVersionScanProgress | null>(null)
@@ -105,11 +110,16 @@ export default function App() {
     pageModelsAdded: number
     pageModelsOnPage: number
     galleryTotal: number
+    galleryStats?: import('../../shared/types').BrowseGalleryStats
     catalogComplete?: boolean
     hasMorePages?: boolean
     pageQueued?: number
   } | null>(null)
   const [crawlProgress, setCrawlProgress] = useState<CrawlProgressPayload | null>(null)
+  const updateBrowseOnCrawlRef = useRef(false)
+  updateBrowseOnCrawlRef.current = settings?.updateBrowseOnCrawl ?? false
+  const hasEnabledWatchRulesRef = useRef(false)
+  hasEnabledWatchRulesRef.current = watchRules.some((r) => r.enabled)
   const [previewRepairActive, setPreviewRepairActive] = useState(false)
   const busyRef = useRef(false)
   const previewRepairRef = useRef(false)
@@ -175,6 +185,36 @@ export default function App() {
 
   useEffect(() => {
     if (!window.api) return
+    return window.api.onStorageError((message) => {
+      setStorageErrorModal(message)
+      setActionError(message)
+      setStorageOffline(true)
+      setBrowseGalleryAwaiting(false)
+      setQueuePaused(true)
+      setBackgroundStatus(null)
+      setBusy(null)
+      setSyncProgress(null)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!window.api) return
+    return window.api.onSettingsChanged((next) => {
+      setSettings(next)
+      if (!next.nightMode) setBrowseGalleryAwaiting(false)
+      else if (!hasEnabledWatchRulesRef.current) setBrowseGalleryAwaiting(false)
+      if (next.crawlAutoDownload === false) setQueuePaused(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!watchRules.some((r) => r.enabled)) {
+      setBrowseGalleryAwaiting(false)
+    }
+  }, [watchRules])
+
+  useEffect(() => {
+    if (!window.api) return
     return window.api.onLibrarySyncProgress((p) => {
       setSyncProgress(p)
       if (!busyRef.current && !previewRepairRef.current) return
@@ -184,7 +224,15 @@ export default function App() {
         const subMessage =
           p.phase === 'preview'
             ? translate(loc, 'app.bgCheckingPreviews')
-            : translate(loc, 'app.busySyncingLibrary')
+            : p.phase === 'import'
+              ? translate(loc, 'appBusy.phaseImport')
+              : p.phase === 'checking'
+                ? translate(loc, 'appBusy.phaseChecking')
+                : p.phase === 'metadata'
+                  ? translate(loc, 'appBusy.phaseMetadata')
+                  : p.phase === 'identity'
+                    ? translate(loc, 'appBusy.phaseIdentity')
+                    : translate(loc, 'app.busySyncingLibrary')
         return { ...prev, subMessage, syncProgress: p }
       })
     })
@@ -192,10 +240,23 @@ export default function App() {
 
   useEffect(() => {
     const refreshSchedule = () => {
-      void window.api.getScanScheduleInfo().then(setScheduleInfo).catch(() => {})
+      void window.api.getScanScheduleInfo().then((info) => {
+        setScheduleInfo((prev) => {
+          if (
+            prev &&
+            prev.nextScanAt === info.nextScanAt &&
+            prev.scanIntervalMinutes === info.scanIntervalMinutes &&
+            prev.nightMode === info.nightMode &&
+            prev.crawlRunning === info.crawlRunning
+          ) {
+            return prev
+          }
+          return info
+        })
+      }).catch(() => {})
     }
     refreshSchedule()
-    const id = window.setInterval(refreshSchedule, 30_000)
+    const id = window.setInterval(refreshSchedule, 60_000)
     return () => window.clearInterval(id)
   }, [status, settings?.nightMode])
 
@@ -212,7 +273,7 @@ export default function App() {
     try {
       if (syncDisk) setSyncProgress(null)
       const inv = await window.api.getInventory({ syncDisk })
-      setInventory(inv.items)
+      setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
       const q = await window.api.reconcileDownloadQueue()
       setQueue(q.items)
       setQueuePaused(q.paused)
@@ -247,7 +308,7 @@ export default function App() {
           setActivity(act)
           setPending(pend)
           setDeferred(def)
-          setInventory(inv.items)
+          setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
           if (options?.syncDisk) {
             setSyncMessage(formatLibrarySyncSummary(inv, s.locale ?? 'en'))
           } else if (inv.removedMissing > 0 || inv.repairedPreviews > 0) {
@@ -318,65 +379,140 @@ export default function App() {
       setActivity(act)
       setPending(pend)
       setDeferred(def)
-      setInventory(inv.items)
+      setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+      // Only await Civitai crawl UI when Harvest is on AND at least one rule can crawl.
+      setBrowseGalleryAwaiting(Boolean(s.nightMode) && watch.some((r) => r.enabled))
       const q = await window.api.reconcileDownloadQueue()
       setQueue(q.items)
-      setQueuePaused(q.paused)
+      setQueuePaused(q.paused || s.crawlAutoDownload === false)
       setStatus(await window.api.getScanStatus())
 
+      // One continuous busy popup — single disk sync (import + verify). Do not split into
+      // skipDiskImport + diskImportOnly + scheduler sync (that flashed "Scanning disk" twice).
       setBusy({
-        message: translate(loc, 'load.starting'),
-        subMessage: translate(loc, 'app.busySyncingLibrary'),
-        syncProgress: null
+        message: translate(loc, 'app.busySyncingLibrary'),
+        subMessage: translate(loc, 'appBusy.phaseImport'),
+        // Start on import — not checking. Starting at "checking" made AppBusyOverlay
+        // discard real import progress (phase rank went backwards).
+        syncProgress: {
+          phase: 'import',
+          current: 0,
+          total: 0,
+          modelName: '',
+          action: translate(loc, 'appBusy.phaseStarting')
+        }
       })
       setSyncProgress(null)
-      // Fast startup: verify inventory paths only (no full folder walk).
       const synced = await window.api.getInventory({
         syncDisk: true,
         skipHashBackfill: true,
-        skipDiskImport: true
+        skipIdentityBackfill: true
       })
-      setInventory(synced.items)
+      setInventory((prev) => mergeInventoryPreserveIdentity(prev, synced.items))
       setSyncMessage(formatLibrarySyncSummary(synced, loc))
+      if (synced.storageError) {
+        setStorageErrorModal(synced.storageError)
+        setActionError(synced.storageError)
+        setStorageOffline(true)
+        setBrowseGalleryAwaiting(false)
+        setBusy(null)
+        setSyncProgress(null)
+        setBackgroundStatus(null)
+        setStartupReady(true)
+        setTab('settings')
+        try {
+          const s = await window.api.getSettings()
+          setSettings(s)
+          setQueuePaused(true)
+        } catch {
+          /* ignore */
+        }
+        // Ready for UI only — main will not start crawl while drive is offline.
+        await window.api.notifyRendererReady()
+        return
+      }
       const qAfter = await window.api.reconcileDownloadQueue()
       setQueue(qAfter.items)
       setQueuePaused(qAfter.paused)
 
-      const enrichedDeferred = await window.api.enrichDeferred()
-      setDeferred(enrichedDeferred)
-
+      // Keep overlay for session prep — do not reset progress to 0% / re-show Scanning disk.
+      setBusy((prev) =>
+        prev
+          ? {
+              ...prev,
+              subMessage: translate(loc, 'app.busyPreparingSession')
+            }
+          : {
+              message: translate(loc, 'app.busySyncingLibrary'),
+              subMessage: translate(loc, 'app.busyPreparingSession')
+            }
+      )
+      await window.api.notifyRendererReady()
       setStartupReady(true)
-      void window.api.notifyRendererReady()
-
-      // Background: scan folders for manually copied models (non-blocking).
-      void (async () => {
-        setBackgroundStatus(translate(loc, 'app.bgScanningDisk'))
+    }, translate('en', 'load.loadingSettings'))
+      .then(async () => {
         try {
-          const imported = await window.api.getInventory({
-            syncDisk: true,
-            skipHashBackfill: true,
-            diskImportOnly: true
-          })
-          if (
-            (imported.importedFromDisk ?? 0) > 0 ||
-            (imported.relinkedFromDisk ?? 0) > 0
-          ) {
-            setInventory(imported.items)
-            setSyncMessage(formatLibrarySyncSummary(imported, loc))
-          }
+          const enrichedDeferred = await window.api.enrichDeferred()
+          setDeferred(enrichedDeferred)
         } catch {
-          /* ignore background import errors */
-        } finally {
-          setBackgroundStatus(null)
-          setSyncProgress(null)
+          /* ignore */
         }
-      })()
-    }, translate('en', 'load.loadingSettings')).catch((err) => {
+      })
+      .catch((err) => {
       setLoadError(err instanceof Error ? err.message : String(err))
       setStartupReady(true)
       void window.api.notifyRendererReady()
     })
     const prevQueueStatus = new Map<string, DownloadQueueItem['status']>()
+    let lastQueueStructureKey = ''
+    let progressQueueTimer: number | null = null
+    let pendingProgressQueue: { items: DownloadQueueItem[]; paused: boolean } | null = null
+    let inventoryRefreshTimer: number | null = null
+    let crawlProgressTimer: number | null = null
+    let pendingCrawlProgress: CrawlProgressPayload | null = null
+
+    const queueStructureKey = (q: { items: DownloadQueueItem[]; paused: boolean }) =>
+      `${q.paused}|${q.items.map((i) => `${i.id}:${i.status}:${i.manual ? 1 : 0}`).join(',')}`
+
+    const applyQueueState = (q: { items: DownloadQueueItem[]; paused: boolean }) => {
+      let needsInventory = false
+      const hadActive = Array.from(prevQueueStatus.values()).some(
+        (s) => s === 'queued' || s === 'downloading'
+      )
+      for (const item of q.items) {
+        const prev = prevQueueStatus.get(item.id)
+        if (item.status === 'done' && prev !== 'done') needsInventory = true
+        if (
+          prev === 'downloading' &&
+          (item.status === 'done' ||
+            item.status === 'failed' ||
+            item.status === 'skipped' ||
+            item.status === 'deferred' ||
+            item.status === 'queued')
+        ) {
+          needsInventory = true
+        }
+      }
+      for (const [id, status] of Array.from(prevQueueStatus.entries())) {
+        if (status === 'downloading' && !q.items.some((i) => i.id === id)) {
+          needsInventory = true
+        }
+      }
+      prevQueueStatus.clear()
+      for (const item of q.items) prevQueueStatus.set(item.id, item.status)
+
+      setQueue(q.items)
+      setQueuePaused(q.paused)
+      const hasActive = q.items.some((i) => i.status === 'queued' || i.status === 'downloading')
+      if (needsInventory || (hadActive && !hasActive)) {
+        if (inventoryRefreshTimer) window.clearTimeout(inventoryRefreshTimer)
+        inventoryRefreshTimer = window.setTimeout(() => {
+          inventoryRefreshTimer = null
+          void refreshInventory()
+        }, 600)
+      }
+    }
+
     const unsubs = [
       window.api.onActivity((e) =>
         setActivity((prev) => {
@@ -391,86 +527,123 @@ export default function App() {
       }),
       window.api.onAppStatus(setStatus),
       window.api.onCrawlPage((payload) => {
-        const result: WatchRuleTestResult = payload.result.crawlSource
-          ? payload.result
-          : { ...payload.result, crawlSource: 'night' }
         setBrowseGalleryAwaiting(false)
-        setLiveCrawlBrowse(result)
-        setCrawlPageMeta({
+        setCrawlPageMeta((prev) => {
+          const catalogComplete =
+            Boolean(payload.catalogComplete) && prev?.hasMorePages !== true
+          const hasMorePages = catalogComplete
+            ? false
+            : Boolean(
+                payload.hasMorePages ??
+                  payload.result.nextCursor ??
+                  (prev?.hasMorePages ? true : false)
+              )
+          return {
             ruleId: payload.ruleId,
             ruleName: payload.ruleName,
             pageNumber: payload.pageNumber,
             pageModelsAdded: payload.pageModelsAdded ?? 0,
             pageModelsOnPage: payload.pageModelsOnPage ?? 0,
             galleryTotal: payload.galleryTotal ?? payload.result.sampleModels.length,
-            catalogComplete: payload.catalogComplete,
-            hasMorePages: payload.catalogComplete ? false : Boolean(payload.result.nextCursor),
+            galleryStats: payload.galleryStats ?? prev?.galleryStats,
+            catalogComplete,
+            hasMorePages,
             pageQueued: payload.pageQueued ?? 0
-          })
+          }
+        })
+        // Quiet harvest: status/meta only — do not replace the live gallery (keeps Library/Browse snappy).
+        if (!updateBrowseOnCrawlRef.current && payload.result.crawlSource) return
+        const result: WatchRuleTestResult = payload.result.crawlSource
+          ? payload.result
+          : { ...payload.result, crawlSource: 'night' }
+        // Defer gallery replace so wheel/scroll stays responsive during page fetch.
+        startTransition(() => setLiveCrawlBrowse(result))
       }),
       window.api.onCrawlBrowseReset(() => {
         setLiveCrawlBrowse(null)
         setCrawlPageMeta(null)
         setCrawlProgress(null)
-        setBrowseGalleryAwaiting(true)
+        setBrowseGalleryAwaiting(hasEnabledWatchRulesRef.current)
       }),
       window.api.onCrawlProgress((payload) => {
-        setCrawlProgress(payload)
-        if (
-          payload?.phase === 'fetching' ||
-          payload?.phase === 'fetching-tags' ||
-          payload?.phase === 'page-done' ||
-          payload?.phase === 'catalog-complete'
-        ) {
-          setBrowseGalleryAwaiting(false)
+        const applyProgress = (p: CrawlProgressPayload | null) => {
+          startTransition(() => setCrawlProgress(p))
+          if (
+            p?.phase === 'fetching' ||
+            p?.phase === 'fetching-tags' ||
+            p?.phase === 'page-done' ||
+            p?.phase === 'catalog-complete'
+          ) {
+            setBrowseGalleryAwaiting(false)
+          }
+          if (p?.phase === 'page-done' || p?.phase === 'catalog-complete') {
+            setCrawlPageMeta((prev) => ({
+              ruleId: p.ruleId,
+              ruleName: p.ruleName,
+              pageNumber: p.pageNumber ?? prev?.pageNumber ?? 1,
+              pageModelsAdded: prev?.pageModelsAdded ?? 0,
+              pageModelsOnPage: p.pageModelsOnPage ?? prev?.pageModelsOnPage ?? 0,
+              galleryTotal: p.galleryTotal ?? prev?.galleryTotal ?? 0,
+              galleryStats: p.galleryStats ?? prev?.galleryStats,
+              catalogComplete: p.catalogComplete,
+              hasMorePages: p.hasMorePages,
+              pageQueued: prev?.pageQueued
+            }))
+          }
         }
-        if (payload?.phase === 'page-done' || payload?.phase === 'catalog-complete') {
-          setCrawlPageMeta((prev) => ({
-            ruleId: payload.ruleId,
-            ruleName: payload.ruleName,
-            pageNumber: payload.pageNumber ?? prev?.pageNumber ?? 1,
-            pageModelsAdded: prev?.pageModelsAdded ?? 0,
-            pageModelsOnPage: payload.pageModelsOnPage ?? prev?.pageModelsOnPage ?? 0,
-            galleryTotal: payload.galleryTotal ?? prev?.galleryTotal ?? 0,
-            catalogComplete: payload.catalogComplete,
-            hasMorePages: payload.hasMorePages,
-            pageQueued: prev?.pageQueued
-          }))
+
+        // Waiting / clear — apply immediately. Fetching spam — coalesce (~400ms).
+        if (!payload || payload.phase === 'waiting' || payload.phase === 'catalog-complete') {
+          if (crawlProgressTimer != null) {
+            window.clearTimeout(crawlProgressTimer)
+            crawlProgressTimer = null
+            pendingCrawlProgress = null
+          }
+          applyProgress(payload)
+          return
         }
+
+        pendingCrawlProgress = payload
+        if (crawlProgressTimer != null) return
+        crawlProgressTimer = window.setTimeout(() => {
+          crawlProgressTimer = null
+          const pending = pendingCrawlProgress
+          pendingCrawlProgress = null
+          if (pending) applyProgress(pending)
+        }, 400)
       }),
       window.api.onPendingVersions(setPending),
       window.api.onDeferredVersions((def) => {
         setDeferred(def)
         void window.api.reconcileDownloadQueue().then((q) => {
-          setQueue(q.items)
-          setQueuePaused(q.paused)
+          lastQueueStructureKey = queueStructureKey(q)
+          applyQueueState(q)
         })
       }),
       window.api.onDownloadQueue((q) => {
-        let needsInventory = false
-        const hadActive = [...prevQueueStatus.values()].some(
-          (s) => s === 'queued' || s === 'downloading'
-        )
-        for (const item of q.items) {
-          const prev = prevQueueStatus.get(item.id)
-          if (item.status === 'done' && prev !== 'done') needsInventory = true
-          if (prev === 'downloading' && item.status !== 'downloading') needsInventory = true
-          if (prev === 'queued' && item.status !== 'queued') needsInventory = true
-        }
-        for (const [id, status] of prevQueueStatus) {
-          if (status === 'downloading' && !q.items.some((i) => i.id === id)) {
-            needsInventory = true
+        const key = queueStructureKey(q)
+        if (key !== lastQueueStructureKey) {
+          lastQueueStructureKey = key
+          if (progressQueueTimer != null) {
+            window.clearTimeout(progressQueueTimer)
+            progressQueueTimer = null
+            pendingProgressQueue = null
           }
+          applyQueueState(q)
+          return
         }
-        prevQueueStatus.clear()
-        for (const item of q.items) prevQueueStatus.set(item.id, item.status)
-
-        setQueue(q.items)
-        setQueuePaused(q.paused)
-        const hasActive = q.items.some((i) => i.status === 'queued' || i.status === 'downloading')
-        if (needsInventory || (hadActive && !hasActive)) {
-          void refreshInventory()
-        }
+        // Byte progress only — coalesce so Browse/Library are not re-rendered every IPC tick.
+        pendingProgressQueue = q
+        if (progressQueueTimer != null) return
+        progressQueueTimer = window.setTimeout(() => {
+          progressQueueTimer = null
+          const pending = pendingProgressQueue
+          pendingProgressQueue = null
+          if (pending) {
+            setQueue(pending.items)
+            setQueuePaused(pending.paused)
+          }
+        }, 900)
       }),
       window.api.onTagAssignmentPrompt((prompt) => {
         setTagPromptQueue((prev) => {
@@ -486,7 +659,12 @@ export default function App() {
         void refreshAfterScan()
       })
     ]
-    return () => unsubs.forEach((u) => u())
+    return () => {
+      if (progressQueueTimer != null) window.clearTimeout(progressQueueTimer)
+      if (crawlProgressTimer != null) window.clearTimeout(crawlProgressTimer)
+      if (inventoryRefreshTimer != null) window.clearTimeout(inventoryRefreshTimer)
+      unsubs.forEach((u) => u())
+    }
   }, [refreshAfterScan, refreshInventory, withBusy])
 
   useEffect(() => {
@@ -559,21 +737,40 @@ export default function App() {
   const saveSettings = async (partial: AppSettingsSave) => {
     const next = await window.api.saveSettings(partial)
     setSettings(next)
+    // Paths may point at a live drive again after Settings edit.
+    if (
+      partial.loraOutputFolder !== undefined ||
+      partial.checkpointOutputFolder !== undefined ||
+      partial.loraFolder !== undefined ||
+      partial.checkpointFolder !== undefined
+    ) {
+      setStorageOffline(false)
+      setActionError(null)
+    }
   }
 
-  const outputFoldersReady = settings
+  const foldersConfigured = settings
     ? hasAllOutputFolders(settings.loraOutputFolder, settings.checkpointOutputFolder)
     : false
+  const outputFoldersReady = foldersConfigured && !storageOffline
 
   const promptOutputFolders = (loc: 'en' | 'lt' = settings?.locale ?? 'en') => {
-    setActionError(translate(loc, 'app.needOutputFolders'))
+    setActionError(
+      storageOffline
+        ? translate(loc, 'app.outputDriveMissing')
+        : translate(loc, 'app.needOutputFolders')
+    )
     setTab('settings')
   }
 
   const toggleNightMode = async () => {
     if (!settings) return
     const enabling = !settings.nightMode
-    if (enabling && !hasAllOutputFolders(settings.loraOutputFolder, settings.checkpointOutputFolder)) {
+    if (enabling && storageOffline) {
+      promptOutputFolders()
+      return
+    }
+    if (enabling && !foldersConfigured) {
       promptOutputFolders()
       return
     }
@@ -582,6 +779,7 @@ export default function App() {
       partial.scanIntervalMinutes = 60
     }
     await saveSettings(partial)
+    setBrowseGalleryAwaiting(enabling && watchRules.some((r) => r.enabled))
   }
 
   const refreshDownloadQueueState = async () => {
@@ -623,6 +821,21 @@ export default function App() {
     await saveSettings({ blurPreviews: !settings.blurPreviews })
   }
 
+  const toggleBrowseLiveGrid = async () => {
+    if (!settings) return
+    const next = !(settings.updateBrowseOnCrawl ?? false)
+    await saveSettings({ updateBrowseOnCrawl: next })
+    if (next) {
+      const gallery = await window.api.getBrowseGallery()
+      if (gallery) setLiveCrawlBrowse(gallery)
+    }
+  }
+
+  const applyBrowseSnapshot = useCallback((gallery: WatchRuleTestResult) => {
+    setLiveCrawlBrowse(gallery)
+    setBrowseGalleryAwaiting(false)
+  }, [])
+
   const clearDownloadQueue = async () => {
     setClearQueueBusy(true)
     try {
@@ -654,19 +867,47 @@ export default function App() {
   const saveWatchRules = async (rules: WatchRule[]) => {
     const next = await window.api.saveWatchRules(rules)
     setWatchRules(next)
+    const anyEnabled = next.some((r) => r.enabled)
+    if (!anyEnabled) {
+      setBrowseGalleryAwaiting(false)
+      setCrawlProgress(null)
+    } else if (settings?.nightMode) {
+      setBrowseGalleryAwaiting(true)
+    }
   }
 
   const markBrowseModelBan = useCallback((modelId: number, banned: boolean) => {
     setLiveCrawlBrowse((prev) => {
       if (!prev) return prev
-      if (!prev.sampleModels.some((m) => m.id === modelId)) return prev
-      return {
-        ...prev,
-        sampleModels: prev.sampleModels.map((m) =>
-          m.id === modelId ? { ...m, isBanned: banned } : m
-        )
+      const idx = prev.sampleModels.findIndex((m) => m.id === modelId)
+      if (idx < 0) return prev
+      // Ban: drop the card immediately (avoid remapping thousands of models → UI freeze).
+      if (banned) {
+        const sampleModels = prev.sampleModels.slice()
+        sampleModels.splice(idx, 1)
+        return { ...prev, sampleModels }
       }
+      const sampleModels = prev.sampleModels.slice()
+      sampleModels[idx] = { ...sampleModels[idx], isBanned: false }
+      return { ...prev, sampleModels }
     })
+  }, [])
+
+  const jumpToGallery = useCallback((modelId: number) => {
+    setGalleryFocusModelId(modelId)
+    setTab('gallery')
+  }, [])
+
+  const openTagFolders = useCallback((tag: string) => {
+    setTagsFocusSearch(tag)
+    setTab('tags')
+  }, [])
+
+  const clearGalleryFocusModel = useCallback(() => setGalleryFocusModelId(null), [])
+  const clearGalleryFocusTag = useCallback(() => setGalleryFocusCivitaiTag(null), [])
+  const onShowBannedChange = useCallback(async (show: boolean) => {
+    const next = await window.api.saveSettings({ showBannedInGallery: show })
+    setSettings(next)
   }, [])
 
   const retryDeferred = async () => {
@@ -705,11 +946,21 @@ export default function App() {
     }
     try {
       setActionError(null)
+      setBrowseGalleryAwaiting(true)
+      // Keep previous snapshot visible until the new one arrives (quiet mode otherwise stays empty).
+      setCrawlPageMeta(null)
+      setCrawlProgress(null)
       await window.api.runScan()
       const gallery = await window.api.getBrowseGallery()
-      if (gallery) setLiveCrawlBrowse(gallery)
+      if (gallery) {
+        setLiveCrawlBrowse(gallery)
+        setBrowseGalleryAwaiting(false)
+      } else {
+        setBrowseGalleryAwaiting(false)
+      }
       await refresh()
     } catch (err) {
+      setBrowseGalleryAwaiting(false)
       setActionError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -731,7 +982,7 @@ export default function App() {
         repairPreviews: true,
         syncDisk: false
       })
-      setInventory(result.items)
+      setInventory((prev) => mergeInventoryPreserveIdentity(prev, result.items))
       const ratingCount = result.repairedRatings ?? 0
       if (result.repairedPreviews > 0 || ratingCount > 0) {
         const parts: string[] = []
@@ -786,46 +1037,35 @@ export default function App() {
     )
   }
 
-  if (!settings) {
-    const m = getMessages('en')
-    return (
-      <I18nProvider locale="en">
-        <AppBusyOverlay
-          message={busy?.message ?? m.load.starting}
-          subMessage={busy?.subMessage ?? m.load.loadingSettings}
-          syncProgress={busy?.syncProgress ?? syncProgress}
-        />
-      </I18nProvider>
-    )
-  }
-
-  const locale = settings.locale ?? 'en'
+  const locale = settings?.locale ?? 'en'
   const m = getMessages(locale)
+  const theme = settings?.theme ?? 'dark'
+  const uiExtended = settings?.uiMode === 'extended'
+  const showBusyOverlay = (Boolean(busy) || !settings) && !storageErrorModal
 
   const activeDownloads = queue.filter((q) => q.status === 'downloading' || q.status === 'queued').length
-  const downloadModeManual = settings.manualQueueMode ?? false
-  const downloadsPaused = settings.crawlAutoDownload === false
+  const downloadModeManual = settings?.manualQueueMode ?? false
+  const downloadsPaused = settings?.crawlAutoDownload === false
   const showDownloadsToggle = outputFoldersReady
   const enabledRulesCount = watchRules.filter((r) => r.enabled).length
   const crawlLiveState = getCrawlLiveState({
-    nightMode: settings.nightMode,
-    crawlAutoDownload: settings.crawlAutoDownload ?? true,
+    nightMode: settings?.nightMode ?? false,
+    crawlAutoDownload: settings?.crawlAutoDownload ?? true,
     hasOutputFolder: outputFoldersReady,
     enabledRulesCount
   })
-  const uiExtended = settings.uiMode === 'extended'
-  const theme = settings.theme ?? 'dark'
 
   const showGlobalStatus =
     Boolean(backgroundStatus) ||
     crawlScanning ||
     status === 'checking' ||
     status === 'downloading' ||
+    Boolean(crawlProgress) ||
     queue.some(
       (i) => i.status === 'downloading' || i.status === 'queued' || i.status === 'failed'
     ) ||
     unlockTodayCount > 0 ||
-    (startupReady && browseGalleryAwaiting && status === 'idle' && !busy)
+    (startupReady && Boolean(settings?.nightMode) && !storageOffline && !busy)
 
   const tabs: { id: Tab; label: string; badge?: number; badgePrefix?: string }[] = [
     { id: 'watch', label: m.tabs.browse, badge: activeDownloads || undefined },
@@ -841,16 +1081,17 @@ export default function App() {
 
   return (
     <I18nProvider locale={locale}>
+      {showBusyOverlay && (
+        <AppBusyOverlay
+          message={busy?.message ?? m.load.starting}
+          subMessage={busy?.subMessage ?? m.load.loadingSettings}
+          syncProgress={busy?.syncProgress ?? syncProgress}
+        />
+      )}
+      {settings && (
     <div
       className={`app ${settings.blurPreviews ? 'blur-previews' : ''} ${theme === 'light' ? 'theme-light' : theme === 'gothic' ? 'theme-gothic' : theme === 'candy' ? 'theme-candy' : theme === 'aroma' ? 'theme-aroma' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}`}
     >
-      {busy && (
-        <AppBusyOverlay
-          message={busy.message}
-          subMessage={busy.subMessage}
-          syncProgress={busy.syncProgress ?? syncProgress}
-        />
-      )}
       <header className="header">
         <div className="header-brand">
           {appIconUrl && (
@@ -923,6 +1164,24 @@ export default function App() {
           >
             {m.header.blur}
           </button>
+          <button
+            type="button"
+            className={`btn-sm ${settings.updateBrowseOnCrawl ? 'toggle-on' : 'btn-ghost'}`}
+            onClick={() => void toggleBrowseLiveGrid()}
+            title={
+              settings.updateBrowseOnCrawl
+                ? m.header.tooltipBrowseLiveOn
+                : m.header.tooltipBrowseLiveOff
+            }
+            aria-pressed={Boolean(settings.updateBrowseOnCrawl)}
+            aria-label={
+              settings.updateBrowseOnCrawl
+                ? m.header.tooltipBrowseLiveOn
+                : m.header.tooltipBrowseLiveOff
+            }
+          >
+            {settings.updateBrowseOnCrawl ? m.header.browseLiveOn : m.header.browseLiveOff}
+          </button>
           {watchRulesSaveState === 'unsaved' && (
             <span className="header-watch-rules-unsaved" role="status">
               Unsaved changes — press <strong>Save rules</strong> to apply filters and start scan.
@@ -968,11 +1227,28 @@ export default function App() {
         </div>
       </header>
 
-      {!settings.nightMode &&
-        (!outputFoldersReady || enabledRulesCount === 0) && (
+      {storageOffline ? (
+        <div className="get-started-banner get-started-banner-error" role="alert">
+          {actionError ?? m.app.outputDriveMissing}
+          <div className="get-started-banner-actions">
+            <button type="button" className="btn-sm" onClick={() => setTab('settings')}>
+              {m.common.openSettings}
+            </button>
+          </div>
+        </div>
+      ) : actionError ? (
+        <div className="action-error-bar" role="alert">
+          {actionError}
+          <button type="button" onClick={() => setActionError(null)}>
+            ×
+          </button>
+        </div>
+      ) : (
+        !settings.nightMode &&
+        (!foldersConfigured || enabledRulesCount === 0) && (
           <div className="get-started-banner" role="status">
             <strong>{m.header.quickStart}</strong>{' '}
-            {!outputFoldersReady ? (
+            {!foldersConfigured ? (
               <>{m.header.setOutputFolders}</>
             ) : (
               <>{m.header.enableBrowseRule}</>
@@ -982,12 +1258,12 @@ export default function App() {
               <span className="muted"> · {m.header.nsfwNeedsKey}</span>
             )}
             <div className="get-started-banner-actions">
-              {!outputFoldersReady && (
+              {!foldersConfigured && (
                 <button type="button" className="btn-sm" onClick={() => setTab('settings')}>
                   {m.common.openSettings}
                 </button>
               )}
-              {outputFoldersReady && enabledRulesCount === 0 && (
+              {foldersConfigured && enabledRulesCount === 0 && (
                 <button type="button" className="btn-sm" onClick={() => setTab('watch')}>
                   {m.header.openBrowseRules}
                 </button>
@@ -997,9 +1273,10 @@ export default function App() {
               </button>
             </div>
           </div>
-        )}
+        )
+      )}
 
-      {settings.nightMode && (
+      {settings.nightMode && !storageOffline && (
         <NightModeBanner
           hasOutputFolder={outputFoldersReady}
           enabledRulesCount={enabledRulesCount}
@@ -1034,15 +1311,6 @@ export default function App() {
             </div>
           )}
       </nav>
-
-      {actionError && (
-        <div className="action-error-bar">
-          {actionError}
-          <button type="button" onClick={() => setActionError(null)}>
-            ×
-          </button>
-        </div>
-      )}
 
       {hasPipelineQueue &&
         shouldShowDownloadStrip(settings.downloadStripVisibility ?? 'off', tab) && (
@@ -1081,18 +1349,18 @@ export default function App() {
         <div className={tab === 'gallery' ? '' : 'tab-hidden'}>
           <GalleryTab
             inventory={inventory}
-            queue={queue}
             tagRules={tagRules}
-            domain={settings.domain}
-            defaultLinkDomain={settings.domain === 'red' ? 'red' : 'com'}
+            domain="red"
+            defaultLinkDomain="red"
             uiExtended={uiExtended}
             showBannedInGallery={settings.showBannedInGallery}
-            onShowBannedChange={(show) => saveSettings({ showBannedInGallery: show })}
+            onShowBannedChange={onShowBannedChange}
             onSaveTagRules={saveTagRules}
             focusModelId={galleryFocusModelId}
-            onFocusHandled={() => setGalleryFocusModelId(null)}
+            onFocusHandled={clearGalleryFocusModel}
             focusCivitaiTag={galleryFocusCivitaiTag}
-            onFocusTagHandled={() => setGalleryFocusCivitaiTag(null)}
+            onFocusTagHandled={clearGalleryFocusTag}
+            onOpenTagFolders={openTagFolders}
             onRefresh={refreshInventory}
             onBusyAction={withBusy}
             onRepairPreviews={repairLibraryPreviews}
@@ -1103,6 +1371,8 @@ export default function App() {
             sessionDownloadIds={sessionDownloadIds}
             highlightVersionIds={libraryHighlightIds}
             isActive={tab === 'gallery'}
+            resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
+            resultsPageSize={settings.resultsPageSize ?? 100}
           />
         </div>
         <div className={tab === 'download' ? '' : 'tab-hidden'}>
@@ -1130,17 +1400,16 @@ export default function App() {
             crawlProgress={crawlProgress}
             onStartDownloads={startDownloads}
             onRetryDeferred={retryDeferred}
-            onJumpToGallery={(modelId) => {
-              setGalleryFocusModelId(modelId)
-              setTab('gallery')
-            }}
+            onJumpToGallery={jumpToGallery}
+            onOpenTagFolders={openTagFolders}
             onSaveTagRules={saveTagRules}
             onRefreshInventory={refreshInventory}
             onSaveSettings={saveSettings}
             onBrowseModelBanChange={markBrowseModelBan}
             onOpenActivity={() => setTab('activity')}
-            browseGalleryAwaiting={browseGalleryAwaiting}
-            onRunScan={runScan}
+            onBrowseSnapshot={applyBrowseSnapshot}
+            browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
+            onRunScan={storageOffline ? undefined : runScan}
             onSaveStateChange={setWatchRulesSaveState}
           />
         </div>
@@ -1154,6 +1423,8 @@ export default function App() {
             onSave={saveTagRules}
             onRefresh={refresh}
             onMoveStatus={setBackgroundStatus}
+            focusSearchTag={tagsFocusSearch}
+            onFocusSearchHandled={() => setTagsFocusSearch(null)}
             onFilterLibrary={(tag) => {
               setGalleryFocusCivitaiTag(tag)
               setTab('gallery')
@@ -1176,9 +1447,10 @@ export default function App() {
         <div className={tab === 'awaiting' ? '' : 'tab-hidden'}>
           <DeferredTab
             deferred={deferred}
-            domain={settings.domain}
+            domain="red"
             hasApiKey={settings.hasApiKey}
             onRefresh={refresh}
+            isActive={tab === 'awaiting'}
           />
         </div>
         <div className={tab === 'activity' ? '' : 'tab-hidden'}>
@@ -1215,9 +1487,22 @@ export default function App() {
         uiExtended={uiExtended}
         deferredDownloads={deferred}
         inventory={inventory}
-        extraMessage={backgroundStatus}
+        extraMessage={
+          storageOffline
+            ? null
+            : backgroundStatus
+        }
         syncProgress={busy || previewRepairActive || backgroundStatus ? syncProgress : null}
-        showReadyIdle={startupReady && browseGalleryAwaiting && status === 'idle' && !busy}
+        showReadyIdle={
+          startupReady &&
+          settings.nightMode &&
+          status === 'idle' &&
+          !busy &&
+          !storageOffline &&
+          !crawlProgress &&
+          !browseGalleryAwaiting &&
+          (liveCrawlBrowse?.sampleModels?.length ?? 0) > 0
+        }
         suppressIdlePipeline={suppressIdlePipeline}
         versionScanning={versionScanning}
         versionScanProgress={versionScanProgress}
@@ -1243,7 +1528,22 @@ export default function App() {
           }}
         />
       )}
+
+      {storageErrorModal && (
+        <ConfirmModal
+          title={m.app.outputDriveMissingTitle}
+          message={storageErrorModal}
+          confirmLabel={m.common.openSettings}
+          cancelLabel={m.common.dismiss}
+          onConfirm={() => {
+            setStorageErrorModal(null)
+            setTab('settings')
+          }}
+          onCancel={() => setStorageErrorModal(null)}
+        />
+      )}
     </div>
+      )}
     </I18nProvider>
   )
 }
