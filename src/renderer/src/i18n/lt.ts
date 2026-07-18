@@ -45,28 +45,23 @@ export const lt: Messages = {
     setOutputFolders: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose.',
     enableBrowseRule: 'Įjunkite bent vieną Browse taisyklę (On → Save).',
     thenNightMode: 'Tada spauskite 🌙 Night mode antraštėje.',
-    thenHarvest: 'Tada spauskite Scan arba Harvest antraštėje.',
+    thenHarvest: 'Tada spauskite Harvest antraštėje.',
     nsfwNeedsKey: 'NSFW/restricted turiniui reikia Civitai API rakto Nustatymuose.',
     openBrowseRules: 'Atidaryti Browse taisykles',
     tooltipNightAllOn: 'Night mode įjungtas — siunčiami visi atitinkantys modeliai. Spauskite, kad išjungtumėte.',
     tooltipNightTagsOn: 'Night harvest on — tik su jūsų naudojamais tagais. Spauskite, kad išjungtumėte.',
-    tooltipNightOff: 'Paleisti harvest — automatinis scan ir atsisiuntimai',
-    tooltipDownloadsOn: 'Siunčiama — spauskite, kad pauzuotumėte eilę (scan tęsiasi)',
+    tooltipNightOff: 'Paleisti harvest — automatinis katalogo ėjimas ir atsisiuntimai',
+    tooltipDownloadsOn: 'Siunčiama — spauskite, kad pauzuotumėte eilę (harvest tęsiasi)',
     tooltipDownloadsAuto: 'Auto eilė — spauskite rankiniam režimui',
     tooltipDownloadsManual: 'Rankinė eilė — spauskite auto režimui',
-    tooltipDownloadsPause: 'Pauzuoti siuntimus (scan tęsiasi)',
+    tooltipDownloadsPause: 'Pauzuoti siuntimus (harvest tęsiasi)',
     tooltipDownloadsResume: 'Tęsti siuntimus',
     tooltipBlur: 'Sulieti preview nuotraukas',
     tooltipBrowseLiveOn:
-      'Browse gyvai ĮJUNGTA — galerija atsinaujina su harvest puslapiais. Spauskite quiet režimui (tik siuntimai).',
+      'Gyva galerija ĮJUNGTA — kortelės atsinaujina harvest metu. Spauskite 👁, kad paslėptumėte korteles (quiet / lengvesnis UI; siuntimai tęsiasi).',
     tooltipBrowseLiveOff:
-      'Browse gyvai IŠJUNGTA — harvest siunčia fone. Spauskite gyvai galerijai, arba Scan / Show Browse snapshot.',
-    tooltipScan: 'Vieną kartą skenuoti įjungtas Browse taisykles ir parodyti rezultatus',
-    tooltipScanNight:
-      'Paleisti vieną scan ir įkelti surinktus modelius į Browse (net kai gyva galerija išjungta)',
-    tooltipScanBusy: 'Scan jau vyksta — palaukite',
-    tooltipScanBusyNight: 'Vyksta scan arba harvest — palaukite',
-    tooltipScheduledScan: 'Kitas automatinis harvest scan (tik Night mode)',
+      'Quiet ĮJUNGTA — Browse kortelės paslėptos, UI lengvesnis; harvest siunčia fone. Spauskite gyvai galerijai arba Show Browse snapshot.',
+    tooltipScheduledScan: 'Kitas automatinis harvest peek (tik Harvest)',
     hideWindow: 'Slėpti langą',
     tooltipHideWindow: 'Slėpti į system tray — programa toliau veikia fone',
     fullscreen: 'Visas ekranas',
@@ -190,7 +185,7 @@ export const lt: Messages = {
       outputFolders:
         'Atsisiuntimai eina tiesiai į šiuos aplankus pagal modelio tipą. Routing tag (pvz. Krea2) prideda subfolderį — LoRA → …\\Lora\\Krea2, Checkpoint → …\\Checkpoints\\Krea2. Tag Folders gali pakeisti kelią.',
       outputFoldersRequired:
-        'Abu aplankai privalomi prieš Scan, Harvest ar atsisiuntimą.',
+        'Abu aplankai privalomi prieš Harvest ar atsisiuntimą.',
       automationHint: 'Naudokite antraštės 🌙 Night mode kaip pagrindinį startą.',
       verifyLibrary: 'Tikrinti bibliotekos hash',
       verifying: 'Tikrinama…',
@@ -226,7 +221,7 @@ export const lt: Messages = {
         'Browse ir Library naudoja tą patį režimą jau įkrautiems rezultatams. Lazy = infinite scroll blokais. Puslapiai = Ankstesnis/Kitas. Auto-advance = lazy, o kai Hide owned palieka Browse tuščią — gali krauti kitą Civitai puslapį, jei jis prieinamas (Library Auto-advance = Lazy).',
       resultsPageSize: 'Kiek kortelių puslapyje (Pages) arba scroll bloke (Lazy / Auto-advance).',
       updateBrowseOnCrawl:
-        'Tas pats kaip 👁 mygtukas šalia Blur antraštėje. Off = tylesnis UI (atsisiuntimai vis tiek vyksta); On = gyvas Browse tinklelis.',
+        'Tas pats kaip 👁 mygtukas šalia Blur antraštėje. Off = išvalo Browse korteles ir tylesnis UI (atsisiuntimai vis tiek vyksta); On = gyvas Browse tinklelis.',
       domain:
         'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.'
     },
@@ -304,8 +299,8 @@ export const lt: Messages = {
       'Kol kas programa testuota daugiausia su LoRA siuntimais. Checkpoint keliai yra, bet mažiau patikrinti — klaidas rašykite GitHub.',
     quickStart1: 'Nustatymai → LoRA aplankas (ir API raktas NSFW turiniui)',
     quickStart2: 'Browse → Rules → įjunkite taisyklę On → Save rules',
-    quickStart3: 'Antraštė → 🌙 Harvest periodiniam scan; **Auto** — automatinė eilė (arba **Manual** ir spauskite korteles)',
-    headerHarvest: '🌙 Harvest — periodinis enabled Browse taisyklių scan; deda į eilę ir siunčia naujus modelius',
+    quickStart3: 'Antraštė → 🌙 Harvest katalogui; **Auto** — automatinė eilė (arba **Manual** ir spauskite korteles)',
+    headerHarvest: '🌙 Harvest — eina per enabled Browse taisykles puslapiais; deda į eilę ir siunčia naujus modelius',
     headerNightModes:
       '🌙 All vs 🌙 Harvesting — Nustatymuose: „Night mode: queue all Browse matches“ nusprendžia ar visi atitikmenys, ar tik su jūsų tagais',
     headerDownloads:
@@ -363,7 +358,7 @@ export const lt: Messages = {
       contentFilter: 'Numatyta naujoms Browse taisyklėms. NSFW/All reikia API rakto. Galima keisti per taisyklę.',
       nightMode: 'Periodinis enabled Browse taisyklių scan + auto-queue. Reikia aplanko + bent vienos On taisyklės.',
       autoStart:
-        'Išjungus (aktyvus Pause) eilėje esantys siuntimai pauzuojami iki Pause išjungimo. Auto/Manual tik valdo ar nauji modeliai dedami į eilę.',
+        'Išjungus (aktyvus Pause) vykdomi siuntimai sustabdomi; Harvest vis tiek gali pildyti eilę. Išjunkite Pause, kad pradėtų siųsti. Auto/Manual valdo ar Harvest deda modelius į eilę.',
       nightDownloadAll:
         'All režimas: eilė visiems naujiems pagal Browse taisykles (ne tik bibliotekos tagus). Blokuojami tagai visada praleidžiami.',
       scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = off (night mode nustato 60 min jei reikia).',
@@ -373,7 +368,7 @@ export const lt: Messages = {
       backfill: 'Peržiūri visą katalogą kartą, tada tik newest puslapį. Atsisiuntimai tarp puslapių.',
       newestPeek: 'Night crawl metu page 1 tikrinamas ne dažniau nei nurodytas intervalas.',
       connections: 'Multi-stream tik tiesioginiams CDN linkams. Civitai API — vienas stream.',
-      updateBrowse: 'Prideda kiekvieną crawl puslapį į Browse rezultatus. Off = tik crawl; žiūrėkite Activity.',
+      updateBrowse: 'Prideda kiekvieną crawl puslapį į Browse rezultatus. Off = išvalo galerijos korteles ir tik crawl; žiūrėkite Activity.',
       resultsDisplayMode:
         'Kaip Browse ir Library langina jau įkrautus rezultatus: lazy scroll, klasikiniai puslapiai arba auto-advance pro tuščius Hide owned Browse puslapius.',
       resultsPageSize: 'Kortelių skaičius puslapyje arba scroll bloke (60 arba 100).',
@@ -570,15 +565,15 @@ export const lt: Messages = {
     shownCount: 'Rodoma {shown}{total}',
     startDownloads: 'Pradėti atsisiuntimus ({count})',
     emptyNoResults:
-      'Modelių dar nėra. Spauskite Skenuoti antraštėje (tikrina visas įjungtas taisykles) arba įjunkite Night mode automatiniam harvest.',
+      'Modelių dar nėra. Įjunkite Harvest antraštėje — eis per įjungtas Browse taisykles.',
     galleryAwaiting: 'Kraunama galerija…',
-    galleryAwaitingTitle: 'Browse galerija tuščia — paleiskite Scan arba įjunkite Night mode',
+    galleryAwaitingTitle: 'Browse galerija tuščia — įjunkite Harvest',
     galleryAwaitingDetail:
-      "Galerijoje dar nėra modelių. Spauskite 'Scan' arba 'Harvest' antraštėje, kad užkrautumėte modelius pagal įjungtas taisykles.",
+      'Galerijoje dar nėra modelių. Spauskite Harvest antraštėje, kad užkrautumėte modelius pagal įjungtas taisykles.',
     galleryAwaitingDetailActive: 'Galerijoje dar nėra modelių. Vyksta užklausa…',
-    galleryAwaitingDetailHarvest: 'Galerijoje dar nėra modelių. Night harvest krauna pirmą puslapį…',
+    galleryAwaitingDetailHarvest: 'Galerijoje dar nėra modelių. Harvest krauna pirmą puslapį…',
     galleryPausedOffline:
-      'Browse neveikia — išvesties diskas nepasiekiamas. Pataisykite LoRA/Checkpoint aplankus Nustatymuose prieš skenuojant.',
+      'Browse neveikia — išvesties diskas nepasiekiamas. Pataisykite LoRA/Checkpoint aplankus Nustatymuose prieš harvest.',
     emptyPreview: 'Preview „{name}“',
     rulePreview: 'Peržiūra',
     rulePreviewTitle:
@@ -641,14 +636,14 @@ export const lt: Messages = {
   },
   nightQuiet: {
     title: 'Night mode',
-    hintUpdateBrowse: 'Scan vyksta fone; nauji modeliai atsiranda apačioje, kai ateina puslapiai.',
+    hintUpdateBrowse: 'Harvest vyksta fone; nauji modeliai atsiranda apačioje, kai ateina puslapiai.',
     hintNoUpdateBrowse:
-      'Quiet harvest: siuntimai eina fone be Browse tinklelio atnaujinimo (sklandesnis UI). Gyvai galerijai naudokite 👁 antraštėje, arba „Show Browse snapshot“ / Scan — baninti ir rankiniu būdu dėti į eilę.',
+      'Quiet harvest: kortelės paslėptos, siuntimai fone. Snapshot / 👁 rodo tai, kas JAU surinkta atmintyje. Visam katalogui palikite Harvest su „Backfill older catalog pages“ ir stebėkite apačios juostą (Fetching page N…). Užteks puslapių — išjunkite Harvest.',
     noOutputFolder: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose.',
     noRules: 'Įjunkite bent vieną Browse taisyklę.',
     previewBrowse: 'Browse peržiūra',
     showBrowseSnapshot: 'Rodyti Browse snapshot',
-    startDownloads: 'Pradėti atsisiuntimus ({count})',
+    startDownloads: 'Pradėti atsisiuntimus',
     activityLog: 'Veiklos logas →',
     queueSummary: 'Siuntimai: {downloading} aktyvūs · {waiting} eilėje',
     ruleNewestOnly: 'tik newest',
@@ -723,7 +718,7 @@ export const lt: Messages = {
   app: {
     apiUnavailable: 'Programos API nepasiekiamas — paleiskite programą iš naujo.',
     busyRetrying: 'Bandoma dar kartą…',
-    needOutputFolders: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose prieš Scan, Harvest ar atsisiuntimą.',
+    needOutputFolders: 'Nustatykite LoRA ir Checkpoint aplankus Nustatymuose prieš Harvest ar atsisiuntimą.',
     outputDriveMissing:
       'Išvesties diskas nepasiekiamas — prijunkite diską arba pakeiskite LoRA/Checkpoint aplankus Nustatymuose.',
     outputDriveMissingTitle: 'Išvesties aplankas nepasiekiamas',
@@ -1035,8 +1030,7 @@ export const lt: Messages = {
       'Katalogas baigtas · 0 atitiko · API {api} · {rules} — tikrink Keywords / Content',
     scanningPageDoneMore: 'Puslapis {page} · {total} galerijoje…',
     scanningPageDoneMoreRule: 'Puslapis {page} · {total} galerijoje · {rules}',
-    scanningCatalogContinuingRule:
-      'Puslapis {page} · {total} galerijoje · dar liko puslapių · {rules}',
+    scanningCatalogContinuingRule: 'Puslapis {page} · {total} galerijoje · {rules}',
     checkingLibrary: 'Tikrinama biblioteka dėl naujų versijų',
     checkingLibraryProgress: 'Tikrinama biblioteka ({current}/{total})',
     failedPrefix: 'Nepavyko:',

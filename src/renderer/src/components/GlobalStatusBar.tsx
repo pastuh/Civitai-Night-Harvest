@@ -64,6 +64,9 @@ interface Props {
 
   crawlProgress?: CrawlProgressPayload | null
 
+  /** Harvest/Browse waiting for first API page (status bar is the only fetch indicator in quiet mode). */
+  galleryAwaiting?: boolean
+
   /** Idle browse gallery — waiting for user Scan or Night harvest */
   showReadyIdle?: boolean
 
@@ -151,6 +154,8 @@ function primaryActivityLabel(
 
     remainingWaitMs?: number | null
 
+    galleryAwaiting?: boolean
+
     showReadyIdle?: boolean
 
   }
@@ -182,6 +187,8 @@ function primaryActivityLabel(
     crawlProgress,
 
     remainingWaitMs,
+
+    galleryAwaiting,
 
     showReadyIdle
 
@@ -221,7 +228,7 @@ function primaryActivityLabel(
 
 
 
-  if (status === 'scanning' || crawlProgress != null) {
+  if (status === 'scanning' || crawlProgress != null || galleryAwaiting) {
 
     const rules = formatRuleNames(
       crawlProgress?.ruleName
@@ -555,6 +562,8 @@ export function GlobalStatusBar({
 
   crawlProgress = null,
 
+  galleryAwaiting = false,
+
   showReadyIdle = false,
 
   uiExtended = false
@@ -638,6 +647,8 @@ export function GlobalStatusBar({
 
         remainingWaitMs,
 
+        galleryAwaiting,
+
         showReadyIdle
 
       }),
@@ -669,6 +680,8 @@ export function GlobalStatusBar({
       crawlProgress,
 
       remainingWaitMs,
+
+      galleryAwaiting,
 
       showReadyIdle
 

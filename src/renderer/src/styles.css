@@ -1540,6 +1540,10 @@ th {
   display: none;
 }
 
+.night-quiet-progress {
+  margin-bottom: var(--space-md);
+}
+
 .night-quiet-actions {
   flex-wrap: wrap;
   gap: 8px;

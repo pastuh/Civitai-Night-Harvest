@@ -64,37 +64,24 @@ export class ScanScheduler {
   private wasNightMode = getSettings().nightMode
   private wasDomain = getSettings().domain
   private wasCrawlAutoDownload = shouldCrawlAutoDownload()
-  /** Delay "fetching page N" status so fast pages only show as loaded. */
-  private fetchStatusTimer: ReturnType<typeof setTimeout> | null = null
-  private fetchStatusToken = 0
-
-  private cancelPendingFetchingStatus(): void {
-    this.fetchStatusToken += 1
-    if (this.fetchStatusTimer) {
-      clearTimeout(this.fetchStatusTimer)
-      this.fetchStatusTimer = null
-    }
-  }
-
+  /** Show "Fetching page N…" in the bottom status bar as soon as the API call starts. */
   private scheduleFetchingStatus(payload: {
     ruleId: string
     ruleName: string
     pageNumber: number
     domain?: import('../shared/types').CivitaiDomain
   }): void {
-    this.cancelPendingFetchingStatus()
-    const token = this.fetchStatusToken
-    this.fetchStatusTimer = setTimeout(() => {
-      if (token !== this.fetchStatusToken) return
-      this.fetchStatusTimer = null
-      this.emitCrawlProgress({
-        ruleId: payload.ruleId,
-        ruleName: payload.ruleName,
-        phase: 'fetching',
-        pageNumber: payload.pageNumber,
-        domain: payload.domain
-      })
-    }, 1200)
+    this.emitCrawlProgress({
+      ruleId: payload.ruleId,
+      ruleName: payload.ruleName,
+      phase: 'fetching',
+      pageNumber: payload.pageNumber,
+      domain: payload.domain
+    })
+  }
+
+  private cancelPendingFetchingStatus(): void {
+    /* Fetching status is emitted immediately; kept for call-site clarity before page-done. */
   }
 
   clearCrawlBrowseAccum(ruleId?: string): void {
@@ -173,13 +160,12 @@ export class ScanScheduler {
     /** When true, run even outside night mode (e.g. after unblocking tags). */
     allowOutsideNightMode?: boolean
   }): number {
-    if (
-      !options?.allowOutsideNightMode &&
-      (!getSettings().nightMode || !shouldCrawlAutoDownload())
-    ) {
+    // Pause only stops the download pump — keep filling the queue so Resume has work.
+    if (!options?.allowOutsideNightMode && !getSettings().nightMode) {
       return 0
     }
-    if (options?.allowOutsideNightMode && !shouldCrawlAutoDownload()) {
+    if (options?.allowOutsideNightMode && !getSettings().nightMode && !shouldCrawlAutoDownload()) {
+      // Outside Harvest: only auto-fill when downloads are allowed.
       return 0
     }
 
@@ -406,17 +392,25 @@ export class ScanScheduler {
 
   /** Top up download queue only when empty (e.g. after dismiss). Never refill mid-drain. */
   maybeFillDownloadQueue(): void {
-    if (!getSettings().nightMode || !shouldCrawlAutoDownload()) return
+    if (!getSettings().nightMode) return
     const pipeline = this.downloadQueue
       .getItems()
       .filter((i) => i.status === 'queued' || i.status === 'downloading').length
     // Refilling at <5 caused the UI count loop: 8→7→6→5→4→8…
-    if (pipeline > 0) return
+    if (pipeline > 0) {
+      if (shouldCrawlAutoDownload()) this.maybeStartAutoDownloads()
+      return
+    }
     const now = Date.now()
     if (now - this.lastPipelineFillAt < 12_000) return
     this.lastPipelineFillAt = now
     const filled = this.fillBrowseDownloadPipeline()
-    if (filled === 0) {
+    if (filled > 0) {
+      this.log('info', `Download pipeline filled with ${filled} model(s) from browse gallery`, undefined, {
+        source: 'crawl'
+      })
+    }
+    if (shouldCrawlAutoDownload()) {
       this.maybeStartAutoDownloads()
     }
   }
@@ -669,6 +663,7 @@ export class ScanScheduler {
       )
       return
     }
+    // Resume: refill from harvest gallery, then start the pump.
     if (shouldAutoQueue()) {
       const allowOutsideNightMode = !getSettings().nightMode
       const filled = this.fillBrowseDownloadPipeline('system', allowOutsideNightMode)
@@ -678,7 +673,16 @@ export class ScanScheduler {
         })
       }
     }
-    this.maybeStartAutoDownloads()
+    this.downloadQueue.start()
+    const hasWork = this.downloadQueue
+      .getItems()
+      .some((i) => i.status === 'queued' || i.status === 'downloading')
+    if (hasWork) {
+      this.setStatus('downloading')
+      this.maybeStartAutoDownloads()
+    } else if (this.status !== 'scanning' && this.status !== 'checking') {
+      this.setStatus('idle')
+    }
   }
 
   private startEarlyAccessWatcher(): void {
@@ -901,6 +905,7 @@ export class ScanScheduler {
     source: ActivitySource = 'scheduled'
   ) {
     return {
+      // Pause only stops the download pump — Harvest may still fill the queue.
       queueEnabled: source === 'manual' ? true : shouldAutoQueue(),
       requireTagMatch,
       includeNewVersions,
@@ -1159,7 +1164,7 @@ export class ScanScheduler {
 
     this.downloadQueue.syncWithInventory()
 
-    if (shouldCrawlAutoDownload() && shouldAutoQueue()) {
+    if (shouldAutoQueue()) {
       const freshPageModels = pageModels.map((m) => ({
         ...m,
         inInventory: inventory.hasVersion(m.versionId)
@@ -1173,6 +1178,10 @@ export class ScanScheduler {
       })
       if (catalogComplete) {
         this.reconcileBrowseDownloadQueue({ ruleId: rule.id, source, allowOutsideNightMode })
+      }
+      // Start pump only when downloads are allowed (Pause off).
+      if (shouldCrawlAutoDownload()) {
+        this.maybeStartAutoDownloads()
       }
     }
 
@@ -1720,23 +1729,39 @@ export class ScanScheduler {
       { source: manual ? 'manual' : 'scheduled' }
     )
 
-    // Manual Scan: replace gallery with a fresh newest-page fetch (do not keep harvest backlog).
+    // Manual Scan:
+    // - Without Harvest: replace gallery with newest API page only.
+    // - With Harvest: restart full catalog walk (do NOT wipe to page-1 forever under peek-only).
     if (manual) {
       this.clearCrawlBrowseAccum()
       this.cancelPendingFetchingStatus()
       this.emitCrawlProgress(null)
       this.emit('crawl:browseReset')
+      if (continuousCrawl) {
+        resetCatalogSessionForAppStart()
+        this.crawler.resetPaginationHints()
+        this.log(
+          'info',
+          'Manual Scan during Harvest — restarting full catalog backfill for enabled rules…',
+          undefined,
+          { source: 'manual' }
+        )
+        await this.stopContinuousCrawl()
+        this.ensureContinuousCrawl()
+      }
     }
 
     const results: ScanResult[] = []
 
-    if (continuousCrawl) {
+    if (continuousCrawl && !manual) {
       this.ensureContinuousCrawl()
     }
 
     try {
       for (const rule of rules) {
-        if (continuousCrawl && !manual) {
+        // Continuous crawl owns page walking — scheduled scan is a no-op per rule.
+        // Manual Scan during Harvest already restarted the walk above.
+        if (continuousCrawl) {
           results.push({
             ruleId: rule.id,
             ruleName: rule.name,

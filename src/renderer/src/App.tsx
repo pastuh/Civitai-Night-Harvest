@@ -103,6 +103,8 @@ export default function App() {
   const [clearQueueBusy, setClearQueueBusy] = useState(false)
   const [syncProgress, setSyncProgress] = useState<LibrarySyncProgress | null>(null)
   const [liveCrawlBrowse, setLiveCrawlBrowse] = useState<WatchRuleTestResult | null>(null)
+  /** While quiet (👁), cards stay hidden unless user asks for Show Browse snapshot. */
+  const [allowQuietBrowseCards, setAllowQuietBrowseCards] = useState(false)
   const [crawlPageMeta, setCrawlPageMeta] = useState<{
     ruleId?: string
     ruleName?: string
@@ -120,6 +122,14 @@ export default function App() {
   updateBrowseOnCrawlRef.current = settings?.updateBrowseOnCrawl ?? false
   const hasEnabledWatchRulesRef = useRef(false)
   hasEnabledWatchRulesRef.current = watchRules.some((r) => r.enabled)
+
+  // Quiet (👁 pressed): drop mounted Browse cards for a lighter renderer.
+  useEffect(() => {
+    if (settings?.updateBrowseOnCrawl !== false) return
+    setAllowQuietBrowseCards(false)
+    setLiveCrawlBrowse(null)
+  }, [settings?.updateBrowseOnCrawl])
+
   const [previewRepairActive, setPreviewRepairActive] = useState(false)
   const busyRef = useRef(false)
   const previewRepairRef = useRef(false)
@@ -468,8 +478,6 @@ export default function App() {
     let progressQueueTimer: number | null = null
     let pendingProgressQueue: { items: DownloadQueueItem[]; paused: boolean } | null = null
     let inventoryRefreshTimer: number | null = null
-    let crawlProgressTimer: number | null = null
-    let pendingCrawlProgress: CrawlProgressPayload | null = null
 
     const queueStructureKey = (q: { items: DownloadQueueItem[]; paused: boolean }) =>
       `${q.paused}|${q.items.map((i) => `${i.id}:${i.status}:${i.manual ? 1 : 0}`).join(',')}`
@@ -551,13 +559,16 @@ export default function App() {
             pageQueued: payload.pageQueued ?? 0
           }
         })
-        // Quiet harvest: status/meta only — do not replace the live gallery (keeps Library/Browse snappy).
-        if (!updateBrowseOnCrawlRef.current && payload.result.crawlSource) return
+        // Quiet harvest: never mount crawl cards (meta above is enough for the status bar).
+        if (!updateBrowseOnCrawlRef.current) return
         const result: WatchRuleTestResult = payload.result.crawlSource
           ? payload.result
           : { ...payload.result, crawlSource: 'night' }
-        // Defer gallery replace so wheel/scroll stays responsive during page fetch.
-        startTransition(() => setLiveCrawlBrowse(result))
+        // Re-check quiet inside transition — a pending page can otherwise restore cards after 👁.
+        startTransition(() => {
+          if (!updateBrowseOnCrawlRef.current) return
+          setLiveCrawlBrowse(result)
+        })
       }),
       window.api.onCrawlBrowseReset(() => {
         setLiveCrawlBrowse(null)
@@ -566,51 +577,30 @@ export default function App() {
         setBrowseGalleryAwaiting(hasEnabledWatchRulesRef.current)
       }),
       window.api.onCrawlProgress((payload) => {
-        const applyProgress = (p: CrawlProgressPayload | null) => {
-          startTransition(() => setCrawlProgress(p))
-          if (
-            p?.phase === 'fetching' ||
-            p?.phase === 'fetching-tags' ||
-            p?.phase === 'page-done' ||
-            p?.phase === 'catalog-complete'
-          ) {
-            setBrowseGalleryAwaiting(false)
-          }
-          if (p?.phase === 'page-done' || p?.phase === 'catalog-complete') {
-            setCrawlPageMeta((prev) => ({
-              ruleId: p.ruleId,
-              ruleName: p.ruleName,
-              pageNumber: p.pageNumber ?? prev?.pageNumber ?? 1,
-              pageModelsAdded: prev?.pageModelsAdded ?? 0,
-              pageModelsOnPage: p.pageModelsOnPage ?? prev?.pageModelsOnPage ?? 0,
-              galleryTotal: p.galleryTotal ?? prev?.galleryTotal ?? 0,
-              galleryStats: p.galleryStats ?? prev?.galleryStats,
-              catalogComplete: p.catalogComplete,
-              hasMorePages: p.hasMorePages,
-              pageQueued: prev?.pageQueued
-            }))
-          }
+        // Urgent for bottom status bar — do not startTransition (React would skip intermediate pages).
+        setCrawlProgress(payload)
+        if (
+          payload?.phase === 'fetching' ||
+          payload?.phase === 'fetching-tags' ||
+          payload?.phase === 'page-done' ||
+          payload?.phase === 'catalog-complete'
+        ) {
+          setBrowseGalleryAwaiting(false)
         }
-
-        // Waiting / clear — apply immediately. Fetching spam — coalesce (~400ms).
-        if (!payload || payload.phase === 'waiting' || payload.phase === 'catalog-complete') {
-          if (crawlProgressTimer != null) {
-            window.clearTimeout(crawlProgressTimer)
-            crawlProgressTimer = null
-            pendingCrawlProgress = null
-          }
-          applyProgress(payload)
-          return
+        if (payload?.phase === 'page-done' || payload?.phase === 'catalog-complete') {
+          setCrawlPageMeta((prev) => ({
+            ruleId: payload.ruleId,
+            ruleName: payload.ruleName,
+            pageNumber: payload.pageNumber ?? prev?.pageNumber ?? 1,
+            pageModelsAdded: prev?.pageModelsAdded ?? 0,
+            pageModelsOnPage: payload.pageModelsOnPage ?? prev?.pageModelsOnPage ?? 0,
+            galleryTotal: payload.galleryTotal ?? prev?.galleryTotal ?? 0,
+            galleryStats: payload.galleryStats ?? prev?.galleryStats,
+            catalogComplete: payload.catalogComplete,
+            hasMorePages: payload.hasMorePages,
+            pageQueued: prev?.pageQueued
+          }))
         }
-
-        pendingCrawlProgress = payload
-        if (crawlProgressTimer != null) return
-        crawlProgressTimer = window.setTimeout(() => {
-          crawlProgressTimer = null
-          const pending = pendingCrawlProgress
-          pendingCrawlProgress = null
-          if (pending) applyProgress(pending)
-        }, 400)
       }),
       window.api.onPendingVersions(setPending),
       window.api.onDeferredVersions((def) => {
@@ -654,14 +644,14 @@ export default function App() {
       window.api.onScanComplete(() => {
         setBrowseGalleryAwaiting(false)
         void window.api.getBrowseGallery().then((gallery) => {
-          if (gallery) setLiveCrawlBrowse(gallery)
+          // Quiet (👁): keep gallery empty for a light UI — use Show Browse snapshot to review.
+          if (gallery && updateBrowseOnCrawlRef.current) setLiveCrawlBrowse(gallery)
         })
         void refreshAfterScan()
       })
     ]
     return () => {
       if (progressQueueTimer != null) window.clearTimeout(progressQueueTimer)
-      if (crawlProgressTimer != null) window.clearTimeout(crawlProgressTimer)
       if (inventoryRefreshTimer != null) window.clearTimeout(inventoryRefreshTimer)
       unsubs.forEach((u) => u())
     }
@@ -735,8 +725,15 @@ export default function App() {
   )
 
   const saveSettings = async (partial: AppSettingsSave) => {
+    const turningQuiet =
+      partial.updateBrowseOnCrawl === false && (settings?.updateBrowseOnCrawl ?? false) === true
     const next = await window.api.saveSettings(partial)
     setSettings(next)
+    // Quiet harvest: drop mounted cards so the renderer stays light.
+    if (turningQuiet) {
+      setAllowQuietBrowseCards(false)
+      setLiveCrawlBrowse(null)
+    }
     // Paths may point at a live drive again after Settings edit.
     if (
       partial.loraOutputFolder !== undefined ||
@@ -824,17 +821,29 @@ export default function App() {
   const toggleBrowseLiveGrid = async () => {
     if (!settings) return
     const next = !(settings.updateBrowseOnCrawl ?? false)
+    if (!next) {
+      setAllowQuietBrowseCards(false)
+      setLiveCrawlBrowse(null)
+    }
     await saveSettings({ updateBrowseOnCrawl: next })
     if (next) {
       const gallery = await window.api.getBrowseGallery()
-      if (gallery) setLiveCrawlBrowse(gallery)
+      if (gallery && updateBrowseOnCrawlRef.current) setLiveCrawlBrowse(gallery)
     }
   }
 
-  const applyBrowseSnapshot = useCallback((gallery: WatchRuleTestResult) => {
-    setLiveCrawlBrowse(gallery)
-    setBrowseGalleryAwaiting(false)
-  }, [])
+  const applyBrowseSnapshot = useCallback(
+    async (gallery: WatchRuleTestResult) => {
+      setAllowQuietBrowseCards(true)
+      setLiveCrawlBrowse(gallery)
+      setBrowseGalleryAwaiting(false)
+      // Snapshot means leave quiet mode — turn the 👁 off (live Browse updates).
+      if (settings && settings.updateBrowseOnCrawl === false) {
+        await saveSettings({ updateBrowseOnCrawl: true })
+      }
+    },
+    [settings, saveSettings]
+  )
 
   const clearDownloadQueue = async () => {
     setClearQueueBusy(true)
@@ -929,38 +938,15 @@ export default function App() {
     }
     try {
       setActionError(null)
+      // Same as header Resume: keep harvest auto-queueing + downloading in the background.
+      if (settings.crawlAutoDownload === false) {
+        await saveSettings({ crawlAutoDownload: true })
+      }
       const state = await window.api.startDownloads()
       setQueue(state.items)
       setQueuePaused(state.paused)
       setStatus(await window.api.getScanStatus())
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const runScan = async () => {
-    const loc = settings?.locale ?? 'en'
-    if (!settings || !hasAllOutputFolders(settings.loraOutputFolder, settings.checkpointOutputFolder)) {
-      promptOutputFolders(loc)
-      return
-    }
-    try {
-      setActionError(null)
-      setBrowseGalleryAwaiting(true)
-      // Keep previous snapshot visible until the new one arrives (quiet mode otherwise stays empty).
-      setCrawlPageMeta(null)
-      setCrawlProgress(null)
-      await window.api.runScan()
-      const gallery = await window.api.getBrowseGallery()
-      if (gallery) {
-        setLiveCrawlBrowse(gallery)
-        setBrowseGalleryAwaiting(false)
-      } else {
-        setBrowseGalleryAwaiting(false)
-      }
-      await refresh()
-    } catch (err) {
-      setBrowseGalleryAwaiting(false)
       setActionError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -1166,14 +1152,14 @@ export default function App() {
           </button>
           <button
             type="button"
-            className={`btn-sm ${settings.updateBrowseOnCrawl ? 'toggle-on' : 'btn-ghost'}`}
+            className={`btn-sm ${settings.updateBrowseOnCrawl ? 'btn-ghost' : 'toggle-on'}`}
             onClick={() => void toggleBrowseLiveGrid()}
             title={
               settings.updateBrowseOnCrawl
                 ? m.header.tooltipBrowseLiveOn
                 : m.header.tooltipBrowseLiveOff
             }
-            aria-pressed={Boolean(settings.updateBrowseOnCrawl)}
+            aria-pressed={!settings.updateBrowseOnCrawl}
             aria-label={
               settings.updateBrowseOnCrawl
                 ? m.header.tooltipBrowseLiveOn
@@ -1184,26 +1170,9 @@ export default function App() {
           </button>
           {watchRulesSaveState === 'unsaved' && (
             <span className="header-watch-rules-unsaved" role="status">
-              Unsaved changes — press <strong>Save rules</strong> to apply filters and start scan.
+              Unsaved changes — press <strong>Save rules</strong> to apply filters.
             </span>
           )}
-          <button
-            type="button"
-            className="btn-sm"
-            onClick={() => void runScan()}
-            disabled={crawlScanning}
-            title={
-              crawlScanning
-                ? settings.nightMode
-                  ? m.header.tooltipScanBusyNight
-                  : m.header.tooltipScanBusy
-                : settings.nightMode
-                  ? m.header.tooltipScanNight
-                  : m.header.tooltipScan
-            }
-          >
-            {m.header.scan}
-          </button>
         </div>
         <div className="header-window-controls">
           <button
@@ -1396,6 +1365,7 @@ export default function App() {
             activity={activity}
             deferred={deferred}
             liveCrawlBrowse={liveCrawlBrowse}
+            allowQuietBrowseCards={allowQuietBrowseCards}
             crawlPageMeta={crawlPageMeta}
             crawlProgress={crawlProgress}
             onStartDownloads={startDownloads}
@@ -1406,10 +1376,8 @@ export default function App() {
             onRefreshInventory={refreshInventory}
             onSaveSettings={saveSettings}
             onBrowseModelBanChange={markBrowseModelBan}
-            onOpenActivity={() => setTab('activity')}
             onBrowseSnapshot={applyBrowseSnapshot}
             browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
-            onRunScan={storageOffline ? undefined : runScan}
             onSaveStateChange={setWatchRulesSaveState}
           />
         </div>
@@ -1512,6 +1480,9 @@ export default function App() {
         crawlCatalogComplete={crawlPageMeta?.catalogComplete ?? crawlProgress?.catalogComplete ?? false}
         crawlHasMorePages={crawlPageMeta?.hasMorePages ?? crawlProgress?.hasMorePages ?? false}
         crawlProgress={crawlProgress}
+        galleryAwaiting={
+          browseGalleryAwaiting && !storageOffline && Boolean(settings?.nightMode)
+        }
       />
 
       {tagPromptQueue[0] && (

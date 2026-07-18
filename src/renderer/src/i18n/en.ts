@@ -43,28 +43,23 @@ export const en = {
     setOutputFolders: 'Set LoRA and Checkpoint folders in Settings.',
     enableBrowseRule: 'Enable at least one Browse rule (On → Save).',
     thenNightMode: 'Then click 🌙 Night mode in the header to begin.',
-    thenHarvest: 'Then press Scan or Harvest in the header to begin.',
+    thenHarvest: 'Then press Harvest in the header to begin.',
     nsfwNeedsKey: 'NSFW/restricted content needs a Civitai API key in Settings.',
     openBrowseRules: 'Open Browse rules',
     tooltipNightAllOn: 'Night mode on — download all matching models. Click to turn off.',
     tooltipNightTagsOn: 'Night harvest on — only models with tags you already use. Click to turn off.',
-    tooltipNightOff: 'Start harvest — automatic scan and download',
-    tooltipDownloadsOn: 'Downloads running — click to pause queue (scan continues)',
+    tooltipNightOff: 'Start harvest — automatic catalog walk and download',
+    tooltipDownloadsOn: 'Downloads running — click to pause queue (harvest continues)',
     tooltipDownloadsAuto: 'Auto queue — click to switch to manual',
     tooltipDownloadsManual: 'Manual queue — click to switch to auto',
-    tooltipDownloadsPause: 'Pause downloads (scan continues)',
+    tooltipDownloadsPause: 'Pause downloads (harvest continues)',
     tooltipDownloadsResume: 'Resume downloads',
     tooltipBlur: 'Blur previews',
     tooltipBrowseLiveOn:
-      'Browse live ON — gallery updates as harvest pages arrive. Click to switch to quiet (downloads only).',
+      'Live gallery ON — cards update during harvest. Click 👁 to hide cards (quiet / lighter UI; downloads continue).',
     tooltipBrowseLiveOff:
-      'Browse live OFF — harvest downloads in the background. Click to show live gallery, or press Scan / Show Browse for a snapshot.',
-    tooltipScan: 'Scan all enabled Browse rules once and show results in Browse',
-    tooltipScanNight:
-      'Run one scan pass and load the harvested models into Browse (even when live gallery is off)',
-    tooltipScanBusy: 'Scan already running — wait for it to finish',
-    tooltipScanBusyNight: 'Scan or harvest in progress — wait for it to finish',
-    tooltipScheduledScan: 'Next automatic harvest scan (Night mode only)',
+      'Quiet ON — Browse cards hidden so the UI stays light; harvest downloads in the background. Click to show live gallery, or Show Browse snapshot.',
+    tooltipScheduledScan: 'Next automatic harvest peek (Harvest only)',
     hideWindow: 'Hide window',
     tooltipHideWindow: 'Hide to system tray — app keeps running in the background',
     fullscreen: 'Fullscreen',
@@ -188,7 +183,7 @@ export const en = {
       outputFolders:
         'Downloads go directly into these folders by model type. Routing tag (e.g. Krea2) adds a subfolder — LoRA → …\\Lora\\Krea2, Checkpoint → …\\Checkpoints\\Krea2. Tag Folders can override with a custom path.',
       outputFoldersRequired:
-        'Both folders are required before Scan, Harvest, or download.',
+        'Both folders are required before Harvest or download.',
       automationHint: 'Use header 🌙 Night mode as the main start button.',
       verifyLibrary: 'Verify library hashes',
       verifying: 'Verifying…',
@@ -224,7 +219,7 @@ export const en = {
         'Browse and Library use the same mode on already-loaded results. Lazy = infinite scroll in chunks. Pages = classic Prev/Next. Auto-advance = lazy, and when Hide owned leaves Browse empty it can load the next Civitai page if more pages are available (Library treats Auto-advance as Lazy).',
       resultsPageSize: 'How many cards per page (Pages) or per scroll chunk (Lazy / Auto-advance).',
       updateBrowseOnCrawl:
-        'Same as the 👁 button next to Blur in the header. Off = quieter UI (downloads still run); On = live Browse grid.',
+        'Same as the 👁 button next to Blur in the header. Off = clear Browse cards and quieter UI (downloads still run); On = live Browse grid.',
       domain:
         'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.'
     },
@@ -301,8 +296,8 @@ export const en = {
       'So far this app is tested mainly with LoRA downloads. Checkpoint paths exist but are less verified — report issues on GitHub.',
     quickStart1: 'Settings → set LoRA folder (and API key for NSFW)',
     quickStart2: 'Browse → Rules → turn a rule On → Save rules',
-    quickStart3: 'Header → 🌙 Harvest for scheduled scan; set **Auto** for hands-off queueing (or **Manual** and click cards)',
-    headerHarvest: '🌙 Harvest — periodic scan of enabled Browse rules; queues and downloads new models',
+    quickStart3: 'Header → 🌙 Harvest to walk the catalog; set **Auto** for hands-off queueing (or **Manual** and click cards)',
+    headerHarvest: '🌙 Harvest — walks enabled Browse rules page by page; queues and downloads new models',
     headerNightModes:
       '🌙 All vs 🌙 Harvesting — in Settings: “Night mode: queue all Browse matches” controls whether every match or only library-tag matches are queued',
     headerDownloads:
@@ -358,7 +353,7 @@ export const en = {
       contentFilter: 'Default for new Browse rules. NSFW/All needs API key. Override per rule.',
       nightMode: 'Periodic scan of enabled Browse rules + auto-queue. Needs folder + at least one rule On.',
       autoStart:
-        'When off (Pause active), queued downloads stay paused until you turn Pause off. Auto/Manual only controls whether new models are added to the queue.',
+        'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
       nightDownloadAll:
         'All mode: queue every new model matching Browse rules (not only library tags). Blocked tags in Settings/Browse are always skipped.',
       scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
@@ -368,7 +363,8 @@ export const en = {
       backfill: 'Walk full catalog once, then peek newest page only. Downloads run between pages.',
       newestPeek: 'During night crawl, re-check page 1 at most this often for brand-new models.',
       connections: 'Multi-stream on direct CDN links only. Civitai API links use single stream.',
-      updateBrowse: 'Append each crawl page to Browse results. Off = crawl downloads only; check Activity log.',
+      updateBrowse:
+        'Append each crawl page to Browse results. Off = clear gallery cards and crawl downloads only; check Activity log.',
       resultsDisplayMode:
         'How Browse and Library window already-loaded results: lazy scroll, classic pages, or auto-advance past empty Hide-owned Browse pages.',
       resultsPageSize: 'Cards per page or scroll chunk (60 or 100).',
@@ -562,15 +558,15 @@ export const en = {
     shownCount: '{shown}{total} shown',
     startDownloads: 'Start downloads ({count})',
     emptyNoResults:
-      'No models loaded yet. Press Scan in the header (checks all enabled rules), or enable Night mode for automatic harvest.',
+      'No models loaded yet. Turn on Harvest in the header to walk your enabled Browse rules.',
     galleryAwaiting: 'Reloading gallery…',
-    galleryAwaitingTitle: 'Browse gallery is empty — run Scan or enable Night mode',
+    galleryAwaitingTitle: 'Browse gallery is empty — turn on Harvest',
     galleryAwaitingDetail:
-      "No models in the gallery yet. Press 'Scan' or 'Harvest' in the header to load models from your enabled rules.",
+      'No models in the gallery yet. Press Harvest in the header to load models from your enabled rules.',
     galleryAwaitingDetailActive: 'No models in the gallery yet. Fetch in progress…',
-    galleryAwaitingDetailHarvest: 'No models in the gallery yet. Night harvest is loading the first page…',
+    galleryAwaitingDetailHarvest: 'No models in the gallery yet. Harvest is loading the first page…',
     galleryPausedOffline:
-      'Browse is idle — output drive is offline. Fix LoRA/Checkpoint folders in Settings before scanning.',
+      'Browse is idle — output drive is offline. Fix LoRA/Checkpoint folders in Settings before harvesting.',
     emptyPreview: 'Preview “{name}”',
     rulePreview: 'Preview',
     rulePreviewTitle:
@@ -633,14 +629,14 @@ export const en = {
   },
   nightQuiet: {
     title: 'Night mode',
-    hintUpdateBrowse: 'Scan runs in the background; new models appear below as pages arrive.',
+    hintUpdateBrowse: 'Harvest runs in the background; new models appear below as pages arrive.',
     hintNoUpdateBrowse:
-      'Quiet harvest: downloads run in the background without refreshing Browse (smoother UI). Use 👁 in the header for a live gallery, or Show Browse snapshot / Scan to review models for ban or queue.',
+      'Quiet harvest: cards hidden, downloads continue. Snapshot / 👁 show what is ALREADY in memory. For the full catalog, leave Harvest on with “Backfill older catalog pages” and watch the bottom bar (Fetching page N…). Turn Harvest off when you have enough pages.',
     noOutputFolder: 'Set LoRA and Checkpoint folders in Settings.',
     noRules: 'Enable at least one Browse rule.',
     previewBrowse: 'Preview Browse',
     showBrowseSnapshot: 'Show Browse snapshot',
-    startDownloads: 'Start downloads ({count})',
+    startDownloads: 'Start downloads',
     activityLog: 'Activity log →',
     queueSummary: 'Downloads: {downloading} active · {waiting} queued',
     ruleNewestOnly: 'newest only',
@@ -715,7 +711,7 @@ export const en = {
   app: {
     apiUnavailable: 'App API not available — restart the application.',
     busyRetrying: 'Retrying…',
-    needOutputFolders: 'Set LoRA and Checkpoint folders in Settings before Scan, Harvest, or download.',
+    needOutputFolders: 'Set LoRA and Checkpoint folders in Settings before Harvest or download.',
     outputDriveMissing:
       'Output drive is not available — plug in the disk or update LoRA/Checkpoint folders in Settings.',
     outputDriveMissingTitle: 'Output folder unavailable',
@@ -1023,7 +1019,7 @@ export const en = {
       'Catalog done · 0 matched · API had {api} · {rules} — check Keywords / Content',
     scanningPageDoneMore: 'Page {page} · {total} in gallery…',
     scanningPageDoneMoreRule: 'Page {page} · {total} in gallery · {rules}',
-    scanningCatalogContinuingRule: 'Page {page} · {total} in gallery · more pages · {rules}',
+    scanningCatalogContinuingRule: 'Page {page} · {total} in gallery · {rules}',
     checkingLibrary: 'Checking your library for new versions',
     checkingLibraryProgress: 'Checking library for new versions ({current}/{total})',
     failedPrefix: 'Failed:',

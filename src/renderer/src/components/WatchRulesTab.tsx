@@ -129,6 +129,8 @@ interface Props {
   activity: ActivityEntry[]
   deferred?: DeferredDownload[]
   liveCrawlBrowse?: WatchRuleTestResult | null
+  /** When quiet, only show cards if user requested Show Browse snapshot. */
+  allowQuietBrowseCards?: boolean
   crawlPageMeta?: {
     ruleId?: string
     ruleName?: string
@@ -143,7 +145,6 @@ interface Props {
   } | null
   crawlProgress?: CrawlProgressPayload | null
   browseGalleryAwaiting?: boolean
-  onRunScan?: () => Promise<void>
   onSaveStateChange?: (state: 'saved' | 'saving' | 'unsaved') => void
   onSave: (rules: WatchRule[]) => Promise<void>
   onStartDownloads: () => Promise<void>
@@ -154,8 +155,7 @@ interface Props {
   onRefreshInventory?: () => Promise<void>
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
   onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
-  onOpenActivity?: () => void
-  onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void
+  onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void | Promise<void>
 }
 
 function newId(): string {
@@ -199,10 +199,10 @@ export function WatchRulesTab({
   activity,
   deferred = [],
   liveCrawlBrowse = null,
+  allowQuietBrowseCards = false,
   crawlPageMeta = null,
   crawlProgress = null,
   browseGalleryAwaiting = false,
-  onRunScan,
   onSaveStateChange,
   onSave,
   onStartDownloads,
@@ -213,7 +213,6 @@ export function WatchRulesTab({
   onRefreshInventory,
   onSaveSettings,
   onBrowseModelBanChange,
-  onOpenActivity,
   onBrowseSnapshot
 }: Props) {
   const t = useT()
@@ -241,12 +240,27 @@ export function WatchRulesTab({
   testResultRef.current = testResult
   testRuleIdRef.current = testRuleId
 
-  const browseResult = liveCrawlBrowse ?? testResult
+  // Quiet (👁): hide all cards unless Show Browse snapshot explicitly allowed them.
+  const quietHideGallery =
+    settings.updateBrowseOnCrawl === false && !allowQuietBrowseCards
+  const browseResult = quietHideGallery
+    ? null
+    : settings.updateBrowseOnCrawl === false
+      ? liveCrawlBrowse
+      : liveCrawlBrowse ?? testResult
   const browseResultRef = useRef(browseResult)
   browseResultRef.current = browseResult
+
+  useEffect(() => {
+    if (settings.updateBrowseOnCrawl !== false) return
+    setTestResult(null)
+  }, [settings.updateBrowseOnCrawl])
+
   const hasEnabledRules = draft.some((r) => r.enabled)
   // Empty gallery loading only while something is actually fetching from Civitai.
+  // Quiet mode skips this — no SearchBrowsePanel / "Fetching…" placeholder.
   const showBrowseLoading =
+    !quietHideGallery &&
     hasEnabledRules &&
     !browseResult?.sampleModels?.length &&
     (browseGalleryAwaiting ||
@@ -263,21 +277,21 @@ export function WatchRulesTab({
   const showQuietActions =
     Boolean(settings.nightMode) &&
     hasEnabledRules &&
-    settings.updateBrowseOnCrawl === false &&
-    !testResult &&
+    quietHideGallery &&
     testingId == null
 
-  const browsePanelResult =
-    browseResult ??
-    (hasEnabledRules &&
-    (showBrowseLoading ||
-      testingId != null ||
-      crawlProgress != null ||
-      status === 'scanning' ||
-      status === 'checking' ||
-      Boolean(settings.nightMode))
-      ? emptyCrawlBrowsePlaceholder()
-      : null)
+  const browsePanelResult = quietHideGallery
+    ? null
+    : browseResult ??
+      (hasEnabledRules &&
+      (showBrowseLoading ||
+        testingId != null ||
+        crawlProgress != null ||
+        status === 'scanning' ||
+        status === 'checking' ||
+        Boolean(settings.nightMode))
+        ? emptyCrawlBrowsePlaceholder()
+        : null)
   const crawlFetching =
     showBrowseLoading ||
     testingId != null ||
@@ -847,15 +861,13 @@ export function WatchRulesTab({
         <NightCrawlQuietPanel
           settings={settings}
           enabledRules={draft.filter((r) => r.enabled)}
-          queue={queue}
           queuePaused={queuePaused}
           onStartDownloads={onStartDownloads}
-          onOpenActivity={onOpenActivity}
-          onRunScan={onRunScan}
           onShowBrowseSnapshot={async () => {
             const gallery = await window.api.getBrowseGallery()
-            if (gallery) onBrowseSnapshot?.(gallery)
+            if (gallery) await onBrowseSnapshot?.(gallery)
           }}
+          galleryStats={crawlProgress?.galleryStats ?? crawlPageMeta?.galleryStats ?? null}
         />
       )}
 
@@ -902,7 +914,6 @@ export function WatchRulesTab({
           civitaiDomain="red"
           browseRule={browseRule}
           browseGalleryAwaiting={browseGalleryAwaiting && hasEnabledRules}
-          onRunScan={onRunScan}
           browseSettledToEnd={settings.browseSettledToEnd ?? false}
           browseSettledDimPercent={settings.browseSettledDimPercent ?? 50}
           loraFolder={settings.loraOutputFolder}
@@ -910,31 +921,24 @@ export function WatchRulesTab({
           resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
           resultsPageSize={settings.resultsPageSize ?? 100}
         />
-      ) : settings.nightMode ? (
+      ) : settings.nightMode && !showQuietActions ? (
         <NightCrawlQuietPanel
           settings={settings}
           enabledRules={draft.filter((r) => r.enabled)}
-          queue={queue}
           queuePaused={queuePaused}
           onStartDownloads={onStartDownloads}
-          onOpenActivity={onOpenActivity}
-          onRunScan={onRunScan}
           onShowBrowseSnapshot={async () => {
             const gallery = await window.api.getBrowseGallery()
-            if (gallery) onBrowseSnapshot?.(gallery)
+            if (gallery) await onBrowseSnapshot?.(gallery)
           }}
+          galleryStats={crawlProgress?.galleryStats ?? crawlPageMeta?.galleryStats ?? null}
         />
-      ) : (
+      ) : !settings.nightMode ? (
         <section className="browse-results-empty">
           <h2>{t('browse.results')}</h2>
           <p className="muted">{t('browse.emptyNoResults')}</p>
-          {onRunScan && (
-            <button type="button" className="primary btn-sm" onClick={() => void onRunScan()}>
-              {t('header.scan')}
-            </button>
-          )}
         </section>
-      )}
+      ) : null}
     </div>
   )
 }

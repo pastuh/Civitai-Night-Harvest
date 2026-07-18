@@ -86,7 +86,6 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.headerHarvest')}</li>
             <li>{t('help.headerNightModes')}</li>
             <li>{t('help.headerDownloads')}</li>
-            <li>{t('help.headerScan')}</li>
             <li>{t('help.headerBlur')}</li>
           </ul>
         </section>

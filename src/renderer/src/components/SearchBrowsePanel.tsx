@@ -143,7 +143,6 @@ interface Props {
   crawlFetching?: boolean
   crawlProgress?: import('../../../shared/types').CrawlProgressPayload | null
   browseGalleryAwaiting?: boolean
-  onRunScan?: () => Promise<void>
   /** Active Browse rule — keyword filter applied to gallery when query has tag keywords */
   browseRule?: WatchRule | null
   browseSettledToEnd?: boolean
@@ -200,7 +199,6 @@ export function SearchBrowsePanel({
   crawlFetching = false,
   crawlProgress = null,
   browseGalleryAwaiting = false,
-  onRunScan,
   browseRule = null,
   browseSettledToEnd = false,
   browseSettledDimPercent = 50,
@@ -2065,24 +2063,14 @@ export function SearchBrowsePanel({
               <span className="browse-gallery-loading-spinner" aria-hidden />
               <strong>{t('browse.fetchingFirstPage')}</strong>
               <p className="muted">{t(galleryAwaitingDetailKey)}</p>
-              {resultsAwaitingReload && onRunScan && (
-                <button type="button" className="btn-sm primary" onClick={() => void onRunScan()}>
-                  {t('header.scan')}
-                </button>
-              )}
             </div>
           )}
           {galleryIdleEmpty && (
             <div className="browse-gallery-loading browse-gallery-idle" role="status">
               <strong>{t('browse.results')}</strong>
               <p className="muted">
-                {onRunScan ? t('browse.galleryAwaitingDetail') : t('browse.galleryPausedOffline')}
+                {nightMode ? t('browse.galleryAwaitingDetail') : t('browse.emptyNoResults')}
               </p>
-              {onRunScan && (
-                <button type="button" className="btn-sm primary" onClick={() => void onRunScan()}>
-                  {t('header.scan')}
-                </button>
-              )}
             </div>
           )}
           {queueAllNotice && <p className="muted">{queueAllNotice}</p>}

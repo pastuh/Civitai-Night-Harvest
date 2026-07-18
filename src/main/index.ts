@@ -2,7 +2,7 @@ import './bootstrap-user-data'
 import { app, BrowserWindow, Menu, Tray, shell, protocol, session } from 'electron'
 import { join } from 'path'
 import { isRetryableNetworkError } from '../shared/network-retry'
-import { initIpc, registerMediaProtocol, recoverFromNetworkError, runScanNow, setMainWindow, ensureSchedulerStarted, onRendererUnload, stopScheduler, flushDownloadQueuePersist } from './ipc-handlers'
+import { initIpc, registerMediaProtocol, recoverFromNetworkError, setMainWindow, ensureSchedulerStarted, onRendererUnload, stopScheduler, flushDownloadQueuePersist } from './ipc-handlers'
 import { closeInventory } from './inventory'
 import { applyLaunchAtLogin, shouldStartHidden } from './launch-at-login'
 import { getSettings } from './settings-store'
@@ -173,10 +173,6 @@ function createTray(): void {
     {
       label: 'Show',
       click: () => showMainWindowFromTray()
-    },
-    {
-      label: 'Scan now',
-      click: () => runScanNow()
     },
     { type: 'separator' },
     {

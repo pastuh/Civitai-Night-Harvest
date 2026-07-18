@@ -531,6 +531,8 @@ export class DownloadQueue {
         continue
       }
       if (item.versionId) this.downloadService.cancel(item.versionId)
+      this.downloadService.cancelByModelId(item.modelId)
+      this.runningIds.delete(item.id)
       item.status = 'queued'
       item.bytesReceived = 0
       item.totalBytes = 0
@@ -542,6 +544,7 @@ export class DownloadQueue {
       cancelled++
     }
 
+    this.active = this.items.filter((i) => i.status === 'downloading').length
     this.schedulePersist()
     sendToRenderer(this.getWindow, 'download:queue', this.getState())
     this.checkIdle()
@@ -1406,6 +1409,8 @@ export class DownloadQueue {
 
       try {
         const onProgress = (p: DownloadProgress) => {
+          // Pause / cancel may have re-queued this item — ignore late transfer ticks.
+          if (item.status !== 'downloading') return
           lastProgressAt = Date.now()
           const now = Date.now()
           if (p.phase === 'model') {
