@@ -51,8 +51,6 @@ interface Props {
   domain: CivitaiDomainSetting
   defaultLinkDomain: CivitaiDomain
   uiExtended?: boolean
-  showBannedInGallery: boolean
-  onShowBannedChange: (show: boolean) => Promise<void>
   banFunctionMode?: boolean
   onBanFunctionModeChange?: (enabled: boolean) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
@@ -87,7 +85,6 @@ interface ContextMenuState {
 type LibraryFilter =
   | { type: 'all' }
   | { type: 'untagged' }
-  | { type: 'banned' }
   | { type: 'routing'; name: string }
   | { type: 'subfolder'; name: string }
   | { type: 'civitai'; name: string }
@@ -121,8 +118,6 @@ function GalleryTabInner({
   domain,
   defaultLinkDomain,
   uiExtended = false,
-  showBannedInGallery,
-  onShowBannedChange,
   banFunctionMode = false,
   onBanFunctionModeChange,
   onSaveTagRules,
@@ -159,6 +154,9 @@ function GalleryTabInner({
   const [moving, setMoving] = useState(false)
   const [message, setMessage] = useState('')
   const [bannedList, setBannedList] = useState<BannedModel[]>([])
+  /** Instant hide on Ban — survives stale loadBanned / refresh races that caused card flicker. */
+  const [pendingBanIds, setPendingBanIds] = useState<Set<number>>(() => new Set())
+  const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [previewRecord, setPreviewRecord] = useState<InventoryRecord | null>(null)
@@ -180,6 +178,12 @@ function GalleryTabInner({
   }, [isActive, highlightVersionIds])
 
   const bannedIds = useMemo(() => new Set(bannedList.map((b) => b.modelId)), [bannedList])
+  const hiddenModelIds = useMemo(() => {
+    if (pendingBanIds.size === 0) return bannedIds
+    const merged = new Set(bannedIds)
+    for (const id of pendingBanIds) merged.add(id)
+    return merged
+  }, [bannedIds, pendingBanIds])
   const modelTags = useMemo(() => aggregateModelTags(inventory), [inventory])
   const tagClusters = useMemo(() => buildTagClusters(modelTags), [modelTags])
 
@@ -291,16 +295,30 @@ function GalleryTabInner({
     void loadBanned()
   }, [inventory])
 
-  const isBanned = (modelId: number) => bannedIds.has(modelId)
+  // Drop pending hides once inventory no longer contains those models.
+  useEffect(() => {
+    if (pendingBanIds.size === 0) return
+    setPendingBanIds((prev) => {
+      if (prev.size === 0) return prev
+      let changed = false
+      const next = new Set(prev)
+      for (const id of prev) {
+        if (!inventory.some((r) => r.modelId === id)) {
+          next.delete(id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [inventory, pendingBanIds.size])
+
+  const isBanned = (modelId: number) => hiddenModelIds.has(modelId)
 
   const filteredInventory = useMemo(() => {
     let list = inventory
     switch (libraryFilter.type) {
       case 'untagged':
         list = list.filter((r) => !r.routingTag)
-        break
-      case 'banned':
-        list = list.filter((r) => bannedIds.has(r.modelId))
         break
       case 'routing': {
         const names = new Set(
@@ -335,9 +353,8 @@ function GalleryTabInner({
       default:
         break
     }
-    if (!showBannedInGallery && libraryFilter.type !== 'banned') {
-      list = list.filter((r) => !bannedIds.has(r.modelId))
-    }
+    // Banned models are removed from disk/inventory on Ban; hide any leftover rows.
+    list = list.filter((r) => !hiddenModelIds.has(r.modelId))
     if (nsfwFilter !== 'all') {
       list = list.filter((r) =>
         matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)
@@ -348,7 +365,7 @@ function GalleryTabInner({
     }
     list = list.filter((r) => matchesModelSearch(r))
     return list
-  }, [inventory, libraryFilter, showBannedInGallery, bannedIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter, hideFolderAssigned, sessionSet])
+  }, [inventory, libraryFilter, hiddenModelIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter, hideFolderAssigned, sessionSet])
 
   const sortedInventory = useMemo(() => {
     const list = [...filteredInventory]
@@ -458,8 +475,6 @@ function GalleryTabInner({
     return () => obs.disconnect()
   }, [libraryDisplayMode, resultsWindow.hasMoreLazy, resultsWindow.expandLazy, gridRecords.length])
 
-  const bannedCount = inventory.filter((r) => isBanned(r.modelId)).length
-
   const scrollToModel = useCallback(
     (modelId: number) => {
       const rec = inventory.find((r) => r.modelId === modelId)
@@ -467,16 +482,14 @@ function GalleryTabInner({
         setMessage(t('gallery.modelNotInLibrary'))
         return
       }
-      if (!showBannedInGallery && bannedIds.has(modelId)) {
-        setMessage(t('gallery.enableShowBanned'))
+      if (hiddenModelIds.has(modelId)) {
+        setMessage(t('gallery.modelNotInLibrary'))
         return
       }
       const matchesFilter = (row: InventoryRecord): boolean => {
         switch (libraryFilter.type) {
           case 'untagged':
             return !row.routingTag
-          case 'banned':
-            return bannedIds.has(row.modelId)
           case 'routing': {
             const names = new Set(
               namesForRoutingFilter(libraryFilter.name, tagRules).map((n) => n.toLowerCase())
@@ -517,9 +530,8 @@ function GalleryTabInner({
     },
     [
       inventory,
-      showBannedInGallery,
       libraryFilter,
-      bannedIds,
+      hiddenModelIds,
       tagClusters,
       tagRules,
       loraFolder,
@@ -544,41 +556,63 @@ function GalleryTabInner({
     onFocusTagHandled?.()
   }, [focusCivitaiTag, onFocusTagHandled])
 
+  const scheduleLibraryRefresh = useCallback(() => {
+    if (libraryRefreshTimerRef.current) clearTimeout(libraryRefreshTimerRef.current)
+    libraryRefreshTimerRef.current = setTimeout(() => {
+      libraryRefreshTimerRef.current = null
+      void onRefresh()
+    }, 500)
+  }, [onRefresh])
+
+  useEffect(() => {
+    return () => {
+      if (libraryRefreshTimerRef.current) clearTimeout(libraryRefreshTimerRef.current)
+    }
+  }, [])
+
   const banModel = async (modelId: number, modelName: string) => {
-    setBannedList((prev) => [
-      { modelId, modelName, bannedAt: new Date().toISOString() },
-      ...prev.filter((b) => b.modelId !== modelId)
-    ])
+    setPendingBanIds((prev) => {
+      if (prev.has(modelId)) return prev
+      const next = new Set(prev)
+      next.add(modelId)
+      return next
+    })
     setContextMenu(null)
     setPreviewRecord(null)
-    setMessage(t('gallery.banned', { name: modelName }))
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of next) {
+        const rec = inventory.find((r) => r.versionId === id)
+        if (rec?.modelId === modelId) next.delete(id)
+      }
+      return next
+    })
     try {
-      const result = await window.api.banModel(modelId, modelName)
-      setSelected((prev) => {
+      await window.api.banModel(modelId, modelName)
+      scheduleLibraryRefresh()
+    } catch (err) {
+      setPendingBanIds((prev) => {
+        if (!prev.has(modelId)) return prev
         const next = new Set(prev)
-        for (const id of next) {
-          const rec = inventory.find((r) => r.versionId === id)
-          if (rec?.modelId === modelId) next.delete(id)
-        }
+        next.delete(modelId)
         return next
       })
-      await onRefresh()
-      if (result?.deletedVersions && result.deletedVersions > 0) {
-        setMessage(t('gallery.deletedExcluded', { name: modelName }))
-      }
-    } catch (err) {
-      setBannedList((prev) => prev.filter((b) => b.modelId !== modelId))
       setMessage(err instanceof Error ? err.message : String(err))
     }
   }
 
   const unbanModel = async (modelId: number, modelName: string) => {
     setBannedList((prev) => prev.filter((b) => b.modelId !== modelId))
+    setPendingBanIds((prev) => {
+      if (!prev.has(modelId)) return prev
+      const next = new Set(prev)
+      next.delete(modelId)
+      return next
+    })
     setContextMenu(null)
-    setMessage(t('gallery.unbanned', { name: modelName }))
     try {
       await window.api.unbanModel(modelId)
-      await onRefresh()
+      scheduleLibraryRefresh()
     } catch (err) {
       setBannedList((prev) => [
         { modelId, modelName, bannedAt: new Date().toISOString() },
@@ -779,14 +813,6 @@ function GalleryTabInner({
             />
             <div className="browse-results-filters-box">
               <div className="browse-results-filters-row">
-                <label className="checkbox-field" title={t('gallery.showBanned')}>
-                  <input
-                    type="checkbox"
-                    checked={showBannedInGallery}
-                    onChange={(e) => void onShowBannedChange(e.target.checked)}
-                  />
-                  {t('gallery.showBanned')}
-                </label>
                 <label className="checkbox-field" title={t('gallery.hideFolderAssignedTitle')}>
                   <input
                     type="checkbox"
@@ -992,15 +1018,6 @@ function GalleryTabInner({
             >
               <span className="tag-name">{t('gallery.sessionDownloads')}</span>
               <span className="muted tag-count-inline">{sessionDownloadIds.length}</span>
-            </button>
-          )}
-          {bannedCount > 0 && showBannedInGallery && (
-            <button
-              type="button"
-              className={`sidebar-tag ${filterActive({ type: 'banned' }) ? 'active' : ''}`}
-              onClick={() => setLibraryFilter({ type: 'banned' })}
-            >
-              {t('gallery.bannedOnly', { count: bannedCount })}
             </button>
           )}
 

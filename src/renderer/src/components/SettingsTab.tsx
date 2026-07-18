@@ -732,16 +732,6 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
-              checked={draft.showBannedInGallery ?? false}
-              onChange={(e) => update('showBannedInGallery', e.target.checked)}
-            />
-            {t('settings.fields.showBannedInGallery')}
-          </label>
-        </div>
-        <div className="field field-checkbox">
-          <label>
-            <input
-              type="checkbox"
               checked={draft.banFunctionMode ?? false}
               onChange={(e) => {
                 const enabled = e.target.checked

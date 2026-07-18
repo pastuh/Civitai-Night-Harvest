@@ -914,10 +914,6 @@ export default function App() {
 
   const clearGalleryFocusModel = useCallback(() => setGalleryFocusModelId(null), [])
   const clearGalleryFocusTag = useCallback(() => setGalleryFocusCivitaiTag(null), [])
-  const onShowBannedChange = useCallback(async (show: boolean) => {
-    const next = await window.api.saveSettings({ showBannedInGallery: show })
-    setSettings(next)
-  }, [])
 
   const retryDeferred = async () => {
     try {
@@ -1322,8 +1318,6 @@ export default function App() {
             domain="red"
             defaultLinkDomain="red"
             uiExtended={uiExtended}
-            showBannedInGallery={settings.showBannedInGallery}
-            onShowBannedChange={onShowBannedChange}
             banFunctionMode={settings.banFunctionMode ?? false}
             onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
             onSaveTagRules={saveTagRules}

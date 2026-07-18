@@ -22,7 +22,6 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'scanOnStartup', fieldKey: 'settings.fields.scanOnStartup' },
   { refKey: 'autoRetryDeferred', fieldKey: 'settings.fields.autoRetryDeferred' },
   { refKey: 'blur', fieldKey: 'settings.fields.blurPreviews' },
-  { refKey: 'showBanned', fieldKey: 'settings.fields.showBannedInGallery' },
   { refKey: 'launchAtLogin', fieldKey: 'settings.fields.launchAtLogin' },
   { refKey: 'galleryGridSize', fieldKey: 'settings.fields.galleryGridSize' },
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
