@@ -3336,6 +3336,10 @@ code {
   cursor: default;
 }
 
+.context-menu-rating-picks {
+  max-width: 280px;
+}
+
 .context-menu button {
   display: block;
   width: 100%;

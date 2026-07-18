@@ -38,6 +38,7 @@ function countAutoPipelineItems(items: DownloadQueueItem[]): number {
   ).length
 }
 import * as inventory from './inventory'
+import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getTagRules, getWatchRules } from './settings-store'
 import { sendToRenderer } from './window-notify'
 import { repairBrokenInventoryPaths } from './library-sync'
@@ -831,8 +832,14 @@ export class DownloadQueue {
     this.items = this.items.filter((i) => i.id !== id)
     if (this.items.length !== before) {
       if (!item.manual && item.modelId > 0) {
+        const deleted = deleteModelFromLibrary(item.modelId)
         inventory.banModel(item.modelId, item.modelName)
-        this.log?.('info', `Excluded from auto-download: ${item.modelName}`)
+        this.log?.(
+          'info',
+          deleted.length > 0
+            ? `Deleted and excluded: ${item.modelName}`
+            : `Excluded from auto-download: ${item.modelName}`
+        )
       }
       this.broadcast()
       this.checkIdle()

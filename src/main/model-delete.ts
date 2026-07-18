@@ -29,3 +29,13 @@ export function deleteVersionFromLibrary(versionId: number): InventoryRecord {
   inventory.removeVersion(versionId)
   return record
 }
+
+/** Remove every library version (and on-disk files) for a model. */
+export function deleteModelFromLibrary(modelId: number): InventoryRecord[] {
+  const records = inventory.getVersionsForModel(modelId)
+  for (const record of records) {
+    deleteVersionFiles(record)
+    inventory.removeVersion(record.versionId)
+  }
+  return records
+}

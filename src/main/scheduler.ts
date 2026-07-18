@@ -24,6 +24,7 @@ import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './
 import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, type RulePageQueueResult } from './rule-queue'
 import { DownloadQueue } from './download-queue'
 import * as inventory from './inventory'
+import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, outputFoldersConfigured, toPublicSettings } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
@@ -2064,10 +2065,15 @@ export class ScanScheduler {
   }
 
   banModel(modelId: number, modelName = ''): void {
-    inventory.banModel(modelId, modelName)
+    const deleted = deleteModelFromLibrary(modelId)
+    inventory.banModel(modelId, modelName || deleted[0]?.modelName || '')
     this.dismissPendingForModel(modelId)
     this.removeModelFromBrowseGallery(modelId)
-    this.log('info', `Excluded model ${modelId} from future downloads`)
+    if (deleted.length > 0) {
+      this.log('info', `Deleted and excluded: ${modelName || modelId}`)
+    } else {
+      this.log('info', `Excluded model ${modelId} from future downloads`)
+    }
   }
 
   /** Resume downloads and night crawl after a transient network crash. */

@@ -210,7 +210,7 @@ const api = {
   }): Promise<{ status: string; modelId: number; versionId: number }> =>
     ipcRenderer.invoke('pending:approve', payload),
   ignoreModel: (modelId: number): Promise<void> => ipcRenderer.invoke('pending:ignore', modelId),
-  banModel: (modelId: number, modelName?: string) =>
+  banModel: (modelId: number, modelName?: string): Promise<{ modelId: number; deletedVersions: number }> =>
     ipcRenderer.invoke('model:ban', { modelId, modelName }),
   unbanModel: (modelId: number) => ipcRenderer.invoke('model:unban', modelId),
   getBannedModels: () => ipcRenderer.invoke('model:getBanned'),

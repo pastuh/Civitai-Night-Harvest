@@ -1324,6 +1324,8 @@ export default function App() {
             uiExtended={uiExtended}
             showBannedInGallery={settings.showBannedInGallery}
             onShowBannedChange={onShowBannedChange}
+            banFunctionMode={settings.banFunctionMode ?? false}
+            onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
             onSaveTagRules={saveTagRules}
             focusModelId={galleryFocusModelId}
             onFocusHandled={clearGalleryFocusModel}

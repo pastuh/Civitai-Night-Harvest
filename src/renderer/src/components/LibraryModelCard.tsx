@@ -24,6 +24,8 @@ export type LibraryModelCardProps = {
   tagRules: TagFolderRule[]
   loraFolder: string
   checkpointFolder: string
+  banFunctionMode?: boolean
+  onBanModel?: (modelId: number, modelName: string) => void
   onToggleSelect: (versionId: number) => void
   onOpenContextMenu: (
     e: MouseEvent,
@@ -47,6 +49,8 @@ function LibraryModelCardInner({
   tagRules,
   loraFolder,
   checkpointFolder,
+  banFunctionMode = false,
+  onBanModel,
   onToggleSelect,
   onOpenContextMenu,
   onOpenDetails,
@@ -136,6 +140,19 @@ function LibraryModelCardInner({
           >
             ↗
           </button>
+          {banFunctionMode && !banned && onBanModel && (
+            <button
+              type="button"
+              className="gallery-ban-inline-btn electron-no-drag"
+              title={t('gallery.excludeBan')}
+              onClick={(e) => {
+                e.stopPropagation()
+                onBanModel(record.modelId, record.modelName)
+              }}
+            >
+              ×
+            </button>
+          )}
         </div>
         <div className="muted">{record.versionName}</div>
         {!hideBaseModelOnCards && (

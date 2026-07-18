@@ -27,7 +27,7 @@ import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
 import { moveRecordsToTagFolder } from './model-move'
-import { deleteVersionFromLibrary } from './model-delete'
+import { deleteModelFromLibrary, deleteVersionFromLibrary } from './model-delete'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
 import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
 import { syncLibrarySlugs } from './slug-rename'
@@ -689,15 +689,26 @@ export function initIpc(): void {
   )
 
   ipcMain.handle('model:ban', (_e, payload: { modelId: number; modelName?: string }) => {
-    // Keep this path cheap — ban is clicked from Browse during harvest and must not
-    // serialize the full banned list or thrash the download queue when the model isn't queued.
-    inventory.banModel(payload.modelId, payload.modelName ?? '')
+    // Ban = exclude from future downloads + delete library files if any exist.
+    // Keep non-library work cheap (Browse harvest ×) when nothing is on disk.
+    const deleted = deleteModelFromLibrary(payload.modelId)
+    const modelName = payload.modelName ?? deleted[0]?.modelName ?? ''
+    inventory.banModel(payload.modelId, modelName)
     inventory.removePendingForModel(payload.modelId)
     scheduler.dismissPendingForModel(payload.modelId)
     scheduler.removeModelFromBrowseGallery(payload.modelId)
     downloadQueue.cancelByModelId(payload.modelId)
-    scheduler.log('info', `Excluded model ${payload.modelId} from downloads`)
-    return { modelId: payload.modelId }
+    if (deleted.length > 0) {
+      scheduler.log(
+        'info',
+        `Deleted and excluded: ${modelName || payload.modelId}`,
+        undefined,
+        { source: 'ban', modelId: payload.modelId }
+      )
+    } else {
+      scheduler.log('info', `Excluded model ${payload.modelId} from downloads`)
+    }
+    return { modelId: payload.modelId, deletedVersions: deleted.length }
   })
 
   ipcMain.handle('model:unban', (_e, modelId: number) => {

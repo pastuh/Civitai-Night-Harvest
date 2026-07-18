@@ -53,6 +53,8 @@ interface Props {
   uiExtended?: boolean
   showBannedInGallery: boolean
   onShowBannedChange: (show: boolean) => Promise<void>
+  banFunctionMode?: boolean
+  onBanFunctionModeChange?: (enabled: boolean) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   focusModelId?: number | null
   onFocusHandled?: () => void
@@ -121,6 +123,8 @@ function GalleryTabInner({
   uiExtended = false,
   showBannedInGallery,
   onShowBannedChange,
+  banFunctionMode = false,
+  onBanFunctionModeChange,
   onSaveTagRules,
   focusModelId,
   onFocusHandled,
@@ -546,9 +550,10 @@ function GalleryTabInner({
       ...prev.filter((b) => b.modelId !== modelId)
     ])
     setContextMenu(null)
+    setPreviewRecord(null)
     setMessage(t('gallery.banned', { name: modelName }))
     try {
-      await window.api.banModel(modelId, modelName)
+      const result = await window.api.banModel(modelId, modelName)
       setSelected((prev) => {
         const next = new Set(prev)
         for (const id of next) {
@@ -558,7 +563,9 @@ function GalleryTabInner({
         return next
       })
       await onRefresh()
-      if (showBannedInGallery) scrollToModel(modelId)
+      if (result?.deletedVersions && result.deletedVersions > 0) {
+        setMessage(t('gallery.deletedExcluded', { name: modelName }))
+      }
     } catch (err) {
       setBannedList((prev) => prev.filter((b) => b.modelId !== modelId))
       setMessage(err instanceof Error ? err.message : String(err))
@@ -788,6 +795,17 @@ function GalleryTabInner({
                   />
                   {t('gallery.hideFolderAssigned')}
                 </label>
+                {onBanFunctionModeChange && (
+                  <button
+                    type="button"
+                    className={`btn-sm browse-ban-toggle ${banFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                    onClick={() => onBanFunctionModeChange(!banFunctionMode)}
+                    title={t('browse.banModeTitle')}
+                    aria-pressed={banFunctionMode}
+                  >
+                    {banFunctionMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                  </button>
+                )}
                 {onRepairPreviews && inventory.length > 0 && (
                   <button
                     type="button"
@@ -904,6 +922,8 @@ function GalleryTabInner({
                   tagRules={tagRules}
                   loraFolder={loraFolder}
                   checkpointFolder={checkpointFolder}
+                  banFunctionMode={banFunctionMode}
+                  onBanModel={banModel}
                   onToggleSelect={toggleSelect}
                   onOpenContextMenu={openContextMenu}
                   onOpenDetails={setPreviewRecord}
@@ -1173,62 +1193,78 @@ function GalleryTabInner({
               <>
                 <div className="context-menu-divider" />
                 <div className="context-menu-subtitle">{t('gallery.setRating')}</div>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, { isNsfw: false, nsfwLevel: null })
-                  )}
-                >
-                  {t('gallery.markSfw')}
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(1))
-                  )}
-                >
-                  PG
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(2))
-                  )}
-                >
-                  PG-13
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(4))
-                  )}
-                >
-                  R
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(8))
-                  )}
-                >
-                  X
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, patchForRatingLevel(16))
-                  )}
-                >
-                  XXX
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, { isNsfw: true })
-                  )}
-                >
-                  {t('gallery.markNsfw')}
-                </button>
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void setRecordRating(contextMenu.versionId!, { isNsfw: false, nsfwLevel: null })
-                  )}
-                >
-                  {t('gallery.clearRating')}
-                </button>
+                <div className="context-menu-tag-picks context-menu-rating-picks">
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, {
+                        isNsfw: false,
+                        nsfwLevel: null
+                      })
+                    )}
+                  >
+                    SFW
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, patchForRatingLevel(1))
+                    )}
+                  >
+                    PG
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, patchForRatingLevel(2))
+                    )}
+                  >
+                    PG-13
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, patchForRatingLevel(4))
+                    )}
+                  >
+                    R
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, patchForRatingLevel(8))
+                    )}
+                  >
+                    X
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, patchForRatingLevel(16))
+                    )}
+                  >
+                    XXX
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, { isNsfw: true })
+                    )}
+                  >
+                    NSFW
+                  </button>
+                  <button
+                    className="tag-chip context-menu-tag-chip"
+                    {...contextMenuButtonProps(() =>
+                      void setRecordRating(contextMenu.versionId!, {
+                        isNsfw: false,
+                        nsfwLevel: null
+                      })
+                    )}
+                  >
+                    {t('gallery.clearRating')}
+                  </button>
+                </div>
               </>
             )}
             {menuBanned ? (
@@ -1248,20 +1284,6 @@ function GalleryTabInner({
                 {t('gallery.excludeBan')}
               </button>
             )}
-            {contextMenu.versionId ? (
-              <button
-                {...contextMenuButtonProps(() =>
-                  void deleteModel(
-                    contextMenu.versionId!,
-                    contextMenu.modelId,
-                    contextMenu.modelName
-                  )
-                )}
-                className="context-menu-danger"
-              >
-                {t('gallery.deleteFilesExclude')}
-              </button>
-            ) : null}
         </ContextMenuPortal>
       )}
 
