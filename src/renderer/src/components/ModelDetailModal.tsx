@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CivitaiDomain, CivitaiModelDetail, InventoryRecord } from '../../../shared/types'
 import {
   formatCompactCount,
-  civitaiModeBadgeLabel,
   isModelArchived,
   isModelTakenDown,
   modelModeLabel
@@ -15,7 +14,7 @@ export type ModelDetailTarget =
       kind: 'browse'
       modelId: number
       versionId: number
-      name: string
+      name?: string
       previewUrls?: string[]
       previewUrl?: string
       domain?: CivitaiDomain
@@ -24,6 +23,8 @@ export type ModelDetailTarget =
       kind: 'library'
       record: InventoryRecord
       domain?: CivitaiDomain
+      /** Other owned versions of the same model (for quick switch). */
+      siblingRecords?: InventoryRecord[]
     }
 
 interface Props {
@@ -31,6 +32,10 @@ interface Props {
   onClose: () => void
   onDelete?: () => void
   onShowInFolder?: (path: string) => void
+  /** When switching library sibling — update parent selection. */
+  onSelectLibraryRecord?: (record: InventoryRecord) => void
+  /** Version IDs already in the library (marks Civitai version list). */
+  ownedVersionIds?: number[]
 }
 
 function previewUrlsFor(target: ModelDetailTarget): string[] {
@@ -48,25 +53,52 @@ function licenseBool(value: boolean | undefined, yes: string, no: string): strin
   return '—'
 }
 
-export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: Props) {
+export function ModelDetailModal({
+  target,
+  onClose,
+  onDelete,
+  onShowInFolder,
+  onSelectLibraryRecord,
+  ownedVersionIds
+}: Props) {
   const [detail, setDetail] = useState<CivitaiModelDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeVersionId, setActiveVersionId] = useState(
+    target.kind === 'library' ? target.record.versionId : target.versionId
+  )
+  const [libraryRecord, setLibraryRecord] = useState(
+    target.kind === 'library' ? target.record : null
+  )
 
   const modelId = target.kind === 'library' ? target.record.modelId : target.modelId
-  const versionId = target.kind === 'library' ? target.record.versionId : target.versionId
-  const swarmPath = target.kind === 'library' ? target.record.swarmPath : undefined
+  const swarmPath =
+    libraryRecord?.swarmPath ?? (target.kind === 'library' ? target.record.swarmPath : undefined)
   const domain =
     target.domain ??
     (target.kind === 'library' ? target.record.civitaiDomain : target.domain) ??
     'com'
+
+  const ownedSet = useMemo(() => {
+    const ids = new Set<number>(ownedVersionIds ?? [])
+    if (target.kind === 'library') {
+      ids.add(target.record.versionId)
+      for (const s of target.siblingRecords ?? []) ids.add(s.versionId)
+    }
+    return ids
+  }, [ownedVersionIds, target])
+
+  useEffect(() => {
+    setActiveVersionId(target.kind === 'library' ? target.record.versionId : target.versionId)
+    if (target.kind === 'library') setLibraryRecord(target.record)
+  }, [target])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     void window.api
-      .getModelDetail({ modelId, versionId, domain, swarmPath })
+      .getModelDetail({ modelId, versionId: activeVersionId, domain, swarmPath })
       .then((d) => {
         if (!cancelled) setDetail(d)
       })
@@ -79,13 +111,37 @@ export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: 
     return () => {
       cancelled = true
     }
-  }, [modelId, versionId, domain, swarmPath])
+  }, [modelId, activeVersionId, domain, swarmPath])
 
   const title =
     detail?.name ??
-    (target.kind === 'library' ? target.record.modelName : target.name)
+    (target.kind === 'library' ? target.record.modelName : target.name) ??
+    `Model #${modelId}`
   const versionLabel =
-    detail?.versionName ?? (target.kind === 'library' ? target.record.versionName : undefined)
+    detail?.versionName ??
+    libraryRecord?.versionName ??
+    (target.kind === 'library' ? target.record.versionName : undefined)
+
+  const switchVersion = (versionId: number) => {
+    if (versionId === activeVersionId) return
+    setActiveVersionId(versionId)
+    if (target.kind === 'library') {
+      const sib =
+        target.siblingRecords?.find((r) => r.versionId === versionId) ??
+        (target.record.versionId === versionId ? target.record : null)
+      if (sib) {
+        setLibraryRecord(sib)
+        onSelectLibraryRecord?.(sib)
+      } else {
+        setLibraryRecord(null)
+      }
+    }
+  }
+
+  const displayTarget: ModelDetailTarget =
+    target.kind === 'library' && libraryRecord
+      ? { ...target, record: libraryRecord }
+      : target
 
   return createPortal(
     <div className="preview-modal-backdrop" onClick={onClose}>
@@ -95,16 +151,56 @@ export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: 
         </button>
 
         <div className="preview-modal-body">
-        <div className="preview-modal-img preview-modal-img-wrap">
-          <PreviewThumb urls={previewUrlsFor(target)} className="preview-modal-img" />
-        </div>
+          <div className="preview-modal-img preview-modal-img-wrap">
+            <PreviewThumb urls={previewUrlsFor(displayTarget)} className="preview-modal-img" />
+          </div>
 
           <div className="preview-modal-info">
             <h3>{title}</h3>
             {versionLabel && <p className="muted">{versionLabel}</p>}
 
+            <p className="model-detail-ids muted">
+              Model ID <code>#{modelId}</code>
+              {activeVersionId > 0 && (
+                <>
+                  {' · '}
+                  Version ID <code>#{activeVersionId}</code>
+                </>
+              )}
+            </p>
+
             {loading && <p className="muted">Loading Civitai details…</p>}
             {error && <p className="model-detail-error">{error}</p>}
+
+            {detail && detail.versions.length > 1 && (
+              <section className="model-detail-section">
+                <h4>Versions ({detail.versions.length})</h4>
+                <div className="model-detail-version-list">
+                  {detail.versions.map((v) => {
+                    const owned = ownedSet.has(v.id)
+                    const active = v.id === activeVersionId
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        className={`model-detail-version-btn${active ? ' is-active' : ''}${
+                          owned ? ' is-owned' : ''
+                        }`}
+                        title={`Version ID #${v.id}${owned ? ' · in library' : ''}`}
+                        onClick={() => switchVersion(v.id)}
+                      >
+                        <span className="model-detail-version-name">{v.name}</span>
+                        <span className="muted model-detail-version-meta">
+                          #{v.id}
+                          {v.baseModel ? ` · ${v.baseModel}` : ''}
+                          {owned ? ' · owned' : ''}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
 
             {detail && (
               <>
@@ -195,33 +291,33 @@ export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: 
               </>
             )}
 
-            {target.kind === 'library' && (
+            {displayTarget.kind === 'library' && libraryRecord && (
               <>
-                {target.record.routingTag ? (
-                  <span className="tag-chip selected">{target.record.routingTag}</span>
+                {libraryRecord.routingTag ? (
+                  <span className="tag-chip selected">{libraryRecord.routingTag}</span>
                 ) : (
                   <span className="muted">default folder</span>
                 )}
                 <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-                  Downloaded {new Date(target.record.downloadedAt).toLocaleString()}
+                  Downloaded {new Date(libraryRecord.downloadedAt).toLocaleString()}
                 </p>
                 <dl className="preview-paths">
                   <dt>Model</dt>
-                  <dd>{target.record.modelPath}</dd>
+                  <dd>{libraryRecord.modelPath}</dd>
                   <dt>Preview</dt>
-                  <dd>{target.record.previewPath || '—'}</dd>
+                  <dd>{libraryRecord.previewPath || '—'}</dd>
                   <dt>Swarm JSON</dt>
-                  <dd>{target.record.swarmPath}</dd>
+                  <dd>{libraryRecord.swarmPath}</dd>
                 </dl>
               </>
             )}
 
             <div className="row model-detail-actions">
-              {target.kind === 'library' && onShowInFolder && (
+              {displayTarget.kind === 'library' && libraryRecord && onShowInFolder && (
                 <button
                   type="button"
                   className="primary"
-                  onClick={() => onShowInFolder(target.record.modelPath)}
+                  onClick={() => onShowInFolder(libraryRecord.modelPath)}
                 >
                   Open in Explorer
                 </button>
@@ -231,7 +327,7 @@ export function ModelDetailModal({ target, onClose, onDelete, onShowInFolder }: 
                   Civitai page ↗
                 </button>
               )}
-              {onDelete && (
+              {onDelete && displayTarget.kind === 'library' && libraryRecord && (
                 <button type="button" className="danger-btn" onClick={onDelete}>
                   Delete files & exclude
                 </button>

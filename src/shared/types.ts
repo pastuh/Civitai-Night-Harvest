@@ -49,8 +49,13 @@ export interface AppSettings {
   autoRetryDeferred: boolean
   /** Periodic scan + auto-download models matching tags you already use */
   nightMode: boolean
-  /** With night mode: queue all filtered models (ignore tag matching) */
+  /** Kept for settings compat; Harvest always queues all Browse matches (tag filter retired). */
   nightDownloadAll: boolean
+  /**
+   * When true, Harvest/Check library auto-queues newer versions of models you already own.
+   * When false, they appear on New Versions for manual Queue / Ban / Dismiss.
+   */
+  autoDownloadNewVersions: boolean
   /** When crawl/scan queues models, start downloads automatically (off = queue only, graceful stop) */
   crawlAutoDownload: boolean
   /** Only user-activated downloads enter the queue (no auto-detect from crawl/scan) */
@@ -144,6 +149,7 @@ export interface AppSettingsPublic {
   autoRetryDeferred: boolean
   nightMode: boolean
   nightDownloadAll: boolean
+  autoDownloadNewVersions: boolean
   crawlAutoDownload: boolean
   manualQueueMode: boolean
   blurPreviews: boolean
@@ -189,7 +195,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showBannedInGallery: true,
   autoRetryDeferred: false,
   nightMode: false,
-  nightDownloadAll: false,
+  nightDownloadAll: true,
+  autoDownloadNewVersions: false,
   crawlAutoDownload: true,
   manualQueueMode: false,
   blurPreviews: false,
@@ -721,6 +728,14 @@ export interface InventoryGetResult {
   relinkedFromDisk?: number
   /** On-disk model files scanned for import */
   diskScanned?: number
+  /** Local/custom (no swarm) rows newly registered */
+  importedLocalFromDisk?: number
+  /** Local rows marked as SHA256 duplicates of another library file */
+  localDuplicatesMarked?: number
+  /** Local rows promoted to real Civitai version IDs via hash lookup */
+  localPromoted?: number
+  /** Local rows still unrecognized after recognition */
+  localStillUnrecognized?: number
   /** Set when LoRA/Checkpoint drive is offline — sync was skipped */
   storageError?: string
 }
@@ -745,6 +760,11 @@ export interface InventoryGetOptions {
    * Used as a background follow-up after a fast startup check.
    */
   diskImportOnly?: boolean
+  /**
+   * Hash local/custom rows, detect duplicates vs library, and look up Civitai by SHA256.
+   * Settings → Sync folders; not used on startup.
+   */
+  recognizeLocalModels?: boolean
   repairPreviews?: boolean
   maxRepairs?: number
 }
@@ -783,6 +803,13 @@ export interface InventoryRecord {
   checkpointType?: string
   civitaiMode?: string
   fileHashSha256?: string
+  /**
+   * `local` = custom / no-swarm import (synthetic negative versionId).
+   * `civitai` = normal library row. Undefined treated as civitai unless versionId < 0.
+   */
+  origin?: 'civitai' | 'local'
+  /** When SHA256 matches another library file, points at that versionId. */
+  duplicateOfVersionId?: number
 }
 
 export interface CivitaiMeProfile {
@@ -790,6 +817,13 @@ export interface CivitaiMeProfile {
   username: string
   tier?: string
   isMember?: boolean
+}
+
+export interface CivitaiModelDetailVersion {
+  id: number
+  name: string
+  baseModel: string
+  createdAt?: string
 }
 
 export interface CivitaiModelDetail {
@@ -816,10 +850,12 @@ export interface CivitaiModelDetail {
   pageUrl: string
   nsfw?: boolean
   sourceDomain: CivitaiDomain
+  /** All Civitai versions for this model (newest first). */
+  versions: CivitaiModelDetailVersion[]
 }
 
 export interface LibrarySyncProgress {
-  phase: 'import' | 'checking' | 'metadata' | 'identity' | 'hash' | 'rename' | 'preview'
+  phase: 'import' | 'checking' | 'metadata' | 'identity' | 'hash' | 'recognize' | 'rename' | 'preview'
   current: number
   total: number
   modelName: string

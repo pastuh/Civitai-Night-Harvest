@@ -20,7 +20,9 @@ interface Props {
   settings: AppSettingsPublic
   onSave: (partial: AppSettingsSave) => Promise<void>
   onOpenHelp?: () => void
-  onRefreshInventory?: (syncDisk?: boolean) => Promise<unknown>
+  onRefreshInventory?: (
+    syncDiskOrOpts?: boolean | import('../../../shared/types').InventoryGetOptions
+  ) => Promise<unknown>
   onWithBusy?: <T,>(message: string, action: () => Promise<T>, subMessage?: string) => Promise<T>
   tagSuggestions?: string[]
 }
@@ -382,7 +384,10 @@ export function SettingsTab({
                     if (Object.keys(folderPatch).length) {
                       await onSave(folderPatch)
                     }
-                    const inv = await onRefreshInventory?.(true)
+                    const inv = await onRefreshInventory?.({
+                      syncDisk: true,
+                      recognizeLocalModels: true
+                    })
                     if (inv && typeof inv === 'object' && 'items' in inv) {
                       setDiskSyncResult(formatLibrarySyncSummary(inv, draft.locale ?? 'en'))
                     } else {
@@ -540,10 +545,10 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
-              checked={draft.nightDownloadAll ?? false}
-              onChange={(e) => update('nightDownloadAll', e.target.checked)}
+              checked={draft.autoDownloadNewVersions ?? false}
+              onChange={(e) => update('autoDownloadNewVersions', e.target.checked)}
             />
-            {t('settings.fields.nightDownloadAll')}
+            {t('settings.fields.autoDownloadNewVersions')}
           </label>
         </div>
         <RangeSlider

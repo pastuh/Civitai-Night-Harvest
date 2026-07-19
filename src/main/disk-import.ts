@@ -2,6 +2,10 @@ import { readFileSync, readdirSync, statSync } from 'fs'
 import { basename, join } from 'path'
 import type { CivitaiDomain, InventoryRecord, LibrarySyncProgress, TagFolderRule } from '../shared/types'
 import { collectLibraryScanRoots, parseSwarmDescriptionModelId, parseSwarmDescriptionVersionId } from '../shared/utils'
+import {
+  nextFreeSyntheticVersionId,
+  syntheticVersionIdFromPath
+} from '../shared/local-inventory'
 import * as inventory from './inventory'
 import { isOutputPathRootReachable, safePathExists } from './output-paths'
 
@@ -16,6 +20,7 @@ function yieldToEventLoop(): Promise<void> {
 export interface DiskImportResult {
   scanned: number
   imported: number
+  importedLocal: number
   updated: number
   skippedKnown: number
   skippedNoSwarm: number
@@ -191,7 +196,46 @@ function buildRecordFromDisk(params: {
     civitaiTags: tagParts.slice(2),
     fileSizeBytes,
     trainingResolution,
-    civitaiDomain: parseDomain(swarm)
+    civitaiDomain: parseDomain(swarm),
+    origin: 'civitai'
+  }
+}
+
+function buildLocalRecordFromDisk(params: {
+  folder: string
+  slug: string
+  modelPath: string
+  tagRules: TagFolderRule[]
+}): InventoryRecord {
+  const { folder, slug, modelPath, tagRules } = params
+  const previewPath = join(folder, `${slug}.preview.jpg`)
+  let fileSizeBytes: number | undefined
+  try {
+    fileSizeBytes = statSync(modelPath).size
+  } catch {
+    /* optional */
+  }
+  const preferred = syntheticVersionIdFromPath(modelPath)
+  const versionId = nextFreeSyntheticVersionId(preferred, (id) => inventory.versionIdExists(id))
+  return {
+    modelId: 0,
+    versionId,
+    slug,
+    modelName: slug,
+    versionName: 'local',
+    author: 'local',
+    baseModel: '',
+    routingTag: inferRoutingTag(folder, tagRules),
+    outputFolder: folder,
+    modelPath,
+    previewPath: safePathExists(previewPath) === true ? previewPath : '',
+    swarmPath: '',
+    downloadedAt: new Date().toISOString(),
+    ignored: false,
+    civitaiTags: [],
+    fileSizeBytes,
+    civitaiDomain: 'com',
+    origin: 'local'
   }
 }
 
@@ -205,6 +249,7 @@ export async function importModelsFromDisk(
   const result: DiskImportResult = {
     scanned: 0,
     imported: 0,
+    importedLocal: 0,
     updated: 0,
     skippedKnown: 0,
     skippedNoSwarm: 0,
@@ -288,26 +333,36 @@ export async function importModelsFromDisk(
     const swarmPath = join(folder, `${slug}.swarm.json`)
     const swarm = readSwarm(swarmPath)
     if (!swarm) {
-      result.skippedNoSwarm++
+      const local = buildLocalRecordFromDisk({ folder, slug, modelPath, tagRules })
+      inventory.addVersion(local)
+      pathToVersion.set(local.modelPath.toLowerCase(), local.versionId)
+      result.importedLocal++
+      result.imported++
       onProgress?.({
         phase: 'import',
         current: i + 1,
         total,
-        modelName: slug,
-        action: 'No .swarm.json — skipped'
+        modelName: local.modelName,
+        action: 'Imported local / unrecognized (no .swarm.json)'
       })
       continue
     }
 
     const record = buildRecordFromDisk({ folder, slug, modelPath, swarmPath, swarm, tagRules })
     if (!record) {
+      // Swarm present but no version id — still register as local unrecognized
+      const local = buildLocalRecordFromDisk({ folder, slug, modelPath, tagRules })
+      inventory.addVersion(local)
+      pathToVersion.set(local.modelPath.toLowerCase(), local.versionId)
+      result.importedLocal++
+      result.imported++
       result.skippedUnidentified++
       onProgress?.({
         phase: 'import',
         current: i + 1,
         total,
-        modelName: slug,
-        action: 'Could not read Civitai version from swarm metadata'
+        modelName: local.modelName,
+        action: 'Imported local (swarm missing Civitai version id)'
       })
       continue
     }

@@ -12,6 +12,7 @@ import {
   cardTagFolderRole,
   cardTagFolderRoleClass
 } from './gallery-card-utils'
+import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 
 export type LibraryModelCardProps = {
   record: InventoryRecord
@@ -25,7 +26,8 @@ export type LibraryModelCardProps = {
   loraFolder: string
   checkpointFolder: string
   banFunctionMode?: boolean
-  onBanModel?: (modelId: number, modelName: string) => void
+  onBanModel?: (modelId: number, modelName: string, versionId?: number) => void
+  duplicateOfName?: string | null
   onToggleSelect: (versionId: number) => void
   onOpenContextMenu: (
     e: MouseEvent,
@@ -51,6 +53,7 @@ function LibraryModelCardInner({
   checkpointFolder,
   banFunctionMode = false,
   onBanModel,
+  duplicateOfName = null,
   onToggleSelect,
   onOpenContextMenu,
   onOpenDetails,
@@ -65,16 +68,31 @@ function LibraryModelCardInner({
       : null
   const folderLabel = folderLabelForRecord(record, tagRules, loraFolder, checkpointFolder)
   const folderLine = folderLineIfNotDuplicatingTag(folderLabel, record.civitaiTags)
+  const unrecognized = isUnrecognizedInventoryRecord(record)
+  const canOpenCivitai = !unrecognized && record.modelId > 0 && record.versionId > 0
 
   return (
     <div
       ref={(el) => setCardRef(record.versionId, el)}
-      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''}`}
+      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''}`}
       onClick={() => onToggleSelect(record.versionId)}
       onContextMenu={(e) =>
         onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
     >
+      {unrecognized ? (
+        <span className="library-unrecognized-badge" title={t('gallery.unrecognizedHint')}>
+          {t('gallery.unrecognized')}
+        </span>
+      ) : null}
+      {duplicateOfName ? (
+        <span
+          className="library-duplicate-badge"
+          title={t('gallery.duplicateOf', { name: duplicateOfName })}
+        >
+          {t('gallery.duplicateOf', { name: duplicateOfName })}
+        </span>
+      ) : null}
       {ratingInfo ? (
         <span
           className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
@@ -123,6 +141,7 @@ function LibraryModelCardInner({
           >
             ℹ
           </button>
+          {canOpenCivitai && (
           <button
             type="button"
             className="gallery-web-btn-inline"
@@ -140,6 +159,7 @@ function LibraryModelCardInner({
           >
             ↗
           </button>
+          )}
           {banFunctionMode && !banned && onBanModel && (
             <button
               type="button"
@@ -147,7 +167,7 @@ function LibraryModelCardInner({
               title={t('gallery.excludeBan')}
               onClick={(e) => {
                 e.stopPropagation()
-                onBanModel(record.modelId, record.modelName)
+                onBanModel(record.modelId, record.modelName, record.versionId)
               }}
             >
               ×

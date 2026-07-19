@@ -47,7 +47,7 @@ export const en = {
     nsfwNeedsKey: 'NSFW/restricted content needs a Civitai API key in Settings.',
     openBrowseRules: 'Open Browse rules',
     tooltipNightAllOn: 'Night mode on — download all matching models. Click to turn off.',
-    tooltipNightTagsOn: 'Night harvest on — only models with tags you already use. Click to turn off.',
+    tooltipNightTagsOn: 'Harvest on — queues and downloads new Browse matches. Click to turn off.',
     tooltipNightOff: 'Start harvest — automatic catalog walk and download',
     tooltipDownloadsOn: 'Downloads running — click to pause queue (harvest continues)',
     tooltipDownloadsAuto: 'Auto queue — click to switch to manual',
@@ -100,6 +100,7 @@ export const en = {
       contentFilter: 'Default content filter',
       nightMode: 'Night mode',
       autoStartDownloads: 'Auto-start downloads when queued',
+      autoDownloadNewVersions: 'Auto-download new versions of owned models',
       nightDownloadAll: 'Night mode: queue all Browse matches (still skips blocked tags)',
       scanInterval: 'Scan interval (min)',
       parallelDownloads: 'Parallel downloads',
@@ -200,7 +201,7 @@ export const en = {
       slugSyncSkipped: 'skipped {skipped} (name collision or file missing)',
       slugSyncRepaired: 'repaired {repaired} paths',
       diskSyncHint:
-        'Scans LoRA and Checkpoint folders (and tag folders) for .safetensors + .swarm.json sidecars, registers owned models, removes stale DB entries, then updates the download queue.',
+        'Scans LoRA and Checkpoint folders (and tag folders) for model files, imports .swarm.json models and unrecognized customs, hashes customs, checks duplicates vs Library and Civitai (SHA256), removes stale DB entries, then updates the download queue.',
       diskSyncDone: 'Disk sync finished — see Library tab for the summary.',
       activityLogHint:
         'Controls what is saved to the activity log and SQLite database. Less logging reduces disk writes and UI updates during long crawls.',
@@ -299,7 +300,7 @@ export const en = {
     quickStart3: 'Header → 🌙 Harvest to walk the catalog; set **Auto** for hands-off queueing (or **Manual** and click cards)',
     headerHarvest: '🌙 Harvest — walks enabled Browse rules page by page; queues and downloads new models',
     headerNightModes:
-      '🌙 All vs 🌙 Harvesting — in Settings: “Night mode: queue all Browse matches” controls whether every match or only library-tag matches are queued',
+      '🌙 Harvesting — queues every new model that matches your enabled Browse rules (blocked tags still skipped). Folder / Tags assignment is separate and can wait until after download.',
     headerDownloads:
       '**Auto** / **Manual** — separate header toggles: Auto queues eligible models (up to 10 in pipeline); Manual only queues cards you click. **Pause** (red) stops active downloads without switching mode.',
     headerScan: 'Scan — run all enabled Browse rules once and refresh Results',
@@ -323,7 +324,7 @@ export const en = {
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
     libraryTags: 'Click a tag on a card to open Tag folders with that tag in search',
     edgeOwned: 'Green top border — already in your library',
-    edgeQueued: 'Gray top border — in download queue',
+    edgeQueued: 'Queue accent top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',
     edgeNew: 'Teal top border — new, not queued',
     edgeAwaiting: 'Yellow — awaiting access / early access',
@@ -335,12 +336,13 @@ export const en = {
     dlStripProgress:
       'Active download — progress bar on the thumbnail; below the title: e.g. 218 MB / 1.2 GB · 12 MB/s (no percentage).',
     dlStripColors:
-      'Strip top border only: gray = queued or downloading · pink = retryable error until the next attempt starts · yellow = early access unlocks today',
+      'Strip top border only: queue accent = queued or downloading · pink = retryable error until the next attempt starts · yellow = early access unlocks today',
     dlStripPriority:
       'Right-click a strip card → Priority download — moves it to the front of the queue (or right after active downloads)',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Awaiting access tab — 403, early access, or missing API key',
-    dlNewVersions: 'New versions tab — approve updates for models you already own',
+    dlNewVersions:
+      'New Versions — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
     dlTabBadges:
       'Tab badges — Browse: active queue count · Library: +N new downloads since last visit · New Versions / Awaiting access: pending counts',
     dlActivity:
@@ -354,8 +356,8 @@ export const en = {
       nightMode: 'Periodic scan of enabled Browse rules + auto-queue. Needs folder + at least one rule On.',
       autoStart:
         'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
-      nightDownloadAll:
-        'All mode: queue every new model matching Browse rules (not only library tags). Blocked tags in Settings/Browse are always skipped.',
+      autoDownloadNewVersions:
+        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on New Versions for Queue / Ban / Dismiss. Brand-new Browse models are always eligible separately.',
       scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
       parallelDownloads: 'How many models download at once. Use 1 for one file at full speed.',
       domain:
@@ -515,6 +517,8 @@ export const en = {
     loadingNextPage: 'Loading next page…',
     showingGridCount: 'Showing {shown} of {total} — scroll for more',
     fetchingFirstPage: 'Fetching models from Civitai API…',
+    galleryBusyTitle: 'Fetching…',
+    galleryBusyDetail: 'Please wait. Progress is shown in the status bar below.',
     fetchingRulePage: 'Fetching page {page} for “{rule}”…',
     waitingNextPage: 'Waiting ~{min} min before next Civitai page…',
     resultsUpdating: 'Updating…',
@@ -563,8 +567,8 @@ export const en = {
     galleryAwaitingTitle: 'Browse gallery is empty — turn on Harvest',
     galleryAwaitingDetail:
       'No models in the gallery yet. Press Harvest in the header to load models from your enabled rules.',
-    galleryAwaitingDetailActive: 'No models in the gallery yet. Fetch in progress…',
-    galleryAwaitingDetailHarvest: 'No models in the gallery yet. Harvest is loading the first page…',
+    galleryAwaitingDetailActive: 'Fetching… Please wait.',
+    galleryAwaitingDetailHarvest: 'Fetching… Please wait.',
     galleryPausedOffline:
       'Browse is idle — output drive is offline. Fix LoRA/Checkpoint folders in Settings before harvesting.',
     emptyPreview: 'Preview “{name}”',
@@ -577,7 +581,7 @@ export const en = {
     previewErrorApi: 'Civitai API error ({status}): {detail}',
     legendOwned: 'Green = owned',
     legendNew: 'Cyan edge / badge = new (not in library)',
-    legendAutoQueued: 'Gray edge = in download queue',
+    legendAutoQueued: 'Queue accent edge = in download queue',
     legendBlocked: 'Purple = blocked by tag',
     legendAwaiting: 'Orange = awaiting access',
     legendDl: 'Amber edge = downloading',
@@ -698,9 +702,26 @@ export const en = {
     }
   },
   pending: {
-    emptyHint:
-      'No pending version updates. Run Check library to poll owned models. If you dismissed a version by mistake, Check library will detect it again — see Activity log for “Dismissed new version”.',
-    dismissHint: 'Hide this version from the list. Run Check library on New Versions to detect it again.'
+    emptyHint: 'No updates waiting. Harvest fills this list automatically when it finds newer versions of models you own.',
+    baseFilterHint:
+      'Only versions matching a base model you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
+    emptyAfterBan: 'Banned entries removed.',
+    dismissHint: 'Hide this offer only (keeps your library files).',
+    ban: 'Ban',
+    banHint: 'Delete all owned versions of this model and exclude it from future downloads',
+    banConfirm:
+      'Ban “{name}”? Deletes all {count} owned version(s) from library/disk and excludes the model.',
+    queueDownload: 'Queue download',
+    queueHint: 'Download this newer version; keep versions you already own',
+    openInLibrary: 'Open in Library',
+    offeredVersion: 'New version:',
+    ownedVersions: 'You own {count}: {list}',
+    ownedNone: 'No owned files found for this model id.',
+    listTitle: 'Updates awaiting approval ({count})',
+    checkLibrary: 'Check again',
+    checkLibraryTitle:
+      'Optional: re-check all owned models via Civitai API (one request per model). Normally Harvest + background check fill this list without clicking.',
+    checking: 'Checking…'
   },
   load: {
     failed: 'Failed to load',
@@ -747,6 +768,7 @@ export const en = {
     phaseMetadata: 'Reading file metadata',
     phaseIdentity: 'Writing model identity files',
     phaseHash: 'Computing SHA256 hashes',
+    phaseRecognize: 'Recognizing custom / local models',
     phaseRename: 'Renaming library files',
     phasePreview: 'Checking library previews',
     preparingHint: 'Loading settings and inventory — progress appears when the disk check starts.',
@@ -765,6 +787,10 @@ export const en = {
   syncSummary: {
     scanned: 'scanned {count} on-disk file(s)',
     imported: 'imported {count} new model(s) from disk',
+    importedLocal: 'imported {count} unrecognized / local file(s)',
+    localDuplicates: 'marked {count} local duplicate(s)',
+    localPromoted: 'matched {count} local file(s) on Civitai',
+    localUnrecognized: '{count} still unrecognized',
     relinked: 'relinked {count} existing model(s)',
     removed: 'removed {count} missing from disk',
     enriched: 'updated metadata for {count} model(s)',
@@ -864,6 +890,10 @@ export const en = {
       'Tag borders (subtle): solid accent tint = final route · solid = mapped · dashed = unmapped. Click → Tag folders.',
     allModels: 'All models',
     untaggedFolder: 'Untagged folder',
+    unrecognized: 'Unrecognized',
+    unrecognizedHint: 'Custom / local file without Civitai identity (no .swarm.json or unmatched hash)',
+    duplicateOf: 'Duplicate of {name}',
+    deleteLocal: 'Delete local files',
     sessionDownloads: 'Session downloads',
     bannedOnly: 'Banned only ({count})',
     baseModels: 'Base models',

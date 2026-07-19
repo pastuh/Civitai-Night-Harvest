@@ -27,6 +27,13 @@ export async function fetchCivitaiModelDetail(
   const swarmTriggers = trainedWordsFromSwarm(swarmPath)
   const apiTriggers = version.trainedWords?.map((w) => w.trim()).filter(Boolean) ?? []
 
+  const versions = (model.modelVersions ?? []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    baseModel: v.baseModel,
+    createdAt: v.createdAt
+  }))
+
   return {
     modelId: model.id,
     versionId: version.id,
@@ -45,7 +52,8 @@ export async function fetchCivitaiModelDetail(
     trainedWordsSource: swarmTriggers ? 'swarm' : apiTriggers.length ? 'api' : undefined,
     pageUrl: client.getModelPageUrl(model.id, version.id),
     nsfw: model.nsfw,
-    sourceDomain: domain
+    sourceDomain: domain,
+    versions
   }
 }
 

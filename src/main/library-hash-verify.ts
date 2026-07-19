@@ -42,7 +42,7 @@ export async function backfillMissingHashes(
 ): Promise<number> {
   const missing = inventory
     .getAllVersions()
-    .filter((r) => !r.fileHashSha256 && existsSync(r.modelPath))
+    .filter((r) => !r.fileHashSha256 && existsSync(r.modelPath) && r.versionId > 0)
     .slice(0, maxFiles)
   const total = missing.length
   let count = 0
@@ -86,7 +86,9 @@ export async function verifyLibraryHashes(
     apiDomains: []
   }
 
-  const records = inventory.getAllVersions().filter((r) => existsSync(r.modelPath))
+  const records = inventory.getAllVersions().filter(
+    (r) => existsSync(r.modelPath) && r.versionId > 0 && r.origin !== 'local'
+  )
   const pending: InventoryRecord[] = []
 
   const needHash = records.filter((r) => !r.fileHashSha256).slice(0, maxFiles)

@@ -19,7 +19,7 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Clear queue** — empties the download strip; does not switch Auto/Manual or enable Pause
 - **Local library** — SQLite inventory, duplicate detection by version, tag-based folder routing; tab badge **+N** for new downloads since last Library visit
 - **API host** — search/crawl use **civitai.red** (fixed)
-- **Queue & retries** — download strip with progress, priority, color-coded states; awaiting-access / early-access; **New Versions** tab for owned-model updates
+- **Queue & retries** — download strip with progress, priority, color-coded states; awaiting-access / early-access; **New Versions** for owned-model updates (filled during Harvest + background API check; optional auto-download in Settings)
 - **Activity log** — crawl and download history (verbosity configurable in Settings, including Off)
 - **Bottom status bar** — API fetch / peek wait / queue summary (works with quiet harvest)
 - **Settings** — backfill vs peek interval, strip layout/visibility, results windowing (lazy / pages / auto-advance), optional optimization slider
@@ -50,6 +50,19 @@ With **Backfill older catalog pages** on (default):
 With backfill off, continuous harvest relies on peek / “queue all” settings instead of a full catalog walk.
 
 Turning **Harvest off** currently clears the in-memory Browse gallery. To review models without more API work: keep Harvest on, use **Pause**, and turn 👁 off (or use snapshot).
+
+---
+
+## New Versions tab
+
+For **models you already own**, when Civitai has a **newer version of the same base model** (e.g. you own Krea2 → only a newer Krea2 counts). If enabled Browse Rules set `baseModels`, that filter applies too (no separate Rules editor on this tab):
+
+1. **During Harvest** — as catalog pages are fetched, if a result is a model already in your library but with a newer matching-base version id, it is added here (or auto-queued if **Settings → Auto-download new versions** is on).
+2. **Background check** — after startup / during Harvest peek, the app also polls owned models via Civitai `GET /models/{id}` (one request per model — **not** SHA256). This catches updates for models that did not appear in the current Browse crawl.
+
+You normally only **Queue / Dismiss / Ban**. The optional **Check again** button is a manual re-poll.
+
+Brand-new models (not in your library) appear as Browse **New** and are handled by Harvest Auto-queue — they do not belong on this tab.
 
 ---
 

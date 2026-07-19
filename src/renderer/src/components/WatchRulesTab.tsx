@@ -900,7 +900,6 @@ export function WatchRulesTab({
           onHiddenTagsChange={async (tags) => onSaveSettings({ hiddenTags: tags })}
           crawlStatus={crawlStatus}
           backfillCatalog={settings.backfillCatalog ?? true}
-          nightDownloadAll={settings.nightDownloadAll ?? false}
           nightMode={settings.nightMode ?? false}
           updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? false}
           deferredAwaitingCount={deferred.length}

@@ -246,6 +246,15 @@ export class DownloadService {
     let swarmPath: string | undefined
 
     try {
+      if (request.modelId <= 0 || (request.versionId != null && request.versionId <= 0)) {
+        return {
+          status: 'failed',
+          reason: 'Invalid model id',
+          modelId: request.modelId,
+          versionId: request.versionId ?? 0
+        }
+      }
+
       if (inventory.isModelBanned(request.modelId)) {
         return {
           status: 'failed',

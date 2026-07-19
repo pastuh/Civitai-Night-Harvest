@@ -97,12 +97,14 @@
   --error: #d64550;
   --browse-cat-loaded: #ffffff;
   --browse-cat-owned: #5a9468;
-  --browse-cat-new: #7a8a9a;
+  /* Keep New clearly cyan — was too close to gray queued accents */
+  --browse-cat-new: #6eb8d4;
   --browse-cat-awaiting: #a67c52;
   --browse-cat-blocked: #8b6b9a;
   --browse-cat-banned: #c45a62;
   --strip-interrupted: #b86b82;
-  --strip-queued: #5a5a64;
+  /* Queued / in-queue card edge — pure black (not slate gray; New is cyan) */
+  --strip-queued: #000000;
   --chrome-bg: #08080a;
   --chrome-text: #d0d0d4;
   --chrome-muted: #707078;
@@ -2010,9 +2012,45 @@ label.field-label {
   margin-bottom: 12px;
 }
 
-.status-tab-desc {
-  margin: 4px 0 0;
+.pending-tab-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pending-tab-head h2 {
+  margin: 0;
+}
+
+.pending-tab-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pending-scan-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
+}
+
+.pending-scan-mini-bar {
+  display: inline-block;
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.pending-scan-mini-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
 }
 
 .status-model-card {
@@ -2021,6 +2059,19 @@ label.field-label {
 
 .status-model-card-header {
   align-items: flex-start;
+}
+
+.status-model-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.status-model-card-title-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .status-model-card-thumb {
@@ -2034,6 +2085,8 @@ label.field-label {
 .status-model-card-title {
   font-size: 13px;
   line-height: 1.3;
+  flex: 1;
+  min-width: 0;
 }
 
 .status-model-card-meta,

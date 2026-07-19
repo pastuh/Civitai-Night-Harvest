@@ -156,6 +156,12 @@ function migrateInventorySchema(database: Database.Database): void {
   if (!hasCol('routing_locked')) {
     database.exec(`ALTER TABLE versions ADD COLUMN routing_locked INTEGER NOT NULL DEFAULT 0`)
   }
+  if (!hasCol('origin')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN origin TEXT NOT NULL DEFAULT 'civitai'`)
+  }
+  if (!hasCol('duplicate_of_version_id')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN duplicate_of_version_id INTEGER`)
+  }
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -204,7 +210,12 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     thumbsUpCount: (row.thumbs_up_count as number | null) ?? undefined,
     checkpointType: (row.checkpoint_type as string) || undefined,
     civitaiMode: (row.civitai_mode as string) || undefined,
-    fileHashSha256: (row.file_hash_sha256 as string) || undefined
+    fileHashSha256: (row.file_hash_sha256 as string) || undefined,
+    origin: (row.origin as 'civitai' | 'local') === 'local' ? 'local' : 'civitai',
+    duplicateOfVersionId:
+      row.duplicate_of_version_id != null && Number(row.duplicate_of_version_id) !== 0
+        ? (row.duplicate_of_version_id as number)
+        : undefined
   }
 }
 
@@ -299,8 +310,8 @@ export function addVersion(record: InventoryRecord): void {
         routing_tag, routing_locked, output_folder, model_path, preview_path, swarm_path, downloaded_at, ignored,
         civitai_tags, file_size_bytes, file_fp, file_variant, training_resolution, is_nsfw,
         nsfw_level, awaiting_since, civitai_domain, download_count, thumbs_up_count, checkpoint_type,
-        civitai_mode, file_hash_sha256
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        civitai_mode, file_hash_sha256, origin, duplicate_of_version_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       record.modelId,
@@ -331,8 +342,14 @@ export function addVersion(record: InventoryRecord): void {
       record.thumbsUpCount ?? null,
       record.checkpointType ?? null,
       record.civitaiMode ?? null,
-      record.fileHashSha256 ?? null
+      record.fileHashSha256 ?? null,
+      record.origin === 'local' || record.versionId < 0 ? 'local' : 'civitai',
+      record.duplicateOfVersionId ?? null
     )
+  // Version is owned now — drop stale New Versions rows for this versionId.
+  if (record.versionId > 0) {
+    removePendingVersion(record.versionId)
+  }
 }
 
 export function patchVersionFileMeta(
@@ -350,8 +367,10 @@ export function patchVersionFileMeta(
       | 'thumbsUpCount'
       | 'checkpointType'
       | 'civitaiMode'
+      | 'origin'
+      | 'duplicateOfVersionId'
     >
-  > & { isNsfw?: boolean | null; nsfwLevel?: number | null }
+  > & { isNsfw?: boolean | null; nsfwLevel?: number | null; duplicateOfVersionId?: number | null }
 ): void {
   const sets: string[] = []
   const vals: unknown[] = []
@@ -407,13 +426,46 @@ export function patchVersionFileMeta(
     sets.push('civitai_mode = ?')
     vals.push(patch.civitaiMode)
   }
+  if (patch.origin != null) {
+    sets.push('origin = ?')
+    vals.push(patch.origin)
+  }
+  if (patch.duplicateOfVersionId === null) {
+    sets.push('duplicate_of_version_id = NULL')
+  } else if (patch.duplicateOfVersionId !== undefined) {
+    sets.push('duplicate_of_version_id = ?')
+    vals.push(patch.duplicateOfVersionId)
+  }
   if (!sets.length) return
   vals.push(versionId)
   getDb().prepare(`UPDATE versions SET ${sets.join(', ')} WHERE version_id = ?`).run(...vals)
 }
 
-export function removeVersion(versionId: number): void {
-  getDb().prepare('DELETE FROM versions WHERE version_id = ?').run(versionId)
+export function versionIdExists(versionId: number): boolean {
+  return hasVersion(versionId)
+}
+
+export function getVersionByModelPath(modelPath: string): InventoryRecord | null {
+  const key = modelPath.replace(/\\/g, '/').toLowerCase()
+  const rows = getAllVersions()
+  return rows.find((r) => r.modelPath.replace(/\\/g, '/').toLowerCase() === key) ?? null
+}
+
+/** Replace a synthetic local row with a promoted civitai identity (new PK). */
+export function promoteLocalVersion(
+  oldVersionId: number,
+  next: InventoryRecord
+): InventoryRecord {
+  const existing = getVersion(oldVersionId)
+  if (!existing) throw new Error('Local model not found')
+  removeVersion(oldVersionId)
+  addVersion({
+    ...existing,
+    ...next,
+    origin: 'civitai',
+    duplicateOfVersionId: next.duplicateOfVersionId
+  })
+  return getVersion(next.versionId) ?? { ...existing, ...next, origin: 'civitai' }
 }
 
 /** Drop DB rows whose model file no longer exists on disk (e.g. manual delete in Explorer). */

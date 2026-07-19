@@ -535,23 +535,23 @@ export function queueItemBlockedByHiddenTags(
   return hidden.some((t) => fuzzyTagMatch(t, route))
 }
 
-/** Pick routing tag for a model at enqueue time. Falls back to base model name (e.g. Krea 2). */
+/** Pick routing tag for a model at enqueue time. No folder-rule match → empty (type default folder). */
 export function resolveModelRoutingTag(
   modelTags: string[],
   activeRoutingTag: string,
   tagRules: TagFolderRule[],
-  baseModel?: string
+  _baseModel?: string
 ): { routingTag: string; needsConfirmation: boolean } {
   const active = activeRoutingTag.trim()
   const matching = getMatchingFolderTags(modelTags, tagRules)
-  const baseFallback = baseModel?.trim() ?? ''
 
   if (active && modelTags.some((t) => tagAliasMatch(active, t))) {
     return { routingTag: active, needsConfirmation: matching.length > 1 }
   }
 
   if (matching.length === 0) {
-    return { routingTag: active || baseFallback, needsConfirmation: false }
+    // Do not invent "Unknown" or base-model as a routing tag — files go to LoRA/Checkpoint root.
+    return { routingTag: '', needsConfirmation: false }
   }
   if (matching.length === 1) {
     return { routingTag: matching[0], needsConfirmation: false }

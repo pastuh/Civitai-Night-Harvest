@@ -25,7 +25,10 @@ function sameInventoryRecord(a: InventoryRecord, b: InventoryRecord): boolean {
     a.trainingResolution === b.trainingResolution &&
     a.fileFp === b.fileFp &&
     a.fileVariant === b.fileVariant &&
-    (a.civitaiTags ?? []).join('\0') === (b.civitaiTags ?? []).join('\0')
+    (a.civitaiTags ?? []).join('\0') === (b.civitaiTags ?? []).join('\0') &&
+    a.origin === b.origin &&
+    a.duplicateOfVersionId === b.duplicateOfVersionId &&
+    a.fileHashSha256 === b.fileHashSha256
   )
 }
 

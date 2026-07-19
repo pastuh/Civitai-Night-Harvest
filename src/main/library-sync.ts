@@ -295,6 +295,7 @@ export async function syncInventoryWithDiskAsync(
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  importedLocalFromDisk?: number
   storageError?: string
 }> {
   return runLibraryDiskSync(onProgress, options)
@@ -307,6 +308,7 @@ let diskSyncPromise: Promise<{
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  importedLocalFromDisk?: number
   storageError?: string
 }> | null = null
 let lastDiskSyncAt = 0
@@ -327,6 +329,7 @@ async function runLibraryDiskSync(
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  importedLocalFromDisk?: number
   storageError?: string
 }> {
   if (diskSyncPromise) return diskSyncPromise
@@ -368,9 +371,11 @@ async function syncInventoryWithDiskInner(
   importedFromDisk: number
   relinkedFromDisk: number
   diskScanned: number
+  importedLocalFromDisk?: number
   storageError?: string
 }> {
   let importedFromDisk = 0
+  let importedLocalFromDisk = 0
   let relinkedFromDisk = 0
   let diskScanned = 0
   let foundModelPaths: Set<string> | undefined
@@ -411,6 +416,7 @@ async function syncInventoryWithDiskInner(
         onProgress
       )
       importedFromDisk = imported.imported
+      importedLocalFromDisk = imported.importedLocal
       relinkedFromDisk = imported.updated
       diskScanned = imported.scanned
       foundModelPaths = imported.foundModelPaths
@@ -427,6 +433,7 @@ async function syncInventoryWithDiskInner(
       enrichedMeta: 0,
       checked: inventory.getAllVersions().length,
       importedFromDisk,
+      importedLocalFromDisk,
       relinkedFromDisk,
       diskScanned
     }
@@ -486,6 +493,7 @@ async function syncInventoryWithDiskInner(
       enrichedMeta: 0,
       checked: total,
       importedFromDisk,
+      importedLocalFromDisk,
       relinkedFromDisk,
       diskScanned
     }
@@ -504,6 +512,7 @@ async function syncInventoryWithDiskInner(
       enrichedMeta: 0,
       checked: total,
       importedFromDisk,
+      importedLocalFromDisk,
       relinkedFromDisk,
       diskScanned
     }
@@ -551,7 +560,15 @@ async function syncInventoryWithDiskInner(
   if (!options?.skipIdentityBackfill) {
     await backfillCivitaiIdentityFiles(onProgress)
   }
-  return { removedMissing, enrichedMeta, checked: total, importedFromDisk, relinkedFromDisk, diskScanned }
+  return {
+    removedMissing,
+    enrichedMeta,
+    checked: total,
+    importedFromDisk,
+    importedLocalFromDisk,
+    relinkedFromDisk,
+    diskScanned
+  }
 }
 
 function enrichInventoryFileMeta(): number {

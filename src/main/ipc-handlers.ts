@@ -30,6 +30,7 @@ import { moveRecordsToTagFolder } from './model-move'
 import { deleteModelFromLibrary, deleteVersionFromLibrary } from './model-delete'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
 import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
+import { recognizeLocalModels } from './recognize-local-models'
 import { syncLibrarySlugs } from './slug-rename'
 import { sendToRenderer, setRendererReady, createThrottledProgressEmitter, bindRendererWindow, flushDeferredRendererMessages } from './window-notify'
 import { getAppIconDataUrl } from './tray-icon'
@@ -576,6 +577,7 @@ export function initIpc(): void {
         skipDiskImport?: boolean
         diskImportOnly?: boolean
         skipIdentityBackfill?: boolean
+        recognizeLocalModels?: boolean
       }
     ) => {
       let removedMissing = 0
@@ -583,8 +585,12 @@ export function initIpc(): void {
       let hashesBackfilled = 0
       let checked = 0
       let importedFromDisk = 0
+      let importedLocalFromDisk = 0
       let relinkedFromDisk = 0
       let diskScanned = 0
+      let localDuplicatesMarked = 0
+      let localPromoted = 0
+      let localStillUnrecognized = 0
       let storageError: string | undefined
       if (options?.syncDisk) {
         const reach = await probeConfiguredOutputFolders()
@@ -611,6 +617,7 @@ export function initIpc(): void {
           enrichedMeta = sync.enrichedMeta
           checked = sync.checked
           importedFromDisk = sync.importedFromDisk
+          importedLocalFromDisk = sync.importedLocalFromDisk ?? 0
           relinkedFromDisk = sync.relinkedFromDisk
           diskScanned = sync.diskScanned
           if (sync.storageError) {
@@ -628,6 +635,24 @@ export function initIpc(): void {
                 action: 'Computing SHA256'
               })
             )
+          }
+          if (options?.recognizeLocalModels && !options?.diskImportOnly) {
+            const recognized = await recognizeLocalModels(clientPool, {
+              domain: settings.domain,
+              onProgress: emitSync
+            })
+            hashesBackfilled += recognized.hashed
+            localDuplicatesMarked = recognized.duplicatesMarked
+            localPromoted = recognized.promoted
+            localStillUnrecognized = recognized.stillUnrecognized
+            if (recognized.errors.length) {
+              scheduler.log(
+                'warn',
+                `Local model recognition: ${recognized.errors.slice(0, 3).join('; ')}`,
+                undefined,
+                { source: 'library' }
+              )
+            }
           }
           downloadQueue.syncWithInventory()
         }
@@ -667,7 +692,8 @@ export function initIpc(): void {
           repairedRatings > 0 ||
           enrichedMeta > 0 ||
           hashesBackfilled > 0 ||
-          importedFromDisk > 0
+          importedFromDisk > 0 ||
+          localPromoted > 0
         ) {
           items = inventory.getAllVersions()
         }
@@ -681,8 +707,12 @@ export function initIpc(): void {
         hashesBackfilled,
         checked,
         importedFromDisk,
+        importedLocalFromDisk,
         relinkedFromDisk,
         diskScanned,
+        localDuplicatesMarked,
+        localPromoted,
+        localStillUnrecognized,
         storageError
       }
     }

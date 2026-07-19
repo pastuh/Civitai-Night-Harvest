@@ -725,6 +725,13 @@ th {
   margin-bottom: 8px;
 }
 
+.pending-base-filter-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 52rem;
+}
+
 .pending-scan-header {
   display: flex;
   align-items: flex-start;
@@ -3234,6 +3241,43 @@ code {
   filter: saturate(0.6);
 }
 
+.gallery-card.library-unrecognized {
+  --card-accent: #c9a227;
+}
+
+.library-unrecognized-badge,
+.library-duplicate-badge {
+  position: absolute;
+  z-index: 4;
+  left: 6px;
+  max-width: calc(100% - 48px);
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-unrecognized-badge {
+  top: 6px;
+  background: color-mix(in srgb, #c9a227 85%, #000);
+  color: #1a1508;
+}
+
+.library-duplicate-badge {
+  top: 28px;
+  background: color-mix(in srgb, var(--accent, #5b8def) 80%, #000);
+  color: #fff;
+}
+
+.gallery-card.library-unrecognized .library-unrecognized-badge + .nsfw-rating-badge,
+.gallery-card .library-duplicate-badge + .nsfw-rating-badge {
+  top: 50px;
+}
+
 .badge-banned {
   background: var(--error);
   color: #fff;
@@ -3358,16 +3402,23 @@ code {
 }
 
 .gallery-card.highlight {
-  animation: gallery-highlight 2.5s ease-out;
+  animation: gallery-highlight 4.5s ease-out;
+  outline: 3px solid var(--accent, #ffca24);
+  outline-offset: 2px;
+  z-index: 2;
 }
 
 @keyframes gallery-highlight {
   0%,
-  30% {
-    box-shadow: 0 0 0 3px var(--error), 0 0 16px rgba(240, 113, 120, 0.6);
+  35% {
+    box-shadow:
+      0 0 0 3px var(--accent, #ffca24),
+      0 0 22px color-mix(in srgb, var(--accent, #ffca24) 55%, transparent);
+    outline-color: var(--accent, #ffca24);
   }
   100% {
     box-shadow: none;
+    outline-color: transparent;
   }
 }
 
@@ -4796,6 +4847,11 @@ button.danger-btn:hover {
   filter: brightness(1.1);
 }
 
+.gallery-ban-inline-btn.is-unban {
+  border-color: color-mix(in srgb, var(--success, #5a9468) 75%, #000);
+  background: var(--success, #5a9468);
+}
+
 .gallery-card-title-row .gallery-ban-inline-btn {
   flex-shrink: 0;
   align-self: flex-start;
@@ -4820,6 +4876,64 @@ button.danger-btn:hover {
   gap: 4px 12px;
   font-size: 12px;
   margin: 0;
+}
+
+.model-detail-ids {
+  font-size: 12px;
+  margin: 4px 0 10px;
+}
+
+.model-detail-ids code {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface2) 80%, transparent);
+}
+
+.model-detail-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow: auto;
+  margin-top: 4px;
+}
+
+.model-detail-version-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: inherit;
+  cursor: pointer;
+}
+
+.model-detail-version-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+.model-detail-version-btn.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.model-detail-version-btn.is-owned .model-detail-version-name::after {
+  content: '';
+}
+
+.model-detail-version-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.model-detail-version-meta {
+  font-size: 11px;
 }
 
 .model-detail-dl dt {

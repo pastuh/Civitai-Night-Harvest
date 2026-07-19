@@ -553,6 +553,8 @@ export class DownloadQueue {
   }
 
   enqueue(request: DownloadRequest, meta: EnqueueMeta = {}): string {
+    if (request.modelId <= 0) return ''
+    if (request.versionId != null && request.versionId <= 0) return ''
     if (inventory.isModelBanned(request.modelId)) return ''
     if (request.versionId && inventory.hasVersion(request.versionId)) return ''
     const settings = getSettings()

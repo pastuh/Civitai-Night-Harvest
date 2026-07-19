@@ -116,7 +116,6 @@ interface Props {
   hiddenTags?: string[]
   onHiddenTagsChange?: (tags: string[]) => Promise<void>
   crawlStatus?: RuleCrawlStatus | null
-  nightDownloadAll?: boolean
   nightMode?: boolean
   backfillCatalog?: boolean
   updateBrowseOnCrawl?: boolean
@@ -184,7 +183,6 @@ export function SearchBrowsePanel({
   onHiddenTagsChange,
   crawlStatus,
   backfillCatalog = true,
-  nightDownloadAll = false,
   nightMode = false,
   updateBrowseOnCrawl = false,
   deferredAwaitingCount = 0,
@@ -1085,24 +1083,6 @@ export function SearchBrowsePanel({
   const galleryIdleEmpty =
     !displayModels.length && ruleScopedModels.length === 0 && !galleryLoadingEmpty
 
-  const galleryAwaitingDetailKey = (() => {
-    const harvestActive =
-      nightMode &&
-      (crawlProgress?.phase === 'fetching' ||
-        crawlProgress?.phase === 'fetching-tags' ||
-        crawlFetching ||
-        browseGalleryAwaiting)
-    if (harvestActive) return 'browse.galleryAwaitingDetailHarvest'
-    const fetchActive =
-      appStatus === 'scanning' ||
-      appStatus === 'checking' ||
-      crawlProgress?.phase === 'fetching' ||
-      crawlProgress?.phase === 'fetching-tags' ||
-      resultsUpdating
-    if (fetchActive) return 'browse.galleryAwaitingDetailActive'
-    return 'browse.galleryAwaitingDetail'
-  })()
-
   const showEmptyHint = !displayModels.length && ruleScopedModels.length > 0
 
   const pipelineVersionIds = useMemo(() => {
@@ -1508,6 +1488,40 @@ export function SearchBrowsePanel({
       setMessage(err instanceof Error ? err.message : String(err))
     }
   }
+
+  const unbanModelRef = useRef(unbanModel)
+  unbanModelRef.current = unbanModel
+
+  const unbanModelById = useCallback(
+    (modelId: number, modelName: string) => {
+      const model =
+        gridModels.find((m) => m.id === modelId) ??
+        displayModels.find((m) => m.id === modelId) ??
+        ruleScopedModels.find((m) => m.id === modelId)
+      if (model) {
+        void unbanModelRef.current(model)
+        return
+      }
+      setLocalBanned((prev) => {
+        const next = new Set(prev)
+        next.delete(modelId)
+        return next
+      })
+      setLocalUnbanned((prev) => new Set(prev).add(modelId))
+      onBrowseModelBanChange?.(modelId, false)
+      setMessage(t('gallery.unbanned', { name: modelName || `#${modelId}` }))
+      void window.api.unbanModel(modelId).catch((err) => {
+        setLocalUnbanned((prev) => {
+          const next = new Set(prev)
+          next.delete(modelId)
+          return next
+        })
+        onBrowseModelBanChange?.(modelId, true)
+        setMessage(err instanceof Error ? err.message : String(err))
+      })
+    },
+    [gridModels, displayModels, ruleScopedModels, onBrowseModelBanChange, t]
+  )
 
   const deleteFromLibrary = async (model: WatchRuleTestModel) => {
     if (!model.inInventory || !model.versionId) return
@@ -2061,8 +2075,8 @@ export function SearchBrowsePanel({
           {galleryLoadingEmpty && (
             <div className="browse-gallery-loading" role="status" aria-live="polite">
               <span className="browse-gallery-loading-spinner" aria-hidden />
-              <strong>{t('browse.fetchingFirstPage')}</strong>
-              <p className="muted">{t(galleryAwaitingDetailKey)}</p>
+              <strong>{t('browse.galleryBusyTitle')}</strong>
+              <p className="muted">{t('browse.galleryBusyDetail')}</p>
             </div>
           )}
           {galleryIdleEmpty && (
@@ -2097,6 +2111,7 @@ export function SearchBrowsePanel({
             onJumpToGallery={onJumpToGallery}
             onViewDetails={onCardViewDetails}
             onBanModel={banModelById}
+            onUnbanModel={unbanModelById}
             onContextMenu={onCardContextMenu}
             showOwned={!onlyMissing}
           />
@@ -2379,19 +2394,9 @@ export function SearchBrowsePanel({
                   </>
                 ) : null}
                 .
-                {!nightDownloadAll ? (
-                  <>
-                    {' '}
-                    In <strong>🌙 Tags</strong> mode only models with tags you already use are queued —
-                    switch to <strong>🌙 All</strong> or use <strong>Queue all</strong>.
-                  </>
-                ) : (
-                  <>
-                    {' '}
-                    Crawl should queue them automatically; try <strong>Queue all</strong> if the queue
-                    stays empty.
-                  </>
-                )}
+                {' '}
+                Crawl should queue them automatically; try <strong>Queue all</strong> if the queue
+                stays empty.
               </>
             ) : (
               <>
@@ -2446,6 +2451,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   onJumpToGallery,
   onViewDetails,
   onBanModel,
+  onUnbanModel,
   onContextMenu,
   showOwned
 }: {
@@ -2467,6 +2473,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   onJumpToGallery?: (modelId: number) => void
   onViewDetails?: (model: WatchRuleTestModel) => void
   onBanModel?: (modelId: number, modelName: string) => void
+  onUnbanModel?: (modelId: number, modelName: string) => void
   onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
   showOwned: boolean
 }) {
@@ -2501,6 +2508,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             onViewDetails={onViewDetails}
             banFunctionMode={banFunctionMode}
             onBanModel={onBanModel}
+            onUnbanModel={onUnbanModel}
             onContextMenu={onContextMenu}
           />
         )
@@ -2528,6 +2536,7 @@ const ModelCard = memo(function ModelCard({
   onViewDetails,
   banFunctionMode = false,
   onBanModel,
+  onUnbanModel,
   settledDimOpacity
 }: {
   model: WatchRuleTestModel
@@ -2549,6 +2558,7 @@ const ModelCard = memo(function ModelCard({
   onViewDetails?: (model: WatchRuleTestModel) => void
   banFunctionMode?: boolean
   onBanModel?: (modelId: number, modelName: string) => void
+  onUnbanModel?: (modelId: number, modelName: string) => void
 }) {
   const t = useT()
   const statusClass = model.isBanned ? 'banned' : model.inInventory ? 'owned' : 'missing'
@@ -2792,14 +2802,20 @@ const ModelCard = memo(function ModelCard({
                 ↗
               </button>
             )}
-            {banFunctionMode && !model.isBanned && onBanModel && (
+            {banFunctionMode &&
+              ((model.isBanned && onUnbanModel) || (!model.isBanned && onBanModel)) && (
               <button
                 type="button"
-                className="gallery-ban-inline-btn electron-no-drag"
-                title={t('downloadsStrip.excludeBan')}
+                className={`gallery-ban-inline-btn electron-no-drag${
+                  model.isBanned ? ' is-unban' : ''
+                }`}
+                title={
+                  model.isBanned ? t('browse.unban') : t('downloadsStrip.excludeBan')
+                }
                 onClick={(e) => {
                   e.stopPropagation()
-                  onBanModel(model.id, model.name)
+                  if (model.isBanned) onUnbanModel?.(model.id, model.name)
+                  else onBanModel?.(model.id, model.name)
                 }}
               >
                 ×

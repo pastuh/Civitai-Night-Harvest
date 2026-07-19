@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
 import type {
   BannedModel,
   InventoryRecord,
@@ -44,6 +44,7 @@ import {
   normalizeResultsDisplayMode,
   normalizeResultsPageSize
 } from '../../../shared/results-display'
+import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 
 interface Props {
   inventory: InventoryRecord[]
@@ -85,6 +86,7 @@ interface ContextMenuState {
 type LibraryFilter =
   | { type: 'all' }
   | { type: 'untagged' }
+  | { type: 'unrecognized' }
   | { type: 'routing'; name: string }
   | { type: 'subfolder'; name: string }
   | { type: 'civitai'; name: string }
@@ -149,6 +151,7 @@ function GalleryTabInner({
   const [hideFolderAssigned, setHideFolderAssigned] = useState(false)
   const [tagSearch, setTagSearch] = useState('')
   const [modelSearch, setModelSearch] = useState('')
+  const deferredModelSearch = useDeferredValue(modelSearch)
   const [modelLetter, setModelLetter] = useState<string | null>(null)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   const [moving, setMoving] = useState(false)
@@ -156,11 +159,17 @@ function GalleryTabInner({
   const [bannedList, setBannedList] = useState<BannedModel[]>([])
   /** Instant hide on Ban — survives stale loadBanned / refresh races that caused card flicker. */
   const [pendingBanIds, setPendingBanIds] = useState<Set<number>>(() => new Set())
+  /** Hide specific versions (local/unrecognized use modelId 0 — cannot key by modelId). */
+  const [pendingHiddenVersionIds, setPendingHiddenVersionIds] = useState<Set<number>>(
+    () => new Set()
+  )
   const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [previewRecord, setPreviewRecord] = useState<InventoryRecord | null>(null)
   const [highlightVersionId, setHighlightVersionId] = useState<number | null>(null)
+  /** Flash all owned versions of a model (Open in Library from New Versions). */
+  const [highlightModelId, setHighlightModelId] = useState<number | null>(null)
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map())
 
   const highlightSet = useMemo(() => new Set(highlightVersionIds), [highlightVersionIds])
@@ -264,7 +273,7 @@ function GalleryTabInner({
 
   const matchesModelSearch = useCallback(
     (record: InventoryRecord): boolean => {
-      const q = modelSearch.trim().toLowerCase()
+      const q = deferredModelSearch.trim().toLowerCase()
       if (modelLetter) {
         const first = record.modelName.trim()[0]?.toLowerCase()
         if (first !== modelLetter) return false
@@ -279,7 +288,7 @@ function GalleryTabInner({
         (record.civitaiTags?.some((t) => t.toLowerCase().includes(q)) ?? false)
       )
     },
-    [modelSearch, modelLetter]
+    [deferredModelSearch, modelLetter]
   )
 
   const loadBanned = async () => {
@@ -295,22 +304,34 @@ function GalleryTabInner({
     void loadBanned()
   }, [inventory])
 
-  // Drop pending hides once inventory no longer contains those models.
+  // Drop pending hides once inventory no longer contains those models/versions.
   useEffect(() => {
-    if (pendingBanIds.size === 0) return
+    if (pendingBanIds.size === 0 && pendingHiddenVersionIds.size === 0) return
     setPendingBanIds((prev) => {
       if (prev.size === 0) return prev
       let changed = false
       const next = new Set(prev)
       for (const id of prev) {
-        if (!inventory.some((r) => r.modelId === id)) {
+        if (id <= 0 || !inventory.some((r) => r.modelId === id)) {
           next.delete(id)
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [inventory, pendingBanIds.size])
+    setPendingHiddenVersionIds((prev) => {
+      if (prev.size === 0) return prev
+      let changed = false
+      const next = new Set(prev)
+      for (const id of prev) {
+        if (!inventory.some((r) => r.versionId === id)) {
+          next.delete(id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [inventory, pendingBanIds.size, pendingHiddenVersionIds.size])
 
   const isBanned = (modelId: number) => hiddenModelIds.has(modelId)
 
@@ -319,6 +340,9 @@ function GalleryTabInner({
     switch (libraryFilter.type) {
       case 'untagged':
         list = list.filter((r) => !r.routingTag)
+        break
+      case 'unrecognized':
+        list = list.filter((r) => isUnrecognizedInventoryRecord(r))
         break
       case 'routing': {
         const names = new Set(
@@ -354,7 +378,9 @@ function GalleryTabInner({
         break
     }
     // Banned models are removed from disk/inventory on Ban; hide any leftover rows.
-    list = list.filter((r) => !hiddenModelIds.has(r.modelId))
+    list = list.filter(
+      (r) => !hiddenModelIds.has(r.modelId) && !pendingHiddenVersionIds.has(r.versionId)
+    )
     if (nsfwFilter !== 'all') {
       list = list.filter((r) =>
         matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)
@@ -365,7 +391,18 @@ function GalleryTabInner({
     }
     list = list.filter((r) => matchesModelSearch(r))
     return list
-  }, [inventory, libraryFilter, hiddenModelIds, tagClusters, tagRules, matchesModelSearch, nsfwFilter, hideFolderAssigned, sessionSet])
+  }, [
+    inventory,
+    libraryFilter,
+    hiddenModelIds,
+    pendingHiddenVersionIds,
+    tagClusters,
+    tagRules,
+    matchesModelSearch,
+    nsfwFilter,
+    hideFolderAssigned,
+    sessionSet
+  ])
 
   const sortedInventory = useMemo(() => {
     const list = [...filteredInventory]
@@ -486,10 +523,18 @@ function GalleryTabInner({
         setMessage(t('gallery.modelNotInLibrary'))
         return
       }
+      // Prefill search with model name so the grid filters to this model (and highlight is obvious).
+      setModelSearch(rec.modelName)
+      setModelLetter(null)
+      if (libraryFilter.type !== 'all' && libraryFilter.type !== 'session') {
+        setLibraryFilter({ type: 'all' })
+      }
       const matchesFilter = (row: InventoryRecord): boolean => {
         switch (libraryFilter.type) {
           case 'untagged':
             return !row.routingTag
+          case 'unrecognized':
+            return isUnrecognizedInventoryRecord(row)
           case 'routing': {
             const names = new Set(
               namesForRoutingFilter(libraryFilter.name, tagRules).map((n) => n.toLowerCase())
@@ -517,16 +562,30 @@ function GalleryTabInner({
         }
       }
       if (!matchesFilter(rec)) setLibraryFilter({ type: 'all' })
-      const idx = sortedInventory.findIndex((r) => r.versionId === rec.versionId)
-      if (idx >= 0) resultsWindow.ensureIndexVisible(idx)
-      window.setTimeout(() => {
-        const el = cardRefs.current.get(rec.versionId)
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          setHighlightVersionId(rec.versionId)
-          window.setTimeout(() => setHighlightVersionId(null), 2500)
-        }
-      }, 80)
+      const runScroll = () => {
+        const rows = inventory.filter(
+          (r) => r.modelId === modelId && !hiddenModelIds.has(r.modelId)
+        )
+        const target = rows[0] ?? rec
+        const idxInSorted = sortedInventory.findIndex((r) => r.modelId === modelId)
+        const idx =
+          idxInSorted >= 0
+            ? idxInSorted
+            : sortedInventory.findIndex((r) => r.versionId === target.versionId)
+        if (idx >= 0) resultsWindow.ensureIndexVisible(idx)
+        setHighlightModelId(modelId)
+        setHighlightVersionId(target.versionId)
+        window.setTimeout(() => {
+          const el = cardRefs.current.get(target.versionId)
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 120)
+        window.setTimeout(() => {
+          setHighlightVersionId(null)
+          setHighlightModelId(null)
+        }, 4500)
+      }
+      // Wait for search filter + visible tab layout before scrolling.
+      window.setTimeout(runScroll, 200)
     },
     [
       inventory,
@@ -543,10 +602,11 @@ function GalleryTabInner({
   )
 
   useEffect(() => {
-    if (focusModelId == null) return
+    if (focusModelId == null || !isActive) return
     scrollToModel(focusModelId)
-    onFocusHandled?.()
-  }, [focusModelId, scrollToModel, onFocusHandled])
+    const t = window.setTimeout(() => onFocusHandled?.(), 600)
+    return () => window.clearTimeout(t)
+  }, [focusModelId, isActive, scrollToModel, onFocusHandled])
 
   useEffect(() => {
     if (!focusCivitaiTag?.trim()) return
@@ -555,6 +615,16 @@ function GalleryTabInner({
     setModelLetter(null)
     onFocusTagHandled?.()
   }, [focusCivitaiTag, onFocusTagHandled])
+
+  const unrecognizedCount = useMemo(
+    () => inventory.filter((r) => isUnrecognizedInventoryRecord(r)).length,
+    [inventory]
+  )
+  const versionNameById = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const r of inventory) map.set(r.versionId, r.modelName)
+    return map
+  }, [inventory])
 
   const scheduleLibraryRefresh = useCallback(() => {
     if (libraryRefreshTimerRef.current) clearTimeout(libraryRefreshTimerRef.current)
@@ -570,33 +640,65 @@ function GalleryTabInner({
     }
   }, [])
 
-  const banModel = async (modelId: number, modelName: string) => {
-    setPendingBanIds((prev) => {
-      if (prev.has(modelId)) return prev
-      const next = new Set(prev)
-      next.add(modelId)
-      return next
-    })
+  const banModel = async (modelId: number, modelName: string, versionId?: number) => {
+    const rec =
+      versionId != null
+        ? inventory.find((r) => r.versionId === versionId)
+        : inventory.find((r) => r.modelId === modelId)
+    const isLocal = rec ? isUnrecognizedInventoryRecord(rec) : modelId <= 0
+
+    if (rec) {
+      setPendingHiddenVersionIds((prev) => {
+        if (prev.has(rec.versionId)) return prev
+        const next = new Set(prev)
+        next.add(rec.versionId)
+        return next
+      })
+    }
+    if (!isLocal && modelId > 0) {
+      setPendingBanIds((prev) => {
+        if (prev.has(modelId)) return prev
+        const next = new Set(prev)
+        next.add(modelId)
+        return next
+      })
+    }
     setContextMenu(null)
     setPreviewRecord(null)
     setSelected((prev) => {
       const next = new Set(prev)
       for (const id of next) {
-        const rec = inventory.find((r) => r.versionId === id)
-        if (rec?.modelId === modelId) next.delete(id)
+        const row = inventory.find((r) => r.versionId === id)
+        if (!row) continue
+        if (isLocal && rec && row.versionId === rec.versionId) next.delete(id)
+        else if (!isLocal && row.modelId === modelId) next.delete(id)
       }
       return next
     })
     try {
-      await window.api.banModel(modelId, modelName)
+      if (isLocal && rec) {
+        await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
+      } else {
+        await window.api.banModel(modelId, modelName)
+      }
       scheduleLibraryRefresh()
     } catch (err) {
-      setPendingBanIds((prev) => {
-        if (!prev.has(modelId)) return prev
-        const next = new Set(prev)
-        next.delete(modelId)
-        return next
-      })
+      if (rec) {
+        setPendingHiddenVersionIds((prev) => {
+          if (!prev.has(rec.versionId)) return prev
+          const next = new Set(prev)
+          next.delete(rec.versionId)
+          return next
+        })
+      }
+      if (!isLocal && modelId > 0) {
+        setPendingBanIds((prev) => {
+          if (!prev.has(modelId)) return prev
+          const next = new Set(prev)
+          next.delete(modelId)
+          return next
+        })
+      }
       setMessage(err instanceof Error ? err.message : String(err))
     }
   }
@@ -744,6 +846,7 @@ function GalleryTabInner({
       return libraryFilter.name.toLowerCase() === f.name.toLowerCase()
     }
     if (f.type === 'civitai' && libraryFilter.type === 'civitai') return libraryFilter.name === f.name
+    if (f.type === 'unrecognized' && libraryFilter.type === 'unrecognized') return true
     if (f.type === 'cluster' && libraryFilter.type === 'cluster') return libraryFilter.key === f.key
     if (f.type === 'baseModel' && libraryFilter.type === 'baseModel') {
       return libraryFilter.name.toLowerCase() === f.name.toLowerCase()
@@ -795,6 +898,10 @@ function GalleryTabInner({
   }
 
   const menuBanned = contextMenu ? isBanned(contextMenu.modelId) : false
+  const menuRecord = contextMenu?.versionId != null
+    ? inventory.find((r) => r.versionId === contextMenu.versionId)
+    : null
+  const menuLocal = menuRecord ? isUnrecognizedInventoryRecord(menuRecord) : false
 
   return (
     <div className="gallery-layout">
@@ -941,7 +1048,9 @@ function GalleryTabInner({
                   record={record}
                   selected={selected.has(record.versionId)}
                   banned={isBanned(record.modelId)}
-                  highlight={highlightVersionId === record.versionId}
+                  highlight={
+                    highlightVersionId === record.versionId || highlightModelId === record.modelId
+                  }
                   sessionNew={highlightSet.has(record.versionId)}
                   hideBaseModelOnCards={hideBaseModelOnCards}
                   defaultLinkDomain={defaultLinkDomain}
@@ -950,6 +1059,12 @@ function GalleryTabInner({
                   checkpointFolder={checkpointFolder}
                   banFunctionMode={banFunctionMode}
                   onBanModel={banModel}
+                  duplicateOfName={
+                    record.duplicateOfVersionId != null
+                      ? versionNameById.get(record.duplicateOfVersionId) ??
+                        `#${record.duplicateOfVersionId}`
+                      : null
+                  }
                   onToggleSelect={toggleSelect}
                   onOpenContextMenu={openContextMenu}
                   onOpenDetails={setPreviewRecord}
@@ -1010,6 +1125,16 @@ function GalleryTabInner({
           >
             {t('gallery.untaggedFolder')}
           </button>
+          {unrecognizedCount > 0 && (
+            <button
+              type="button"
+              className={`sidebar-tag ${filterActive({ type: 'unrecognized' }) ? 'active' : ''}`}
+              onClick={() => setLibraryFilter({ type: 'unrecognized' })}
+            >
+              <span className="tag-name">{t('gallery.unrecognized')}</span>
+              <span className="muted tag-count-inline">{unrecognizedCount}</span>
+            </button>
+          )}
           {sessionDownloadIds.length > 0 && (
             <button
               type="button"
@@ -1180,7 +1305,7 @@ function GalleryTabInner({
           onClose={() => setContextMenu(null)}
         >
           <div className="context-menu-title">{contextMenu.modelName}</div>
-            {contextMenu.versionId != null && (
+            {contextMenu.versionId != null && !menuLocal && contextMenu.modelId > 0 && (
               <button
                 {...contextMenuButtonProps(() => {
                   setContextMenu(null)
@@ -1199,14 +1324,14 @@ function GalleryTabInner({
                 {t('gallery.openOnCivitaiMenu')}
               </button>
             )}
-            {inventory.some((r) => r.modelId === contextMenu.modelId) && (
+            {!menuLocal && inventory.some((r) => r.modelId === contextMenu.modelId) && (
               <button
                 {...contextMenuButtonProps(() => scrollToModel(contextMenu.modelId))}
               >
                 {t('gallery.goToInGallery')}
               </button>
             )}
-            {contextMenu.versionId != null && (
+            {contextMenu.versionId != null && !menuLocal && (
               <>
                 <div className="context-menu-divider" />
                 <div className="context-menu-subtitle">{t('gallery.setRating')}</div>
@@ -1284,7 +1409,20 @@ function GalleryTabInner({
                 </div>
               </>
             )}
-            {menuBanned ? (
+            {menuLocal ? (
+              <button
+                {...contextMenuButtonProps(() =>
+                  void banModel(
+                    contextMenu.modelId,
+                    contextMenu.modelName,
+                    contextMenu.versionId
+                  )
+                )}
+                className="context-menu-danger"
+              >
+                {t('gallery.deleteLocal')}
+              </button>
+            ) : menuBanned ? (
               <button
                 {...contextMenuButtonProps(() =>
                   void unbanModel(contextMenu.modelId, contextMenu.modelName)
@@ -1295,7 +1433,11 @@ function GalleryTabInner({
             ) : (
               <button
                 {...contextMenuButtonProps(() =>
-                  void banModel(contextMenu.modelId, contextMenu.modelName)
+                  void banModel(
+                    contextMenu.modelId,
+                    contextMenu.modelName,
+                    contextMenu.versionId
+                  )
                 )}
               >
                 {t('gallery.excludeBan')}
@@ -1306,8 +1448,22 @@ function GalleryTabInner({
 
       {previewRecord && (
         <ModelDetailModal
-          target={{ kind: 'library', record: previewRecord, domain: previewRecord.civitaiDomain ?? defaultLinkDomain }}
+          target={{
+            kind: 'library',
+            record: previewRecord,
+            domain: previewRecord.civitaiDomain ?? defaultLinkDomain,
+            siblingRecords: inventory.filter(
+              (r) =>
+                r.modelId === previewRecord.modelId &&
+                r.versionId !== previewRecord.versionId &&
+                r.modelId > 0
+            )
+          }}
+          ownedVersionIds={inventory
+            .filter((r) => r.modelId === previewRecord.modelId && r.modelId > 0)
+            .map((r) => r.versionId)}
           onClose={() => setPreviewRecord(null)}
+          onSelectLibraryRecord={(rec) => setPreviewRecord(rec)}
           onShowInFolder={(path) => void window.api.showInFolder(path)}
           onDelete={() =>
             void deleteModel(previewRecord.versionId, previewRecord.modelId, previewRecord.modelName)

@@ -10,7 +10,7 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'contentFilter', fieldKey: 'settings.fields.contentFilter' },
   { refKey: 'nightMode', fieldKey: 'settings.fields.nightMode' },
   { refKey: 'autoStart', fieldKey: 'settings.fields.autoStartDownloads' },
-  { refKey: 'nightDownloadAll', fieldKey: 'settings.fields.nightDownloadAll' },
+  { refKey: 'autoDownloadNewVersions', fieldKey: 'settings.fields.autoDownloadNewVersions' },
   { refKey: 'scanInterval', fieldKey: 'settings.fields.scanInterval' },
   { refKey: 'parallelDownloads', fieldKey: 'settings.fields.parallelDownloads' },
   { refKey: 'backfill', fieldKey: 'settings.fields.backfillCatalog' },

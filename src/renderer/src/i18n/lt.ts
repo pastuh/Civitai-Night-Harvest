@@ -49,7 +49,7 @@ export const lt: Messages = {
     nsfwNeedsKey: 'NSFW/restricted turiniui reikia Civitai API rakto Nustatymuose.',
     openBrowseRules: 'Atidaryti Browse taisykles',
     tooltipNightAllOn: 'Night mode įjungtas — siunčiami visi atitinkantys modeliai. Spauskite, kad išjungtumėte.',
-    tooltipNightTagsOn: 'Night harvest on — tik su jūsų naudojamais tagais. Spauskite, kad išjungtumėte.',
+    tooltipNightTagsOn: 'Harvest įjungtas — eilėn ir siunčia naujus Browse atitikmenis. Spauskite, kad išjungtumėte.',
     tooltipNightOff: 'Paleisti harvest — automatinis katalogo ėjimas ir atsisiuntimai',
     tooltipDownloadsOn: 'Siunčiama — spauskite, kad pauzuotumėte eilę (harvest tęsiasi)',
     tooltipDownloadsAuto: 'Auto eilė — spauskite rankiniam režimui',
@@ -102,6 +102,7 @@ export const lt: Messages = {
       contentFilter: 'Turinio filtras (numatytas)',
       nightMode: 'Night mode',
       autoStartDownloads: 'Auto-start atsisiuntimai eilėje',
+      autoDownloadNewVersions: 'Auto-download turimų modelių naujas versijas',
       nightDownloadAll: 'Night mode: eilė visiems Browse atitikmenims (blokuojami tagai vis tiek praleidžiami)',
       scanInterval: 'Scan intervalas (min)',
       parallelDownloads: 'Lygiagūs atsisiuntimai',
@@ -202,7 +203,7 @@ export const lt: Messages = {
       slugSyncSkipped: 'praleista {skipped} (konfliktas ar failas nerastas)',
       slugSyncRepaired: 'atstatyta {repaired} kelių',
       diskSyncHint:
-        'Skenuoja LoRA ir Checkpoint aplankus (ir tag aplankus) — .safetensors + .swarm.json, registruoja modelius, pašalina pasenusius įrašus, atnaujina eilę.',
+        'Skenuoja LoRA ir Checkpoint aplankus (ir tag aplankus): importuoja modelius su .swarm.json ir neatpažintus custom, skaičiuoja hash, tikrina dublikatus Library ir Civitai (SHA256), pašalina pasenusius įrašus, atnaujina eilę.',
       diskSyncDone: 'Disko sync baigtas — santrauka Library skirtuke.',
       activityLogHint:
         'Valdo, kas rašoma į veiklos logą ir SQLite. Mažiau logų = mažiau disko rašymo ir UI atnaujinimų ilgų crawl metu.',
@@ -302,7 +303,7 @@ export const lt: Messages = {
     quickStart3: 'Antraštė → 🌙 Harvest katalogui; **Auto** — automatinė eilė (arba **Manual** ir spauskite korteles)',
     headerHarvest: '🌙 Harvest — eina per enabled Browse taisykles puslapiais; deda į eilę ir siunčia naujus modelius',
     headerNightModes:
-      '🌙 All vs 🌙 Harvesting — Nustatymuose: „Night mode: queue all Browse matches“ nusprendžia ar visi atitikmenys, ar tik su jūsų tagais',
+      '🌙 Harvesting — eilėn deda visus naujus modelius pagal įjungtas Browse taisykles (blokuojami tagai vis tiek praleidžiami). Aplanką / Tags galite priskirti vėliau po atsisiuntimo.',
     headerDownloads:
       '**Auto** / **Manual** — atskiri antraštės mygtukai: Auto deda tinkamus modelius į eilę (iki 10 pipeline); Manual — tik paspaustos kortelės. **Pause** (raudonas) sustabdo siuntimus nekeisdamas režimo.',
     headerScan: 'Scan — vieną kartą paleisti visas enabled Browse taisykles ir atnaujinti Results',
@@ -326,7 +327,7 @@ export const lt: Messages = {
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
     libraryTags: 'Spustelėkite tag ant kortelės — atidaromi Tag folders su ta paieška',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
-    edgeQueued: 'Pilkas viršutinis kraštas — siuntimo eilėje',
+    edgeQueued: 'Eilės accentas viršuje — siuntimo eilėje',
     edgeDownloading: 'Žalia juosta ant miniatiūros — aktyviai siunčiama',
     edgeNew: 'Mėlynai žalias kraštas — naujas, ne eilėje',
     edgeAwaiting: 'Geltona — laukia prieigos / early access',
@@ -338,12 +339,13 @@ export const lt: Messages = {
     dlStripProgress:
       'Aktyvus siuntimas — progreso juosta ant miniatiūros; po pavadinimu pvz. 218 MB / 1.2 GB · 12 MB/s (be procentų).',
     dlStripColors:
-      'Tik juostos viršutinis kraštas: pilka = eilėje arba siunčiama · rožinė = klaida, laukia kito bandymo · geltona = early access atrakina šiandien',
+      'Tik juostos viršutinis kraštas: eilės accentas = eilėje arba siunčiama · rožinė = klaida, laukia kito bandymo · geltona = early access atrakina šiandien',
     dlStripPriority:
       'Dešinis pelės mygtukas ant juostos kortelės → Prioritetinis atsisiuntimas — perkelia į eilės priekį (arba iškart po aktyvių siuntimų)',
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
     dlAwaiting: 'Awaiting access — 403, early access arba trūksta API rakto',
-    dlNewVersions: 'New versions — patvirtinkite atnaujinimus jau turimiems modeliams',
+    dlNewVersions:
+      'New Versions — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
     dlTabBadges:
       'Skiltų ženkliukai — Browse: aktyvi eilė · Library: +N naujų nuo paskutinio apsilankymo · New Versions / Awaiting access: laukiančių skaičius',
     dlActivity:
@@ -359,8 +361,8 @@ export const lt: Messages = {
       nightMode: 'Periodinis enabled Browse taisyklių scan + auto-queue. Reikia aplanko + bent vienos On taisyklės.',
       autoStart:
         'Išjungus (aktyvus Pause) vykdomi siuntimai sustabdomi; Harvest vis tiek gali pildyti eilę. Išjunkite Pause, kad pradėtų siųsti. Auto/Manual valdo ar Harvest deda modelius į eilę.',
-      nightDownloadAll:
-        'All režimas: eilė visiems naujiems pagal Browse taisykles (ne tik bibliotekos tagus). Blokuojami tagai visada praleidžiami.',
+      autoDownloadNewVersions:
+        'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda New Versions — Queue / Ban / Dismiss. Visiškai nauji Browse modeliai tvarkomi atskirai.',
       scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = off (night mode nustato 60 min jei reikia).',
       parallelDownloads: 'Kiek modelių siunčiama vienu metu. 1 = vienas failas pilnu greičiu.',
       domain:
@@ -520,6 +522,8 @@ export const lt: Messages = {
     loadingNextPage: 'Kraunamas kitas puslapis…',
     showingGridCount: 'Rodoma {shown} iš {total} — slinkite žemyn',
     fetchingFirstPage: 'Kraunami modeliai iš Civitai API…',
+    galleryBusyTitle: 'Kraunama…',
+    galleryBusyDetail: 'Palaukite. Eiga rodoma apačios juostoje.',
     fetchingRulePage: 'Kraunamas {page} puslapis — „{rule}“…',
     waitingNextPage: 'Laukiama ~{min} min. iki kito Civitai puslapio…',
     resultsUpdating: 'Updating…',
@@ -570,8 +574,8 @@ export const lt: Messages = {
     galleryAwaitingTitle: 'Browse galerija tuščia — įjunkite Harvest',
     galleryAwaitingDetail:
       'Galerijoje dar nėra modelių. Spauskite Harvest antraštėje, kad užkrautumėte modelius pagal įjungtas taisykles.',
-    galleryAwaitingDetailActive: 'Galerijoje dar nėra modelių. Vyksta užklausa…',
-    galleryAwaitingDetailHarvest: 'Galerijoje dar nėra modelių. Harvest krauna pirmą puslapį…',
+    galleryAwaitingDetailActive: 'Kraunama… Palaukite.',
+    galleryAwaitingDetailHarvest: 'Kraunama… Palaukite.',
     galleryPausedOffline:
       'Browse neveikia — išvesties diskas nepasiekiamas. Pataisykite LoRA/Checkpoint aplankus Nustatymuose prieš harvest.',
     emptyPreview: 'Preview „{name}“',
@@ -586,7 +590,7 @@ export const lt: Messages = {
     legendNew: 'Cyan edge / badge = new (not in library)',
     legendBlocked: 'Purple = blocked by tag',
     legendAwaiting: 'Orange = awaiting access',
-    legendAutoQueued: 'Pilkas kraštas = siuntimo eilėje',
+    legendAutoQueued: 'Eilės kraštas = siuntimo eilėje',
     legendDl: 'Gintarinis kraštas = siunčiama',
     queueAll: 'Eilė visiems (puslapis po puslapio)',
     crawling: 'Skenuojama API…'
@@ -706,8 +710,26 @@ export const lt: Messages = {
   },
   pending: {
     emptyHint:
-      'Nėra laukiančių versijų. Spauskite Check library. Jei per klaidą paspaudėte Dismiss — vėl paleiskite Check library; Activity loge ieškokite „Dismissed new version”.',
-    dismissHint: 'Paslėpti šią versiją. Vėl aptikti — New Versions → Check library.'
+      'Nėra laukiančių atnaujinimų. Harvest pats papildo šį sąrašą, kai randa naujesnes versijas modelių, kuriuos jau turite.',
+    baseFilterHint:
+      'Tik versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
+    emptyAfterBan: 'Ban’inti įrašai pašalinti.',
+    dismissHint: 'Paslėpti tik šį pasiūlymą (bibliotekos failų neliesti).',
+    ban: 'Ban',
+    banHint: 'Ištrina visas turimas šio modelio versijas ir exclude’ina nuo būsimų siuntimų',
+    banConfirm:
+      'Ban „{name}“? Bus ištrintos visos {count} turimos versijos iš bibliotekos/disko ir modelis exclude’intas.',
+    queueDownload: 'Queue download',
+    queueHint: 'Atsisiųsti šią naujesnę versiją; jau turimas palikti',
+    openInLibrary: 'Atidaryti Library',
+    offeredVersion: 'Nauja versija:',
+    ownedVersions: 'Turite {count}: {list}',
+    ownedNone: 'Šiam modelio id bibliotekoje failų nerasta.',
+    listTitle: 'Atnaujinimai laukia patvirtinimo ({count})',
+    checkLibrary: 'Tikrinti dar kartą',
+    checkLibraryTitle:
+      'Pasirinktinai: dar kartą patikrinti visus turimus modelius per Civitai API (po vieną užklausą). Paprastai Harvest + fono check užpildo sąrašą be paspaudimo.',
+    checking: 'Tikrinama…'
   },
   load: {
     failed: 'Nepavyko įkelti',
@@ -754,6 +776,7 @@ export const lt: Messages = {
     phaseMetadata: 'Skaitomi failų metaduomenys',
     phaseIdentity: 'Rašomi modelio identity failai',
     phaseHash: 'Skaičiuojami SHA256 hash',
+    phaseRecognize: 'Atpažįstami custom / vietiniai modeliai',
     phaseRename: 'Pervadinami bibliotekos failai',
     phasePreview: 'Tikrinamos bibliotekos preview',
     preparingHint: 'Kraunami nustatymai ir inventorius — progress pasirodys, kai prasidės disko tikrinimas.',
@@ -772,6 +795,10 @@ export const lt: Messages = {
   syncSummary: {
     scanned: 'nuskanuota {count} failų diske',
     imported: 'importuota {count} naujų modelių iš disko',
+    importedLocal: 'importuota {count} neatpažintų / vietinių failų',
+    localDuplicates: 'pažymėta {count} vietinių dublikatų',
+    localPromoted: 'sutapatinta {count} vietinių failų su Civitai',
+    localUnrecognized: '{count} vis dar neatpažinti',
     relinked: 'susieti {count} esami modeliai',
     removed: 'pašalinta {count} nebėra diske',
     enriched: 'atnaujinti {count} modelių metaduomenys',
@@ -871,6 +898,10 @@ export const lt: Messages = {
       'Tag remeliai (subtilūs): vientisas accent atspalvis = galutinis · vientisas = priskirtas · brūkšninis = nepriskirta. Spauskite → Tag folders.',
     allModels: 'Visi modeliai',
     untaggedFolder: 'Be aplanko tag',
+    unrecognized: 'Neatpažinti',
+    unrecognizedHint: 'Custom / vietinis failas be Civitai tapatybės (nėra .swarm.json arba nesutapo hash)',
+    duplicateOf: 'Dublikatas: {name}',
+    deleteLocal: 'Ištrinti vietinius failus',
     sessionDownloads: 'Sesijos atsisiuntimai',
     bannedOnly: 'Tik banned ({count})',
     baseModels: 'Base modeliai',

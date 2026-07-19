@@ -17,7 +17,13 @@ interface StoreSchema {
   watchRules: WatchRule[]
 }
 
-const store = new Store<StoreSchema & { manualDownloadPolicyV1?: boolean; backfillCatalogDefaultV1?: boolean }>({
+const store = new Store<
+  StoreSchema & {
+    manualDownloadPolicyV1?: boolean
+    backfillCatalogDefaultV1?: boolean
+    nightQueueAllDefaultV1?: boolean
+  }
+>({
   name: 'civitai-swarm-downloader',
   defaults: {
     settings: DEFAULT_SETTINGS,
@@ -32,6 +38,15 @@ function applyBackfillDefaultMigration(): void {
   settings.backfillCatalog = true
   store.set('settings', settings)
   store.set('backfillCatalogDefaultV1', true)
+}
+
+/** Harvest always queues every Browse match — retire the old “tags-only” night mode. */
+function applyNightQueueAllDefaultMigration(): void {
+  if (store.get('nightQueueAllDefaultV1')) return
+  const settings = { ...DEFAULT_SETTINGS, ...store.get('settings') }
+  settings.nightDownloadAll = true
+  store.set('settings', settings)
+  store.set('nightQueueAllDefaultV1', true)
 }
 
 function applyContentFilterAllDefaultMigration(): void {
@@ -82,6 +97,7 @@ export function getSettings(): AppSettings {
   applyManualDownloadPolicyMigration()
   applyContentFilterAllDefaultMigration()
   applyBackfillDefaultMigration()
+  applyNightQueueAllDefaultMigration()
   const raw = migrateOutputFolderSettings({ ...DEFAULT_SETTINGS, ...store.get('settings') } as AppSettings & { includeNsfw?: boolean })
   if (!raw.contentFilter) {
     raw.contentFilter = 'all'
@@ -96,7 +112,10 @@ export function getSettings(): AppSettings {
     raw.nightMode = false
   }
   if (raw.nightDownloadAll === undefined) {
-    raw.nightDownloadAll = false
+    raw.nightDownloadAll = true
+  }
+  if (raw.autoDownloadNewVersions === undefined) {
+    raw.autoDownloadNewVersions = false
   }
   if (raw.crawlAutoDownload === undefined) {
     raw.crawlAutoDownload = true
@@ -325,12 +344,20 @@ export function shouldAutoQueue(): boolean {
 }
 
 /**
- * Night mode tag filter for crawl queueing.
- * Backfill scans the full Browse rule catalog — tag match would skip most visible models.
+ * Whether newer versions of owned models may auto-enter the download queue.
+ * Off → New Versions tab for manual approve / Ban / Dismiss.
+ */
+export function shouldAutoDownloadNewVersions(): boolean {
+  return getSettings().autoDownloadNewVersions === true
+}
+
+/**
+ * Legacy flag: Harvest used to skip models without a library/Tags “used” tag.
+ * Always false now — every Browse match is eligible for the download queue
+ * (blocked/hidden tags still skipped). Folder routing is separate from queueing.
  */
 export function crawlRequireTagMatch(): boolean {
-  const s = getSettings()
-  return Boolean(s.nightMode && !s.nightDownloadAll && !s.backfillCatalog)
+  return false
 }
 
 export function saveWatchRules(rules: WatchRule[]): WatchRule[] {

@@ -21,8 +21,9 @@ const PHASE_ORDER: Record<LibrarySyncProgress['phase'], number> = {
   metadata: 3,
   identity: 4,
   hash: 5,
-  rename: 6,
-  preview: 7
+  recognize: 6,
+  rename: 7,
+  preview: 8
 }
 
 export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
@@ -33,6 +34,7 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
     metadata: t('appBusy.phaseMetadata'),
     identity: t('appBusy.phaseIdentity'),
     hash: t('appBusy.phaseHash'),
+    recognize: t('appBusy.phaseRecognize'),
     rename: t('appBusy.phaseRename'),
     preview: t('appBusy.phasePreview')
   }

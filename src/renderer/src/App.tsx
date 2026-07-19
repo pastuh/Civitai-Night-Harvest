@@ -279,15 +279,17 @@ export default function App() {
     }
   }, [])
 
-  const refreshInventory = useCallback(async (syncDisk = false) => {
+  const refreshInventory = useCallback(async (syncDiskOrOpts: boolean | import('../../shared/types').InventoryGetOptions = false) => {
     try {
-      if (syncDisk) setSyncProgress(null)
-      const inv = await window.api.getInventory({ syncDisk })
+      const options =
+        typeof syncDiskOrOpts === 'boolean' ? { syncDisk: syncDiskOrOpts } : { ...syncDiskOrOpts }
+      if (options.syncDisk) setSyncProgress(null)
+      const inv = await window.api.getInventory(options)
       setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
       const q = await window.api.reconcileDownloadQueue()
       setQueue(q.items)
       setQueuePaused(q.paused)
-      if (syncDisk) {
+      if (options.syncDisk) {
         setSyncMessage(formatLibrarySyncSummary(inv, settings?.locale ?? 'en'))
         setSyncProgress(null)
       }
@@ -772,6 +774,9 @@ export default function App() {
       return
     }
     const partial: AppSettingsSave = { nightMode: enabling }
+    if (enabling) {
+      partial.nightDownloadAll = true
+    }
     if (enabling && settings.scanIntervalMinutes <= 0) {
       partial.scanIntervalMinutes = 60
     }
@@ -903,8 +908,8 @@ export default function App() {
   }, [])
 
   const jumpToGallery = useCallback((modelId: number) => {
-    setGalleryFocusModelId(modelId)
     setTab('gallery')
+    window.setTimeout(() => setGalleryFocusModelId(modelId), 50)
   }, [])
 
   const openTagFolders = useCallback((tag: string) => {
@@ -914,6 +919,13 @@ export default function App() {
 
   const clearGalleryFocusModel = useCallback(() => setGalleryFocusModelId(null), [])
   const clearGalleryFocusTag = useCallback(() => setGalleryFocusCivitaiTag(null), [])
+
+  /** Badge must match what New Versions actually lists (hide already-owned version rows). */
+  const pendingBadgeCount = useMemo(() => {
+    const ownedVersionIds = new Set(inventory.map((r) => r.versionId))
+    const n = pending.filter((p) => !ownedVersionIds.has(p.versionId)).length
+    return n || undefined
+  }, [pending, inventory])
 
   const retryDeferred = async () => {
     try {
@@ -1054,7 +1066,7 @@ export default function App() {
     { id: 'gallery', label: m.tabs.library, badge: newLibraryCount || undefined, badgePrefix: '+' },
     { id: 'download', label: m.tabs.download },
     { id: 'tags', label: m.tabs.tagFolders },
-    { id: 'pending', label: m.tabs.newVersions, badge: pending.length },
+    { id: 'pending', label: m.tabs.newVersions, badge: pendingBadgeCount },
     { id: 'awaiting', label: m.tabs.awaitingAccess, badge: deferred.length || undefined },
     { id: 'activity', label: m.tabs.activity },
     { id: 'help', label: m.tabs.help },
@@ -1099,18 +1111,10 @@ export default function App() {
             className={`btn-sm ${settings.nightMode ? 'primary toggle-on' : 'btn-ghost'}`}
             onClick={() => void toggleNightMode()}
             title={
-              settings.nightMode
-                ? settings.nightDownloadAll
-                  ? m.header.tooltipNightAllOn
-                  : m.header.tooltipNightTagsOn
-                : m.header.tooltipNightOff
+              settings.nightMode ? m.header.tooltipNightTagsOn : m.header.tooltipNightOff
             }
           >
-            {settings.nightMode
-              ? settings.nightDownloadAll
-                ? m.header.nightAll
-                : m.header.nightTags
-              : m.header.nightOff}
+            {settings.nightMode ? m.header.nightTags : m.header.nightOff}
           </button>
           {showDownloadsToggle && (
             <div className="downloads-header-controls">
@@ -1398,14 +1402,16 @@ export default function App() {
         <div className={tab === 'pending' ? '' : 'tab-hidden'}>
           <PendingTab
             pending={pending}
-            status={status}
-            activity={activity}
+            inventory={inventory}
             versionScanProgress={versionScanProgress}
             versionScanning={versionScanning}
             inventoryModelCount={inventory.length}
             onRefresh={refresh}
             onScanLibrary={scanLibraryVersions}
-            onOpenActivity={() => setTab('activity')}
+            onOpenInLibrary={(modelId) => {
+              setTab('gallery')
+              window.setTimeout(() => setGalleryFocusModelId(modelId), 50)
+            }}
           />
         </div>
         <div className={tab === 'awaiting' ? '' : 'tab-hidden'}>

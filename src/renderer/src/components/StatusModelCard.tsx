@@ -7,6 +7,8 @@ interface Props {
   details?: ReactNode
   previewUrl?: string
   actions: ReactNode
+  /** Extra controls next to the title (e.g. Ban ×). Clicks do not open the card. */
+  titleActions?: ReactNode
   onOpen?: () => void
 }
 
@@ -17,6 +19,7 @@ export function StatusModelCard({
   details,
   previewUrl,
   actions,
+  titleActions,
   onOpen
 }: Props) {
   return (
@@ -38,7 +41,18 @@ export function StatusModelCard({
     >
       <div className="card-header status-model-card-header">
         <div className="status-model-card-body">
-          <strong className="status-model-card-title">{title}</strong>
+          <div className="status-model-card-title-row">
+            <strong className="status-model-card-title">{title}</strong>
+            {titleActions && (
+              <div
+                className="status-model-card-title-actions"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                {titleActions}
+              </div>
+            )}
+          </div>
           {meta && <div className="muted status-model-card-meta">{meta}</div>}
           {badges}
           {details}

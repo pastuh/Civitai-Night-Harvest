@@ -21,11 +21,11 @@ import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incr
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { enrichTestModelPreviews } from './preview-enrich'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
-import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, type RulePageQueueResult } from './rule-queue'
+import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, type RulePageQueueResult } from './rule-queue'
 import { DownloadQueue } from './download-queue'
 import * as inventory from './inventory'
 import { deleteModelFromLibrary } from './model-delete'
-import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, outputFoldersConfigured, toPublicSettings } from './settings-store'
+import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
 import { modelHasHiddenTag } from '../shared/tag-routing'
@@ -390,20 +390,48 @@ export class ScanScheduler {
   }
 
   private lastPipelineFillAt = 0
+  /** One-shot: empty pipeline hit fill cooldown — top up remaining gallery New after cooldown. */
+  private deferredPipelineFillTimer: ReturnType<typeof setTimeout> | null = null
+
+  private clearDeferredPipelineFill(): void {
+    if (this.deferredPipelineFillTimer) {
+      clearTimeout(this.deferredPipelineFillTimer)
+      this.deferredPipelineFillTimer = null
+    }
+  }
+
+  private scheduleDeferredPipelineFill(delayMs: number): void {
+    if (this.deferredPipelineFillTimer) return
+    this.deferredPipelineFillTimer = setTimeout(() => {
+      this.deferredPipelineFillTimer = null
+      this.maybeFillDownloadQueue()
+    }, Math.max(50, delayMs))
+  }
 
   /** Top up download queue only when empty (e.g. after dismiss). Never refill mid-drain. */
   maybeFillDownloadQueue(): void {
-    if (!getSettings().nightMode) return
+    if (!getSettings().nightMode) {
+      this.clearDeferredPipelineFill()
+      return
+    }
     const pipeline = this.downloadQueue
       .getItems()
       .filter((i) => i.status === 'queued' || i.status === 'downloading').length
     // Refilling at <5 caused the UI count loop: 8→7→6→5→4→8…
     if (pipeline > 0) {
+      this.clearDeferredPipelineFill()
       if (shouldCrawlAutoDownload()) this.maybeStartAutoDownloads()
       return
     }
     const now = Date.now()
-    if (now - this.lastPipelineFillAt < 12_000) return
+    const sinceFill = now - this.lastPipelineFillAt
+    if (sinceFill < 12_000) {
+      // Fast downloads emptied the pipeline before cooldown — without a catch-up,
+      // remaining gallery "New" models stayed unqueued until the next crawl peek.
+      this.scheduleDeferredPipelineFill(12_000 - sinceFill)
+      return
+    }
+    this.clearDeferredPipelineFill()
     this.lastPipelineFillAt = now
     const filled = this.fillBrowseDownloadPipeline()
     if (filled > 0) {
@@ -429,6 +457,8 @@ export class ScanScheduler {
     this.downloadQueue = downloadQueue
     this.window = getWindow
     this.pendingVersions = inventory.getAllPendingVersions()
+    // Clean stale / wrong-base New Versions rows left after downloads / imports / rule changes.
+    this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
     this.activity = inventory.getActivityLog(2000)
   }
 
@@ -509,6 +539,36 @@ export class ScanScheduler {
     return this.libraryScanning
   }
 
+  private lastLibraryVersionScanAt = 0
+  private libraryVersionScanTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * One Civitai GET /models/{id} per owned model (not SHA256). Slow on large libraries —
+   * runs in background so New Versions fills without a manual “Check library” click.
+   */
+  scheduleBackgroundLibraryVersionScan(delayMs = 5_000): void {
+    if (this.libraryVersionScanTimer) return
+    this.libraryVersionScanTimer = setTimeout(() => {
+      this.libraryVersionScanTimer = null
+      void this.runLibraryVersionScanIfDue()
+    }, Math.max(0, delayMs))
+  }
+
+  private async runLibraryVersionScanIfDue(minIntervalMs = 30 * 60_000): Promise<void> {
+    if (this.libraryScanning || this.scanning) {
+      this.scheduleBackgroundLibraryVersionScan(60_000)
+      return
+    }
+    if (!outputFoldersConfigured()) return
+    if (inventory.getAllVersions().length === 0) return
+    const now = Date.now()
+    if (now - this.lastLibraryVersionScanAt < minIntervalMs && this.lastLibraryVersionScanAt > 0) {
+      return
+    }
+    this.lastLibraryVersionScanAt = now
+    await this.runLibraryVersionScan()
+  }
+
   async runLibraryVersionScan(): Promise<LibraryVersionScanResult> {
     if (this.libraryScanning) {
       this.log('warn', 'Library version check already running', undefined, { source: 'library' })
@@ -528,6 +588,7 @@ export class ScanScheduler {
     }
 
     this.libraryScanning = true
+    this.lastLibraryVersionScanAt = Date.now()
     this.setStatus('checking')
     const uniqueModels = new Set(owned.map((v) => v.modelId)).size
     this.log('info', `Checking ${uniqueModels} model(s) in your library for new versions…`, undefined, {
@@ -554,6 +615,9 @@ export class ScanScheduler {
         undefined,
         { source: 'library' }
       )
+      if (shouldAutoDownloadNewVersions()) {
+        this.maybeStartAutoDownloads()
+      }
       return result
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -569,6 +633,12 @@ export class ScanScheduler {
   }
 
   getPendingVersions(): PendingVersion[] {
+    // Drop stale rows (already owned) and pending whose base no longer matches owned/Browse filters.
+    const before = this.pendingVersions.length
+    this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
+    if (this.pendingVersions.length !== before) {
+      this.emit('pending:versions', this.pendingVersions)
+    }
     return [...this.pendingVersions]
   }
 
@@ -632,6 +702,8 @@ export class ScanScheduler {
     this.startEarlyAccessWatcher()
     // Harvest runs after startup prep — UI overlay must not wait for the full catalog walk.
     this.ensureContinuousCrawl()
+    // Background: poll Civitai for newer versions of owned models → New Versions tab (or auto-queue).
+    this.scheduleBackgroundLibraryVersionScan(12_000)
   }
 
   private maybeStartAutoDownloads(logMessage?: string): void {
@@ -892,6 +964,11 @@ export class ScanScheduler {
     this.intervalId = null
     if (this.earlyAccessTimerId) clearInterval(this.earlyAccessTimerId)
     this.earlyAccessTimerId = null
+    this.clearDeferredPipelineFill()
+    if (this.libraryVersionScanTimer) {
+      clearTimeout(this.libraryVersionScanTimer)
+      this.libraryVersionScanTimer = null
+    }
     void this.stopContinuousCrawl()
   }
 
@@ -902,14 +979,14 @@ export class ScanScheduler {
 
   private crawlQueueOptions(
     requireTagMatch: boolean,
-    includeNewVersions: boolean,
+    _includeNewVersions: boolean,
     source: ActivitySource = 'scheduled'
   ) {
     return {
       // Pause only stops the download pump — Harvest may still fill the queue.
       queueEnabled: source === 'manual' ? true : shouldAutoQueue(),
       requireTagMatch,
-      includeNewVersions,
+      includeNewVersions: shouldAutoDownloadNewVersions(),
       markManual: source === 'manual',
       log: (level: ActivityEntry['level'], message: string, ruleId?: string) =>
         this.log(level, message, ruleId, { source }),
@@ -1488,6 +1565,8 @@ export class ScanScheduler {
             }
           }
           await this.runPeekOnlyMaintenance(rules, requireTagMatch)
+          // Periodically refresh New Versions while Harvest is idle on peek-only.
+          this.scheduleBackgroundLibraryVersionScan(2_000)
           if (getSettings().autoRetryDeferred !== false) {
             const requeued = this.downloadQueue.requeueDeferred()
             if (requeued > 0) {
@@ -1865,7 +1944,7 @@ export class ScanScheduler {
                 {
                   queueEnabled: nightMode && shouldAutoQueue(),
                   requireTagMatch: crawlRequireTagMatch(),
-                  includeNewVersions: false,
+                  includeNewVersions: shouldAutoDownloadNewVersions(),
                   log: this.ruleQueueLog(logSource)
                 },
                 this.pendingVersions,
@@ -1914,7 +1993,7 @@ export class ScanScheduler {
               const queueOpts = {
                 queueEnabled: nightMode && shouldAutoQueue(),
                 requireTagMatch: crawlRequireTagMatch(),
-                includeNewVersions: false,
+                includeNewVersions: shouldAutoDownloadNewVersions(),
                 log: this.ruleQueueLog(logSource),
                 onFetchProgress: (p: import('../shared/types').CrawlProgressPayload) =>
                   this.emitCrawlProgress(p)

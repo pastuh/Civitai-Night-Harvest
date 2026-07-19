@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
-  ActivityEntry,
-  AppStatus,
+  InventoryRecord,
   LibraryVersionScanProgress,
   PendingVersion
 } from '../../../shared/types'
@@ -11,45 +10,59 @@ import { StatusModelCard } from './StatusModelCard'
 
 interface Props {
   pending: PendingVersion[]
-  status: AppStatus
-  activity: ActivityEntry[]
+  inventory: InventoryRecord[]
   versionScanProgress: LibraryVersionScanProgress | null
   versionScanning: boolean
   inventoryModelCount: number
   onRefresh: () => Promise<void>
   onScanLibrary: () => Promise<void>
-  onOpenActivity?: () => void
-}
-
-const STATUS_LABELS: Record<AppStatus, string> = {
-  idle: 'Idle',
-  scanning: 'Scanning watch rules',
-  checking: 'Checking library versions',
-  downloading: 'Downloading'
-}
-
-function formatLogTime(iso: string): string {
-  return new Date(iso).toLocaleString()
-}
-
-function isLibraryCheckProgressNoise(message: string): boolean {
-  return /Library check: \d+\/\d+ models/i.test(message)
+  onOpenInLibrary?: (modelId: number) => void
 }
 
 export function PendingTab({
   pending,
-  status,
-  activity,
+  inventory,
   versionScanProgress,
   versionScanning,
   inventoryModelCount,
   onRefresh,
   onScanLibrary,
-  onOpenActivity
+  onOpenInLibrary
 }: Props) {
   const t = useT()
   const [detailModelId, setDetailModelId] = useState<number | null>(null)
   const [detailVersionId, setDetailVersionId] = useState<number | undefined>(undefined)
+  const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
+
+  const ownedByModel = useMemo(() => {
+    const map = new Map<number, InventoryRecord[]>()
+    for (const r of inventory) {
+      if (r.modelId <= 0) continue
+      const list = map.get(r.modelId) ?? []
+      list.push(r)
+      map.set(r.modelId, list)
+    }
+    return map
+  }, [inventory])
+
+  const visiblePending = useMemo(
+    () =>
+      pending.filter((p) => {
+        if (hiddenModelIds.has(p.modelId)) return false
+        if (ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)) return false
+        return true
+      }),
+    [pending, hiddenModelIds, ownedByModel]
+  )
+
+  useEffect(() => {
+    const stale = pending.filter((p) =>
+      ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)
+    )
+    for (const p of stale) {
+      void window.api.dismissPending(p.versionId)
+    }
+  }, [pending, ownedByModel])
 
   const approve = async (item: PendingVersion) => {
     await window.api.approvePending({
@@ -59,9 +72,26 @@ export function PendingTab({
     await onRefresh()
   }
 
-  const ignore = async (modelId: number) => {
-    await window.api.ignoreModel(modelId)
-    await onRefresh()
+  const ban = async (item: PendingVersion) => {
+    const owned = ownedByModel.get(item.modelId) ?? []
+    const ok = window.confirm(
+      t('pending.banConfirm', {
+        name: item.modelName,
+        count: Math.max(owned.length, 1)
+      })
+    )
+    if (!ok) return
+    setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
+    try {
+      await window.api.banModel(item.modelId, item.modelName)
+      await onRefresh()
+    } catch {
+      setHiddenModelIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.modelId)
+        return next
+      })
+    }
   }
 
   const dismiss = async (versionId: number) => {
@@ -69,171 +99,132 @@ export function PendingTab({
     await onRefresh()
   }
 
-  const recentLog = useMemo(() => {
-    const keywords = ['library', 'version', 'scan', 'download', 'queued', 'check']
-    const filtered = activity.filter((e) => {
-      if (isLibraryCheckProgressNoise(e.message)) return false
-      const m = e.message.toLowerCase()
-      return keywords.some((k) => m.includes(k))
-    })
-    return (filtered.length > 0 ? filtered : activity.filter((e) => !isLibraryCheckProgressNoise(e.message))).slice(
-      0,
-      12
-    )
-  }, [activity])
+  const ownedSummary = (modelId: number): string => {
+    const owned = ownedByModel.get(modelId) ?? []
+    if (!owned.length) return t('pending.ownedNone')
+    const names = owned
+      .map((r) => r.versionName?.trim() || r.slug || `#${r.versionId}`)
+      .slice(0, 6)
+    const extra = owned.length > names.length ? ` (+${owned.length - names.length})` : ''
+    return t('pending.ownedVersions', { count: owned.length, list: names.join(' · ') + extra })
+  }
 
-  const scanBusy = versionScanning
   const progressPct =
     versionScanProgress && versionScanProgress.total > 0
       ? Math.round((versionScanProgress.current / versionScanProgress.total) * 100)
       : 0
 
-  const scanPanel = (
-    <section className="pending-scan-panel">
-      <div className="pending-scan-header">
-        <div>
-          <h3>New versions in your library</h3>
-          <p className="muted">
-            Checks Civitai for <strong>newer versions</strong> of models you already own (filtered by
-            enabled Browse rule base models, e.g. Krea 2). Click a card for full details.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="primary"
-          disabled={scanBusy || inventoryModelCount === 0}
-          onClick={() => void onScanLibrary()}
-        >
-          {scanBusy ? 'Checking…' : 'Check library'}
-        </button>
-      </div>
-
-      {inventoryModelCount === 0 && (
-        <p className="muted">Download models first — then check for version updates.</p>
-      )}
-
-      {scanBusy && (
-        <div className="pending-scan-progress">
-          <span className={`status-pill ${status}`}>{STATUS_LABELS[status]}</span>
-          {versionScanProgress ? (
-            <>
-              <div className="pending-scan-progress-text">
-                {versionScanProgress.current}/{versionScanProgress.total} — {versionScanProgress.modelName}
-              </div>
-              <div className="pending-scan-progress-bar" aria-hidden>
-                <div className="pending-scan-progress-fill" style={{ width: `${progressPct}%` }} />
-              </div>
-            </>
-          ) : (
-            <span className="muted">Starting library check…</span>
-          )}
-        </div>
-      )}
-
-      {recentLog.length > 0 && (
-        <details className="pending-scan-log">
-          <summary className="pending-scan-log-title">
-            <span className="muted">Recent activity ({recentLog.length})</span>
-            {onOpenActivity && (
-              <button
-                type="button"
-                className="link-btn"
-                onClick={(e) => {
-                  e.preventDefault()
-                  onOpenActivity()
-                }}
-              >
-                Full log →
-              </button>
-            )}
-          </summary>
-          <div className="pending-scan-log-entries">
-            {recentLog.map((e) => (
-              <div key={e.id} className={`log-entry ${e.level}`}>
-                <span className="muted">{formatLogTime(e.timestamp)}</span> {e.message}
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-    </section>
-  )
-
-  const openDetail = (item: PendingVersion) => {
-    setDetailModelId(item.modelId)
-    setDetailVersionId(item.versionId)
-  }
-
-  if (!pending.length) {
-    return (
-      <div className="panel status-tab-panel pending-tab">
-        <h2>{t('tabs.newVersions')}</h2>
-        {scanPanel}
-        <p className="muted" style={{ marginTop: 16 }}>
-          {t('pending.emptyHint')}
-        </p>
-        <button type="button" onClick={() => void onRefresh()} disabled={scanBusy}>
-          Refresh list
-        </button>
-        {detailModelId != null && (
-          <ModelDetailModal
-            target={{ kind: 'browse', modelId: detailModelId, versionId: detailVersionId }}
-            onClose={() => {
-              setDetailModelId(null)
-              setDetailVersionId(undefined)
-            }}
-          />
-        )}
-      </div>
-    )
-  }
+  const detailModal =
+    detailModelId != null ? (
+      <ModelDetailModal
+        target={{
+          kind: 'browse',
+          modelId: detailModelId,
+          versionId: detailVersionId ?? 0,
+          name:
+            pending.find((p) => p.modelId === detailModelId)?.modelName ??
+            `Model #${detailModelId}`
+        }}
+        ownedVersionIds={(ownedByModel.get(detailModelId) ?? []).map((r) => r.versionId)}
+        onClose={() => {
+          setDetailModelId(null)
+          setDetailVersionId(undefined)
+        }}
+      />
+    ) : null
 
   return (
     <div className="panel status-tab-panel pending-tab">
-      <h2>New versions awaiting approval ({pending.length})</h2>
-      {scanPanel}
-      <div className="card-list status-card-grid" style={{ marginTop: 16 }}>
-        {pending.map((item) => (
-          <StatusModelCard
-            key={item.versionId}
-            title={item.modelName}
-            meta={
-              <>
-                New: {item.versionName} · {item.baseModel} · {item.author}
-              </>
-            }
-            details={<div className="muted status-card-detail">Folder: {item.existingFolder}</div>}
-            previewUrl={item.previewUrl}
-            onOpen={() => openDetail(item)}
-            actions={
-              <>
-                <button type="button" className="primary" onClick={() => void approve(item)}>
-                  Queue download
-                </button>
-                <button
-                  type="button"
-                  title={t('pending.dismissHint')}
-                  onClick={() => void dismiss(item.versionId)}
-                >
-                  {t('common.dismiss')}
-                </button>
-                <button type="button" onClick={() => void ignore(item.modelId)}>
-                  Exclude model
-                </button>
-              </>
-            }
-          />
-        ))}
+      <div className="pending-tab-head">
+        <h2>
+          {visiblePending.length > 0
+            ? t('pending.listTitle', { count: visiblePending.length })
+            : t('tabs.newVersions')}
+        </h2>
+        <div className="pending-tab-head-actions">
+          {versionScanning && (
+            <span className="muted pending-scan-inline">
+              {versionScanProgress
+                ? `${versionScanProgress.current}/${versionScanProgress.total}`
+                : t('pending.checking')}
+              {versionScanProgress && versionScanProgress.total > 0 ? (
+                <span className="pending-scan-mini-bar" aria-hidden>
+                  <span style={{ width: `${progressPct}%` }} />
+                </span>
+              ) : null}
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn-sm"
+            disabled={versionScanning || inventoryModelCount === 0}
+            title={t('pending.checkLibraryTitle')}
+            onClick={() => void onScanLibrary()}
+          >
+            {versionScanning ? t('pending.checking') : t('pending.checkLibrary')}
+          </button>
+        </div>
       </div>
-      {detailModelId != null && (
-        <ModelDetailModal
-          target={{ kind: 'browse', modelId: detailModelId, versionId: detailVersionId }}
-          onClose={() => {
-            setDetailModelId(null)
-            setDetailVersionId(undefined)
-          }}
-        />
+
+      <p className="muted pending-base-filter-hint">{t('pending.baseFilterHint')}</p>
+
+      {!visiblePending.length ? (
+        <p className="muted">{t('pending.emptyHint')}</p>
+      ) : (
+        <div className="card-list status-card-grid" style={{ marginTop: 12 }}>
+          {visiblePending.map((item) => (
+            <StatusModelCard
+              key={item.versionId}
+              title={item.modelName}
+              meta={
+                <>
+                  <div>
+                    <strong>{t('pending.offeredVersion')}</strong> {item.versionName} ·{' '}
+                    {item.baseModel}
+                  </div>
+                  <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                    #{item.modelId} / v#{item.versionId}
+                  </div>
+                  <div className="status-card-detail">{ownedSummary(item.modelId)}</div>
+                </>
+              }
+              previewUrl={item.previewUrl}
+              onOpen={() => {
+                setDetailModelId(item.modelId)
+                setDetailVersionId(item.versionId)
+              }}
+              actions={
+                <>
+                  <button
+                    type="button"
+                    className="primary"
+                    title={t('pending.queueHint')}
+                    onClick={() => void approve(item)}
+                  >
+                    {t('pending.queueDownload')}
+                  </button>
+                  {onOpenInLibrary && (
+                    <button type="button" onClick={() => onOpenInLibrary(item.modelId)}>
+                      {t('pending.openInLibrary')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    title={t('pending.dismissHint')}
+                    onClick={() => void dismiss(item.versionId)}
+                  >
+                    {t('common.dismiss')}
+                  </button>
+                  <button type="button" title={t('pending.banHint')} onClick={() => void ban(item)}>
+                    {t('pending.ban')}
+                  </button>
+                </>
+              }
+            />
+          ))}
+        </div>
       )}
+      {detailModal}
     </div>
   )
 }

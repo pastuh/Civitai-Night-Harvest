@@ -14,6 +14,20 @@ export function formatLibrarySyncSummary(inv: InventoryGetResult, locale: AppLoc
   if (inv.relinkedFromDisk != null && inv.relinkedFromDisk > 0) {
     parts.push(translate(locale, 'syncSummary.relinked', { count: inv.relinkedFromDisk }))
   }
+  if (inv.importedLocalFromDisk != null && inv.importedLocalFromDisk > 0) {
+    parts.push(translate(locale, 'syncSummary.importedLocal', { count: inv.importedLocalFromDisk }))
+  }
+  if (inv.localDuplicatesMarked != null && inv.localDuplicatesMarked > 0) {
+    parts.push(translate(locale, 'syncSummary.localDuplicates', { count: inv.localDuplicatesMarked }))
+  }
+  if (inv.localPromoted != null && inv.localPromoted > 0) {
+    parts.push(translate(locale, 'syncSummary.localPromoted', { count: inv.localPromoted }))
+  }
+  if (inv.localStillUnrecognized != null && inv.localStillUnrecognized > 0) {
+    parts.push(
+      translate(locale, 'syncSummary.localUnrecognized', { count: inv.localStillUnrecognized })
+    )
+  }
   if (inv.removedMissing > 0) {
     parts.push(translate(locale, 'syncSummary.removed', { count: inv.removedMissing }))
   }
