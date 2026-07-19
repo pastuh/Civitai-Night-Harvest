@@ -17,7 +17,7 @@ import type {
   WatchRuleTestModel,
   WatchRuleTestResult
 } from '../shared/types'
-import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearRuleCrawlState, msUntilNewestPeekAllowed, clearLegacyUnscopedCursor, resetCatalogSessionForAppStart } from './crawl-state'
+import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearRuleCrawlState, msUntilNewestPeekAllowed, clearLegacyUnscopedCursor, resetCatalogSessionForAppStart, getLastLibraryVersionScanAt, markLibraryVersionScan } from './crawl-state'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { enrichTestModelPreviews } from './preview-enrich'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
@@ -460,6 +460,7 @@ export class ScanScheduler {
     // Clean stale / wrong-base New Versions rows left after downloads / imports / rule changes.
     this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
     this.activity = inventory.getActivityLog(2000)
+    this.lastLibraryVersionScanAt = getLastLibraryVersionScanAt() ?? 0
   }
 
   private emit(channel: string, data?: unknown): void {
@@ -541,10 +542,13 @@ export class ScanScheduler {
 
   private lastLibraryVersionScanAt = 0
   private libraryVersionScanTimer: ReturnType<typeof setTimeout> | null = null
+  /** True while Harvest is in peek-only wait (catalogs done) — library version poll may run then. */
+  private harvestPeekIdle = false
 
   /**
    * One Civitai GET /models/{id} per owned model (not SHA256). Slow on large libraries —
    * runs in background so New Versions fills without a manual “Check library” click.
+   * Cooldown is persisted so restarting the app does not immediately re-poll.
    */
   scheduleBackgroundLibraryVersionScan(delayMs = 5_000): void {
     if (this.libraryVersionScanTimer) return
@@ -555,45 +559,51 @@ export class ScanScheduler {
   }
 
   private async runLibraryVersionScanIfDue(minIntervalMs = 30 * 60_000): Promise<void> {
-    if (this.libraryScanning || this.scanning) {
+    // Do not compete with a one-shot scan or an active Harvest catalog walk.
+    if (this.libraryScanning || this.scanning || (this.continuousCrawlPromise && !this.harvestPeekIdle)) {
       this.scheduleBackgroundLibraryVersionScan(60_000)
       return
     }
     if (!outputFoldersConfigured()) return
     if (inventory.getAllVersions().length === 0) return
     const now = Date.now()
-    if (now - this.lastLibraryVersionScanAt < minIntervalMs && this.lastLibraryVersionScanAt > 0) {
+    if (this.lastLibraryVersionScanAt > 0 && now - this.lastLibraryVersionScanAt < minIntervalMs) {
       return
     }
-    this.lastLibraryVersionScanAt = now
     await this.runLibraryVersionScan()
   }
 
-  async runLibraryVersionScan(): Promise<LibraryVersionScanResult> {
+  async runLibraryVersionScan(options: { force?: boolean } = {}): Promise<LibraryVersionScanResult> {
     if (this.libraryScanning) {
       this.log('warn', 'Library version check already running', undefined, { source: 'library' })
-      return { modelsChecked: 0, newVersions: 0, upToDate: 0, errors: [] }
+      return { modelsChecked: 0, modelsSkipped: 0, newVersions: 0, upToDate: 0, errors: [] }
     }
     if (this.scanning) {
       this.log('warn', 'Watch scan is running — wait for it to finish or try again shortly', undefined, {
         source: 'library'
       })
-      return { modelsChecked: 0, newVersions: 0, upToDate: 0, errors: [] }
+      return { modelsChecked: 0, modelsSkipped: 0, newVersions: 0, upToDate: 0, errors: [] }
     }
 
     const owned = inventory.getAllVersions()
     if (!owned.length) {
       this.log('info', 'Library version check: no models in library yet', undefined, { source: 'library' })
-      return { modelsChecked: 0, newVersions: 0, upToDate: 0, errors: [] }
+      return { modelsChecked: 0, modelsSkipped: 0, newVersions: 0, upToDate: 0, errors: [] }
     }
 
     this.libraryScanning = true
     this.lastLibraryVersionScanAt = Date.now()
+    markLibraryVersionScan(this.lastLibraryVersionScanAt)
     this.setStatus('checking')
     const uniqueModels = new Set(owned.map((v) => v.modelId)).size
-    this.log('info', `Checking ${uniqueModels} model(s) in your library for new versions…`, undefined, {
-      source: 'library'
-    })
+    this.log(
+      'info',
+      options.force
+        ? `Checking ${uniqueModels} model(s) in your library for new versions (manual full re-check)…`
+        : `Checking library for new versions (skips models polled within 2 days)…`,
+      undefined,
+      { source: 'library' }
+    )
 
     try {
       const result = await scanOwnedModelsForNewVersions(
@@ -602,6 +612,7 @@ export class ScanScheduler {
         this.pendingVersions,
         this.pendingChangeHandler,
         {
+          force: options.force === true,
           log: this.ruleQueueLog('library'),
           onProgress: (current, total, modelName) => {
             this.emit('version-scan:progress', { current, total, modelName })
@@ -609,9 +620,10 @@ export class ScanScheduler {
         }
       )
       const errMsg = result.errors.length ? `, ${result.errors.length} error(s)` : ''
+      const skipMsg = result.modelsSkipped ? `, ${result.modelsSkipped} skipped (< 2 days)` : ''
       this.log(
         'success',
-        `Library check done — ${result.newVersions} new version(s), ${result.upToDate} up-to-date, ${result.modelsChecked} checked${errMsg}`,
+        `Library check done — ${result.newVersions} new version(s), ${result.upToDate} up-to-date, ${result.modelsChecked} checked${skipMsg}${errMsg}`,
         undefined,
         { source: 'library' }
       )
@@ -622,7 +634,7 @@ export class ScanScheduler {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       this.log('error', `Library version check failed: ${msg}`, undefined, { source: 'library' })
-      return { modelsChecked: 0, newVersions: 0, upToDate: 0, errors: [msg] }
+      return { modelsChecked: 0, modelsSkipped: 0, newVersions: 0, upToDate: 0, errors: [msg] }
     } finally {
       this.libraryScanning = false
       this.emit('version-scan:complete')
@@ -702,8 +714,8 @@ export class ScanScheduler {
     this.startEarlyAccessWatcher()
     // Harvest runs after startup prep — UI overlay must not wait for the full catalog walk.
     this.ensureContinuousCrawl()
-    // Background: poll Civitai for newer versions of owned models → New Versions tab (or auto-queue).
-    this.scheduleBackgroundLibraryVersionScan(12_000)
+    // New Versions poll: only if due (persisted 30 min cooldown). Skips while Harvest is walking catalogs.
+    this.scheduleBackgroundLibraryVersionScan(20_000)
   }
 
   private maybeStartAutoDownloads(logMessage?: string): void {
@@ -1488,6 +1500,7 @@ export class ScanScheduler {
 
     const settings = getSettings()
     const modeLabel = settings.nightDownloadAll ? 'download all' : 'backfill'
+    this.harvestPeekIdle = false
     this.log('info', `Night mode (${modeLabel}): continuous page-by-page crawl started`, undefined, {
       source: 'crawl'
     })
@@ -1512,6 +1525,7 @@ export class ScanScheduler {
             if (!shouldRunContinuousCrawl() || this.continuousCrawlStopRequested) return
             // Already finished one full catalog — peek-only handles page 1 on interval.
             if (getSettings().backfillCatalog && isCatalogBackfillDone(rule.id, domain)) continue
+            this.harvestPeekIdle = false
             const domains = this.ruleSearchDomains(rule)
             if (domains.length > 1) {
               this.log(
@@ -1565,7 +1579,8 @@ export class ScanScheduler {
             }
           }
           await this.runPeekOnlyMaintenance(rules, requireTagMatch)
-          // Periodically refresh New Versions while Harvest is idle on peek-only.
+          // Catalogs finished — peek wait is idle enough for a due library version poll.
+          this.harvestPeekIdle = true
           this.scheduleBackgroundLibraryVersionScan(2_000)
           if (getSettings().autoRetryDeferred !== false) {
             const requeued = this.downloadQueue.requeueDeferred()
@@ -1611,6 +1626,7 @@ export class ScanScheduler {
         await this.interruptibleSleep(2_000)
       }
     } finally {
+      this.harvestPeekIdle = false
       if (!this.crawler.isRunning() && !this.downloadQueue.isBusy()) {
         this.setStatus('idle')
       }

@@ -345,7 +345,7 @@ export const lt: Messages = {
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
     dlAwaiting: 'Awaiting access — 403, early access arba trūksta API rakto',
     dlNewVersions:
-      'New Versions — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
+      'New Versions — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256; praleidžia modelius, tikrintus per paskutines 2 d.). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
     dlTabBadges:
       'Skiltų ženkliukai — Browse: aktyvi eilė · Library: +N naujų nuo paskutinio apsilankymo · New Versions / Awaiting access: laukiančių skaičius',
     dlActivity:
@@ -728,7 +728,7 @@ export const lt: Messages = {
     listTitle: 'Atnaujinimai laukia patvirtinimo ({count})',
     checkLibrary: 'Tikrinti dar kartą',
     checkLibraryTitle:
-      'Pasirinktinai: dar kartą patikrinti visus turimus modelius per Civitai API (po vieną užklausą). Paprastai Harvest + fono check užpildo sąrašą be paspaudimo.',
+      'Dar kartą patikrinti visus turimus modelius per Civitai API (apeina 2 d. per-model skip, kurį naudoja fono check). Po vieną užklausą modeliui.',
     checking: 'Tikrinama…'
   },
   load: {

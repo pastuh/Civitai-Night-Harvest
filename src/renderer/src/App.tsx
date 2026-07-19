@@ -69,6 +69,8 @@ interface BusyState {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('watch')
+  const tabRef = useRef<Tab>('watch')
+  tabRef.current = tab
   const [settings, setSettings] = useState<AppSettingsPublic | null>(null)
   const [tagRules, setTagRules] = useState<TagFolderRule[]>([])
   const [watchRules, setWatchRules] = useState<WatchRule[]>([])
@@ -523,15 +525,47 @@ export default function App() {
       }
     }
 
+    let versionScanProgressTimer: number | null = null
+    let pendingVersionScanProgress: LibraryVersionScanProgress | null = null
+    let activityFlushTimer: number | null = null
+    const pendingActivityBatch: ActivityEntry[] = []
+
     const unsubs = [
-      window.api.onActivity((e) =>
-        setActivity((prev) => {
-          if (prev.some((p) => p.id === e.id)) return prev
-          return [e, ...prev].slice(0, 2000)
-        })
-      ),
-      window.api.onVersionScanProgress(setVersionScanProgress),
+      window.api.onActivity((e) => {
+        pendingActivityBatch.push(e)
+        if (activityFlushTimer != null) return
+        activityFlushTimer = window.setTimeout(() => {
+          activityFlushTimer = null
+          const batch = pendingActivityBatch.splice(0)
+          if (!batch.length) return
+          setActivity((prev) => {
+            const seen = new Set(prev.map((p) => p.id))
+            const next = [...prev]
+            for (const entry of batch) {
+              if (seen.has(entry.id)) continue
+              seen.add(entry.id)
+              next.unshift(entry)
+            }
+            return next.slice(0, 2000)
+          })
+        }, 800)
+      }),
+      // Coalesce per-model scan ticks — each setState was re-rendering Browse/Library (hidden but mounted).
+      window.api.onVersionScanProgress((p) => {
+        setVersionScanning(true)
+        pendingVersionScanProgress = p
+        if (versionScanProgressTimer != null) return
+        versionScanProgressTimer = window.setTimeout(() => {
+          versionScanProgressTimer = null
+          if (pendingVersionScanProgress) setVersionScanProgress(pendingVersionScanProgress)
+        }, 750)
+      }),
       window.api.onVersionScanComplete(() => {
+        if (versionScanProgressTimer != null) {
+          window.clearTimeout(versionScanProgressTimer)
+          versionScanProgressTimer = null
+        }
+        pendingVersionScanProgress = null
         setVersionScanning(false)
         setVersionScanProgress(null)
       }),
@@ -563,12 +597,15 @@ export default function App() {
         })
         // Quiet harvest: never mount crawl cards (meta above is enough for the status bar).
         if (!updateBrowseOnCrawlRef.current) return
+        // Skip heavy gallery state while user is on another tab (Browse is unmounted).
+        if (tabRef.current !== 'watch') return
         const result: WatchRuleTestResult = payload.result.crawlSource
           ? payload.result
           : { ...payload.result, crawlSource: 'night' }
         // Re-check quiet inside transition — a pending page can otherwise restore cards after 👁.
         startTransition(() => {
           if (!updateBrowseOnCrawlRef.current) return
+          if (tabRef.current !== 'watch') return
           setLiveCrawlBrowse(result)
         })
       }),
@@ -579,8 +616,12 @@ export default function App() {
         setBrowseGalleryAwaiting(hasEnabledWatchRulesRef.current)
       }),
       window.api.onCrawlProgress((payload) => {
-        // Urgent for bottom status bar — do not startTransition (React would skip intermediate pages).
-        setCrawlProgress(payload)
+        // Status bar needs progress; defer React work when Browse is not visible.
+        if (tabRef.current === 'watch') {
+          setCrawlProgress(payload)
+        } else {
+          startTransition(() => setCrawlProgress(payload))
+        }
         if (
           payload?.phase === 'fetching' ||
           payload?.phase === 'fetching-tags' ||
@@ -604,7 +645,9 @@ export default function App() {
           }))
         }
       }),
-      window.api.onPendingVersions(setPending),
+      window.api.onPendingVersions((pend) => {
+        startTransition(() => setPending(pend))
+      }),
       window.api.onDeferredVersions((def) => {
         setDeferred(def)
         void window.api.reconcileDownloadQueue().then((q) => {
@@ -654,6 +697,8 @@ export default function App() {
     ]
     return () => {
       if (progressQueueTimer != null) window.clearTimeout(progressQueueTimer)
+      if (versionScanProgressTimer != null) window.clearTimeout(versionScanProgressTimer)
+      if (activityFlushTimer != null) window.clearTimeout(activityFlushTimer)
       if (inventoryRefreshTimer != null) window.clearTimeout(inventoryRefreshTimer)
       unsubs.forEach((u) => u())
     }
@@ -927,6 +972,25 @@ export default function App() {
     return n || undefined
   }, [pending, inventory])
 
+  const pendingOwnedInventory = useMemo(() => {
+    if (!pending.length) return [] as InventoryRecord[]
+    const ids = new Set(pending.map((p) => p.modelId))
+    return inventory.filter((r) => ids.has(r.modelId))
+  }, [pending, inventory])
+
+  // Browse was unmounted / gallery updates skipped while away — refresh snapshot when returning.
+  useEffect(() => {
+    if (tab !== 'watch') return
+    if (!(settings?.updateBrowseOnCrawl ?? false)) return
+    let cancelled = false
+    void window.api.getBrowseGallery().then((gallery) => {
+      if (!cancelled && gallery) setLiveCrawlBrowse(gallery)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [tab, settings?.updateBrowseOnCrawl])
+
   const retryDeferred = async () => {
     try {
       setActionError(null)
@@ -1003,12 +1067,31 @@ export default function App() {
     setVersionScanProgress(null)
     try {
       await window.api.scanLibraryVersions()
-      await refresh()
+      // Pending updates arrive via pending:versions — avoid full inventory refresh here.
+      await refreshAfterScan()
     } finally {
       setVersionScanning(false)
       setVersionScanProgress(null)
     }
   }
+
+  const refreshQueueOnly = useCallback(async () => {
+    try {
+      const q = await window.api.getDownloadQueue()
+      setQueue(q.items)
+      setQueuePaused(q.paused)
+    } catch {
+      /* keep existing queue */
+    }
+  }, [])
+
+  const removePendingVersionLocal = useCallback((versionId: number) => {
+    setPending((prev) => prev.filter((p) => p.versionId !== versionId))
+  }, [])
+
+  const removePendingModelLocal = useCallback((modelId: number) => {
+    setPending((prev) => prev.filter((p) => p.modelId !== modelId))
+  }, [])
 
   if (loadError) {
     const m = getMessages('en')
@@ -1315,44 +1398,46 @@ export default function App() {
         )}
 
       <main className={`content ${tab === 'gallery' ? 'content-gallery' : ''}`}>
-        <div className={tab === 'gallery' ? '' : 'tab-hidden'}>
-          <GalleryTab
-            inventory={inventory}
-            tagRules={tagRules}
-            domain="red"
-            defaultLinkDomain="red"
-            uiExtended={uiExtended}
-            banFunctionMode={settings.banFunctionMode ?? false}
-            onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
-            onSaveTagRules={saveTagRules}
-            focusModelId={galleryFocusModelId}
-            onFocusHandled={clearGalleryFocusModel}
-            focusCivitaiTag={galleryFocusCivitaiTag}
-            onFocusTagHandled={clearGalleryFocusTag}
-            onOpenTagFolders={openTagFolders}
-            onRefresh={refreshInventory}
-            onBusyAction={withBusy}
-            onRepairPreviews={repairLibraryPreviews}
-            previewRepairBusy={previewRepairActive}
-            syncMessage={syncMessage}
-            loraFolder={settings.loraOutputFolder}
-            checkpointFolder={settings.checkpointOutputFolder}
-            sessionDownloadIds={sessionDownloadIds}
-            highlightVersionIds={libraryHighlightIds}
-            isActive={tab === 'gallery'}
-            resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
-            resultsPageSize={settings.resultsPageSize ?? 100}
-          />
-        </div>
-        <div className={tab === 'download' ? '' : 'tab-hidden'}>
+        {tab === 'gallery' ? (
+          <div>
+            <GalleryTab
+              inventory={inventory}
+              tagRules={tagRules}
+              domain="red"
+              defaultLinkDomain="red"
+              uiExtended={uiExtended}
+              banFunctionMode={settings.banFunctionMode ?? false}
+              onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+              onSaveTagRules={saveTagRules}
+              focusModelId={galleryFocusModelId}
+              onFocusHandled={clearGalleryFocusModel}
+              focusCivitaiTag={galleryFocusCivitaiTag}
+              onFocusTagHandled={clearGalleryFocusTag}
+              onOpenTagFolders={openTagFolders}
+              onRefresh={refreshInventory}
+              onBusyAction={withBusy}
+              onRepairPreviews={repairLibraryPreviews}
+              previewRepairBusy={previewRepairActive}
+              syncMessage={syncMessage}
+              loraFolder={settings.loraOutputFolder}
+              checkpointFolder={settings.checkpointOutputFolder}
+              sessionDownloadIds={sessionDownloadIds}
+              highlightVersionIds={libraryHighlightIds}
+              isActive
+              resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
+              resultsPageSize={settings.resultsPageSize ?? 100}
+            />
+          </div>
+        ) : null}
+        {tab === 'download' ? (
           <DownloadTab
             settings={settings}
             tagRules={tagRules}
             onRefresh={refresh}
             onOpenTagSettings={() => setTab('settings')}
           />
-        </div>
-        <div className={tab === 'watch' ? '' : 'tab-hidden'}>
+        ) : null}
+        {tab === 'watch' ? (
           <WatchRulesTab
             rules={watchRules}
             onSave={saveWatchRules}
@@ -1380,8 +1465,8 @@ export default function App() {
             browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
             onSaveStateChange={setWatchRulesSaveState}
           />
-        </div>
-        <div className={tab === 'tags' ? '' : 'tab-hidden'}>
+        ) : null}
+        {tab === 'tags' ? (
           <TagsTab
             rules={tagRules}
             tagSuggestions={tagSuggestions}
@@ -1398,32 +1483,35 @@ export default function App() {
               setTab('gallery')
             }}
           />
-        </div>
-        <div className={tab === 'pending' ? '' : 'tab-hidden'}>
+        ) : null}
+        {tab === 'pending' ? (
           <PendingTab
             pending={pending}
-            inventory={inventory}
+            inventory={pendingOwnedInventory}
             versionScanProgress={versionScanProgress}
             versionScanning={versionScanning}
             inventoryModelCount={inventory.length}
-            onRefresh={refresh}
+            onQueueRefresh={refreshQueueOnly}
+            onLibraryRefresh={refreshInventory}
+            onPendingRemoved={removePendingVersionLocal}
+            onPendingModelRemoved={removePendingModelLocal}
             onScanLibrary={scanLibraryVersions}
             onOpenInLibrary={(modelId) => {
               setTab('gallery')
               window.setTimeout(() => setGalleryFocusModelId(modelId), 50)
             }}
           />
-        </div>
-        <div className={tab === 'awaiting' ? '' : 'tab-hidden'}>
+        ) : null}
+        {tab === 'awaiting' ? (
           <DeferredTab
             deferred={deferred}
             domain="red"
             hasApiKey={settings.hasApiKey}
             onRefresh={refresh}
-            isActive={tab === 'awaiting'}
+            isActive
           />
-        </div>
-        <div className={tab === 'activity' ? '' : 'tab-hidden'}>
+        ) : null}
+        {tab === 'activity' ? (
           <ActivityTab
             entries={activity}
             status={status}
@@ -1435,11 +1523,9 @@ export default function App() {
               setTab('gallery')
             }}
           />
-        </div>
-        <div className={tab === 'help' ? '' : 'tab-hidden'}>
-          <HelpTab onOpenSettings={() => setTab('settings')} />
-        </div>
-        <div className={tab === 'settings' ? '' : 'tab-hidden'}>
+        ) : null}
+        {tab === 'help' ? <HelpTab onOpenSettings={() => setTab('settings')} /> : null}
+        {tab === 'settings' ? (
           <SettingsTab
             settings={settings}
             onSave={saveSettings}
@@ -1447,7 +1533,7 @@ export default function App() {
             onRefreshInventory={refreshInventory}
             onWithBusy={withBusy}
           />
-        </div>
+        ) : null}
       </main>
 
       <GlobalStatusBar

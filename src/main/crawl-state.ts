@@ -6,11 +6,19 @@ interface CrawlStateSchema {
   lastPeekAt: Record<string, string>
   backfillPages: Record<string, number>
   catalogPass: Record<string, number>
+  /** ISO timestamp of last library New Versions API poll (persists across restarts). */
+  lastLibraryVersionScanAt: string | null
 }
 
 const store = new Store<CrawlStateSchema>({
   name: 'crawl-state',
-  defaults: { cursors: {}, lastPeekAt: {}, backfillPages: {}, catalogPass: {} }
+  defaults: {
+    cursors: {},
+    lastPeekAt: {},
+    backfillPages: {},
+    catalogPass: {},
+    lastLibraryVersionScanAt: null
+  }
 })
 
 export function getCrawlCursor(ruleId: string, domain?: import('../shared/types').CivitaiDomain): string | null | undefined {
@@ -78,6 +86,18 @@ export function msUntilNewestPeekAllowed(
   if (!Number.isFinite(ms)) return 0
   const cooldownMs = Math.max(intervalMinutes, 5) * 60 * 1000
   return Math.max(0, cooldownMs - (Date.now() - ms))
+}
+
+/** Last background/manual library New Versions poll (ms since epoch), or null. */
+export function getLastLibraryVersionScanAt(): number | null {
+  const iso = store.get('lastLibraryVersionScanAt')
+  if (!iso) return null
+  const ms = Date.parse(iso)
+  return Number.isFinite(ms) ? ms : null
+}
+
+export function markLibraryVersionScan(atMs: number = Date.now()): void {
+  store.set('lastLibraryVersionScanAt', new Date(atMs).toISOString())
 }
 
 export function getBackfillPage(ruleId: string, domain?: import('../shared/types').CivitaiDomain): number {

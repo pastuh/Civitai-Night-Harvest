@@ -162,6 +162,24 @@ function migrateInventorySchema(database: Database.Database): void {
   if (!hasCol('duplicate_of_version_id')) {
     database.exec(`ALTER TABLE versions ADD COLUMN duplicate_of_version_id INTEGER`)
   }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS library_version_checks (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      checked_at TEXT NOT NULL
+    );
+  `)
+  // First-time table: mark existing library as recently checked so we do not
+  // immediately GET /models/{id} for thousands of models on upgrade / first run.
+  const checkCount = (
+    database.prepare('SELECT COUNT(*) AS c FROM library_version_checks').get() as { c: number }
+  ).c
+  if (checkCount === 0) {
+    database.exec(`
+      INSERT OR IGNORE INTO library_version_checks (model_id, checked_at)
+      SELECT DISTINCT model_id, datetime('now') FROM versions WHERE model_id > 0
+    `)
+  }
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -556,6 +574,38 @@ export function removePendingVersion(versionId: number): void {
 
 export function removePendingForModel(modelId: number): void {
   getDb().prepare('DELETE FROM pending_versions WHERE model_id = ?').run(modelId)
+}
+
+/** Per-model last successful New Versions API poll (ISO), or null if never checked. */
+export function getLibraryVersionCheckedAt(modelId: number): string | null {
+  const row = getDb()
+    .prepare('SELECT checked_at FROM library_version_checks WHERE model_id = ?')
+    .get(modelId) as { checked_at: string } | undefined
+  return row?.checked_at ?? null
+}
+
+export function markLibraryVersionChecked(modelId: number, atIso: string = new Date().toISOString()): void {
+  if (modelId <= 0) return
+  getDb()
+    .prepare(
+      `INSERT INTO library_version_checks (model_id, checked_at) VALUES (?, ?)
+       ON CONFLICT(model_id) DO UPDATE SET checked_at = excluded.checked_at`
+    )
+    .run(modelId, atIso)
+}
+
+/** modelIds whose last check is missing or older than cooldownMs. */
+export function filterModelsDueForVersionCheck(modelIds: number[], cooldownMs: number): number[] {
+  if (!modelIds.length) return []
+  const cutoff = Date.now() - Math.max(0, cooldownMs)
+  const stmt = getDb().prepare('SELECT checked_at FROM library_version_checks WHERE model_id = ?')
+  return modelIds.filter((id) => {
+    const row = stmt.get(id) as { checked_at: string } | undefined
+    if (!row?.checked_at) return true
+    const ms = Date.parse(row.checked_at)
+    if (!Number.isFinite(ms)) return true
+    return ms < cutoff
+  })
 }
 
 function rowToDeferred(row: Record<string, unknown>): DeferredDownload {

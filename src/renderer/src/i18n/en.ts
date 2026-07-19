@@ -342,7 +342,7 @@ export const en = {
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Awaiting access tab — 403, early access, or missing API key',
     dlNewVersions:
-      'New Versions — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
+      'New Versions — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256; skips models polled within 2 days). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
     dlTabBadges:
       'Tab badges — Browse: active queue count · Library: +N new downloads since last visit · New Versions / Awaiting access: pending counts',
     dlActivity:
@@ -720,7 +720,7 @@ export const en = {
     listTitle: 'Updates awaiting approval ({count})',
     checkLibrary: 'Check again',
     checkLibraryTitle:
-      'Optional: re-check all owned models via Civitai API (one request per model). Normally Harvest + background check fill this list without clicking.',
+      'Re-check all owned models via Civitai API (ignores the 2-day per-model skip used by background checks). One request per model.',
     checking: 'Checking…'
   },
   load: {

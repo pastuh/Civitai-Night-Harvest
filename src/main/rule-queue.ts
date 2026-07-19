@@ -865,7 +865,14 @@ function libraryCheckRule(model: CivitaiModel, baseModels = ''): WatchRule {
 export interface LibraryVersionScanOptions {
   onProgress?: (current: number, total: number, modelName: string) => void
   log?: RuleQueueOptions['log']
+  /** When true (manual Check again), ignore per-model cooldown and re-poll everything. */
+  force?: boolean
 }
+
+/** Background polls skip models checked within this window — new versions rarely appear sooner. */
+export const LIBRARY_VERSION_CHECK_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000
+/** Cap API calls per background sweep so the UI stays responsive on large libraries. */
+export const LIBRARY_VERSION_CHECK_BATCH = 20
 
 function allowedBaseModelsFromRules(): Set<string> | null {
   const bases = new Set<string>()
@@ -884,7 +891,13 @@ export async function scanOwnedModelsForNewVersions(
   pendingVersions: PendingVersion[] = [],
   onPendingChange?: (pending: PendingVersion[]) => void,
   options: LibraryVersionScanOptions = {}
-): Promise<{ modelsChecked: number; newVersions: number; upToDate: number; errors: string[] }> {
+): Promise<{
+  modelsChecked: number
+  modelsSkipped: number
+  newVersions: number
+  upToDate: number
+  errors: string[]
+}> {
   const snapshot = inventory.buildInventorySnapshot()
   const domainByModel = libraryDomainByModelId()
   const modelIds = [
@@ -904,14 +917,44 @@ export async function scanOwnedModelsForNewVersions(
       )
     : modelIds
 
-  const result = { modelsChecked: 0, newVersions: 0, upToDate: 0, errors: [] as string[] }
-  if (!scopedModelIds.length) return result
+  const dueAll = options.force
+    ? scopedModelIds
+    : inventory.filterModelsDueForVersionCheck(scopedModelIds, LIBRARY_VERSION_CHECK_COOLDOWN_MS)
+  const dueModelIds = options.force ? dueAll : dueAll.slice(0, LIBRARY_VERSION_CHECK_BATCH)
+  const modelsSkipped = scopedModelIds.length - dueModelIds.length
+  const deferredMore = !options.force && dueAll.length > dueModelIds.length
 
-  const comCount = scopedModelIds.filter((id) => (domainByModel.get(id) ?? 'com') === 'com').length
-  const redCount = scopedModelIds.length - comCount
+  const result = {
+    modelsChecked: 0,
+    modelsSkipped,
+    newVersions: 0,
+    upToDate: 0,
+    errors: [] as string[]
+  }
+  if (!dueModelIds.length) {
+    options.log?.(
+      'info',
+      modelsSkipped
+        ? `Library check: all ${modelsSkipped} model(s) checked within the last 2 days — nothing to poll`
+        : 'Library check: no models in scope'
+    )
+    return result
+  }
+
+  const comCount = dueModelIds.filter((id) => (domainByModel.get(id) ?? 'com') === 'com').length
+  const redCount = dueModelIds.length - comCount
+  const skipNote = modelsSkipped
+    ? `, skipped ${modelsSkipped} (cooldown / later batch)`
+    : options.force
+      ? ' (manual full re-check)'
+      : ''
+  const batchNote =
+    deferredMore && !options.force
+      ? ` — batch ${dueModelIds.length}/${dueAll.length} due`
+      : ''
   options.log?.(
     'info',
-    `Library check: ${scopedModelIds.length} model(s)${allowedBases ? ' (Browse base-model filter)' : ''} — ${comCount} on ${domainLabel('com')}, ${redCount} on ${domainLabel('red')}`
+    `Library check: ${dueModelIds.length} model(s)${allowedBases ? ' (Browse base-model filter)' : ''}${skipNote}${batchNote} — ${comCount} on ${domainLabel('com')}, ${redCount} on ${domainLabel('red')}`
   )
 
   const autoNv = getSettings().autoDownloadNewVersions === true
@@ -923,10 +966,10 @@ export async function scanOwnedModelsForNewVersions(
   }
 
   const ctx = createRuleQueueContext(pendingVersions, onPendingChange)
-  const total = scopedModelIds.length
+  const total = dueModelIds.length
 
-  for (let i = 0; i < scopedModelIds.length; i++) {
-    const modelId = scopedModelIds[i]
+  for (let i = 0; i < dueModelIds.length; i++) {
+    const modelId = dueModelIds[i]
     let modelName = `#${modelId}`
     const preferredDomain = domainByModel.get(modelId) ?? 'com'
     try {
@@ -951,6 +994,7 @@ export async function scanOwnedModelsForNewVersions(
         pageResult,
         model
       )
+      inventory.markLibraryVersionChecked(modelId)
       result.newVersions += pageResult.newVersions
       result.upToDate += pageResult.upToDate
       result.errors.push(...pageResult.errors)
@@ -964,9 +1008,10 @@ export async function scanOwnedModelsForNewVersions(
       result.errors.push(`Model ${modelId}: ${msg}`)
       options.log?.('error', `Library check failed for ${modelName} (${domainLabel(preferredDomain)}): ${msg}`)
       result.modelsChecked++
+      // Do not mark checked on failure — allow retry on next sweep.
     }
 
-    if (i + 1 < modelIds.length) await sleep(250)
+    if (i + 1 < dueModelIds.length) await sleep(250)
   }
 
   return result

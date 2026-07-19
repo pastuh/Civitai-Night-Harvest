@@ -58,9 +58,9 @@ Turning **Harvest off** currently clears the in-memory Browse gallery. To review
 For **models you already own**, when Civitai has a **newer version of the same base model** (e.g. you own Krea2 → only a newer Krea2 counts). If enabled Browse Rules set `baseModels`, that filter applies too (no separate Rules editor on this tab):
 
 1. **During Harvest** — as catalog pages are fetched, if a result is a model already in your library but with a newer matching-base version id, it is added here (or auto-queued if **Settings → Auto-download new versions** is on).
-2. **Background check** — after startup / during Harvest peek, the app also polls owned models via Civitai `GET /models/{id}` (one request per model — **not** SHA256). This catches updates for models that did not appear in the current Browse crawl.
+2. **Background check** — after startup / during Harvest peek, the app also polls owned models via Civitai `GET /models/{id}` (one request per model — **not** SHA256). Models successfully checked within the **last 2 days** are skipped (new versions rarely appear sooner). Manual **Check again** forces a full re-poll.
 
-You normally only **Queue / Dismiss / Ban**. The optional **Check again** button is a manual re-poll.
+You normally only **Queue / Dismiss / Ban**. The optional **Check again** button is a manual full re-poll.
 
 Brand-new models (not in your library) appear as Browse **New** and are handled by Harvest Auto-queue — they do not belong on this tab.
 

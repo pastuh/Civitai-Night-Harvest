@@ -975,7 +975,7 @@ export function initIpc(): void {
   })
 
   ipcMain.handle('scan:run', () => scheduler.runScan({ manual: true }))
-  ipcMain.handle('scan:libraryVersions', () => scheduler.runLibraryVersionScan())
+  ipcMain.handle('scan:libraryVersions', () => scheduler.runLibraryVersionScan({ force: true }))
   ipcMain.handle('scan:status', () => scheduler.getStatus())
   ipcMain.handle('scan:scheduleInfo', () => scheduler.getScheduleInfo())
   ipcMain.handle('activity:get', () => scheduler.getActivity())

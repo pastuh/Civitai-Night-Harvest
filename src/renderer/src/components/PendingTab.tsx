@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, memo } from 'react'
 import type {
   InventoryRecord,
   LibraryVersionScanProgress,
@@ -14,25 +14,35 @@ interface Props {
   versionScanProgress: LibraryVersionScanProgress | null
   versionScanning: boolean
   inventoryModelCount: number
-  onRefresh: () => Promise<void>
+  /** Refresh download strip after Queue download — not a full app refresh. */
+  onQueueRefresh?: () => Promise<void>
+  /** Refresh library after Ban (files may be deleted). */
+  onLibraryRefresh?: () => Promise<void>
   onScanLibrary: () => Promise<void>
   onOpenInLibrary?: (modelId: number) => void
+  /** Optimistic UI: drop a pending row before / without waiting for parent IPC echo. */
+  onPendingRemoved?: (versionId: number) => void
+  onPendingModelRemoved?: (modelId: number) => void
 }
 
-export function PendingTab({
+export const PendingTab = memo(function PendingTab({
   pending,
   inventory,
   versionScanProgress,
   versionScanning,
   inventoryModelCount,
-  onRefresh,
+  onQueueRefresh,
+  onLibraryRefresh,
   onScanLibrary,
-  onOpenInLibrary
+  onOpenInLibrary,
+  onPendingRemoved,
+  onPendingModelRemoved
 }: Props) {
   const t = useT()
   const [detailModelId, setDetailModelId] = useState<number | null>(null)
   const [detailVersionId, setDetailVersionId] = useState<number | undefined>(undefined)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
+  const [busyVersionIds, setBusyVersionIds] = useState<Set<number>>(() => new Set())
 
   const ownedByModel = useMemo(() => {
     const map = new Map<number, InventoryRecord[]>()
@@ -64,15 +74,34 @@ export function PendingTab({
     }
   }, [pending, ownedByModel])
 
-  const approve = async (item: PendingVersion) => {
-    await window.api.approvePending({
-      modelId: item.modelId,
-      versionId: item.versionId
+  const markBusy = (versionId: number, busy: boolean) => {
+    setBusyVersionIds((prev) => {
+      const next = new Set(prev)
+      if (busy) next.add(versionId)
+      else next.delete(versionId)
+      return next
     })
-    await onRefresh()
+  }
+
+  const approve = async (item: PendingVersion) => {
+    if (busyVersionIds.has(item.versionId)) return
+    markBusy(item.versionId, true)
+    onPendingRemoved?.(item.versionId)
+    try {
+      await window.api.approvePending({
+        modelId: item.modelId,
+        versionId: item.versionId
+      })
+      await onQueueRefresh?.()
+    } catch {
+      // Event stream / next scan will restore if dismiss failed mid-flight.
+    } finally {
+      markBusy(item.versionId, false)
+    }
   }
 
   const ban = async (item: PendingVersion) => {
+    if (busyVersionIds.has(item.versionId)) return
     const owned = ownedByModel.get(item.modelId) ?? []
     const ok = window.confirm(
       t('pending.banConfirm', {
@@ -81,22 +110,32 @@ export function PendingTab({
       })
     )
     if (!ok) return
+    markBusy(item.versionId, true)
     setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
+    onPendingModelRemoved?.(item.modelId)
     try {
       await window.api.banModel(item.modelId, item.modelName)
-      await onRefresh()
+      await onLibraryRefresh?.()
     } catch {
       setHiddenModelIds((prev) => {
         const next = new Set(prev)
         next.delete(item.modelId)
         return next
       })
+    } finally {
+      markBusy(item.versionId, false)
     }
   }
 
   const dismiss = async (versionId: number) => {
-    await window.api.dismissPending(versionId)
-    await onRefresh()
+    if (busyVersionIds.has(versionId)) return
+    markBusy(versionId, true)
+    onPendingRemoved?.(versionId)
+    try {
+      await window.api.dismissPending(versionId)
+    } finally {
+      markBusy(versionId, false)
+    }
   }
 
   const ownedSummary = (modelId: number): string => {
@@ -172,59 +211,73 @@ export function PendingTab({
         <p className="muted">{t('pending.emptyHint')}</p>
       ) : (
         <div className="card-list status-card-grid" style={{ marginTop: 12 }}>
-          {visiblePending.map((item) => (
-            <StatusModelCard
-              key={item.versionId}
-              title={item.modelName}
-              meta={
-                <>
-                  <div>
-                    <strong>{t('pending.offeredVersion')}</strong> {item.versionName} ·{' '}
-                    {item.baseModel}
-                  </div>
-                  <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-                    #{item.modelId} / v#{item.versionId}
-                  </div>
-                  <div className="status-card-detail">{ownedSummary(item.modelId)}</div>
-                </>
-              }
-              previewUrl={item.previewUrl}
-              onOpen={() => {
-                setDetailModelId(item.modelId)
-                setDetailVersionId(item.versionId)
-              }}
-              actions={
-                <>
-                  <button
-                    type="button"
-                    className="primary"
-                    title={t('pending.queueHint')}
-                    onClick={() => void approve(item)}
-                  >
-                    {t('pending.queueDownload')}
-                  </button>
-                  {onOpenInLibrary && (
-                    <button type="button" onClick={() => onOpenInLibrary(item.modelId)}>
-                      {t('pending.openInLibrary')}
+          {visiblePending.map((item) => {
+            const busy = busyVersionIds.has(item.versionId)
+            return (
+              <StatusModelCard
+                key={item.versionId}
+                title={item.modelName}
+                meta={
+                  <>
+                    <div>
+                      <strong>{t('pending.offeredVersion')}</strong> {item.versionName} ·{' '}
+                      {item.baseModel}
+                    </div>
+                    <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                      #{item.modelId} / v#{item.versionId}
+                    </div>
+                    <div className="status-card-detail">{ownedSummary(item.modelId)}</div>
+                  </>
+                }
+                previewUrl={item.previewUrl}
+                onOpen={() => {
+                  setDetailModelId(item.modelId)
+                  setDetailVersionId(item.versionId)
+                }}
+                actions={
+                  <>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={busy}
+                      title={t('pending.queueHint')}
+                      onClick={() => void approve(item)}
+                    >
+                      {t('pending.queueDownload')}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    title={t('pending.dismissHint')}
-                    onClick={() => void dismiss(item.versionId)}
-                  >
-                    {t('common.dismiss')}
-                  </button>
-                  <button type="button" title={t('pending.banHint')} onClick={() => void ban(item)}>
-                    {t('pending.ban')}
-                  </button>
-                </>
-              }
-            />
-          ))}
+                    {onOpenInLibrary && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onOpenInLibrary(item.modelId)}
+                      >
+                        {t('pending.openInLibrary')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={busy}
+                      title={t('pending.dismissHint')}
+                      onClick={() => void dismiss(item.versionId)}
+                    >
+                      {t('common.dismiss')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      title={t('pending.banHint')}
+                      onClick={() => void ban(item)}
+                    >
+                      {t('pending.ban')}
+                    </button>
+                  </>
+                }
+              />
+            )
+          })}
         </div>
       )}
       {detailModal}
     </div>
   )
-}
+})

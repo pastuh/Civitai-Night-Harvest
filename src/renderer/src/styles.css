@@ -504,11 +504,20 @@ th {
   overflow: hidden;
 }
 
+/* Host wrapper (or legacy .tab-hidden sibling layout) fills the main area. */
 .content-gallery > :not(.tab-hidden) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Never force column on the Library row layout itself (sidebar must stay on the right). */
+.content-gallery > .gallery-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
 }
 
 .gallery-layout {

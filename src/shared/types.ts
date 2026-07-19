@@ -701,6 +701,7 @@ export interface LibraryVersionScanProgress {
 
 export interface LibraryVersionScanResult {
   modelsChecked: number
+  modelsSkipped: number
   newVersions: number
   upToDate: number
   errors: string[]
