@@ -6,6 +6,40 @@ const RETRYABLE_RE =
 const FILE_RETRYABLE_RE =
   /\b(eperm|eacces|ebusy|enospc|emfile|enfile)\b|operation not permitted|permission denied/i
 
+/** User-facing detail from a failed Civitai HTTP response (never dump HTML). */
+export function formatCivitaiHttpError(status: number, body: string): string {
+  const trimmed = (body || '').trim()
+  const looksHtml = trimmed.startsWith('<!') || trimmed.startsWith('<html') || /<title>/i.test(trimmed)
+  const cloudflare =
+    /just a moment|cf-browser-verification|cf-challenge|attention required|cloudflare/i.test(trimmed)
+
+  if (cloudflare || (looksHtml && (status === 403 || status === 429 || status === 503))) {
+    if (status === 429) {
+      return 'Rate limited by Cloudflare — wait a few minutes, then retry'
+    }
+    return 'Blocked by Cloudflare challenge — wait a few minutes, then retry'
+  }
+
+  if (looksHtml) {
+    return `HTTP ${status} (non-JSON response)`
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as { error?: unknown; message?: unknown }
+    if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim()
+    if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message.trim()
+  } catch {
+    /* use snippet */
+  }
+
+  const snippet = trimmed.replace(/\s+/g, ' ').slice(0, 160)
+  return snippet || `HTTP ${status}`
+}
+
+export function isCloudflareOrRateLimitError(message: string): boolean {
+  return /rate limited by cloudflare|cloudflare challenge|civitai api 429\b/i.test(message)
+}
+
 /** User-facing summary for Chromium / Node network error codes. */
 export function formatNetworkError(message: string): string {
   const lower = message.toLowerCase()
@@ -29,8 +63,10 @@ export function formatNetworkError(message: string): string {
 
 export function isRetryableNetworkError(message: string): boolean {
   const m = message.trim()
+  // Cloudflare interstitial / hard rate-limit: retrying immediately makes storms worse.
+  if (isCloudflareOrRateLimitError(m)) return false
   if (RETRYABLE_RE.test(m)) return true
-  return /\bCivitai API (503|502|504|429)\b/.test(m)
+  return /\bCivitai API (503|502|504)\b/.test(m)
 }
 
 export function isRetryableFileError(message: string): boolean {

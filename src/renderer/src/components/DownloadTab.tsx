@@ -41,7 +41,9 @@ export function DownloadTab({ settings, tagRules, onRefresh, onOpenTagSettings }
     try {
       const data = await window.api.previewModel(input)
       const version = data.version
-      const previewCandidates = resolveVersionPreviewCandidates(data.model, version.id)
+      const previewCandidates = resolveVersionPreviewCandidates(data.model, version.id, undefined, {
+        strictVersion: true
+      })
       setPreview({
         name: data.model.name,
         version: version.name,

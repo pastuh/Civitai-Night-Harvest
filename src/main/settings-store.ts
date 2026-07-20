@@ -126,6 +126,9 @@ export function getSettings(): AppSettings {
   if (raw.blurPreviews === undefined) {
     raw.blurPreviews = false
   }
+  if (raw.preserveFilters === undefined) {
+    raw.preserveFilters = false
+  }
   if (!raw.downloadStreams || raw.downloadStreams < 1) {
     raw.downloadStreams = 16
   }

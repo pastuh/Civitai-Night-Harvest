@@ -533,11 +533,12 @@ export function toDisplayPreviewUrls(urls: string[]): string[] {
   return out
 }
 
-/** Prefer selected version images, then fall back to other versions on the model. */
+/** Prefer selected version images; optionally fall back to other versions on the model. */
 export function resolveVersionPreviewCandidates(
   model: { modelVersions?: { id: number; images?: CivitaiImage[] }[] },
   versionId?: number,
-  contentFilter?: ContentFilter
+  contentFilter?: ContentFilter,
+  options?: { strictVersion?: boolean }
 ): string[] {
   const versions = model.modelVersions ?? []
   const primary =
@@ -555,10 +556,23 @@ export function resolveVersionPreviewCandidates(
   }
 
   if (primary) push(collectPreviewCandidates(primary.images, contentFilter))
-  for (const version of versions) {
-    if (version !== primary) push(collectPreviewCandidates(version.images, contentFilter))
+  if (!options?.strictVersion) {
+    for (const version of versions) {
+      if (version !== primary) push(collectPreviewCandidates(version.images, contentFilter))
+    }
   }
   return urls
+}
+
+/** Preview for one version only (no cross-version fallback). */
+export function resolveVersionPreviewUrl(
+  model: { modelVersions?: { id: number; images?: CivitaiImage[] }[] },
+  versionId: number,
+  contentFilter?: ContentFilter
+): string | undefined {
+  return resolveVersionPreviewCandidates(model, versionId, contentFilter, {
+    strictVersion: true
+  })[0]
 }
 
 /** Try every version's images — search API often omits them on older versions */

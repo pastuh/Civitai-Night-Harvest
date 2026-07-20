@@ -37,7 +37,6 @@ export type LibraryModelCardProps = {
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
   onCivitaiTagClick: (tag: string) => void
-  setCardRef: (versionId: number, el: HTMLDivElement | null) => void
 }
 
 function LibraryModelCardInner({
@@ -57,8 +56,7 @@ function LibraryModelCardInner({
   onToggleSelect,
   onOpenContextMenu,
   onOpenDetails,
-  onCivitaiTagClick,
-  setCardRef
+  onCivitaiTagClick
 }: LibraryModelCardProps) {
   const t = useT()
   const metaExtra = inventoryMetaExtra(record)
@@ -73,7 +71,6 @@ function LibraryModelCardInner({
 
   return (
     <div
-      ref={(el) => setCardRef(record.versionId, el)}
       className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''}`}
       onClick={() => onToggleSelect(record.versionId)}
       onContextMenu={(e) =>

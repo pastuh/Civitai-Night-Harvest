@@ -22,6 +22,8 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'scanOnStartup', fieldKey: 'settings.fields.scanOnStartup' },
   { refKey: 'autoRetryDeferred', fieldKey: 'settings.fields.autoRetryDeferred' },
   { refKey: 'blur', fieldKey: 'settings.fields.blurPreviews' },
+  { refKey: 'preserveFilters', fieldKey: 'settings.fields.preserveFilters' },
+  { refKey: 'banFunctionMode', fieldKey: 'settings.fields.banFunctionMode' },
   { refKey: 'launchAtLogin', fieldKey: 'settings.fields.launchAtLogin' },
   { refKey: 'galleryGridSize', fieldKey: 'settings.fields.galleryGridSize' },
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
@@ -99,6 +101,8 @@ export function HelpTab({ onOpenSettings }: Props) {
           <ul>
             <li>{t('help.browseRules')}</li>
             <li>{t('help.browseResults')}</li>
+            <li>{t('help.browseDetails')}</li>
+            <li>{t('help.browsePreviews')}</li>
             <li>{t('help.browseTags')}</li>
             <li>{t('help.browseManualQueue')}</li>
             <li>{t('help.browseSettled')}</li>
@@ -117,9 +121,13 @@ export function HelpTab({ onOpenSettings }: Props) {
           <ul>
             <li>{t('help.libraryFolders')}</li>
             <li>{t('help.libraryBadge')}</li>
+            <li>{t('help.librarySession')}</li>
+            <li>{t('help.libraryByDate')}</li>
+            <li>{t('help.libraryDetails')}</li>
             <li>{t('help.librarySort')}</li>
             <li>{t('help.libraryContent')}</li>
             <li>{t('help.libraryTags')}</li>
+            <li>{t('help.libraryPreserve')}</li>
           </ul>
         </section>
 

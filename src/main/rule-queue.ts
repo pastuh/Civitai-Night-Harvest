@@ -10,7 +10,7 @@ import type {
 } from '../shared/types'
 import type { ActivityLogFn } from '../shared/types'
 import {
-  resolveModelPreviewUrl,
+  resolveVersionPreviewUrl,
   apiNsfwParam,
   apiEarlyAccessParam,
   apiTagSearchVariants,
@@ -32,6 +32,7 @@ import {
 import type { DownloadQueue } from './download-queue'
 import { buildSampleModels } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
+import { resolvePreviewsForModelWithFallback } from './preview-enrich'
 import * as inventory from './inventory'
 import { markNewestPeek, msUntilNewestPeekAllowed } from './crawl-state'
 import { getSettings, getTagRules, getWatchRules, shouldAutoQueue, shouldCrawlAutoDownload } from './settings-store'
@@ -158,22 +159,51 @@ function versionMatchesBaseFilters(
 }
 
 /**
- * Newest-first among API `modelVersions`: first not-in-library version whose base
- * matches owned (+ optional rule) filters.
+ * All API `modelVersions` not in library whose base matches owned (+ optional rule) filters.
+ * Order follows Civitai (typically newest first).
  */
-function pickNewVersionForOwnedModel(
+function pickNewVersionsForOwnedModel(
   model: CivitaiModel,
   knownVersions: { baseModel: string }[],
   ruleBaseModels: Set<string>,
   ownedVersionIds: Set<number>
-): CivitaiModelVersion | null {
+): CivitaiModelVersion[] {
   const ownedBases = ownedBaseModels(knownVersions)
+  const out: CivitaiModelVersion[] = []
   for (const version of model.modelVersions ?? []) {
     if (ownedVersionIds.has(version.id)) continue
     if (!versionMatchesBaseFilters(version.baseModel, ownedBases, ruleBaseModels)) continue
-    return version
+    out.push(version)
   }
-  return null
+  return out
+}
+
+/**
+ * Brand-new model (not in library): all versions matching Browse rule baseModels,
+ * or — when rules leave base unrestricted — every version sharing the primary
+ * version's base (so LoRA packs like "Official Loras" are not reduced to one file).
+ */
+function pickVersionsForNewModel(
+  model: CivitaiModel,
+  ruleBaseModels: Set<string>,
+  ownedVersionIds: Set<number>
+): CivitaiModelVersion[] {
+  const versions = model.modelVersions ?? []
+  if (!versions.length) return []
+  const primaryBase = normalizeBaseModel(versions[0]?.baseModel)
+  const out: CivitaiModelVersion[] = []
+  for (const version of versions) {
+    if (ownedVersionIds.has(version.id)) continue
+    const b = normalizeBaseModel(version.baseModel)
+    if (!b) continue
+    if (ruleBaseModels.size > 0) {
+      if (!ruleBaseModels.has(b)) continue
+    } else if (primaryBase && b !== primaryBase) {
+      continue
+    }
+    out.push(version)
+  }
+  return out
 }
 
 /**
@@ -186,6 +216,10 @@ export function pruneIrrelevantPendingVersions(pending: PendingVersion[]): Pendi
   const snapshot = inventory.buildInventorySnapshot()
   const kept: PendingVersion[] = []
   for (const p of pending) {
+    if (inventory.isModelBanned(p.modelId)) {
+      inventory.removePendingVersion(p.versionId)
+      continue
+    }
     if (snapshot.versionIds.has(p.versionId) || inventory.hasVersion(p.versionId)) {
       inventory.removePendingVersion(p.versionId)
       continue
@@ -204,6 +238,74 @@ export function pruneIrrelevantPendingVersions(pending: PendingVersion[]): Pendi
   return kept
 }
 
+/**
+ * Refresh Updates-card preview URLs so each pending row uses that version’s image
+ * (not the shared first model thumbnail). Mutates `pending` in place.
+ */
+export async function enrichPendingVersionPreviews(
+  pool: CivitaiClientPool,
+  pending: PendingVersion[],
+  onPendingChange?: (pending: PendingVersion[]) => void
+): Promise<boolean> {
+  if (!pending.length) return false
+
+  const byModel = new Map<number, PendingVersion[]>()
+  for (const p of pending) {
+    const list = byModel.get(p.modelId) ?? []
+    list.push(p)
+    byModel.set(p.modelId, list)
+  }
+
+  const domainByModel = libraryDomainByModelId()
+  let changed = false
+
+  for (const [modelId, items] of byModel) {
+    try {
+      const preferred = domainByModel.get(modelId) ?? 'com'
+      const { model, domain } = await fetchLibraryModel(pool, modelId, preferred)
+      for (const item of items) {
+        let url = resolveVersionPreviewUrl(model, item.versionId)
+        if (!url) {
+          const resolved = await resolvePreviewsForModelWithFallback(
+            pool,
+            modelId,
+            item.versionId,
+            domain,
+            model,
+            'all',
+            { model },
+            true
+          )
+          url = resolved.previewUrls[0]
+        }
+        if (!url || url === item.previewUrl) continue
+        inventory.updatePendingPreviewUrl(item.versionId, url)
+        item.previewUrl = url
+        changed = true
+      }
+    } catch {
+      /* keep existing preview */
+    }
+  }
+
+  if (changed) onPendingChange?.([...pending])
+  return changed
+}
+
+/** Align Updates-card previews with each pending version’s own images on this model. */
+function refreshPendingPreviewsFromModel(model: CivitaiModel, ctx: RuleQueueContext): void {
+  let changed = false
+  for (const p of ctx.pendingVersions) {
+    if (p.modelId !== model.id) continue
+    const url = resolveVersionPreviewUrl(model, p.versionId)
+    if (!url || url === p.previewUrl) continue
+    inventory.updatePendingPreviewUrl(p.versionId, url)
+    p.previewUrl = url
+    changed = true
+  }
+  if (changed) ctx.onPendingChange?.([...ctx.pendingVersions])
+}
+
 function processModel(
   client: CivitaiClient,
   downloadQueue: DownloadQueue,
@@ -219,6 +321,8 @@ function processModel(
 
   const hiddenTags = getSettings().hiddenTags ?? []
   if (modelHasHiddenTag(model.tags ?? [], hiddenTags)) return
+
+  refreshPendingPreviewsFromModel(model, ctx)
 
   const civitaiTags = model.tags ?? []
   const matchedUsedTag = findFirstUsedTag(civitaiTags, ctx.usedTags)
@@ -248,9 +352,10 @@ function processModel(
       modelId: model.id,
       versionId: version.id,
       modelName: model.name,
+      versionName: version.name,
       modelType: model.type,
       routingTag,
-      previewUrl: resolveModelPreviewUrl(model),
+      previewUrl: resolveVersionPreviewUrl(model, version.id),
       reason: formatEarlyAccessReason(version.earlyAccessEndsAt),
       earlyAccessEndsAt: version.earlyAccessEndsAt ?? undefined
     })
@@ -299,7 +404,7 @@ function processModel(
       },
       {
         modelName: model.name,
-        previewUrl: resolveModelPreviewUrl(model),
+        previewUrl: resolveVersionPreviewUrl(model, version.id),
         routingTag,
         modelType: model.type,
         baseModel: version.baseModel,
@@ -317,115 +422,137 @@ function processModel(
     return true
   }
 
-  // Brand-new model (not in library): keep crawl's primary version (already base-scoped by search).
+  // Brand-new model (not in library): all same-base (or rule-matching) versions.
   if (knownVersions.length === 0) {
-    const version = model.modelVersions[0]
-    if (!version) return
-    if (ctx.snapshot.versionIds.has(version.id)) {
-      result.upToDate++
-      return
-    }
+    const versions = pickVersionsForNewModel(model, ruleBases, ctx.snapshot.versionIds)
+    if (!versions.length) return
 
-    const newModelSkipReason = (): string | null => {
-      if (model.id <= 0 || version.id <= 0) return 'invalid id'
-      if (modelHasHiddenTag(civitaiTags, getSettings().hiddenTags ?? [])) return 'blocked tag'
-      if (inventory.isModelBanned(model.id)) return 'banned'
-      if (inventory.hasVersion(version.id)) return 'already in library'
-      if (isVersionEarlyAccess(version)) return 'early access'
-      if (inventory.getDeferredDownload(version.id)) return 'awaiting access'
-      if (downloadQueue.hasActiveItem(version.id)) return 'already in download list'
-      if (options.requireTagMatch && !matchedUsedTag) return 'no matching tag'
-      return null
-    }
+    let offered = 0
+    for (const version of versions) {
+      if (ctx.snapshot.versionIds.has(version.id) || inventory.hasVersion(version.id)) continue
+      if (ctx.pendingVersionIds.has(version.id)) continue
+      if (downloadQueue.hasActiveItem(version.id)) continue
+      if (inventory.getDeferredDownload(version.id)) {
+        result.upToDate++
+        continue
+      }
 
-    result.newModels++
-    if (tryDeferEarlyAccess(version)) return
-    if (
-      tryQueue(
-        version,
-        options.requireTagMatch
-          ? `Queued ${model.name} (tag "${matchedUsedTag}")`
-          : `Queued ${model.name}`
-      )
-    ) {
-      return
-    }
-    if (!options.queueEnabled) {
-      logModelEvent(options, rule.id, 'info', `New model found: ${model.name}`, model, version)
-    } else {
-      const why = newModelSkipReason()
-      if (why === 'no matching tag') {
-        logModelEvent(
-          options,
-          rule.id,
-          'info',
-          `New model found: ${model.name} — no matching tag`,
-          model,
-          version
+      const newModelSkipReason = (): string | null => {
+        if (model.id <= 0 || version.id <= 0) return 'invalid id'
+        if (modelHasHiddenTag(civitaiTags, getSettings().hiddenTags ?? [])) return 'blocked tag'
+        if (inventory.isModelBanned(model.id)) return 'banned'
+        if (inventory.hasVersion(version.id)) return 'already in library'
+        if (isVersionEarlyAccess(version)) return 'early access'
+        if (inventory.getDeferredDownload(version.id)) return 'awaiting access'
+        if (downloadQueue.hasActiveItem(version.id)) return 'already in download list'
+        if (options.requireTagMatch && !matchedUsedTag) return 'no matching tag'
+        return null
+      }
+
+      offered++
+      if (offered === 1) result.newModels++
+      else result.newVersions++
+      if (tryDeferEarlyAccess(version)) continue
+      if (
+        tryQueue(
+          version,
+          options.requireTagMatch
+            ? `Queued ${model.name} → ${version.name} (tag "${matchedUsedTag}")`
+            : `Queued ${model.name} → ${version.name}`
         )
-      } else if (why) {
-        logModelEvent(
-          options,
-          rule.id,
-          'info',
-          `New model found: ${model.name} — ${why}`,
-          model,
-          version
-        )
+      ) {
+        continue
+      }
+      if (!options.queueEnabled) {
+        logModelEvent(options, rule.id, 'info', `New model found: ${model.name}`, model, version)
+      } else {
+        const why = newModelSkipReason()
+        if (why === 'no matching tag') {
+          logModelEvent(
+            options,
+            rule.id,
+            'info',
+            `New model found: ${model.name} — no matching tag`,
+            model,
+            version
+          )
+        } else if (why) {
+          logModelEvent(
+            options,
+            rule.id,
+            'info',
+            `New model found: ${model.name} — ${why}`,
+            model,
+            version
+          )
+        }
       }
     }
+    if (!offered) result.upToDate++
     return
   }
 
-  // Owned model: only newer versions matching owned (+ rule) base models.
-  if (ctx.snapshot.ignoredModelIds.has(model.id)) {
+  // Owned model: all missing versions matching owned (+ rule) base models.
+  // Live ban check — snapshot can be stale if user bans mid-scan / mid-harvest.
+  if (ctx.snapshot.ignoredModelIds.has(model.id) || inventory.isModelBanned(model.id)) {
     result.upToDate++
     return
   }
-  const version = pickNewVersionForOwnedModel(
+  const versions = pickNewVersionsForOwnedModel(
     model,
     knownVersions,
     ruleBases,
     ctx.snapshot.versionIds
   )
-  if (!version) {
+  if (!versions.length) {
     result.upToDate++
     return
   }
-  if (ctx.pendingVersionIds.has(version.id)) {
+  if (inventory.isModelBanned(model.id)) {
     result.upToDate++
     return
   }
-  result.newVersions++
-  if (tryDeferEarlyAccess(version)) return
-  if (
-    options.includeNewVersions &&
-    tryQueue(version, `Queued new version ${model.name} → ${version.name}`)
-  ) {
-    return
+
+  let offered = 0
+  for (const version of versions) {
+    if (ctx.pendingVersionIds.has(version.id)) continue
+    if (inventory.hasVersion(version.id)) continue
+    offered++
+    result.newVersions++
+    if (tryDeferEarlyAccess(version)) continue
+    const autoUpdateThis =
+      options.includeNewVersions === true || inventory.isModelAutoUpdate(model.id)
+    if (
+      autoUpdateThis &&
+      tryQueue(version, `Queued new version ${model.name} → ${version.name}`)
+    ) {
+      continue
+    }
+    const existing =
+      knownVersions.find(
+        (k) => normalizeBaseModel(k.baseModel) === normalizeBaseModel(version.baseModel)
+      ) ?? knownVersions[0]
+    const pending: PendingVersion = {
+      modelId: model.id,
+      modelName: model.name,
+      versionId: version.id,
+      versionName: version.name,
+      baseModel: version.baseModel,
+      author: model.creator?.username ?? '',
+      previewUrl: resolveVersionPreviewUrl(model, version.id),
+      existingFolder: existing.outputFolder,
+      totalVersions: model.modelVersions?.length ?? undefined
+    }
+    inventory.addPendingVersion(pending)
+    ctx.pendingVersions.push(pending)
+    ctx.pendingVersionIds.add(pending.versionId)
+    ctx.onPendingChange?.([...ctx.pendingVersions])
+    options.log?.('warn', `New version available: ${model.name} → ${version.name}${modelLogSuffix(model, version)}`, rule.id, {
+      modelId: model.id,
+      versionId: version.id
+    })
   }
-  const existing =
-    knownVersions.find(
-      (k) => normalizeBaseModel(k.baseModel) === normalizeBaseModel(version.baseModel)
-    ) ?? knownVersions[0]
-  const pending: PendingVersion = {
-    modelId: model.id,
-    modelName: model.name,
-    versionId: version.id,
-    versionName: version.name,
-    baseModel: version.baseModel,
-    author: model.creator?.username ?? '',
-    previewUrl: resolveModelPreviewUrl(model),
-    existingFolder: existing.outputFolder
-  }
-  inventory.addPendingVersion(pending)
-  ctx.pendingVersions.push(pending)
-  ctx.pendingVersionIds.add(pending.versionId)
-  ctx.onPendingChange?.([...ctx.pendingVersions])
-  options.log?.('warn', `New version available: ${model.name} → ${version.name}${modelLogSuffix(model, version)}`, rule.id, {
-    modelId: model.id,
-    versionId: version.id
-  })
+  if (!offered) result.upToDate++
 }
 
 export async function queueModelsFromPage(
@@ -677,6 +804,7 @@ export function queueEligibleTestModels(
   const skipped = {
     noVersion: 0,
     owned: 0,
+    needsConfirm: 0,
     banned: 0,
     earlyAccess: 0,
     hiddenTag: 0,
@@ -698,6 +826,15 @@ export function queueEligibleTestModels(
     if (inventory.hasVersion(m.versionId)) {
       skipped.owned++
       continue
+    }
+    // Owned model, newer version card — New Versions confirm / Always update / Settings auto-NV.
+    if (inventory.getVersionsForModel(m.id).length > 0) {
+      const autoNv =
+        getSettings().autoDownloadNewVersions === true || inventory.isModelAutoUpdate(m.id)
+      if (!autoNv) {
+        skipped.needsConfirm++
+        continue
+      }
     }
     if (m.isBanned || inventory.isModelBanned(m.id)) {
       skipped.banned++
@@ -959,7 +1096,8 @@ export async function scanOwnedModelsForNewVersions(
 
   const autoNv = getSettings().autoDownloadNewVersions === true
   const queueOpts: RuleQueueOptions = {
-    queueEnabled: autoNv && shouldAutoQueue(),
+    // Allow per-model auto-update even when global auto-download is off.
+    queueEnabled: shouldAutoQueue(),
     requireTagMatch: false,
     includeNewVersions: autoNv,
     log: options.log
@@ -970,6 +1108,10 @@ export async function scanOwnedModelsForNewVersions(
 
   for (let i = 0; i < dueModelIds.length; i++) {
     const modelId = dueModelIds[i]
+    if (inventory.isModelBanned(modelId)) {
+      result.modelsChecked++
+      continue
+    }
     let modelName = `#${modelId}`
     const preferredDomain = domainByModel.get(modelId) ?? 'com'
     try {

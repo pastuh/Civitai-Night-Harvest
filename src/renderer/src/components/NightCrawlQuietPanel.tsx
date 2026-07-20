@@ -38,6 +38,7 @@ export function NightCrawlQuietPanel({
   const excluded = stats?.excluded ?? 0
   const skipTag = stats?.skipTag ?? 0
   const awaiting = stats?.awaiting ?? 0
+  const awaitingConfirm = stats?.awaitingConfirm ?? 0
   const missing = stats?.missing ?? 0
 
   return (
@@ -62,6 +63,7 @@ export function NightCrawlQuietPanel({
               owned,
               missing,
               awaiting,
+              awaitingConfirm,
               skipTag,
               excluded
             })}
@@ -94,6 +96,13 @@ export function NightCrawlQuietPanel({
                 title={t('browse.barSegAwaiting', { count: awaiting })}
               />
             )}
+            {pct(awaitingConfirm) > 0 && (
+              <div
+                className="browse-download-progress-seg browse-download-progress-seg-awaiting-confirm"
+                style={{ width: `${pct(awaitingConfirm)}%` }}
+                title={t('browse.barSegAwaitingConfirm', { count: awaitingConfirm })}
+              />
+            )}
             {pct(missing) > 0 && (
               <div
                 className="browse-download-progress-seg browse-download-progress-seg-missing"
@@ -121,6 +130,19 @@ export function NightCrawlQuietPanel({
               {t('browse.barLegendNew')}{' '}
               <strong className="browse-progress-legend-count">{missing}</strong>
             </span>
+            {awaitingConfirm > 0 && (
+              <span
+                className="browse-progress-legend-item"
+                title={t('browse.barLegendAwaitingConfirmHint')}
+              >
+                <span
+                  className="browse-progress-dot browse-progress-dot-awaiting-confirm"
+                  aria-hidden
+                />
+                {t('browse.barLegendAwaitingConfirm')}{' '}
+                <strong className="browse-progress-legend-count">{awaitingConfirm}</strong>
+              </span>
+            )}
             {awaiting > 0 && (
               <span className="browse-progress-legend-item">
                 <span className="browse-progress-dot browse-progress-dot-awaiting" aria-hidden />

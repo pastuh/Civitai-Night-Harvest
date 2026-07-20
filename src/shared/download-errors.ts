@@ -135,14 +135,15 @@ export function shouldAutoRetryDeferred(
   entry: DeferredRetryContext,
   hasApiKey: boolean
 ): boolean {
-  if (entry.attemptCount >= MAX_AUTO_DEFERRED_ATTEMPTS) return false
-
+  // Early access waits for unlock time — attempt caps do not apply (no point retrying early).
   if (entry.failureKind === 'early_access') {
     if (entry.earlyAccessEndsAt) {
       return Date.now() >= new Date(entry.earlyAccessEndsAt).getTime()
     }
     return false
   }
+
+  if (entry.attemptCount >= MAX_AUTO_DEFERRED_ATTEMPTS) return false
 
   const elapsed = Date.now() - new Date(entry.lastAttemptAt).getTime()
 

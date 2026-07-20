@@ -203,7 +203,8 @@ export async function repairMissingPreviews(
         record.civitaiDomain,
         undefined,
         'all',
-        { nsfw: record.isNsfw }
+        { nsfw: record.isNsfw },
+        true
       )
       if (!resolved.previewUrls.length) {
         if (await backfillRating(record)) {
@@ -534,14 +535,19 @@ async function syncInventoryWithDiskInner(
     if (!record.fileSizeBytes && safePathExists(record.modelPath) === true) {
       patch.fileSizeBytes = statSync(record.modelPath).size
     }
-    if (!record.trainingResolution && record.swarmPath && safePathExists(record.swarmPath) === true) {
-      try {
-        const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
-        const res = swarm['modelspec.resolution']
-        if (typeof res === 'string' && res.trim()) patch.trainingResolution = res.trim()
-      } catch {
-        /* skip */
+    if (!record.trainingResolution) {
+      let resolution: string | undefined
+      if (record.swarmPath && safePathExists(record.swarmPath) === true) {
+        try {
+          const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
+          const res = swarm['modelspec.resolution']
+          if (typeof res === 'string' && res.trim()) resolution = res.trim()
+        } catch {
+          /* skip */
+        }
       }
+      // Persist a sentinel when missing so the next launch does not re-scan forever.
+      patch.trainingResolution = resolution || 'n/a'
     }
     const updated = Object.keys(patch).length > 0
     if (updated) {
@@ -578,14 +584,18 @@ function enrichInventoryFileMeta(): number {
     if (!record.fileSizeBytes && existsSync(record.modelPath)) {
       patch.fileSizeBytes = statSync(record.modelPath).size
     }
-    if (!record.trainingResolution && record.swarmPath && existsSync(record.swarmPath)) {
-      try {
-        const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
-        const res = swarm['modelspec.resolution']
-        if (typeof res === 'string' && res.trim()) patch.trainingResolution = res.trim()
-      } catch {
-        /* skip */
+    if (!record.trainingResolution) {
+      let resolution: string | undefined
+      if (record.swarmPath && existsSync(record.swarmPath)) {
+        try {
+          const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
+          const res = swarm['modelspec.resolution']
+          if (typeof res === 'string' && res.trim()) resolution = res.trim()
+        } catch {
+          /* skip */
+        }
       }
+      patch.trainingResolution = resolution || 'n/a'
     }
     if (Object.keys(patch).length) {
       inventory.patchVersionFileMeta(record.versionId, patch)

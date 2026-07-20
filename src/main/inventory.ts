@@ -9,7 +9,9 @@ import type {
   InventorySnapshot,
   PendingVersion,
   DeferredDownload,
-  DeferredFailureKind
+  DeferredFailureKind,
+  IncompleteModel,
+  CivitaiDomain
 } from '../shared/types'
 import { expandCivitaiTagNames } from '../shared/tag-routing'
 import { safePathExists } from './output-paths'
@@ -50,7 +52,8 @@ function getDb(): Database.Database {
         author TEXT NOT NULL,
         preview_url TEXT,
         existing_folder TEXT NOT NULL,
-        detected_at TEXT NOT NULL
+        detected_at TEXT NOT NULL,
+        total_versions INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_pending_model ON pending_versions(model_id);
 
@@ -60,10 +63,17 @@ function getDb(): Database.Database {
         banned_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS auto_update_models (
+        model_id INTEGER NOT NULL PRIMARY KEY,
+        model_name TEXT NOT NULL DEFAULT '',
+        enabled_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS deferred_downloads (
         version_id INTEGER NOT NULL PRIMARY KEY,
         model_id INTEGER NOT NULL,
         model_name TEXT NOT NULL,
+        version_name TEXT NOT NULL DEFAULT '',
         model_type TEXT NOT NULL DEFAULT 'LORA',
         routing_tag TEXT NOT NULL DEFAULT '',
         preview_url TEXT,
@@ -103,6 +113,14 @@ function migrateInventorySchema(database: Database.Database): void {
   const hasCol = (name: string) =>
     (database.pragma('table_info(versions)') as { name: string }[]).some((c) => c.name === name)
 
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS auto_update_models (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      model_name TEXT NOT NULL DEFAULT '',
+      enabled_at TEXT NOT NULL
+    );
+  `)
+
   if (!hasCol('civitai_tags')) {
     database.exec(`ALTER TABLE versions ADD COLUMN civitai_tags TEXT NOT NULL DEFAULT '[]'`)
   }
@@ -130,6 +148,9 @@ function migrateInventorySchema(database: Database.Database): void {
   const deferredCols = database.pragma('table_info(deferred_downloads)') as { name: string }[]
   if (!deferredCols.some((c) => c.name === 'early_access_ends_at')) {
     database.exec(`ALTER TABLE deferred_downloads ADD COLUMN early_access_ends_at TEXT`)
+  }
+  if (!deferredCols.some((c) => c.name === 'version_name')) {
+    database.exec(`ALTER TABLE deferred_downloads ADD COLUMN version_name TEXT NOT NULL DEFAULT ''`)
   }
   const activityCols = database.pragma('table_info(activity_log)') as { name: string }[]
   if (!activityCols.some((c) => c.name === 'source')) {
@@ -163,6 +184,11 @@ function migrateInventorySchema(database: Database.Database): void {
     database.exec(`ALTER TABLE versions ADD COLUMN duplicate_of_version_id INTEGER`)
   }
 
+  const pendingCols = database.pragma('table_info(pending_versions)') as { name: string }[]
+  if (!pendingCols.some((c) => c.name === 'total_versions')) {
+    database.exec(`ALTER TABLE pending_versions ADD COLUMN total_versions INTEGER`)
+  }
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS library_version_checks (
       model_id INTEGER NOT NULL PRIMARY KEY,
@@ -180,6 +206,25 @@ function migrateInventorySchema(database: Database.Database): void {
       SELECT DISTINCT model_id, datetime('now') FROM versions WHERE model_id > 0
     `)
   }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS incomplete_models (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      model_name TEXT NOT NULL,
+      model_type TEXT NOT NULL DEFAULT 'LORA',
+      author TEXT NOT NULL DEFAULT '',
+      base_model TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      page_url TEXT NOT NULL DEFAULT '',
+      source_domain TEXT NOT NULL DEFAULT 'com',
+      preview_url TEXT,
+      resolved_version_id INTEGER,
+      resolved_version_name TEXT,
+      detected_at TEXT NOT NULL,
+      last_checked_at TEXT NOT NULL,
+      last_error TEXT
+    );
+  `)
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -238,6 +283,7 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
 }
 
 function rowToPending(row: Record<string, unknown>): PendingVersion {
+  const total = row.total_versions
   return {
     modelId: row.model_id as number,
     modelName: row.model_name as string,
@@ -246,7 +292,13 @@ function rowToPending(row: Record<string, unknown>): PendingVersion {
     baseModel: row.base_model as string,
     author: row.author as string,
     previewUrl: (row.preview_url as string) || undefined,
-    existingFolder: row.existing_folder as string
+    existingFolder: row.existing_folder as string,
+    totalVersions:
+      typeof total === 'number' && total > 0
+        ? total
+        : typeof total === 'string' && Number(total) > 0
+          ? Number(total)
+          : undefined
   }
 }
 
@@ -283,6 +335,8 @@ export function banModel(modelId: number, modelName = ''): void {
     .prepare('INSERT OR REPLACE INTO banned_models (model_id, model_name, banned_at) VALUES (?, ?, ?)')
     .run(modelId, modelName, new Date().toISOString())
   setModelIgnored(modelId, true)
+  clearModelAutoUpdate(modelId)
+  removeIncompleteModel(modelId)
 }
 
 export function unbanModel(modelId: number): void {
@@ -301,6 +355,46 @@ export function getBannedModels(): Array<{ modelId: number; modelName: string; b
 
 export function getBannedModelIds(): Set<number> {
   const rows = getDb().prepare('SELECT model_id FROM banned_models').all() as { model_id: number }[]
+  return new Set(rows.map((r) => r.model_id))
+}
+
+/** Per-model: always queue new versions (even when Settings auto-download is off). */
+export function isModelAutoUpdate(modelId: number): boolean {
+  if (modelId <= 0) return false
+  const row = getDb().prepare('SELECT 1 FROM auto_update_models WHERE model_id = ?').get(modelId)
+  return Boolean(row)
+}
+
+export function setModelAutoUpdate(modelId: number, enabled: boolean, modelName = ''): void {
+  if (modelId <= 0) return
+  if (enabled) {
+    getDb()
+      .prepare(
+        'INSERT OR REPLACE INTO auto_update_models (model_id, model_name, enabled_at) VALUES (?, ?, ?)'
+      )
+      .run(modelId, modelName, new Date().toISOString())
+  } else {
+    clearModelAutoUpdate(modelId)
+  }
+}
+
+export function clearModelAutoUpdate(modelId: number): void {
+  getDb().prepare('DELETE FROM auto_update_models WHERE model_id = ?').run(modelId)
+}
+
+export function getAutoUpdateModels(): Array<{ modelId: number; modelName: string; enabledAt: string }> {
+  const rows = getDb().prepare('SELECT * FROM auto_update_models ORDER BY enabled_at DESC').all()
+  return rows.map((r) => ({
+    modelId: (r as Record<string, unknown>).model_id as number,
+    modelName: (r as Record<string, unknown>).model_name as string,
+    enabledAt: (r as Record<string, unknown>).enabled_at as string
+  }))
+}
+
+export function getAutoUpdateModelIds(): Set<number> {
+  const rows = getDb().prepare('SELECT model_id FROM auto_update_models').all() as {
+    model_id: number
+  }[]
   return new Set(rows.map((r) => r.model_id))
 }
 
@@ -367,6 +461,9 @@ export function addVersion(record: InventoryRecord): void {
   // Version is owned now — drop stale New Versions rows for this versionId.
   if (record.versionId > 0) {
     removePendingVersion(record.versionId)
+  }
+  if (record.modelId > 0) {
+    removeIncompleteModel(record.modelId)
   }
 }
 
@@ -463,6 +560,12 @@ export function versionIdExists(versionId: number): boolean {
   return hasVersion(versionId)
 }
 
+/** Remove a library version row (DB only — caller deletes files if needed). */
+export function removeVersion(versionId: number): void {
+  getDb().prepare('DELETE FROM versions WHERE version_id = ?').run(versionId)
+  removePendingVersion(versionId)
+}
+
 export function getVersionByModelPath(modelPath: string): InventoryRecord | null {
   const key = modelPath.replace(/\\/g, '/').toLowerCase()
   const rows = getAllVersions()
@@ -542,7 +645,8 @@ export function buildInventorySnapshot(): InventorySnapshot {
 
 export function getAllPendingVersions(): PendingVersion[] {
   const rows = getDb()
-    .prepare('SELECT * FROM pending_versions ORDER BY detected_at DESC')
+    // Oldest first so newly detected offers appear at the bottom (safer while reviewing).
+    .prepare('SELECT * FROM pending_versions ORDER BY detected_at ASC')
     .all()
   return rows.map((r) => rowToPending(r as Record<string, unknown>))
 }
@@ -552,8 +656,8 @@ export function addPendingVersion(pending: PendingVersion): void {
     .prepare(
       `INSERT OR IGNORE INTO pending_versions (
         version_id, model_id, model_name, version_name, base_model,
-        author, preview_url, existing_folder, detected_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        author, preview_url, existing_folder, detected_at, total_versions
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pending.versionId,
@@ -564,7 +668,8 @@ export function addPendingVersion(pending: PendingVersion): void {
       pending.author,
       pending.previewUrl ?? null,
       pending.existingFolder,
-      new Date().toISOString()
+      new Date().toISOString(),
+      pending.totalVersions ?? null
     )
 }
 
@@ -574,6 +679,14 @@ export function removePendingVersion(versionId: number): void {
 
 export function removePendingForModel(modelId: number): void {
   getDb().prepare('DELETE FROM pending_versions WHERE model_id = ?').run(modelId)
+}
+
+export function updatePendingPreviewUrl(versionId: number, previewUrl: string): void {
+  const url = previewUrl.trim()
+  if (!url) return
+  getDb()
+    .prepare('UPDATE pending_versions SET preview_url = ? WHERE version_id = ?')
+    .run(url, versionId)
 }
 
 /** Per-model last successful New Versions API poll (ISO), or null if never checked. */
@@ -610,10 +723,12 @@ export function filterModelsDueForVersionCheck(modelIds: number[], cooldownMs: n
 
 function rowToDeferred(row: Record<string, unknown>): DeferredDownload {
   const endsAt = row.early_access_ends_at as string | null | undefined
+  const versionName = ((row.version_name as string) || '').trim()
   return {
     modelId: row.model_id as number,
     versionId: row.version_id as number,
     modelName: row.model_name as string,
+    versionName: versionName || undefined,
     modelType: row.model_type as string,
     routingTag: row.routing_tag as string,
     previewUrl: (row.preview_url as string) || undefined,
@@ -638,21 +753,40 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
   attemptCount?: number
   deferredAt?: string
   earlyAccessEndsAt?: string
+  /** When false, keep existing attempt_count (metadata enrich). Default true. */
+  bumpAttempt?: boolean
 }): void {
   const existing = getDb()
     .prepare('SELECT attempt_count, deferred_at FROM deferred_downloads WHERE version_id = ?')
     .get(entry.versionId) as { attempt_count: number; deferred_at: string } | undefined
 
   const now = new Date().toISOString()
+  // Early access is calendar-wait, not retry-storm — don't inflate attempts on metadata refresh.
+  const bump =
+    entry.bumpAttempt !== undefined
+      ? entry.bumpAttempt
+      : entry.failureKind === 'early_access'
+        ? false
+        : true
+  const nextAttempts = existing
+    ? bump
+      ? (existing.attempt_count ?? 0) + 1
+      : existing.attempt_count ?? 1
+    : (entry.attemptCount ?? 1)
+
   getDb()
     .prepare(
       `INSERT INTO deferred_downloads (
-        version_id, model_id, model_name, model_type, routing_tag, preview_url,
+        version_id, model_id, model_name, version_name, model_type, routing_tag, preview_url,
         output_folder, reason, failure_kind, deferred_at, last_attempt_at, attempt_count,
         early_access_ends_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(version_id) DO UPDATE SET
         model_name = excluded.model_name,
+        version_name = CASE
+          WHEN excluded.version_name != '' THEN excluded.version_name
+          ELSE deferred_downloads.version_name
+        END,
         model_type = excluded.model_type,
         routing_tag = excluded.routing_tag,
         preview_url = excluded.preview_url,
@@ -667,6 +801,7 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       entry.versionId,
       entry.modelId,
       entry.modelName,
+      entry.versionName?.trim() || '',
       entry.modelType,
       entry.routingTag,
       entry.previewUrl ?? null,
@@ -675,7 +810,7 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       entry.failureKind,
       existing?.deferred_at ?? entry.deferredAt ?? now,
       entry.lastAttemptAt ?? now,
-      (existing?.attempt_count ?? 0) + 1,
+      nextAttempts,
       entry.earlyAccessEndsAt ?? null
     )
 }
@@ -686,6 +821,129 @@ export function removeDeferredDownload(versionId: number): void {
 
 export function removeDeferredForModel(modelId: number): void {
   getDb().prepare('DELETE FROM deferred_downloads WHERE model_id = ?').run(modelId)
+}
+
+function parseTagsJson(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function rowToIncomplete(row: Record<string, unknown>): IncompleteModel {
+  const resolvedVid = row.resolved_version_id as number | null | undefined
+  const domain = (row.source_domain as string) === 'red' ? 'red' : 'com'
+  return {
+    modelId: row.model_id as number,
+    modelName: row.model_name as string,
+    modelType: (row.model_type as string) || 'LORA',
+    author: (row.author as string) || '',
+    baseModel: (row.base_model as string) || '',
+    tags: parseTagsJson(row.tags_json),
+    pageUrl: (row.page_url as string) || '',
+    sourceDomain: domain as CivitaiDomain,
+    previewUrl: (row.preview_url as string) || undefined,
+    resolvedVersionId: resolvedVid && resolvedVid > 0 ? resolvedVid : undefined,
+    resolvedVersionName: (row.resolved_version_name as string) || undefined,
+    detectedAt: row.detected_at as string,
+    lastCheckedAt: row.last_checked_at as string,
+    lastError: (row.last_error as string) || undefined
+  }
+}
+
+export function getAllIncompleteModels(): IncompleteModel[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM incomplete_models ORDER BY detected_at ASC')
+    .all()
+  return rows.map((r) => rowToIncomplete(r as Record<string, unknown>))
+}
+
+export function getIncompleteModel(modelId: number): IncompleteModel | null {
+  const row = getDb().prepare('SELECT * FROM incomplete_models WHERE model_id = ?').get(modelId)
+  return row ? rowToIncomplete(row as Record<string, unknown>) : null
+}
+
+export function upsertIncompleteModel(
+  entry: Omit<IncompleteModel, 'detectedAt' | 'lastCheckedAt'> & {
+    detectedAt?: string
+    lastCheckedAt?: string
+  }
+): void {
+  if (entry.modelId <= 0) return
+  const existing = getDb()
+    .prepare('SELECT detected_at FROM incomplete_models WHERE model_id = ?')
+    .get(entry.modelId) as { detected_at: string } | undefined
+  const now = new Date().toISOString()
+  getDb()
+    .prepare(
+      `INSERT INTO incomplete_models (
+        model_id, model_name, model_type, author, base_model, tags_json, page_url,
+        source_domain, preview_url, resolved_version_id, resolved_version_name,
+        detected_at, last_checked_at, last_error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(model_id) DO UPDATE SET
+        model_name = excluded.model_name,
+        model_type = excluded.model_type,
+        author = excluded.author,
+        base_model = CASE
+          WHEN excluded.base_model != '' THEN excluded.base_model
+          ELSE incomplete_models.base_model END,
+        tags_json = excluded.tags_json,
+        page_url = excluded.page_url,
+        source_domain = excluded.source_domain,
+        preview_url = COALESCE(excluded.preview_url, incomplete_models.preview_url),
+        resolved_version_id = COALESCE(excluded.resolved_version_id, incomplete_models.resolved_version_id),
+        resolved_version_name = COALESCE(excluded.resolved_version_name, incomplete_models.resolved_version_name),
+        last_checked_at = excluded.last_checked_at,
+        last_error = excluded.last_error`
+    )
+    .run(
+      entry.modelId,
+      entry.modelName,
+      entry.modelType || 'LORA',
+      entry.author || '',
+      entry.baseModel || '',
+      JSON.stringify(entry.tags ?? []),
+      entry.pageUrl || '',
+      entry.sourceDomain === 'red' ? 'red' : 'com',
+      entry.previewUrl ?? null,
+      entry.resolvedVersionId ?? null,
+      entry.resolvedVersionName ?? null,
+      existing?.detected_at ?? entry.detectedAt ?? now,
+      entry.lastCheckedAt ?? now,
+      entry.lastError ?? null
+    )
+}
+
+export function updateIncompleteModelResolved(
+  modelId: number,
+  patch: {
+    resolvedVersionId?: number
+    resolvedVersionName?: string
+    previewUrl?: string
+    baseModel?: string
+    lastError?: string | null
+    lastCheckedAt?: string
+  }
+): void {
+  const row = getIncompleteModel(modelId)
+  if (!row) return
+  upsertIncompleteModel({
+    ...row,
+    resolvedVersionId: patch.resolvedVersionId ?? row.resolvedVersionId,
+    resolvedVersionName: patch.resolvedVersionName ?? row.resolvedVersionName,
+    previewUrl: patch.previewUrl ?? row.previewUrl,
+    baseModel: patch.baseModel ?? row.baseModel,
+    lastError: patch.lastError === null ? undefined : (patch.lastError ?? row.lastError),
+    lastCheckedAt: patch.lastCheckedAt ?? new Date().toISOString()
+  })
+}
+
+export function removeIncompleteModel(modelId: number): void {
+  getDb().prepare('DELETE FROM incomplete_models WHERE model_id = ?').run(modelId)
 }
 
 const ACTIVITY_LOG_MAX = 5000

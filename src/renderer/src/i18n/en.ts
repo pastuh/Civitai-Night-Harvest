@@ -15,11 +15,14 @@ export const en = {
   },
   tabs: {
     browse: 'Browse',
+    browseBadgeTitle:
+      'Total models planned to download from Browse (New). Not limited to the current strip of ~10 — they fill the queue as slots free.',
     library: 'Library',
     download: 'Download',
     tagFolders: 'Tag Folders',
-    newVersions: 'New Versions',
-    awaitingAccess: 'Awaiting access',
+    newVersions: 'Updates',
+    awaitingAccess: 'Early access',
+    incomplete: 'Incomplete',
     activity: 'Activity',
     help: 'Help',
     settings: 'Settings'
@@ -77,7 +80,7 @@ export const en = {
     title: 'Settings',
     lead: 'New here? See the Help tab for a quick start.',
     nsfwCallout:
-      'NSFW & restricted models need an API key. Without it, downloads may fail or land in Awaiting access.',
+      'NSFW & restricted models need an API key. Without it, downloads may fail or land in Early access.',
     sections: {
       general: 'General',
       library: 'Library & API',
@@ -100,7 +103,7 @@ export const en = {
       contentFilter: 'Default content filter',
       nightMode: 'Night mode',
       autoStartDownloads: 'Auto-start downloads when queued',
-      autoDownloadNewVersions: 'Auto-download new versions of owned models',
+      autoDownloadNewVersions: 'Auto-download updates for owned models',
       nightDownloadAll: 'Night mode: queue all Browse matches (still skips blocked tags)',
       scanInterval: 'Scan interval (min)',
       parallelDownloads: 'Parallel downloads',
@@ -112,6 +115,7 @@ export const en = {
       scanOnStartup: 'Scan on startup',
       autoRetryDeferred: 'Re-queue awaiting-access after scan',
       blurPreviews: 'Blur preview images',
+      preserveFilters: 'Preserve filters',
       showBannedInGallery: 'Show banned in gallery',
       banFunctionMode: 'Ban function (× next to card title)',
       browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
@@ -222,7 +226,19 @@ export const en = {
       updateBrowseOnCrawl:
         'Same as the 👁 button next to Blur in the header. Off = clear Browse cards and quieter UI (downloads still run); On = live Browse grid.',
       domain:
-        'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.'
+        'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.',
+      preserveFilters:
+        'Keep Browse and Library filters, sort, and show/hide checkboxes when you switch tabs — until you change them yourself.',
+      banFunctionMode:
+        'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
+      blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
+      downloadStripVisibility:
+        'Default Hidden: no top queue strip — Clear queue sits on the right of the tab bar. Enable Browse / Browse+Library / All tabs to show the full download strip (Clear queue moves into the strip).',
+      downloadStripLayout:
+        'Row = horizontal scroll cards · Grid = wrapped card grid · Minimal = vertical list with thumbnail, status column, separator, and name; progress fill stops at the separator when complete.',
+      galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
+      queueGridSize:
+        'Download strip card width (thumbnail size) for Row and Grid layouts. Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).'
     },
     actions: {
       slugSync: 'Rename library files to match format',
@@ -308,6 +324,10 @@ export const en = {
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort); pick domain above Results',
     browseResults:
       'Results — search by name/author; filter toolbar (content, hide owned, ban mode); Sort and Tags in the right toolbar box; click a card to queue or remove. Display mode (lazy / pages / auto-advance) is set in Settings.',
+    browseDetails:
+      'ℹ on a card opens **Model details** (full page) — versions on the right, sticky Back/Civitai/Show List/Ban bar, download missing versions, Load/Save preview for owned versions',
+    browsePreviews:
+      'Previews are **per version** (not one shared model image). Load previews fetches only that version’s images; Save preview writes `.preview.jpg` for the selected owned version',
     browseTags:
       'Tags popover — filter the grid · 🚫 block tag from auto-queue · blocked tags listed at top when any exist',
     browseManualQueue:
@@ -318,16 +338,25 @@ export const en = {
     browseContextSkipTag:
       'Right-click a model → Skip tag — block a tag from auto-queue (click a tag chip; already-blocked tags are dimmed)',
     libraryFolders: 'Tag Folders tab — map Civitai tags to disk subfolders under your LoRA/Checkpoint paths',
-    libraryBadge: 'Library tab **+N** — new models downloaded since your last visit; badge clears when you open Library',
+    libraryBadge:
+      'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Show List** from Updates still opens All models pinned to that model',
+    librarySession:
+      '**Session downloads** — sidebar filter for everything added to the library during this app run (not the same as Show List)',
+    libraryByDate:
+      '**Downloaded by date** — Today / Yesterday / Last 7 days, day or from–to pickers, and a list of days that have downloads (`downloadedAt`)',
+    libraryDetails:
+      'ℹ opens the same Model details page as Browse — switch versions, save preview, open on Civitai',
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
     libraryTags: 'Click a tag on a card to open Tag folders with that tag in search',
+    libraryPreserve:
+      'Settings → **Preserve filters** — keep Browse/Library filters, sort, and show/hide checkboxes when switching tabs',
     edgeOwned: 'Green top border — already in your library',
     edgeQueued: 'Queue accent top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',
     edgeNew: 'Teal top border — new, not queued',
-    edgeAwaiting: 'Yellow — awaiting access / early access',
+    edgeAwaiting: 'Yellow — Early access',
     edgeBlocked: 'Purple — skipped (blocked tag or excluded)',
     dlStrip:
       'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode.',
@@ -340,11 +369,11 @@ export const en = {
     dlStripPriority:
       'Right-click a strip card → Priority download — moves it to the front of the queue (or right after active downloads)',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
-    dlAwaiting: 'Awaiting access tab — 403, early access, or missing API key',
+    dlAwaiting: 'Early access tab — gated download, or missing API key',
     dlNewVersions:
-      'New Versions — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256; skips models polled within 2 days). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
+      'Updates — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256; skips models polled within 2 days). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
     dlTabBadges:
-      'Tab badges — Browse: active queue count · Library: +N new downloads since last visit · New Versions / Awaiting access: pending counts',
+      'Tab badges — Browse: planned New downloads · Library: +N new downloads since last visit · Updates / Early access: pending counts',
     dlActivity:
       'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:
@@ -357,7 +386,7 @@ export const en = {
       autoStart:
         'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
       autoDownloadNewVersions:
-        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on New Versions for Queue / Ban / Dismiss. Brand-new Browse models are always eligible separately.',
+        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Queue / Ban / Dismiss — or use Always update on a card for that model only. Brand-new Browse models are always eligible separately.',
       scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
       parallelDownloads: 'How many models download at once. Use 1 for one file at full speed.',
       domain:
@@ -371,10 +400,12 @@ export const en = {
         'How Browse and Library window already-loaded results: lazy scroll, classic pages, or auto-advance past empty Hide-owned Browse pages.',
       resultsPageSize: 'Cards per page or scroll chunk (60 or 100).',
       scanOnStartup: 'Run one scan when the app opens.',
-      autoRetryDeferred: 'After each scan, retry Awaiting access models (403 waits ~4h).',
+      autoRetryDeferred: 'After each scan, retry Early access models (403 waits ~4h).',
       blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
+      preserveFilters:
+        'Keep Browse and Library filters, sort, and show/hide checkboxes when you switch tabs — until you change them yourself.',
       showBanned: 'Show banned models with red highlight so you can unban.',
-      banFunctionMode: 'Shows red × next to the model title in Browse, Library, and download strip.',
+      banFunctionMode: 'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
       hashVerify: 'Compares SHA256 on disk with Civitai /model-versions/by-hash. Use after moving files manually or if a model seems corrupted.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
@@ -393,7 +424,7 @@ export const en = {
       green: 'Green = owned',
       red: 'Red = excluded',
       yellow: 'Yellow = blocked tag',
-      gray: 'Gray = awaiting access',
+      gray: 'Gray = Early access',
       empty: 'Empty = still to download'
     }
   },
@@ -424,7 +455,7 @@ export const en = {
       downloading: 'downloading',
       waitingToSend: 'Waiting to queue',
       skipped: 'Skipped',
-      awaiting: 'Awaiting access',
+      awaiting: 'Early access',
       retry: 'Retry',
       libraryShort: 'Library',
       browseShort: 'Browse',
@@ -436,7 +467,10 @@ export const en = {
     scanningPage: 'Scanning API p.{page} · gallery {total}',
     modeAll: '🌙 All — download all new models',
     modeTags: '🌙 Tags — only models with tags you use',
-    hideAwaitingAccess: 'Hide awaiting access',
+    hideAwaitingAccess: 'Hide awaiting',
+    showAwaitingConfirm: 'Show updates',
+    showAwaitingConfirmTitle:
+      'Show newer versions of models you already own (same as Updates tab — confirm there first)',
     banModeOff: 'Ban Off',
     banModeOn: 'Ban On',
     banModeTitle: 'Red × next to the title excludes the model (Browse, Library, and download strip)',
@@ -448,16 +482,20 @@ export const en = {
     barLegendOwned: 'Owned',
     barLegendBanned: 'Banned',
     barLegendSkipTag: 'Blocked',
-    barLegendAwaiting: 'Awaiting access',
+    barLegendAwaiting: 'Awaiting',
+    barLegendAwaitingConfirm: 'Updates',
+    barLegendAwaitingConfirmHint:
+      'You already own another version — confirm on the Updates tab (or Always update) before queueing',
     barLegendNew: 'New',
-    barLegendNewHint: 'Not in your library yet — can queue for download',
+    barLegendNewHint: 'Not in your library yet — can auto-queue for download',
     barTooltip:
-      '{total} loaded = {owned} owned + {missing} new + {awaiting} awaiting + {skipTag} blocked by tag + {excluded} banned',
+      '{total} loaded = {owned} owned + {missing} new + {awaitingConfirm} updates + {awaiting} awaiting + {skipTag} blocked by tag + {excluded} banned',
     barSegOwned: '{count} already owned',
     barSegMissing: '{count} not downloaded yet',
     barSegExcluded: '{count} excluded / banned',
     barSegSkipTag: '{count} blocked by tag',
-    barSegAwaiting: '{count} awaiting access',
+    barSegAwaiting: '{count} Early access',
+    barSegAwaitingConfirm: '{count} owned-model updates awaiting confirm',
     tagFetchStatusPrep: 'Preparing supplemental tag searches ({total} variants)…',
     tagFetchStatusTag: 'Tag {step}/{total}: “{tag}” — fetching from Civitai…',
     tagFetchBarTooltip:
@@ -552,11 +590,11 @@ export const en = {
     hideExcluded: 'Hide excluded',
     showBlockedTitle:
       'Show models with blocked tags (🚫) in the grid — they still will not auto-download',
-    showBlocked: 'Show blocked models',
+    showBlocked: 'Show blocked',
     tagFilterBlockedCleared: 'Tag filter cleared — “{tag}” is blocked (turn on Show blocked models)',
     tagFilterBlockedConflict: 'Tag filter conflicts with blocked tag — use Tags → All',
     hiddenByBlockedTags: '{count} hidden by blocked tag(s): {tags} — turn on Show blocked models',
-    hideAwaitingTitle: 'Hide models in Awaiting access / early access',
+    hideAwaitingTitle: 'Hide Early access models (EA / gated download, missing API key)',
     routingTagPlaceholder: 'Routing tag',
     routingNoFolder: 'No folder mapped — pick 📁 on a tag or add rule in Tag Folders',
     shownCount: '{shown}{total} shown',
@@ -583,7 +621,7 @@ export const en = {
     legendNew: 'Cyan edge / badge = new (not in library)',
     legendAutoQueued: 'Queue accent edge = in download queue',
     legendBlocked: 'Purple = blocked by tag',
-    legendAwaiting: 'Orange = awaiting access',
+    legendAwaiting: 'Orange = Early access',
     legendDl: 'Amber edge = downloading',
     queueAll: 'Queue all (page by page)',
     crawling: 'Crawling API…'
@@ -673,6 +711,7 @@ export const en = {
     searchActive: 'search: “{q}”',
     empty: 'No activity yet.',
     noMatches: 'No log entries match the current filters.',
+    showMore: 'Show more ({remaining} remaining)',
     openInLibrary: 'Library →',
     level: {
       success: 'Success',
@@ -691,7 +730,7 @@ export const en = {
       banned: 'Banned / excluded',
       skippedFind: 'Skipped discoveries',
       discovery: 'New models',
-      newVersion: 'New versions',
+      newVersion: 'Updates',
       download: 'Downloads & queue',
       repairSync: 'Repairs & sync',
       library: 'Library checks',
@@ -704,24 +743,83 @@ export const en = {
   pending: {
     emptyHint: 'No updates waiting. Harvest fills this list automatically when it finds newer versions of models you own.',
     baseFilterHint:
-      'Only versions matching a base model you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
+      'Lists every missing version whose base model matches one you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
     emptyAfterBan: 'Banned entries removed.',
     dismissHint: 'Hide this offer only (keeps your library files).',
     ban: 'Ban',
     banHint: 'Delete all owned versions of this model and exclude it from future downloads',
     banConfirm:
       'Ban “{name}”? Deletes all {count} owned version(s) from library/disk and excludes the model.',
-    queueDownload: 'Queue download',
+    queueDownload: 'Download',
     queueHint: 'Download this newer version; keep versions you already own',
-    openInLibrary: 'Open in Library',
+    alwaysUpdate: 'Sync',
+    alwaysUpdateHint:
+      'Queue this version and auto-download future new versions of this model (even if Settings auto-download is off)',
+    openInLibrary: 'Show List',
     offeredVersion: 'New version:',
     ownedVersions: 'You own {count}: {list}',
     ownedNone: 'No owned files found for this model id.',
+    versionsCount: 'Versions: {owned}/{total}',
     listTitle: 'Updates awaiting approval ({count})',
     checkLibrary: 'Check again',
     checkLibraryTitle:
       'Re-check all owned models via Civitai API (ignores the 2-day per-model skip used by background checks). One request per model.',
     checking: 'Checking…'
+  },
+  modelDetail: {
+    back: 'Back',
+    banned: 'Banned',
+    ban: 'Ban',
+    unban: 'Unban',
+    banConfirm:
+      'Ban “{name}”? Deletes all {count} owned version(s) from library/disk and excludes the model from future downloads.',
+    civitaiPage: 'Civitai page ↗',
+    openInExplorer: 'Open in Explorer',
+    deleteFiles: 'Delete files & exclude',
+    loading: 'Loading Civitai details…',
+    license: 'License',
+    commercialUse: 'Commercial use',
+    derivatives: 'Derivatives',
+    creditRequired: 'Credit required',
+    differentLicense: 'Different license',
+    allowed: 'Allowed',
+    notAllowed: 'Not allowed',
+    noCreditNeeded: 'No credit needed',
+    creditNeeded: 'Credit required',
+    mustDifferentLicense: 'Must use different license',
+    sameLicenseOk: 'Same license OK',
+    triggerWords: 'Trigger words',
+    fromSwarm: 'from swarm.json',
+    downloadedAt: 'Downloaded {when}',
+    pathModel: 'Model',
+    pathPreview: 'Preview',
+    pathSwarm: 'Swarm JSON',
+    versionsHeading: 'Versions ({count})',
+    sort: 'Sort',
+    sortDefault: 'Default',
+    sortDownloads: 'Downloads',
+    sortLikes: 'Likes',
+    inLibrary: 'In library',
+    notOwned: 'Not owned',
+    earlyAccess: 'Early access',
+    download: 'Download',
+    queueEarlyAccess: 'Queue (Early access)',
+    inQueue: 'In queue',
+    downloadHint: 'Download this version',
+    downloadEarlyHint: 'Queue this early-access version (Awaiting access until unlock)',
+    loadPreviews: 'Load previews',
+    loadingPreviews: 'Loading previews…',
+    loadPreviewsHint:
+      'Fetch only this version’s images from Civitai (no other versions)',
+    noVersionPreviews: 'No images found for this version on Civitai.',
+    previewOf: '{current} / {total}',
+    openTagFoldersHint: 'Open Tag folders — find or assign “{tag}”',
+    savePreview: 'Save preview',
+    savingPreview: 'Saving…',
+    savePreviewHint:
+      'Download the selected image and set it as this version’s library thumbnail (.preview.jpg)',
+    previewSaved: 'Preview saved to library.',
+    previewSavedPending: 'Preview URL updated for Updates list (not in library yet).'
   },
   load: {
     failed: 'Failed to load',
@@ -839,7 +937,7 @@ export const en = {
       'Click preview for details. Click a Civitai tag to open Tag folders. Green tag + Folder line = assigned. Select cards → sidebar Move. Right-click to ban / unban / delete.',
     selectedHint: '{count} selected — pick a tag on the right → Move',
     emptyFiltered: 'No models match your search or filter.',
-    emptyNone: 'No models here yet. Download from the Download tab or run a watch scan.',
+    emptyNone: 'No models here yet. Queue downloads from Browse or run a watch scan.',
     downloadingCount: 'Downloading {count} model(s)…',
     modelNotInLibrary: 'Model not in library yet',
     enableShowBanned: 'Enable "Show banned" below to view banned models in the grid',
@@ -883,7 +981,7 @@ export const en = {
     tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
     folderLabel: 'Folder: {folder}',
     folderAssignedTitle: 'Assigned folder: {folder}',
-    earlyAccessWait: 'Early access wait:',
+    earlyAccessWait: 'Early:',
     sidebarTitle: 'Filter & move',
     sidebarSearchPlaceholder: 'Search tags…',
     sidebarHint:
@@ -895,6 +993,13 @@ export const en = {
     duplicateOf: 'Duplicate of {name}',
     deleteLocal: 'Delete local files',
     sessionDownloads: 'Session downloads',
+    downloadedByDate: 'Downloaded by date',
+    downloadedToday: 'Today',
+    downloadedYesterday: 'Yesterday',
+    downloadedLast7Days: 'Last 7 days',
+    downloadedDay: 'Day',
+    downloadedFrom: 'From',
+    downloadedTo: 'To',
     bannedOnly: 'Banned only ({count})',
     baseModels: 'Base models',
     folderRoutes: 'Folder routes',
@@ -1008,8 +1113,8 @@ export const en = {
     movingBanner: 'Moving library models to tag folders…'
   },
   deferredTab: {
-    title: 'Awaiting access',
-    titleCount: 'Awaiting access ({count})',
+    title: 'Early access',
+    titleCount: 'Early access ({count})',
     emptyLead:
       'Models blocked by API key, early access, or permissions. Auto-retry when eligible (max {max} attempts).',
     desc: 'Early access shows unlock countdown. Does not block other downloads.',
@@ -1017,12 +1122,45 @@ export const en = {
     retryOne: 'Retry → queue',
     dismiss: 'Dismiss',
     openCivitai: 'Civitai ↗',
+    ban: 'Ban',
+    banHint: 'Exclude permanently — will not return to Early access or auto-download',
+    banConfirm:
+      'Ban “{name}”? Excludes it from Early access, Browse auto-download, and future harvest. You can unban later in Settings.',
+    emptyAfterBan: 'Banned entries removed.',
     waiting: 'Waiting {duration} · attempts {count}',
     autoRetryPaused: ' · auto-retry paused',
     unlocksAt: 'Unlocks {when}',
     unlocksIn: ' · in {countdown}',
+    unlocksInShort: 'Unlocks in {countdown}',
+    reasonWait: '— Sub/Buzz/Wait',
+    reasonBuy: '— Sub/Buzz',
+    filterLabel: 'Access',
+    filterAll: 'All',
+    filterWait: 'Unlock soon (wait)',
+    filterBuy: 'No unlock date yet',
+    emptyFiltered: 'No models match this filter.',
     extraBuzz: 'Extra Buzz cost to download now',
     freeTrial: 'Free trial generations: {count}'
+  },
+  incompleteTab: {
+    title: 'Incomplete',
+    titleCount: 'Incomplete ({count})',
+    emptyLead:
+      'Models Civitai lists without version data (empty modelVersions). They are kept out of Browse until resolved.',
+    recheck: 'Recheck API',
+    download: 'Download → queue',
+    pasteLink: 'Paste download link…',
+    downloadWithUrl: 'Use link → queue',
+    openCivitai: 'Civitai ↗',
+    ban: 'Ban',
+    banHint: 'Exclude this model permanently — it will not return to Incomplete or auto-download',
+    banConfirm:
+      'Ban “{name}”? Excludes it from Incomplete, Browse auto-download, and future harvest. You can unban later in Settings.',
+    emptyAfterBan: 'Banned entries removed.',
+    waiting: 'Tracked {duration}',
+    versionName: ' · {name}',
+    badgeWaiting: 'Waiting for version data',
+    badgeReady: 'Version resolved'
   },
   globalStatus: {
     preparingDownloads: 'Preparing downloads…',

@@ -4,8 +4,7 @@ import type {
   InventoryRecord,
   TagFolderRule
 } from '../../../shared/types'
-import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
-import { ModelDetailModal } from './ModelDetailModal'
+import type { ModelDetailTarget } from './ModelDetailModal'
 import { LibraryModelCard } from './LibraryModelCard'
 import { aggregateResultTags, domainLabel, getModelPageUrl } from '../../../shared/utils'
 import type { CivitaiDomain, CivitaiDomainSetting } from '../../../shared/types'
@@ -45,6 +44,12 @@ import {
   normalizeResultsPageSize
 } from '../../../shared/results-display'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
+import {
+  DEFAULT_LIBRARY_VIEW_PREFS,
+  type LibraryFilter,
+  type LibrarySort,
+  type LibraryViewPrefs
+} from '../view-prefs'
 
 interface Props {
   inventory: InventoryRecord[]
@@ -56,6 +61,8 @@ interface Props {
   onBanFunctionModeChange?: (enabled: boolean) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   focusModelId?: number | null
+  /** Prefill Library search (Updates → Open in Library). */
+  focusModelName?: string | null
   onFocusHandled?: () => void
   focusCivitaiTag?: string | null
   onFocusTagHandled?: () => void
@@ -70,9 +77,16 @@ interface Props {
   checkpointFolder?: string
   sessionDownloadIds?: number[]
   highlightVersionIds?: number[]
+  /** Open Library on Session downloads (from +badge). Show List must leave this false. */
+  preferSessionFilter?: boolean
+  onPreferSessionHandled?: () => void
+  /** When set (Settings → Preserve filters), remount restores these values. */
+  viewPrefs?: LibraryViewPrefs
+  onViewPrefsChange?: (prefs: LibraryViewPrefs) => void
   isActive?: boolean
   resultsDisplayMode?: import('../../../shared/results-display').ResultsDisplayMode
   resultsPageSize?: import('../../../shared/results-display').ResultsPageSize
+  onOpenModelDetail?: (target: ModelDetailTarget) => void
 }
 
 interface ContextMenuState {
@@ -83,18 +97,35 @@ interface ContextMenuState {
   versionId?: number
 }
 
-type LibraryFilter =
-  | { type: 'all' }
-  | { type: 'untagged' }
-  | { type: 'unrecognized' }
-  | { type: 'routing'; name: string }
-  | { type: 'subfolder'; name: string }
-  | { type: 'civitai'; name: string }
-  | { type: 'cluster'; key: string }
-  | { type: 'baseModel'; name: string }
-  | { type: 'session' }
+/** YYYY-MM-DD from inventory `downloadedAt` (ISO). */
+function inventoryDayKey(downloadedAt: string): string | null {
+  const day = downloadedAt.trim().slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null
+}
 
-type LibrarySort = 'default' | 'folder' | 'tagGroup' | 'downloads'
+function localDayKey(d = new Date()): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function shiftDayKey(dayKey: string, deltaDays: number): string {
+  const [y, m, d] = dayKey.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + deltaDays)
+  return localDayKey(dt)
+}
+
+function recordInDownloadDay(r: InventoryRecord, day: string): boolean {
+  return inventoryDayKey(r.downloadedAt) === day
+}
+
+function recordInDownloadRange(r: InventoryRecord, from: string, to: string): boolean {
+  const day = inventoryDayKey(r.downloadedAt)
+  if (!day) return false
+  return day >= from && day <= to
+}
 
 function aggregateModelTags(inventory: InventoryRecord[]): Array<{ name: string; count: number }> {
   const map = new Map<string, number>()
@@ -124,6 +155,7 @@ function GalleryTabInner({
   onBanFunctionModeChange,
   onSaveTagRules,
   focusModelId,
+  focusModelName,
   onFocusHandled,
   focusCivitaiTag,
   onFocusTagHandled,
@@ -137,22 +169,30 @@ function GalleryTabInner({
   checkpointFolder = '',
   sessionDownloadIds = [],
   highlightVersionIds = [],
+  preferSessionFilter = false,
+  onPreferSessionHandled,
+  viewPrefs,
+  onViewPrefsChange,
   isActive = false,
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
-  resultsPageSize: resultsPageSizeProp = 100
+  resultsPageSize: resultsPageSizeProp = 100,
+  onOpenModelDetail
 }: Props) {
   const t = useT()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
+  const initial = viewPrefs ?? DEFAULT_LIBRARY_VIEW_PREFS
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>({ type: 'all' })
-  const [librarySort, setLibrarySort] = useState<LibrarySort>('tagGroup')
-  const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>('all')
-  const [hideFolderAssigned, setHideFolderAssigned] = useState(false)
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>(initial.libraryFilter)
+  const [librarySort, setLibrarySort] = useState<LibrarySort>(initial.librarySort)
+  const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>(initial.nsfwFilter)
+  const [hideFolderAssigned, setHideFolderAssigned] = useState(initial.hideFolderAssigned)
   const [tagSearch, setTagSearch] = useState('')
-  const [modelSearch, setModelSearch] = useState('')
+  const [modelSearch, setModelSearch] = useState(initial.modelSearch)
   const deferredModelSearch = useDeferredValue(modelSearch)
-  const [modelLetter, setModelLetter] = useState<string | null>(null)
+  /** Exact-model pin from Updates → Open in Library (skips full-grid search/scroll). */
+  const [pinModelId, setPinModelId] = useState<number | null>(null)
+  const [modelLetter, setModelLetter] = useState<string | null>(initial.modelLetter)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   const [moving, setMoving] = useState(false)
   const [message, setMessage] = useState('')
@@ -166,25 +206,55 @@ function GalleryTabInner({
   const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
-  const [previewRecord, setPreviewRecord] = useState<InventoryRecord | null>(null)
   const [highlightVersionId, setHighlightVersionId] = useState<number | null>(null)
   /** Flash all owned versions of a model (Open in Library from New Versions). */
   const [highlightModelId, setHighlightModelId] = useState<number | null>(null)
-  const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map())
 
   const highlightSet = useMemo(() => new Set(highlightVersionIds), [highlightVersionIds])
   const sessionSet = useMemo(() => new Set(sessionDownloadIds), [sessionDownloadIds])
   const libraryWasActiveRef = useRef(false)
 
-  // Auto-select "New models" only when opening Library (not while already viewing another filter).
+  // Auto-select session downloads only when opening Library normally — not when
+  // Show List / Open in Library is pinning a specific model.
   useEffect(() => {
     const justOpened = isActive && !libraryWasActiveRef.current
     libraryWasActiveRef.current = isActive
     if (!justOpened) return
-    if (highlightVersionIds.length > 0) {
-      setLibraryFilter({ type: 'session' })
+    if (focusModelId != null) {
+      if (preferSessionFilter) onPreferSessionHandled?.()
+      return
     }
-  }, [isActive, highlightVersionIds])
+    if (preferSessionFilter || highlightVersionIds.length > 0) {
+      setLibraryFilter({ type: 'session' })
+      if (preferSessionFilter) onPreferSessionHandled?.()
+    }
+  }, [
+    isActive,
+    highlightVersionIds,
+    focusModelId,
+    preferSessionFilter,
+    onPreferSessionHandled
+  ])
+
+  useEffect(() => {
+    if (!onViewPrefsChange) return
+    onViewPrefsChange({
+      libraryFilter,
+      librarySort,
+      nsfwFilter,
+      hideFolderAssigned,
+      modelSearch,
+      modelLetter
+    })
+  }, [
+    libraryFilter,
+    librarySort,
+    nsfwFilter,
+    hideFolderAssigned,
+    modelSearch,
+    modelLetter,
+    onViewPrefsChange
+  ])
 
   const bannedIds = useMemo(() => new Set(bannedList.map((b) => b.modelId)), [bannedList])
   const hiddenModelIds = useMemo(() => {
@@ -217,6 +287,20 @@ function GalleryTabInner({
   }, [inventory])
 
   const hideBaseModelOnCards = libraryFilter.type === 'baseModel'
+
+  const downloadDayCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const r of inventory) {
+      const day = inventoryDayKey(r.downloadedAt)
+      if (!day) continue
+      map.set(day, (map.get(day) ?? 0) + 1)
+    }
+    return [...map.entries()]
+      .map(([day, count]) => ({ day, count }))
+      .sort((a, b) => b.day.localeCompare(a.day))
+  }, [inventory])
+
+  const recentDownloadDays = useMemo(() => downloadDayCounts.slice(0, 45), [downloadDayCounts])
 
   const filteredBaseModelOptions = useMemo(() => {
     const q = tagSearch.trim().toLowerCase()
@@ -271,24 +355,30 @@ function GalleryTabInner({
     return set
   }, [inventory])
 
+  /** Prebuilt lowercase haystack — one includes() per card instead of many field checks. */
+  const searchHayByVersionId = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const r of inventory) {
+      const tags = r.civitaiTags?.length ? `\0${r.civitaiTags.join('\0')}` : ''
+      map.set(
+        r.versionId,
+        `${r.modelName}\0${r.slug}\0${r.author}\0${r.routingTag}\0${r.baseModel}${tags}`.toLowerCase()
+      )
+    }
+    return map
+  }, [inventory])
+
   const matchesModelSearch = useCallback(
     (record: InventoryRecord): boolean => {
-      const q = deferredModelSearch.trim().toLowerCase()
       if (modelLetter) {
         const first = record.modelName.trim()[0]?.toLowerCase()
         if (first !== modelLetter) return false
       }
+      const q = deferredModelSearch.trim().toLowerCase()
       if (!q) return true
-      return (
-        record.modelName.toLowerCase().includes(q) ||
-        record.slug.toLowerCase().includes(q) ||
-        record.author.toLowerCase().includes(q) ||
-        record.routingTag.toLowerCase().includes(q) ||
-        record.baseModel.toLowerCase().includes(q) ||
-        (record.civitaiTags?.some((t) => t.toLowerCase().includes(q)) ?? false)
-      )
+      return searchHayByVersionId.get(record.versionId)?.includes(q) ?? false
     },
-    [deferredModelSearch, modelLetter]
+    [deferredModelSearch, modelLetter, searchHayByVersionId]
   )
 
   const loadBanned = async () => {
@@ -374,6 +464,14 @@ function GalleryTabInner({
       case 'session':
         list = list.filter((r) => sessionSet.has(r.versionId))
         break
+      case 'byDate':
+        list = list.filter((r) => recordInDownloadDay(r, libraryFilter.day))
+        break
+      case 'byDateRange':
+        list = list.filter((r) =>
+          recordInDownloadRange(r, libraryFilter.from, libraryFilter.to)
+        )
+        break
       default:
         break
     }
@@ -389,7 +487,11 @@ function GalleryTabInner({
     if (hideFolderAssigned) {
       list = list.filter((r) => !r.routingTag?.trim())
     }
-    list = list.filter((r) => matchesModelSearch(r))
+    if (pinModelId != null) {
+      list = list.filter((r) => r.modelId === pinModelId)
+    } else {
+      list = list.filter((r) => matchesModelSearch(r))
+    }
     return list
   }, [
     inventory,
@@ -401,38 +503,50 @@ function GalleryTabInner({
     matchesModelSearch,
     nsfwFilter,
     hideFolderAssigned,
-    sessionSet
+    sessionSet,
+    pinModelId,
+    loraFolder,
+    checkpointFolder
   ])
 
   const sortedInventory = useMemo(() => {
     const list = [...filteredInventory]
-    switch (librarySort) {
-      case 'folder':
-        list.sort(
-          (a, b) =>
-            (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
-            a.modelName.localeCompare(b.modelName)
-        )
-        break
-      case 'tagGroup':
-        list.sort(
-          (a, b) =>
-            primaryClusterKey(a.civitaiTags, tagClusters).localeCompare(
-              primaryClusterKey(b.civitaiTags, tagClusters)
-            ) ||
-            (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
-            a.modelName.localeCompare(b.modelName)
-        )
-        break
-      case 'downloads':
-        list.sort(
-          (a, b) =>
-            (b.downloadCount ?? 0) - (a.downloadCount ?? 0) ||
-            a.modelName.localeCompare(b.modelName)
-        )
-        break
-      default:
-        break
+    const dateFilterActive =
+      libraryFilter.type === 'byDate' || libraryFilter.type === 'byDateRange'
+    if (dateFilterActive) {
+      list.sort(
+        (a, b) =>
+          b.downloadedAt.localeCompare(a.downloadedAt) || a.modelName.localeCompare(b.modelName)
+      )
+    } else {
+      switch (librarySort) {
+        case 'folder':
+          list.sort(
+            (a, b) =>
+              (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
+              a.modelName.localeCompare(b.modelName)
+          )
+          break
+        case 'tagGroup':
+          list.sort(
+            (a, b) =>
+              primaryClusterKey(a.civitaiTags, tagClusters).localeCompare(
+                primaryClusterKey(b.civitaiTags, tagClusters)
+              ) ||
+              (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
+              a.modelName.localeCompare(b.modelName)
+          )
+          break
+        case 'downloads':
+          list.sort(
+            (a, b) =>
+              (b.downloadCount ?? 0) - (a.downloadCount ?? 0) ||
+              a.modelName.localeCompare(b.modelName)
+          )
+          break
+        default:
+          break
+      }
     }
     if (highlightSet.size > 0) {
       list.sort((a, b) => {
@@ -443,7 +557,7 @@ function GalleryTabInner({
       })
     }
     return list
-  }, [filteredInventory, librarySort, tagClusters, highlightSet])
+  }, [filteredInventory, librarySort, tagClusters, highlightSet, libraryFilter])
 
   const libraryDisplayMode =
     resultsDisplayMode === 'autoAdvance' ? 'lazy' : resultsDisplayMode
@@ -457,8 +571,9 @@ function GalleryTabInner({
         libraryFilter.type === 'tagSubfolder'
           ? libraryFilter.name
           : '',
-        modelSearch,
+        deferredModelSearch,
         modelLetter ?? '',
+        pinModelId ?? '',
         nsfwFilter,
         librarySort,
         hideFolderAssigned ? 1 : 0,
@@ -468,8 +583,9 @@ function GalleryTabInner({
       ].join('|'),
     [
       libraryFilter,
-      modelSearch,
+      deferredModelSearch,
       modelLetter,
+      pinModelId,
       nsfwFilter,
       librarySort,
       hideFolderAssigned,
@@ -513,103 +629,46 @@ function GalleryTabInner({
   }, [libraryDisplayMode, resultsWindow.hasMoreLazy, resultsWindow.expandLazy, gridRecords.length])
 
   const scrollToModel = useCallback(
-    (modelId: number) => {
+    (modelId: number, preferredName?: string | null) => {
       const rec = inventory.find((r) => r.modelId === modelId)
+      const searchName = (preferredName?.trim() || rec?.modelName || '').trim()
+      if (searchName) {
+        setModelSearch(searchName)
+        setModelLetter(null)
+      }
       if (!rec) {
+        setPinModelId(null)
         setMessage(t('gallery.modelNotInLibrary'))
         return
       }
       if (hiddenModelIds.has(modelId)) {
+        setPinModelId(null)
         setMessage(t('gallery.modelNotInLibrary'))
         return
       }
-      // Prefill search with model name so the grid filters to this model (and highlight is obvious).
-      setModelSearch(rec.modelName)
-      setModelLetter(null)
-      if (libraryFilter.type !== 'all' && libraryFilter.type !== 'session') {
-        setLibraryFilter({ type: 'all' })
-      }
-      const matchesFilter = (row: InventoryRecord): boolean => {
-        switch (libraryFilter.type) {
-          case 'untagged':
-            return !row.routingTag
-          case 'unrecognized':
-            return isUnrecognizedInventoryRecord(row)
-          case 'routing': {
-            const names = new Set(
-              namesForRoutingFilter(libraryFilter.name, tagRules).map((n) => n.toLowerCase())
-            )
-            return names.has(row.routingTag.toLowerCase())
-          }
-          case 'subfolder':
-            return recordMatchesTagSubfolder(
-              row,
-              libraryFilter.name,
-              tagRules,
-              loraFolder,
-              checkpointFolder
-            )
-          case 'civitai':
-            return (
-              row.civitaiTags?.some((t) => fuzzyTagMatch(libraryFilter.name, t)) ?? false
-            )
-          case 'cluster': {
-            const cluster = tagClusters.find((c) => c.key === libraryFilter.key)
-            return cluster ? recordMatchesCluster(row.civitaiTags, cluster) : false
-          }
-          default:
-            return true
-        }
-      }
-      if (!matchesFilter(rec)) setLibraryFilter({ type: 'all' })
-      const runScroll = () => {
-        const rows = inventory.filter(
-          (r) => r.modelId === modelId && !hiddenModelIds.has(r.modelId)
-        )
-        const target = rows[0] ?? rec
-        const idxInSorted = sortedInventory.findIndex((r) => r.modelId === modelId)
-        const idx =
-          idxInSorted >= 0
-            ? idxInSorted
-            : sortedInventory.findIndex((r) => r.versionId === target.versionId)
-        if (idx >= 0) resultsWindow.ensureIndexVisible(idx)
-        setHighlightModelId(modelId)
-        setHighlightVersionId(target.versionId)
-        window.setTimeout(() => {
-          const el = cardRefs.current.get(target.versionId)
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }, 120)
-        window.setTimeout(() => {
-          setHighlightVersionId(null)
-          setHighlightModelId(null)
-        }, 4500)
-      }
-      // Wait for search filter + visible tab layout before scrolling.
-      window.setTimeout(runScroll, 200)
+      // Always All models — session (and other) filters hide siblings and confuse Show List.
+      setLibraryFilter({ type: 'all' })
+      // Pin to this model only — no deferred search, no full-grid render + scroll.
+      setPinModelId(modelId)
+      setHighlightModelId(modelId)
+      setHighlightVersionId(rec.versionId)
+      window.setTimeout(() => {
+        setHighlightVersionId(null)
+        setHighlightModelId(null)
+      }, 4500)
     },
-    [
-      inventory,
-      libraryFilter,
-      hiddenModelIds,
-      tagClusters,
-      tagRules,
-      loraFolder,
-      checkpointFolder,
-      sortedInventory,
-      resultsWindow,
-      t
-    ]
+    [inventory, hiddenModelIds, t]
   )
 
   useEffect(() => {
     if (focusModelId == null || !isActive) return
-    scrollToModel(focusModelId)
-    const t = window.setTimeout(() => onFocusHandled?.(), 600)
-    return () => window.clearTimeout(t)
-  }, [focusModelId, isActive, scrollToModel, onFocusHandled])
+    scrollToModel(focusModelId, focusModelName)
+    onFocusHandled?.()
+  }, [focusModelId, focusModelName, isActive, scrollToModel, onFocusHandled])
 
   useEffect(() => {
     if (!focusCivitaiTag?.trim()) return
+    setPinModelId(null)
     setLibraryFilter({ type: 'civitai', name: focusCivitaiTag.trim() })
     setModelSearch('')
     setModelLetter(null)
@@ -640,89 +699,109 @@ function GalleryTabInner({
     }
   }, [])
 
-  const banModel = async (modelId: number, modelName: string, versionId?: number) => {
-    const rec =
-      versionId != null
-        ? inventory.find((r) => r.versionId === versionId)
-        : inventory.find((r) => r.modelId === modelId)
-    const isLocal = rec ? isUnrecognizedInventoryRecord(rec) : modelId <= 0
+  const banModel = useCallback(
+    async (modelId: number, modelName: string, versionId?: number) => {
+      const rec =
+        versionId != null
+          ? inventory.find((r) => r.versionId === versionId)
+          : inventory.find((r) => r.modelId === modelId)
+      const isLocal = rec ? isUnrecognizedInventoryRecord(rec) : modelId <= 0
 
-    if (rec) {
-      setPendingHiddenVersionIds((prev) => {
-        if (prev.has(rec.versionId)) return prev
-        const next = new Set(prev)
-        next.add(rec.versionId)
-        return next
-      })
-    }
-    if (!isLocal && modelId > 0) {
-      setPendingBanIds((prev) => {
-        if (prev.has(modelId)) return prev
-        const next = new Set(prev)
-        next.add(modelId)
-        return next
-      })
-    }
-    setContextMenu(null)
-    setPreviewRecord(null)
-    setSelected((prev) => {
-      const next = new Set(prev)
-      for (const id of next) {
-        const row = inventory.find((r) => r.versionId === id)
-        if (!row) continue
-        if (isLocal && rec && row.versionId === rec.versionId) next.delete(id)
-        else if (!isLocal && row.modelId === modelId) next.delete(id)
-      }
-      return next
-    })
-    try {
-      if (isLocal && rec) {
-        await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
-      } else {
-        await window.api.banModel(modelId, modelName)
-      }
-      scheduleLibraryRefresh()
-    } catch (err) {
       if (rec) {
         setPendingHiddenVersionIds((prev) => {
-          if (!prev.has(rec.versionId)) return prev
+          if (prev.has(rec.versionId)) return prev
           const next = new Set(prev)
-          next.delete(rec.versionId)
+          next.add(rec.versionId)
           return next
         })
       }
       if (!isLocal && modelId > 0) {
         setPendingBanIds((prev) => {
-          if (!prev.has(modelId)) return prev
+          if (prev.has(modelId)) return prev
           const next = new Set(prev)
-          next.delete(modelId)
+          next.add(modelId)
           return next
         })
       }
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
-  }
+      setContextMenu(null)
+      setSelected((prev) => {
+        const next = new Set(prev)
+        for (const id of next) {
+          const row = inventory.find((r) => r.versionId === id)
+          if (!row) continue
+          if (isLocal && rec && row.versionId === rec.versionId) next.delete(id)
+          else if (!isLocal && row.modelId === modelId) next.delete(id)
+        }
+        return next
+      })
+      try {
+        if (isLocal && rec) {
+          await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
+        } else {
+          await window.api.banModel(modelId, modelName)
+        }
+        scheduleLibraryRefresh()
+      } catch (err) {
+        if (rec) {
+          setPendingHiddenVersionIds((prev) => {
+            if (!prev.has(rec.versionId)) return prev
+            const next = new Set(prev)
+            next.delete(rec.versionId)
+            return next
+          })
+        }
+        if (!isLocal && modelId > 0) {
+          setPendingBanIds((prev) => {
+            if (!prev.has(modelId)) return prev
+            const next = new Set(prev)
+            next.delete(modelId)
+            return next
+          })
+        }
+        setMessage(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [inventory, scheduleLibraryRefresh]
+  )
 
-  const unbanModel = async (modelId: number, modelName: string) => {
-    setBannedList((prev) => prev.filter((b) => b.modelId !== modelId))
-    setPendingBanIds((prev) => {
-      if (!prev.has(modelId)) return prev
-      const next = new Set(prev)
-      next.delete(modelId)
-      return next
-    })
-    setContextMenu(null)
-    try {
-      await window.api.unbanModel(modelId)
-      scheduleLibraryRefresh()
-    } catch (err) {
-      setBannedList((prev) => [
-        { modelId, modelName, bannedAt: new Date().toISOString() },
-        ...prev
-      ])
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
-  }
+  const unbanModel = useCallback(
+    async (modelId: number, modelName: string) => {
+      setBannedList((prev) => prev.filter((b) => b.modelId !== modelId))
+      setPendingBanIds((prev) => {
+        if (!prev.has(modelId)) return prev
+        const next = new Set(prev)
+        next.delete(modelId)
+        return next
+      })
+      setContextMenu(null)
+      try {
+        await window.api.unbanModel(modelId)
+        scheduleLibraryRefresh()
+      } catch (err) {
+        setBannedList((prev) => [
+          { modelId, modelName, bannedAt: new Date().toISOString() },
+          ...prev
+        ])
+        setMessage(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [scheduleLibraryRefresh]
+  )
+
+  const openLibraryDetails = useCallback(
+    (rec: InventoryRecord) => {
+      onOpenModelDetail?.({
+        kind: 'library',
+        record: rec,
+        domain: rec.civitaiDomain ?? defaultLinkDomain,
+        siblingRecords: inventory.filter(
+          (r) =>
+            r.modelId === rec.modelId && r.versionId !== rec.versionId && r.modelId > 0
+        )
+      })
+    },
+    [onOpenModelDetail, defaultLinkDomain, inventory]
+  )
 
   const setRecordRating = async (
     versionId: number,
@@ -742,7 +821,6 @@ function GalleryTabInner({
     const ok = window.confirm(t('gallery.deleteConfirm', { name: modelName }))
     if (!ok) return
     setContextMenu(null)
-    setPreviewRecord(null)
     setMessage('')
 
     const runDelete = async () => {
@@ -781,11 +859,6 @@ function GalleryTabInner({
       else next.add(versionId)
       return next
     })
-  }, [])
-
-  const setCardRef = useCallback((versionId: number, el: HTMLDivElement | null) => {
-    if (el) cardRefs.current.set(versionId, el)
-    else cardRefs.current.delete(versionId)
   }, [])
 
   const openContextMenu = useCallback(
@@ -852,6 +925,12 @@ function GalleryTabInner({
       return libraryFilter.name.toLowerCase() === f.name.toLowerCase()
     }
     if (f.type === 'session' && libraryFilter.type === 'session') return true
+    if (f.type === 'byDate' && libraryFilter.type === 'byDate') {
+      return libraryFilter.day === f.day
+    }
+    if (f.type === 'byDateRange' && libraryFilter.type === 'byDateRange') {
+      return libraryFilter.from === f.from && libraryFilter.to === f.to
+    }
     return true
   }
 
@@ -914,7 +993,10 @@ function GalleryTabInner({
               type="search"
               className="browse-results-search library-model-search"
               value={modelSearch}
-              onChange={(e) => setModelSearch(e.target.value)}
+              onChange={(e) => {
+                setPinModelId(null)
+                setModelSearch(e.target.value)
+              }}
               placeholder={t('gallery.searchPlaceholder')}
               aria-label={t('gallery.searchPlaceholder')}
             />
@@ -984,11 +1066,12 @@ function GalleryTabInner({
                   <option value="default">{t('gallery.sortDefault')}</option>
                 </select>
               </label>
-              {(modelSearch || modelLetter) && (
+              {(modelSearch || modelLetter || pinModelId != null) && (
                 <button
                   type="button"
                   className="btn-sm btn-ghost"
                   onClick={() => {
+                    setPinModelId(null)
                     setModelSearch('')
                     setModelLetter(null)
                   }}
@@ -1002,7 +1085,10 @@ function GalleryTabInner({
             <button
               type="button"
               className={`library-letter ${modelLetter === null ? 'active' : ''}`}
-              onClick={() => setModelLetter(null)}
+              onClick={() => {
+                setPinModelId(null)
+                setModelLetter(null)
+              }}
             >
               {t('gallery.allLetters')}
             </button>
@@ -1012,7 +1098,10 @@ function GalleryTabInner({
                 type="button"
                 className={`library-letter ${modelLetter === letter ? 'active' : ''}`}
                 disabled={!modelSearchLetters.has(letter)}
-                onClick={() => setModelLetter(modelLetter === letter ? null : letter)}
+                onClick={() => {
+                  setPinModelId(null)
+                  setModelLetter(modelLetter === letter ? null : letter)
+                }}
               >
                 {letter.toUpperCase()}
               </button>
@@ -1034,45 +1123,37 @@ function GalleryTabInner({
           <div className="gallery-main-scroll">
           {!sortedInventory.length ? (
             <p className="muted">
-              {inventory.length > 0 && (modelSearch || modelLetter || libraryFilter.type !== 'all')
+              {inventory.length > 0 &&
+              (modelSearch ||
+                modelLetter ||
+                libraryFilter.type !== 'all' ||
+                pinModelId != null)
                 ? t('gallery.emptyFiltered')
                 : t('gallery.emptyNone')}
             </p>
           ) : (
             <>
             <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
-            <div className="gallery-grid">
-              {gridRecords.map((record) => (
-                <LibraryModelCard
-                  key={record.versionId}
-                  record={record}
-                  selected={selected.has(record.versionId)}
-                  banned={isBanned(record.modelId)}
-                  highlight={
-                    highlightVersionId === record.versionId || highlightModelId === record.modelId
-                  }
-                  sessionNew={highlightSet.has(record.versionId)}
-                  hideBaseModelOnCards={hideBaseModelOnCards}
-                  defaultLinkDomain={defaultLinkDomain}
-                  tagRules={tagRules}
-                  loraFolder={loraFolder}
-                  checkpointFolder={checkpointFolder}
-                  banFunctionMode={banFunctionMode}
-                  onBanModel={banModel}
-                  duplicateOfName={
-                    record.duplicateOfVersionId != null
-                      ? versionNameById.get(record.duplicateOfVersionId) ??
-                        `#${record.duplicateOfVersionId}`
-                      : null
-                  }
-                  onToggleSelect={toggleSelect}
-                  onOpenContextMenu={openContextMenu}
-                  onOpenDetails={setPreviewRecord}
-                  onCivitaiTagClick={openTagInFolders}
-                  setCardRef={setCardRef}
-                />
-              ))}
-            </div>
+            <LibraryCardGrid
+              records={gridRecords}
+              selected={selected}
+              hiddenModelIds={hiddenModelIds}
+              highlightVersionId={highlightVersionId}
+              highlightModelId={highlightModelId}
+              highlightSet={highlightSet}
+              hideBaseModelOnCards={hideBaseModelOnCards}
+              defaultLinkDomain={defaultLinkDomain}
+              tagRules={tagRules}
+              loraFolder={loraFolder}
+              checkpointFolder={checkpointFolder}
+              banFunctionMode={banFunctionMode}
+              versionNameById={versionNameById}
+              onBanModel={banModel}
+              onToggleSelect={toggleSelect}
+              onOpenContextMenu={openContextMenu}
+              onOpenDetails={openLibraryDetails}
+              onCivitaiTagClick={openTagInFolders}
+            />
             <ResultsPager
               mode={libraryDisplayMode}
               page={resultsWindow.page}
@@ -1144,6 +1225,136 @@ function GalleryTabInner({
               <span className="tag-name">{t('gallery.sessionDownloads')}</span>
               <span className="muted tag-count-inline">{sessionDownloadIds.length}</span>
             </button>
+          )}
+
+          {downloadDayCounts.length > 0 && (
+            <>
+              <h4 className="sidebar-section-title">{t('gallery.downloadedByDate')}</h4>
+              <div className="sidebar-date-presets">
+                <button
+                  type="button"
+                  className={`btn-sm ${
+                    filterActive({ type: 'byDate', day: localDayKey() }) ? 'primary' : ''
+                  }`}
+                  onClick={() => setLibraryFilter({ type: 'byDate', day: localDayKey() })}
+                >
+                  {t('gallery.downloadedToday')}
+                </button>
+                <button
+                  type="button"
+                  className={`btn-sm ${
+                    filterActive({ type: 'byDate', day: shiftDayKey(localDayKey(), -1) })
+                      ? 'primary'
+                      : ''
+                  }`}
+                  onClick={() =>
+                    setLibraryFilter({ type: 'byDate', day: shiftDayKey(localDayKey(), -1) })
+                  }
+                >
+                  {t('gallery.downloadedYesterday')}
+                </button>
+                <button
+                  type="button"
+                  className={`btn-sm ${
+                    libraryFilter.type === 'byDateRange' &&
+                    libraryFilter.from === shiftDayKey(localDayKey(), -6) &&
+                    libraryFilter.to === localDayKey()
+                      ? 'primary'
+                      : ''
+                  }`}
+                  onClick={() => {
+                    const to = localDayKey()
+                    setLibraryFilter({
+                      type: 'byDateRange',
+                      from: shiftDayKey(to, -6),
+                      to
+                    })
+                  }}
+                >
+                  {t('gallery.downloadedLast7Days')}
+                </button>
+              </div>
+              <div className="sidebar-date-pickers">
+                <label className="sidebar-date-field">
+                  <span>{t('gallery.downloadedDay')}</span>
+                  <input
+                    type="date"
+                    value={libraryFilter.type === 'byDate' ? libraryFilter.day : ''}
+                    onChange={(e) => {
+                      const day = e.target.value
+                      if (day) setLibraryFilter({ type: 'byDate', day })
+                    }}
+                  />
+                </label>
+                <label className="sidebar-date-field">
+                  <span>{t('gallery.downloadedFrom')}</span>
+                  <input
+                    type="date"
+                    value={
+                      libraryFilter.type === 'byDateRange'
+                        ? libraryFilter.from
+                        : libraryFilter.type === 'byDate'
+                          ? libraryFilter.day
+                          : ''
+                    }
+                    onChange={(e) => {
+                      const from = e.target.value
+                      if (!from) return
+                      const to =
+                        libraryFilter.type === 'byDateRange'
+                          ? libraryFilter.to
+                          : libraryFilter.type === 'byDate'
+                            ? libraryFilter.day
+                            : from
+                      setLibraryFilter({
+                        type: 'byDateRange',
+                        from,
+                        to: to < from ? from : to
+                      })
+                    }}
+                  />
+                </label>
+                <label className="sidebar-date-field">
+                  <span>{t('gallery.downloadedTo')}</span>
+                  <input
+                    type="date"
+                    value={
+                      libraryFilter.type === 'byDateRange'
+                        ? libraryFilter.to
+                        : libraryFilter.type === 'byDate'
+                          ? libraryFilter.day
+                          : ''
+                    }
+                    onChange={(e) => {
+                      const to = e.target.value
+                      if (!to) return
+                      const from =
+                        libraryFilter.type === 'byDateRange'
+                          ? libraryFilter.from
+                          : libraryFilter.type === 'byDate'
+                            ? libraryFilter.day
+                            : to
+                      setLibraryFilter({
+                        type: 'byDateRange',
+                        from: from > to ? to : from,
+                        to
+                      })
+                    }}
+                  />
+                </label>
+              </div>
+              {recentDownloadDays.map(({ day, count }) => (
+                <button
+                  key={day}
+                  type="button"
+                  className={`sidebar-tag ${filterActive({ type: 'byDate', day }) ? 'active' : ''}`}
+                  onClick={() => setLibraryFilter({ type: 'byDate', day })}
+                >
+                  <span className="tag-name">{day}</span>
+                  <span className="muted tag-count-inline">{count}</span>
+                </button>
+              ))}
+            </>
           )}
 
           {filteredBaseModelOptions.length > 0 && (
@@ -1326,7 +1537,9 @@ function GalleryTabInner({
             )}
             {!menuLocal && inventory.some((r) => r.modelId === contextMenu.modelId) && (
               <button
-                {...contextMenuButtonProps(() => scrollToModel(contextMenu.modelId))}
+                {...contextMenuButtonProps(() =>
+                  scrollToModel(contextMenu.modelId, contextMenu.modelName)
+                )}
               >
                 {t('gallery.goToInGallery')}
               </button>
@@ -1445,33 +1658,90 @@ function GalleryTabInner({
             )}
         </ContextMenuPortal>
       )}
-
-      {previewRecord && (
-        <ModelDetailModal
-          target={{
-            kind: 'library',
-            record: previewRecord,
-            domain: previewRecord.civitaiDomain ?? defaultLinkDomain,
-            siblingRecords: inventory.filter(
-              (r) =>
-                r.modelId === previewRecord.modelId &&
-                r.versionId !== previewRecord.versionId &&
-                r.modelId > 0
-            )
-          }}
-          ownedVersionIds={inventory
-            .filter((r) => r.modelId === previewRecord.modelId && r.modelId > 0)
-            .map((r) => r.versionId)}
-          onClose={() => setPreviewRecord(null)}
-          onSelectLibraryRecord={(rec) => setPreviewRecord(rec)}
-          onShowInFolder={(path) => void window.api.showInFolder(path)}
-          onDelete={() =>
-            void deleteModel(previewRecord.versionId, previewRecord.modelId, previewRecord.modelName)
-          }
-        />
-      )}
     </div>
   )
 }
+
+type LibraryCardGridProps = {
+  records: InventoryRecord[]
+  selected: Set<number>
+  hiddenModelIds: Set<number>
+  highlightVersionId: number | null
+  highlightModelId: number | null
+  highlightSet: Set<number>
+  hideBaseModelOnCards: boolean
+  defaultLinkDomain: CivitaiDomain
+  tagRules: TagFolderRule[]
+  loraFolder: string
+  checkpointFolder: string
+  banFunctionMode: boolean
+  versionNameById: Map<number, string>
+  onBanModel: (modelId: number, modelName: string, versionId?: number) => void
+  onToggleSelect: (versionId: number) => void
+  onOpenContextMenu: (
+    e: MouseEvent,
+    modelId: number,
+    modelName: string,
+    versionId?: number
+  ) => void
+  onOpenDetails: (record: InventoryRecord) => void
+  onCivitaiTagClick: (tag: string) => void
+}
+
+/** Isolates card renders from search-input keystrokes until deferred filter catches up. */
+const LibraryCardGrid = memo(function LibraryCardGrid({
+  records,
+  selected,
+  hiddenModelIds,
+  highlightVersionId,
+  highlightModelId,
+  highlightSet,
+  hideBaseModelOnCards,
+  defaultLinkDomain,
+  tagRules,
+  loraFolder,
+  checkpointFolder,
+  banFunctionMode,
+  versionNameById,
+  onBanModel,
+  onToggleSelect,
+  onOpenContextMenu,
+  onOpenDetails,
+  onCivitaiTagClick
+}: LibraryCardGridProps) {
+  return (
+    <div className="gallery-grid">
+      {records.map((record) => (
+        <LibraryModelCard
+          key={record.versionId}
+          record={record}
+          selected={selected.has(record.versionId)}
+          banned={hiddenModelIds.has(record.modelId)}
+          highlight={
+            highlightVersionId === record.versionId || highlightModelId === record.modelId
+          }
+          sessionNew={highlightSet.has(record.versionId)}
+          hideBaseModelOnCards={hideBaseModelOnCards}
+          defaultLinkDomain={defaultLinkDomain}
+          tagRules={tagRules}
+          loraFolder={loraFolder}
+          checkpointFolder={checkpointFolder}
+          banFunctionMode={banFunctionMode}
+          onBanModel={onBanModel}
+          duplicateOfName={
+            record.duplicateOfVersionId != null
+              ? versionNameById.get(record.duplicateOfVersionId) ??
+                `#${record.duplicateOfVersionId}`
+              : null
+          }
+          onToggleSelect={onToggleSelect}
+          onOpenContextMenu={onOpenContextMenu}
+          onOpenDetails={onOpenDetails}
+          onCivitaiTagClick={onCivitaiTagClick}
+        />
+      ))}
+    </div>
+  )
+})
 
 export const GalleryTab = memo(GalleryTabInner)

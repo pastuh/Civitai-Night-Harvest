@@ -11,41 +11,58 @@ import type {
   LibrarySyncProgress,
   PendingVersion,
   DeferredDownload,
+  IncompleteModel,
   LibraryVersionScanProgress,
   ScanScheduleInfo,
   TagAssignmentPrompt,
   TagFolderRule,
   WatchRule,
   WatchRuleTestResult,
-  CrawlProgressPayload
+  WatchRuleTestModel,
+  CrawlProgressPayload,
+  CrawlPagePayload
 } from '../../../shared/types'
 import { GlobalStatusBar } from './components/GlobalStatusBar'
-import { DownloadTab } from './components/DownloadTab'
 import { SettingsTab } from './components/SettingsTab'
 import { TagsTab } from './components/TagsTab'
 import { WatchRulesTab } from './components/WatchRulesTab'
 import { ActivityTab } from './components/ActivityTab'
 import { PendingTab } from './components/PendingTab'
 import { DeferredTab } from './components/DeferredTab'
+import { IncompleteTab } from './components/IncompleteTab'
 import { GalleryTab } from './components/GalleryTab'
+import { HelpTab } from './components/HelpTab'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
 import { ActiveDownloadsStrip, StripClearQueueButton } from './components/ActiveDownloadsStrip'
 import { AppBusyOverlay } from './components/AppBusyOverlay'
 import { ConfirmModal } from './components/ConfirmModal'
-import { HelpTab } from './components/HelpTab'
+import { ModelDetailPage, type ModelDetailTarget } from './components/ModelDetailPage'
+import {
+  DEFAULT_BROWSE_VIEW_PREFS,
+  DEFAULT_LIBRARY_VIEW_PREFS,
+  type BrowseViewPrefs,
+  type LibraryViewPrefs
+} from './view-prefs'
 import { I18nProvider, getMessages, translate } from './i18n/context'
 import { hasAllOutputFolders } from '../../shared/utils'
 import { formatLibrarySyncSummary } from './utils/library-sync-summary'
 import { mergeInventoryPreserveIdentity } from './utils/inventory-merge'
+import { applyCrawlPageToLiveGallery } from './utils/crawl-gallery-merge'
+import {
+  setDownloadQueueState,
+  useHasPipelineQueue,
+  useHasStatusPipeline
+} from './hooks/useDownloadQueue'
+import { getDownloadQueueSnapshot, queueStructureKey } from './utils/download-queue-store'
 import { collectTagSuggestions } from '../../shared/tag-routing'
 import { applyAppearanceToDocument, appearanceFromSettings } from '../../shared/appearance'
 
 /** Wall-clock when this renderer session started — Activity log default filter. */
 const APP_SESSION_STARTED_AT = Date.now()
 
-type Tab = 'gallery' | 'download' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'activity' | 'help' | 'settings'
+type Tab = 'gallery' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'incomplete' | 'activity' | 'help' | 'settings'
 
 function shouldShowDownloadStrip(visibility: DownloadStripVisibility, tab: Tab): boolean {
   switch (visibility) {
@@ -77,17 +94,20 @@ export default function App() {
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [pending, setPending] = useState<PendingVersion[]>([])
   const [deferred, setDeferred] = useState<DeferredDownload[]>([])
+  const [incomplete, setIncomplete] = useState<IncompleteModel[]>([])
   const [inventory, setInventory] = useState<InventoryRecord[]>([])
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
-  const [queue, setQueue] = useState<DownloadQueueItem[]>([])
-  const [queuePaused, setQueuePaused] = useState(true)
+  const hasPipelineQueue = useHasPipelineQueue()
+  const hasStatusPipeline = useHasStatusPipeline()
   const [status, setStatus] = useState<AppStatus>('idle')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [storageErrorModal, setStorageErrorModal] = useState<string | null>(null)
   const [storageOffline, setStorageOffline] = useState(false)
   const [galleryFocusModelId, setGalleryFocusModelId] = useState<number | null>(null)
+  const [galleryFocusModelName, setGalleryFocusModelName] = useState<string | null>(null)
   const [galleryFocusCivitaiTag, setGalleryFocusCivitaiTag] = useState<string | null>(null)
+  const [modelDetailTarget, setModelDetailTarget] = useState<ModelDetailTarget | null>(null)
   const [tagsFocusSearch, setTagsFocusSearch] = useState<string | null>(null)
   const [scheduleInfo, setScheduleInfo] = useState<ScanScheduleInfo | null>(null)
   const [tagPromptQueue, setTagPromptQueue] = useState<TagAssignmentPrompt[]>([])
@@ -97,6 +117,10 @@ export default function App() {
   const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null)
   const [sessionDownloadIds, setSessionDownloadIds] = useState<number[]>([])
   const [libraryHighlightIds, setLibraryHighlightIds] = useState<number[]>([])
+  /** One-shot: open Library on Session downloads (badge click). Cleared after Gallery consumes it. */
+  const [preferLibrarySession, setPreferLibrarySession] = useState(false)
+  const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
+  const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
   const [startupReady, setStartupReady] = useState(false)
   const [browseGalleryAwaiting, setBrowseGalleryAwaiting] = useState(true)
   const [watchRulesSaveState, setWatchRulesSaveState] = useState<'saved' | 'saving' | 'unsaved'>('saved')
@@ -138,7 +162,32 @@ export default function App() {
   previewRepairRef.current = previewRepairActive
   const sessionBaselineRef = useRef<Set<number> | null>(null)
   const libraryBadgeSeenRef = useRef<Set<number> | null>(null)
+  /** Models banned from New Versions this session — ignore stale scan echoes that re-add them. */
+  const bannedPendingModelIdsRef = useRef<Set<number>>(new Set())
   const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
+
+  /** Keep existing row order; append newly detected offers at the bottom. */
+  const applyPendingVersions = useCallback((pend: PendingVersion[]) => {
+    const banned = bannedPendingModelIdsRef.current
+    const filtered = banned.size ? pend.filter((p) => !banned.has(p.modelId)) : pend
+    setPending((prev) => {
+      if (!prev.length) return filtered
+      const incoming = new Map(filtered.map((p) => [p.versionId, p]))
+      const kept: PendingVersion[] = []
+      for (const p of prev) {
+        const next = incoming.get(p.versionId)
+        if (!next) continue
+        kept.push(next)
+        incoming.delete(p.versionId)
+      }
+      for (const p of filtered) {
+        if (!incoming.has(p.versionId)) continue
+        kept.push(p)
+        incoming.delete(p.versionId)
+      }
+      return kept
+    })
+  }, [])
 
   useEffect(() => {
     if (!startupReady) return
@@ -202,7 +251,7 @@ export default function App() {
       setActionError(message)
       setStorageOffline(true)
       setBrowseGalleryAwaiting(false)
-      setQueuePaused(true)
+      setDownloadQueueState({ items: getDownloadQueueSnapshot().items, paused: true })
       setBackgroundStatus(null)
       setBusy(null)
       setSyncProgress(null)
@@ -215,7 +264,7 @@ export default function App() {
       setSettings(next)
       if (!next.nightMode) setBrowseGalleryAwaiting(false)
       else if (!hasEnabledWatchRulesRef.current) setBrowseGalleryAwaiting(false)
-      if (next.crawlAutoDownload === false) setQueuePaused(true)
+      if (next.crawlAutoDownload === false) setDownloadQueueState({ items: getDownloadQueueSnapshot().items, paused: true })
     })
   }, [])
 
@@ -287,10 +336,11 @@ export default function App() {
         typeof syncDiskOrOpts === 'boolean' ? { syncDisk: syncDiskOrOpts } : { ...syncDiskOrOpts }
       if (options.syncDisk) setSyncProgress(null)
       const inv = await window.api.getInventory(options)
-      setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+      startTransition(() => {
+        setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+      })
       const q = await window.api.reconcileDownloadQueue()
-      setQueue(q.items)
-      setQueuePaused(q.paused)
+      setDownloadQueueState({ items: q.items, paused: q.paused })
       if (options.syncDisk) {
         setSyncMessage(formatLibrarySyncSummary(inv, settings?.locale ?? 'en'))
         setSyncProgress(null)
@@ -306,13 +356,14 @@ export default function App() {
     async (options?: { syncDisk?: boolean; busyMessage?: string; busySubMessage?: string }) => {
       const run = async () => {
         try {
-          const [s, tags, watch, act, pend, def, inv, q] = await Promise.all([
+          const [s, tags, watch, act, pend, def, incompleteItems, inv, q] = await Promise.all([
             window.api.getSettings(),
             window.api.getTagRules(),
             window.api.getWatchRules(),
             window.api.getActivity(),
             window.api.getPending(),
             window.api.getDeferred(),
+            window.api.getIncomplete(),
             window.api.getInventory({ syncDisk: options?.syncDisk ?? false }),
             window.api.getDownloadQueue()
           ])
@@ -320,9 +371,12 @@ export default function App() {
           setTagRules(tags)
           setWatchRules(watch)
           setActivity(act)
-          setPending(pend)
+          applyPendingVersions(pend)
           setDeferred(def)
-          setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+          setIncomplete(incompleteItems)
+          startTransition(() => {
+            setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+          })
           if (options?.syncDisk) {
             setSyncMessage(formatLibrarySyncSummary(inv, s.locale ?? 'en'))
           } else if (inv.removedMissing > 0 || inv.repairedPreviews > 0) {
@@ -330,8 +384,7 @@ export default function App() {
           } else {
             setSyncMessage(null)
           }
-          setQueue(q.items)
-          setQueuePaused(q.paused)
+          setDownloadQueueState({ items: q.items, paused: q.paused })
           setStatus(await window.api.getScanStatus())
         } catch (err) {
           setActionError(err instanceof Error ? err.message : String(err))
@@ -344,7 +397,7 @@ export default function App() {
         await run()
       }
     },
-    [withBusy]
+    [withBusy, applyPendingVersions]
   )
 
   const refreshAfterScan = useCallback(async () => {
@@ -355,12 +408,12 @@ export default function App() {
         window.api.getScanStatus()
       ])
       setActivity(act)
-      setPending(pend)
+      applyPendingVersions(pend)
       setStatus(st)
     } catch {
       /* keep UI usable if scan follow-up IPC is slow */
     }
-  }, [])
+  }, [applyPendingVersions])
 
   useEffect(() => {
     if (!window.api) {
@@ -376,13 +429,14 @@ export default function App() {
         message: translate('en', 'load.starting'),
         subMessage: translate('en', 'load.loadingSettings')
       })
-      const [s, tags, watch, act, pend, def, inv] = await Promise.all([
+      const [s, tags, watch, act, pend, def, incompleteItems, inv] = await Promise.all([
         window.api.getSettings(),
         window.api.getTagRules(),
         window.api.getWatchRules(),
         window.api.getActivity(),
         window.api.getPending(),
         window.api.getDeferred(),
+        window.api.getIncomplete(),
         window.api.getInventory({ syncDisk: false })
       ])
       loadedLocale = s.locale ?? 'en'
@@ -391,14 +445,16 @@ export default function App() {
       setTagRules(tags)
       setWatchRules(watch)
       setActivity(act)
-      setPending(pend)
+      applyPendingVersions(pend)
       setDeferred(def)
-      setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+      setIncomplete(incompleteItems)
+      startTransition(() => {
+        setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+      })
       // Only await Civitai crawl UI when Harvest is on AND at least one rule can crawl.
       setBrowseGalleryAwaiting(Boolean(s.nightMode) && watch.some((r) => r.enabled))
       const q = await window.api.reconcileDownloadQueue()
-      setQueue(q.items)
-      setQueuePaused(q.paused || s.crawlAutoDownload === false)
+      setDownloadQueueState({ items: q.items, paused: q.paused || s.crawlAutoDownload === false })
       setStatus(await window.api.getScanStatus())
 
       // One continuous busy popup — single disk sync (import + verify). Do not split into
@@ -422,7 +478,9 @@ export default function App() {
         skipHashBackfill: true,
         skipIdentityBackfill: true
       })
-      setInventory((prev) => mergeInventoryPreserveIdentity(prev, synced.items))
+      startTransition(() => {
+        setInventory((prev) => mergeInventoryPreserveIdentity(prev, synced.items))
+      })
       setSyncMessage(formatLibrarySyncSummary(synced, loc))
       if (synced.storageError) {
         setStorageErrorModal(synced.storageError)
@@ -437,7 +495,7 @@ export default function App() {
         try {
           const s = await window.api.getSettings()
           setSettings(s)
-          setQueuePaused(true)
+          setDownloadQueueState({ items: getDownloadQueueSnapshot().items, paused: true })
         } catch {
           /* ignore */
         }
@@ -446,8 +504,7 @@ export default function App() {
         return
       }
       const qAfter = await window.api.reconcileDownloadQueue()
-      setQueue(qAfter.items)
-      setQueuePaused(qAfter.paused)
+      setDownloadQueueState({ items: qAfter.items, paused: qAfter.paused })
 
       // Keep overlay for session prep — do not reset progress to 0% / re-show Scanning disk.
       setBusy((prev) =>
@@ -483,9 +540,6 @@ export default function App() {
     let pendingProgressQueue: { items: DownloadQueueItem[]; paused: boolean } | null = null
     let inventoryRefreshTimer: number | null = null
 
-    const queueStructureKey = (q: { items: DownloadQueueItem[]; paused: boolean }) =>
-      `${q.paused}|${q.items.map((i) => `${i.id}:${i.status}:${i.manual ? 1 : 0}`).join(',')}`
-
     const applyQueueState = (q: { items: DownloadQueueItem[]; paused: boolean }) => {
       let needsInventory = false
       const hadActive = Array.from(prevQueueStatus.values()).some(
@@ -513,8 +567,7 @@ export default function App() {
       prevQueueStatus.clear()
       for (const item of q.items) prevQueueStatus.set(item.id, item.status)
 
-      setQueue(q.items)
-      setQueuePaused(q.paused)
+      setDownloadQueueState({ items: q.items, paused: q.paused })
       const hasActive = q.items.some((i) => i.status === 'queued' || i.status === 'downloading')
       if (needsInventory || (hadActive && !hasActive)) {
         if (inventoryRefreshTimer) window.clearTimeout(inventoryRefreshTimer)
@@ -529,6 +582,8 @@ export default function App() {
     let pendingVersionScanProgress: LibraryVersionScanProgress | null = null
     let activityFlushTimer: number | null = null
     const pendingActivityBatch: ActivityEntry[] = []
+    let crawlProgressTimer: number | null = null
+    let pendingCrawlProgress: CrawlProgressPayload | null | undefined
 
     const unsubs = [
       window.api.onActivity((e) => {
@@ -599,14 +654,17 @@ export default function App() {
         if (!updateBrowseOnCrawlRef.current) return
         // Skip heavy gallery state while user is on another tab (Browse is unmounted).
         if (tabRef.current !== 'watch') return
-        const result: WatchRuleTestResult = payload.result.crawlSource
-          ? payload.result
-          : { ...payload.result, crawlSource: 'night' }
+        const normalized: CrawlPagePayload = payload.result.crawlSource
+          ? payload
+          : {
+              ...payload,
+              result: { ...payload.result, crawlSource: 'night' }
+            }
         // Re-check quiet inside transition — a pending page can otherwise restore cards after 👁.
         startTransition(() => {
           if (!updateBrowseOnCrawlRef.current) return
           if (tabRef.current !== 'watch') return
-          setLiveCrawlBrowse(result)
+          setLiveCrawlBrowse((prev) => applyCrawlPageToLiveGallery(prev, normalized))
         })
       }),
       window.api.onCrawlBrowseReset(() => {
@@ -616,12 +674,7 @@ export default function App() {
         setBrowseGalleryAwaiting(hasEnabledWatchRulesRef.current)
       }),
       window.api.onCrawlProgress((payload) => {
-        // Status bar needs progress; defer React work when Browse is not visible.
-        if (tabRef.current === 'watch') {
-          setCrawlProgress(payload)
-        } else {
-          startTransition(() => setCrawlProgress(payload))
-        }
+        pendingCrawlProgress = payload
         if (
           payload?.phase === 'fetching' ||
           payload?.phase === 'fetching-tags' ||
@@ -644,9 +697,26 @@ export default function App() {
             pageQueued: prev?.pageQueued
           }))
         }
+        // Coalesce fetching ticks — status bar stays live enough without thrashing React.
+        if (payload?.phase === 'page-done' || payload?.phase === 'catalog-complete' || payload == null) {
+          if (crawlProgressTimer != null) {
+            window.clearTimeout(crawlProgressTimer)
+            crawlProgressTimer = null
+          }
+          setCrawlProgress(payload)
+          return
+        }
+        if (crawlProgressTimer != null) return
+        crawlProgressTimer = window.setTimeout(() => {
+          crawlProgressTimer = null
+          if (pendingCrawlProgress !== undefined) {
+            setCrawlProgress(pendingCrawlProgress)
+            pendingCrawlProgress = undefined
+          }
+        }, 500)
       }),
       window.api.onPendingVersions((pend) => {
-        startTransition(() => setPending(pend))
+        startTransition(() => applyPendingVersions(pend))
       }),
       window.api.onDeferredVersions((def) => {
         setDeferred(def)
@@ -654,6 +724,9 @@ export default function App() {
           lastQueueStructureKey = queueStructureKey(q)
           applyQueueState(q)
         })
+      }),
+      window.api.onIncompleteList((items) => {
+        setIncomplete(items)
       }),
       window.api.onDownloadQueue((q) => {
         const key = queueStructureKey(q)
@@ -675,8 +748,7 @@ export default function App() {
           const pending = pendingProgressQueue
           pendingProgressQueue = null
           if (pending) {
-            setQueue(pending.items)
-            setQueuePaused(pending.paused)
+            setDownloadQueueState({ items: pending.items, paused: pending.paused })
           }
         }, 900)
       }),
@@ -699,10 +771,11 @@ export default function App() {
       if (progressQueueTimer != null) window.clearTimeout(progressQueueTimer)
       if (versionScanProgressTimer != null) window.clearTimeout(versionScanProgressTimer)
       if (activityFlushTimer != null) window.clearTimeout(activityFlushTimer)
+      if (crawlProgressTimer != null) window.clearTimeout(crawlProgressTimer)
       if (inventoryRefreshTimer != null) window.clearTimeout(inventoryRefreshTimer)
       unsubs.forEach((u) => u())
     }
-  }, [refreshAfterScan, refreshInventory, withBusy])
+  }, [refreshAfterScan, refreshInventory, withBusy, applyPendingVersions])
 
   useEffect(() => {
     if (!settings) return
@@ -725,9 +798,6 @@ export default function App() {
   )
 
   const crawlScanning = status === 'scanning' || status === 'checking'
-  const hasPipelineQueue = queue.some(
-    (i) => i.status === 'queued' || i.status === 'downloading' || i.status === 'failed'
-  )
   const suppressIdlePipeline =
     !startupReady ||
     Boolean(busy) ||
@@ -832,8 +902,7 @@ export default function App() {
   const refreshDownloadQueueState = async () => {
     try {
       const q = await window.api.getDownloadQueue()
-      setQueue(q.items)
-      setQueuePaused(q.paused)
+      setDownloadQueueState({ items: q.items, paused: q.paused })
       setStatus(await window.api.getScanStatus())
     } catch {
       /* queue broadcast may have already updated state */
@@ -847,8 +916,7 @@ export default function App() {
     if (!nextManual) {
       try {
         const q = await window.api.reconcileDownloadQueue()
-        setQueue(q.items)
-        setQueuePaused(q.paused)
+        setDownloadQueueState({ items: q.items, paused: q.paused })
       } catch {
         await refreshDownloadQueueState()
       }
@@ -899,8 +967,7 @@ export default function App() {
     setClearQueueBusy(true)
     try {
       const result = await window.api.clearDownloadQueue()
-      setQueue(result.queue.items)
-      setQueuePaused(result.queue.paused)
+      setDownloadQueueState({ items: result.queue.items, paused: result.queue.paused })
       setSettings(result.settings)
       setStatus(await window.api.getScanStatus())
     } catch (err) {
@@ -935,48 +1002,120 @@ export default function App() {
     }
   }
 
-  const markBrowseModelBan = useCallback((modelId: number, banned: boolean) => {
-    setLiveCrawlBrowse((prev) => {
-      if (!prev) return prev
-      const idx = prev.sampleModels.findIndex((m) => m.id === modelId)
-      if (idx < 0) return prev
-      // Ban: drop the card immediately (avoid remapping thousands of models → UI freeze).
-      if (banned) {
-        const sampleModels = prev.sampleModels.slice()
-        sampleModels.splice(idx, 1)
-        return { ...prev, sampleModels }
+  const markBrowseModelBan = useCallback(
+    (
+      modelId: number,
+      banned: boolean,
+      stub?: {
+        name?: string
+        versionId?: number
+        type?: string
+        baseModel?: string
+        creator?: string
+        previewUrl?: string
+        pageUrl?: string
+        tags?: string[]
       }
-      const sampleModels = prev.sampleModels.slice()
-      sampleModels[idx] = { ...sampleModels[idx], isBanned: false }
-      return { ...prev, sampleModels }
-    })
+    ) => {
+      setLiveCrawlBrowse((prev) => {
+        const makeBanned = (base?: WatchRuleTestModel): WatchRuleTestModel => ({
+          id: modelId,
+          versionId: stub?.versionId ?? base?.versionId ?? 0,
+          name: stub?.name || base?.name || `Model #${modelId}`,
+          type: stub?.type || base?.type || 'LORA',
+          baseModel: stub?.baseModel ?? base?.baseModel ?? '',
+          previewUrl: stub?.previewUrl ?? base?.previewUrl,
+          previewUrls: stub?.previewUrl
+            ? [stub.previewUrl]
+            : base?.previewUrls ?? (base?.previewUrl ? [base.previewUrl] : []),
+          pageUrl: stub?.pageUrl ?? base?.pageUrl,
+          tags: stub?.tags ?? base?.tags ?? [],
+          creator: stub?.creator ?? base?.creator,
+          inInventory: false,
+          isBanned: true
+        })
+
+        if (!prev?.sampleModels?.length) {
+          if (!banned) return prev
+          return {
+            pageSize: 1,
+            currentPage: 1,
+            sampleModels: [makeBanned()],
+            baseModelsInResults: [],
+            tagsInResults: [],
+            enums: prev?.enums ?? { modelTypes: [], baseModels: [], sortOptions: [] },
+            crawlSource: prev?.crawlSource ?? 'night'
+          }
+        }
+        const idx = prev.sampleModels.findIndex((m) => m.id === modelId)
+        const sampleModels = prev.sampleModels.slice()
+        if (banned) {
+          if (idx >= 0) sampleModels[idx] = { ...sampleModels[idx], isBanned: true }
+          else sampleModels.push(makeBanned())
+          return { ...prev, sampleModels }
+        }
+        if (idx < 0) return prev
+        sampleModels[idx] = { ...sampleModels[idx], isBanned: false }
+        return { ...prev, sampleModels }
+      })
+    },
+    []
+  )
+
+  const jumpToGallery = useCallback((modelId: number, modelName?: string) => {
+    // Show List / Open in Library — pin model under All models, never Session.
+    setPreferLibrarySession(false)
+    setGalleryFocusModelId(modelId)
+    setGalleryFocusModelName(modelName ?? null)
+    setModelDetailTarget(null)
+    setTab('gallery')
   }, [])
 
-  const jumpToGallery = useCallback((modelId: number) => {
-    setTab('gallery')
-    window.setTimeout(() => setGalleryFocusModelId(modelId), 50)
+  const openModelDetail = useCallback((target: ModelDetailTarget) => {
+    setModelDetailTarget(target)
+  }, [])
+
+  const closeModelDetail = useCallback(() => {
+    setModelDetailTarget(null)
   }, [])
 
   const openTagFolders = useCallback((tag: string) => {
+    setModelDetailTarget(null)
     setTagsFocusSearch(tag)
     setTab('tags')
   }, [])
 
-  const clearGalleryFocusModel = useCallback(() => setGalleryFocusModelId(null), [])
+  const clearGalleryFocusModel = useCallback(() => {
+    setGalleryFocusModelId(null)
+    setGalleryFocusModelName(null)
+  }, [])
   const clearGalleryFocusTag = useCallback(() => setGalleryFocusCivitaiTag(null), [])
 
   /** Badge must match what New Versions actually lists (hide already-owned version rows). */
+  const ownedVersionIds = useMemo(
+    () => new Set(inventory.map((r) => r.versionId)),
+    [inventory]
+  )
+
   const pendingBadgeCount = useMemo(() => {
-    const ownedVersionIds = new Set(inventory.map((r) => r.versionId))
     const n = pending.filter((p) => !ownedVersionIds.has(p.versionId)).length
     return n || undefined
-  }, [pending, inventory])
+  }, [pending, ownedVersionIds])
 
   const pendingOwnedInventory = useMemo(() => {
     if (!pending.length) return [] as InventoryRecord[]
     const ids = new Set(pending.map((p) => p.modelId))
     return inventory.filter((r) => ids.has(r.modelId))
   }, [pending, inventory])
+
+  const nsfwByVersionId = useMemo(() => {
+    const map = new Map<number, boolean | undefined>()
+    for (const r of inventory) {
+      if (r.isNsfw === true || r.isNsfw === false) map.set(r.versionId, r.isNsfw)
+      else map.set(r.versionId, undefined)
+    }
+    return map
+  }, [inventory])
 
   // Browse was unmounted / gallery updates skipped while away — refresh snapshot when returning.
   useEffect(() => {
@@ -995,8 +1134,7 @@ export default function App() {
     try {
       setActionError(null)
       const result = await window.api.retryAllDeferred()
-      setQueue(result.queue.items)
-      setQueuePaused(result.queue.paused)
+      setDownloadQueueState({ items: result.queue.items, paused: result.queue.paused })
       setDeferred(result.deferred)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
@@ -1015,8 +1153,7 @@ export default function App() {
         await saveSettings({ crawlAutoDownload: true })
       }
       const state = await window.api.startDownloads()
-      setQueue(state.items)
-      setQueuePaused(state.paused)
+      setDownloadQueueState({ items: state.items, paused: state.paused })
       setStatus(await window.api.getScanStatus())
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
@@ -1040,7 +1177,9 @@ export default function App() {
         repairPreviews: true,
         syncDisk: false
       })
-      setInventory((prev) => mergeInventoryPreserveIdentity(prev, result.items))
+      startTransition(() => {
+        setInventory((prev) => mergeInventoryPreserveIdentity(prev, result.items))
+      })
       const ratingCount = result.repairedRatings ?? 0
       if (result.repairedPreviews > 0 || ratingCount > 0) {
         const parts: string[] = []
@@ -1078,8 +1217,7 @@ export default function App() {
   const refreshQueueOnly = useCallback(async () => {
     try {
       const q = await window.api.getDownloadQueue()
-      setQueue(q.items)
-      setQueuePaused(q.paused)
+      setDownloadQueueState({ items: q.items, paused: q.paused })
     } catch {
       /* keep existing queue */
     }
@@ -1090,6 +1228,7 @@ export default function App() {
   }, [])
 
   const removePendingModelLocal = useCallback((modelId: number) => {
+    bannedPendingModelIdsRef.current.add(modelId)
     setPending((prev) => prev.filter((p) => p.modelId !== modelId))
   }, [])
 
@@ -1120,7 +1259,6 @@ export default function App() {
   const uiExtended = settings?.uiMode === 'extended'
   const showBusyOverlay = (Boolean(busy) || !settings) && !storageErrorModal
 
-  const activeDownloads = queue.filter((q) => q.status === 'downloading' || q.status === 'queued').length
   const downloadModeManual = settings?.manualQueueMode ?? false
   const downloadsPaused = settings?.crawlAutoDownload === false
   const showDownloadsToggle = outputFoldersReady
@@ -1138,19 +1276,57 @@ export default function App() {
     status === 'checking' ||
     status === 'downloading' ||
     Boolean(crawlProgress) ||
-    queue.some(
-      (i) => i.status === 'downloading' || i.status === 'queued' || i.status === 'failed'
-    ) ||
+    hasStatusPipeline ||
     unlockTodayCount > 0 ||
     (startupReady && Boolean(settings?.nightMode) && !storageOffline && !busy)
 
-  const tabs: { id: Tab; label: string; badge?: number; badgePrefix?: string }[] = [
-    { id: 'watch', label: m.tabs.browse, badge: activeDownloads || undefined },
+  const browsePlannedDownloadCount = useMemo(() => {
+    const fromStats =
+      crawlPageMeta?.galleryStats?.missing ?? crawlProgress?.galleryStats?.missing ?? null
+    if (fromStats != null) return fromStats
+
+    const models = liveCrawlBrowse?.sampleModels
+    if (!models?.length) return 0
+    const ownedVersions = ownedVersionIds
+    const ownedModels = new Set(inventory.map((r) => r.modelId).filter((id) => id > 0))
+    const hidden = settings?.hiddenTags ?? []
+    const deferredIds = new Set(deferred.map((d) => d.versionId))
+    let n = 0
+    for (const m of models) {
+      if (m.inInventory || ownedVersions.has(m.versionId)) continue
+      if (m.isBanned) continue
+      if (hidden.some((t) => (m.tags ?? []).some((x) => x.toLowerCase() === t.toLowerCase()))) {
+        continue
+      }
+      if (m.isEarlyAccess || deferredIds.has(m.versionId)) continue
+      if (ownedModels.has(m.id)) continue // awaiting confirm — not auto-planned
+      n++
+    }
+    return n
+  }, [
+    crawlPageMeta?.galleryStats?.missing,
+    crawlProgress?.galleryStats?.missing,
+    liveCrawlBrowse?.sampleModels,
+    ownedVersionIds,
+    inventory,
+    settings?.hiddenTags,
+    deferred
+  ])
+
+  const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
+    {
+      id: 'watch',
+      label: m.tabs.browse,
+      badge: browsePlannedDownloadCount || undefined,
+      title: m.tabs.browseBadgeTitle
+    },
     { id: 'gallery', label: m.tabs.library, badge: newLibraryCount || undefined, badgePrefix: '+' },
-    { id: 'download', label: m.tabs.download },
-    { id: 'tags', label: m.tabs.tagFolders },
     { id: 'pending', label: m.tabs.newVersions, badge: pendingBadgeCount },
     { id: 'awaiting', label: m.tabs.awaitingAccess, badge: deferred.length || undefined },
+    { id: 'incomplete', label: m.tabs.incomplete, badge: incomplete.length || undefined },
+    { id: 'tags', label: m.tabs.tagFolders }
+  ]
+  const endTabs: { id: Tab; label: string }[] = [
     { id: 'activity', label: m.tabs.activity },
     { id: 'help', label: m.tabs.help },
     { id: 'settings', label: m.tabs.settings }
@@ -1337,11 +1513,21 @@ export default function App() {
 
       <nav className="tabs">
         <div className="tabs-list">
-          {tabs.map((t) => (
+          {mainTabs.map((t) => (
             <button
               key={t.id}
+              type="button"
               className={`tab ${tab === t.id ? 'active' : ''}`}
-              onClick={() => setTab(t.id)}
+              title={t.title}
+              onClick={() => {
+                setModelDetailTarget(null)
+                if (t.id === 'gallery') {
+                  // Badge = new downloads since last Library visit → open Session filter.
+                  // Capture before tab change zeros newLibraryCount.
+                  if (newLibraryCount > 0) setPreferLibrarySession(true)
+                }
+                setTab(t.id)
+              }}
             >
               {t.label}
               {t.badge != null && t.badge > 0 ? (
@@ -1350,6 +1536,21 @@ export default function App() {
                   {t.badge}
                 </span>
               ) : null}
+            </button>
+          ))}
+        </div>
+        <div className="tabs-list tabs-list-end">
+          {endTabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`tab ${tab === t.id ? 'active' : ''}`}
+              onClick={() => {
+                setModelDetailTarget(null)
+                setTab(t.id)
+              }}
+            >
+              {t.label}
             </button>
           ))}
         </div>
@@ -1368,8 +1569,6 @@ export default function App() {
         shouldShowDownloadStrip(settings.downloadStripVisibility ?? 'off', tab) && (
           <div className="downloads-strip-dock">
             <ActiveDownloadsStrip
-              queue={queue}
-              queuePaused={queuePaused}
               deferred={deferred}
               stripLayout={settings.downloadStripLayout ?? 'minimal'}
               banFunctionMode={settings.banFunctionMode ?? false}
@@ -1377,28 +1576,90 @@ export default function App() {
               clearQueueBusy={clearQueueBusy}
               onRetryFailed={async (id) => {
                 const state = await window.api.retryFailedDownload(id)
-                setQueue(state.items)
-                setQueuePaused(state.paused)
+                setDownloadQueueState({ items: state.items, paused: state.paused })
                 if (!state.paused) setStatus(await window.api.getScanStatus())
               }}
               onDismissFailed={async (id) => {
                 const state = await window.api.dismissDownload(id)
-                setQueue(state.items)
-                setQueuePaused(state.paused)
+                setDownloadQueueState({ items: state.items, paused: state.paused })
               }}
               onPrioritizeDownload={async (id) => {
                 const state = await window.api.prioritizeDownload(id)
-                setQueue(state.items)
-                setQueuePaused(state.paused)
+                setDownloadQueueState({ items: state.items, paused: state.paused })
                 if (!state.paused) setStatus(await window.api.getScanStatus())
               }}
               onBrowseModelBanChange={markBrowseModelBan}
+              onJumpToGallery={jumpToGallery}
+              onOpenModelDetail={openModelDetail}
             />
           </div>
         )}
 
-      <main className={`content ${tab === 'gallery' ? 'content-gallery' : ''}`}>
-        {tab === 'gallery' ? (
+      <main className={`content ${tab === 'gallery' && !modelDetailTarget ? 'content-gallery' : ''}${modelDetailTarget ? ' content-model-detail' : ''}`}>
+        {modelDetailTarget ? (
+          <ModelDetailPage
+            target={modelDetailTarget}
+            onClose={closeModelDetail}
+            ownedVersionIds={[...ownedVersionIds]}
+            ownedRecords={inventory.filter((r) => {
+              const mid =
+                modelDetailTarget.kind === 'library'
+                  ? modelDetailTarget.record.modelId
+                  : modelDetailTarget.modelId
+              return r.modelId === mid && r.modelId > 0
+            })}
+            onShowInLibrary={jumpToGallery}
+            onOpenTagFolders={openTagFolders}
+            onBannedChange={(modelId, banned) => markBrowseModelBan(modelId, banned)}
+            onInventoryRefresh={refreshInventory}
+            onQueueRefresh={refreshQueueOnly}
+            onShowInFolder={(path) => void window.api.showInFolder(path)}
+            onSelectLibraryRecord={(rec) => {
+              setModelDetailTarget((prev) =>
+                prev?.kind === 'library'
+                  ? {
+                      ...prev,
+                      record: rec,
+                      siblingRecords: inventory.filter(
+                        (r) =>
+                          r.modelId === rec.modelId &&
+                          r.versionId !== rec.versionId &&
+                          r.modelId > 0
+                      )
+                    }
+                  : prev
+              )
+            }}
+            onDelete={
+              modelDetailTarget.kind === 'library'
+                ? () => {
+                    const rec = modelDetailTarget.record
+                    const ok = window.confirm(
+                      translate(settings.locale ?? 'en', 'gallery.deleteConfirm', {
+                        name: rec.modelName
+                      })
+                    )
+                    if (!ok) return
+                    void (async () => {
+                      await window.api.deleteInventoryVersion(rec.versionId, { ban: true })
+                      markBrowseModelBan(rec.modelId, true, {
+                        name: rec.modelName,
+                        versionId: rec.versionId,
+                        baseModel: rec.baseModel,
+                        creator: rec.author,
+                        previewUrl: rec.previewPath
+                          ? window.api.toMediaUrl(rec.previewPath)
+                          : undefined
+                      })
+                      closeModelDetail()
+                      await refreshInventory()
+                    })()
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+        {!modelDetailTarget && tab === 'gallery' ? (
           <div>
             <GalleryTab
               inventory={inventory}
@@ -1410,6 +1671,7 @@ export default function App() {
               onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
               onSaveTagRules={saveTagRules}
               focusModelId={galleryFocusModelId}
+              focusModelName={galleryFocusModelName}
               onFocusHandled={clearGalleryFocusModel}
               focusCivitaiTag={galleryFocusCivitaiTag}
               onFocusTagHandled={clearGalleryFocusTag}
@@ -1423,29 +1685,25 @@ export default function App() {
               checkpointFolder={settings.checkpointOutputFolder}
               sessionDownloadIds={sessionDownloadIds}
               highlightVersionIds={libraryHighlightIds}
+              preferSessionFilter={preferLibrarySession}
+              onPreferSessionHandled={() => setPreferLibrarySession(false)}
+              viewPrefs={settings.preserveFilters ? libraryViewPrefs : undefined}
+              onViewPrefsChange={settings.preserveFilters ? setLibraryViewPrefs : undefined}
               isActive
               resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
               resultsPageSize={settings.resultsPageSize ?? 100}
+              onOpenModelDetail={openModelDetail}
             />
           </div>
         ) : null}
-        {tab === 'download' ? (
-          <DownloadTab
-            settings={settings}
-            tagRules={tagRules}
-            onRefresh={refresh}
-            onOpenTagSettings={() => setTab('settings')}
-          />
-        ) : null}
-        {tab === 'watch' ? (
+        {!modelDetailTarget && tab === 'watch' ? (
           <WatchRulesTab
             rules={watchRules}
             onSave={saveWatchRules}
             settings={settings}
             tagRules={tagRules}
             inventory={inventory}
-            queue={queue}
-            queuePaused={queuePaused}
+            ownedVersionIds={ownedVersionIds}
             status={status}
             activity={activity}
             deferred={deferred}
@@ -1464,9 +1722,12 @@ export default function App() {
             onBrowseSnapshot={applyBrowseSnapshot}
             browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
             onSaveStateChange={setWatchRulesSaveState}
+            onOpenModelDetail={openModelDetail}
+            browseViewPrefs={settings.preserveFilters ? browseViewPrefs : undefined}
+            onBrowseViewPrefsChange={settings.preserveFilters ? setBrowseViewPrefs : undefined}
           />
         ) : null}
-        {tab === 'tags' ? (
+        {!modelDetailTarget && tab === 'tags' ? (
           <TagsTab
             rules={tagRules}
             tagSuggestions={tagSuggestions}
@@ -1479,12 +1740,13 @@ export default function App() {
             focusSearchTag={tagsFocusSearch}
             onFocusSearchHandled={() => setTagsFocusSearch(null)}
             onFilterLibrary={(tag) => {
+              setPreferLibrarySession(false)
               setGalleryFocusCivitaiTag(tag)
               setTab('gallery')
             }}
           />
         ) : null}
-        {tab === 'pending' ? (
+        {!modelDetailTarget && tab === 'pending' ? (
           <PendingTab
             pending={pending}
             inventory={pendingOwnedInventory}
@@ -1496,22 +1758,46 @@ export default function App() {
             onPendingRemoved={removePendingVersionLocal}
             onPendingModelRemoved={removePendingModelLocal}
             onScanLibrary={scanLibraryVersions}
-            onOpenInLibrary={(modelId) => {
-              setTab('gallery')
-              window.setTimeout(() => setGalleryFocusModelId(modelId), 50)
+            banFunctionMode={settings.banFunctionMode ?? false}
+            onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+            onBrowseModelBanned={(modelId, stub) => {
+              markBrowseModelBan(modelId, true, stub)
             }}
+            onOpenInLibrary={jumpToGallery}
+            onOpenModelDetail={openModelDetail}
           />
         ) : null}
-        {tab === 'awaiting' ? (
+        {!modelDetailTarget && tab === 'awaiting' ? (
           <DeferredTab
             deferred={deferred}
             domain="red"
             hasApiKey={settings.hasApiKey}
             onRefresh={refresh}
+            onBrowseModelBanned={(modelId, stub) => {
+              markBrowseModelBan(modelId, true, stub)
+            }}
+            banFunctionMode={settings.banFunctionMode ?? false}
+            onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+            onShowInLibrary={jumpToGallery}
+            onOpenModelDetail={openModelDetail}
             isActive
           />
         ) : null}
-        {tab === 'activity' ? (
+        {!modelDetailTarget && tab === 'incomplete' ? (
+          <IncompleteTab
+            items={incomplete}
+            onRefresh={async () => {
+              setIncomplete(await window.api.getIncomplete())
+            }}
+            onQueueRefresh={refreshQueueOnly}
+            onBrowseModelBanned={(modelId, stub) => {
+              markBrowseModelBan(modelId, true, stub)
+            }}
+            onOpenModelDetail={openModelDetail}
+            isActive
+          />
+        ) : null}
+        {!modelDetailTarget && tab === 'activity' ? (
           <ActivityTab
             entries={activity}
             status={status}
@@ -1519,13 +1805,16 @@ export default function App() {
             watchRules={watchRules}
             sessionStartedAt={APP_SESSION_STARTED_AT}
             onJumpToModel={(modelId) => {
+              setPreferLibrarySession(false)
               setGalleryFocusModelId(modelId)
               setTab('gallery')
             }}
           />
         ) : null}
-        {tab === 'help' ? <HelpTab onOpenSettings={() => setTab('settings')} /> : null}
-        {tab === 'settings' ? (
+        {!modelDetailTarget && tab === 'help' ? (
+          <HelpTab onOpenSettings={() => setTab('settings')} />
+        ) : null}
+        {!modelDetailTarget && tab === 'settings' ? (
           <SettingsTab
             settings={settings}
             onSave={saveSettings}
@@ -1538,11 +1827,9 @@ export default function App() {
 
       <GlobalStatusBar
         status={status}
-        queue={queue}
-        queuePaused={queuePaused}
         uiExtended={uiExtended}
         deferredDownloads={deferred}
-        inventory={inventory}
+        nsfwByVersionId={nsfwByVersionId}
         extraMessage={
           storageOffline
             ? null

@@ -21,8 +21,8 @@ import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incr
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { enrichTestModelPreviews } from './preview-enrich'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
-import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, type RulePageQueueResult } from './rule-queue'
-import { DownloadQueue } from './download-queue'
+import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, enrichPendingVersionPreviews, type RulePageQueueResult } from './rule-queue'
+import { DownloadQueue, AUTO_QUEUE_PIPELINE_CAP } from './download-queue'
 import * as inventory from './inventory'
 import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
@@ -33,6 +33,7 @@ import { sendToRenderer } from './window-notify'
 import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, modelMatchesRuleKeywords } from '../shared/utils'
 import { watchRuleCrawlSignature, watchRulesCrawlChanged } from '../shared/watch-rule-crawl'
 import { syncInventoryWithDiskAsync, wasLibrarySyncedRecently } from './library-sync'
+import { recheckIncompleteModels, emitIncompleteList } from './incomplete-resolve'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -151,6 +152,53 @@ export class ScanScheduler {
       if (!prev) order.push(key)
       bucket.set(key, mergedModel)
     }
+  }
+
+  /**
+   * After Incomplete → download queue: put the model back into the Browse gallery
+   * so the Browse tab badge (planned New / missing) and Queued card state update.
+   */
+  promoteIncompleteQueuedToBrowse(model: WatchRuleTestModel): void {
+    if (!model?.id || !model.versionId) return
+    const rules = getWatchRules()
+    const rule = rules.find((r) => r.enabled) ?? rules[0]
+    const ruleId = rule?.id ?? '__incomplete__'
+    this.seedBrowseModels(ruleId, [model])
+    if (rule) {
+      this.emitBrowseGallerySnapshot(rule, {
+        pageQueued: 1,
+        pageModelsOnPage: 1
+      })
+      return
+    }
+    const merged = this.crawlBrowseModels()
+    const stats = this.browseGalleryStats(merged)
+    const result = buildWatchRuleTestResult(
+      [model],
+      {
+        pageSize: 1,
+        currentPage: 1,
+        nextCursor: null,
+        totalItems: merged.length
+      },
+      this.browseEnumsOrFallback()
+    )
+    result.crawlSource = 'night'
+    this.emit('crawl:page', {
+      ruleId,
+      ruleName: 'Incomplete',
+      pageNumber: 1,
+      pageModelsAdded: 1,
+      pageModelsOnPage: 1,
+      galleryTotal: merged.length,
+      galleryStats: stats,
+      pageQueued: 1,
+      galleryMode: getSettings().updateBrowseOnCrawl === false ? 'full' : 'delta',
+      result:
+        getSettings().updateBrowseOnCrawl === false
+          ? { ...result, sampleModels: [] }
+          : result
+    })
   }
 
   /** Queue eligible models from live browse gallery into the download pipeline. */
@@ -358,6 +406,7 @@ export class ScanScheduler {
         galleryStats: stats,
         catalogComplete: meta?.catalogComplete,
         pageQueued: meta?.pageQueued ?? 0,
+        galleryMode: 'full',
         result: emptyResult
       })
       return true
@@ -384,6 +433,7 @@ export class ScanScheduler {
       galleryStats: this.browseGalleryStats(merged),
       catalogComplete: meta?.catalogComplete,
       pageQueued: meta?.pageQueued ?? 0,
+      galleryMode: 'full',
       result
     })
     return true
@@ -408,27 +458,28 @@ export class ScanScheduler {
     }, Math.max(50, delayMs))
   }
 
-  /** Top up download queue only when empty (e.g. after dismiss). Never refill mid-drain. */
+  /** Top up auto-queue toward AUTO_QUEUE_PIPELINE_CAP when slots free. */
   maybeFillDownloadQueue(): void {
     if (!getSettings().nightMode) {
       this.clearDeferredPipelineFill()
       return
     }
-    const pipeline = this.downloadQueue
+    const autoPipeline = this.downloadQueue
       .getItems()
-      .filter((i) => i.status === 'queued' || i.status === 'downloading').length
-    // Refilling at <5 caused the UI count loop: 8→7→6→5→4→8…
-    if (pipeline > 0) {
+      .filter(
+        (i) =>
+          (i.status === 'queued' || i.status === 'downloading') && i.manual !== true
+      ).length
+    if (autoPipeline >= AUTO_QUEUE_PIPELINE_CAP) {
       this.clearDeferredPipelineFill()
       if (shouldCrawlAutoDownload()) this.maybeStartAutoDownloads()
       return
     }
     const now = Date.now()
     const sinceFill = now - this.lastPipelineFillAt
-    if (sinceFill < 12_000) {
-      // Fast downloads emptied the pipeline before cooldown — without a catch-up,
-      // remaining gallery "New" models stayed unqueued until the next crawl peek.
-      this.scheduleDeferredPipelineFill(12_000 - sinceFill)
+    // Short debounce avoids thrash when many items finish in a burst.
+    if (sinceFill < 2_500) {
+      this.scheduleDeferredPipelineFill(2_500 - sinceFill)
       return
     }
     this.clearDeferredPipelineFill()
@@ -651,7 +702,31 @@ export class ScanScheduler {
     if (this.pendingVersions.length !== before) {
       this.emit('pending:versions', this.pendingVersions)
     }
+    this.schedulePendingPreviewEnrich()
     return [...this.pendingVersions]
+  }
+
+  private pendingPreviewEnrichBusy = false
+  private pendingPreviewEnrichKey = ''
+
+  /** One-shot (per pending set) fix so Updates cards show each version’s own preview. */
+  private schedulePendingPreviewEnrich(): void {
+    const key = this.pendingVersions
+      .map((p) => p.versionId)
+      .sort((a, b) => a - b)
+      .join(',')
+    if (!key || key === this.pendingPreviewEnrichKey || this.pendingPreviewEnrichBusy) return
+    this.pendingPreviewEnrichBusy = true
+    void enrichPendingVersionPreviews(this.pool, this.pendingVersions, (pending) => {
+      this.pendingVersions = pending
+      this.emit('pending:versions', this.pendingVersions)
+    })
+      .then(() => {
+        this.pendingPreviewEnrichKey = key
+      })
+      .finally(() => {
+        this.pendingPreviewEnrichBusy = false
+      })
   }
 
   private startupPromise: Promise<void> | null = null
@@ -783,7 +858,44 @@ export class ScanScheduler {
         this.log('info', `Early access ready — re-queued ${count} model(s) for download`)
         this.maybeStartAutoDownloads()
       }
+      void this.runIncompleteRecheckIfDue()
     }, intervalMs)
+  }
+
+  private incompleteRecheckBusy = false
+
+  private async runIncompleteRecheckIfDue(): Promise<void> {
+    if (this.incompleteRecheckBusy) return
+    if (inventory.getAllIncompleteModels().length === 0) return
+    this.incompleteRecheckBusy = true
+    try {
+      const { checked, resolved } = await recheckIncompleteModels(this.pool, this.window)
+      if (resolved > 0) {
+        this.log(
+          'info',
+          `Incomplete: API restored version data for ${resolved}/${checked} model(s) — open Incomplete tab to download`,
+          undefined,
+          { source: 'system' }
+        )
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.log('warn', `Incomplete recheck failed: ${msg}`, undefined, { source: 'system' })
+    } finally {
+      this.incompleteRecheckBusy = false
+    }
+  }
+
+  getIncompleteModels() {
+    return inventory.getAllIncompleteModels()
+  }
+
+  async recheckIncompleteModels(force = false) {
+    return recheckIncompleteModels(this.pool, this.window, { force })
+  }
+
+  notifyIncompleteList(): void {
+    emitIncompleteList(this.window)
   }
 
   onSettingsChanged(): void {
@@ -1040,10 +1152,14 @@ export class ScanScheduler {
 
   private browseGalleryStats(models: WatchRuleTestModel[]): import('../shared/types').BrowseGalleryStats {
     const hidden = getSettings().hiddenTags ?? []
+    const ownedModelIds = new Set(
+      inventory.getAllVersions().map((r) => r.modelId).filter((id) => id > 0)
+    )
     let owned = 0
     let excluded = 0
     let skipTag = 0
     let awaiting = 0
+    let awaitingConfirm = 0
     let missing = 0
     for (const m of models) {
       if (m.inInventory) {
@@ -1062,6 +1178,10 @@ export class ScanScheduler {
         awaiting++
         continue
       }
+      if (ownedModelIds.has(m.id)) {
+        awaitingConfirm++
+        continue
+      }
       missing++
     }
     return {
@@ -1069,6 +1189,7 @@ export class ScanScheduler {
       excluded,
       skipTag,
       awaiting,
+      awaitingConfirm,
       missing,
       total: models.length
     }
@@ -1094,6 +1215,10 @@ export class ScanScheduler {
       pageModels = page.sampleModels
     } else if (page.rawModels.length > 0) {
       pageModels = buildSampleModels(page.rawModels, client, filter)
+    }
+    // Incomplete registrations happen inside buildSampleModels — refresh Incomplete tab badge.
+    if (inventory.getAllIncompleteModels().length > 0) {
+      emitIncompleteList(this.window)
     }
 
     const pageHasApiData =
@@ -1129,8 +1254,13 @@ export class ScanScheduler {
       }
     }
 
-    const emitGalleryPage = (modelsForUi: WatchRuleTestModel[], pageModelsAdded: number): void => {
-      const galleryStats = this.browseGalleryStats(modelsForUi)
+    const emitGalleryPage = (
+      cards: WatchRuleTestModel[],
+      pageModelsAdded: number,
+      galleryMode: 'delta' | 'full' = 'delta'
+    ): void => {
+      const galleryNow = this.crawlBrowseModels(rule.id)
+      const galleryStats = this.browseGalleryStats(galleryNow)
       const quiet = source === 'night' && getSettings().updateBrowseOnCrawl === false
 
       // Quiet harvest: still emit page meta + stats so the Browse progress bar updates,
@@ -1142,7 +1272,7 @@ export class ScanScheduler {
             pageSize: page.pageModels,
             currentPage: pageNumber,
             nextCursor: page.nextCursor ?? null,
-            totalItems: modelsForUi.length
+            totalItems: galleryNow.length
           },
           this.browseEnumsOrFallback()
         )
@@ -1154,17 +1284,18 @@ export class ScanScheduler {
           pageNumber,
           pageModelsAdded,
           pageModelsOnPage: pageModels.length,
-          galleryTotal: modelsForUi.length,
+          galleryTotal: galleryNow.length,
           galleryStats,
           catalogComplete,
           hasMorePages: morePages,
           pageQueued: page.queued,
+          galleryMode: 'full',
           result: emptyResult
         })
         return
       }
 
-      if (modelsForUi.length === 0) {
+      if (cards.length === 0 && galleryNow.length === 0) {
         if (!pageHasApiData) return
         const emptyResult = buildWatchRuleTestResult(
           [],
@@ -1189,23 +1320,24 @@ export class ScanScheduler {
           catalogComplete,
           hasMorePages: morePages,
           pageQueued: page.queued,
+          galleryMode: 'full',
           result: emptyResult
         })
         return
       }
 
       const result = buildWatchRuleTestResult(
-        modelsForUi,
+        cards,
         {
-          pageSize: page.pageModels || modelsForUi.length,
+          pageSize: page.pageModels || cards.length,
           currentPage: pageNumber,
           nextCursor: page.nextCursor ?? null,
-          totalItems: modelsForUi.length
+          totalItems: galleryNow.length
         },
         this.browseEnumsOrFallback()
       )
       result.crawlSource = source
-      result.tagsInResults = aggregateResultTags(modelsForUi)
+      result.tagsInResults = aggregateResultTags(cards)
 
       const payload: CrawlPagePayload = {
         ruleId: rule.id,
@@ -1213,19 +1345,19 @@ export class ScanScheduler {
         pageNumber,
         pageModelsAdded,
         pageModelsOnPage: pageModels.length,
-        galleryTotal: modelsForUi.length,
+        galleryTotal: galleryNow.length,
         galleryStats,
         catalogComplete,
         hasMorePages: morePages,
         pageQueued: page.queued,
+        galleryMode,
         result
       }
       this.emit('crawl:page', payload)
     }
 
-    const merged = this.crawlBrowseModels(rule.id)
-    const modelsForUi = merged.length > 0 ? merged : pageModels
-    emitGalleryPage(modelsForUi, added)
+    // Live Browse: send only this page's cards; renderer merges. Snapshots use galleryMode full.
+    emitGalleryPage(pageModels.length > 0 ? pageModels : [], added, 'delta')
 
     if (pageModels.length > 0) {
       void (async () => {
@@ -1243,7 +1375,7 @@ export class ScanScheduler {
           const prev = bucket.get(key)
           bucket.set(key, prev ? preferBrowseModel(prev, m) : m)
         }
-        emitGalleryPage(this.crawlBrowseModels(rule.id), 0)
+        emitGalleryPage(pageModels, 0, 'delta')
       })().catch((err) => {
         const msg = err instanceof Error ? err.message : String(err)
         this.log('warn', `Preview enrich failed on page ${pageNumber}: ${msg}`, rule.id, {
@@ -2159,15 +2291,105 @@ export class ScanScheduler {
     }
   }
 
+  /**
+   * Keep the model visible in Browse as banned (do not remove the card).
+   * If it was never in the gallery (e.g. Incomplete-only), seed a banned stub.
+   */
+  markModelBannedInBrowseGallery(
+    modelId: number,
+    hint?: {
+      modelName?: string
+      versionId?: number
+      modelType?: string
+      baseModel?: string
+      author?: string
+      previewUrl?: string
+      pageUrl?: string
+      sourceDomain?: CivitaiDomain
+      tags?: string[]
+    }
+  ): void {
+    if (modelId <= 0) return
+    let found = false
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const [key, m] of bucket) {
+        if (m.id !== modelId) continue
+        bucket.set(key, { ...m, isBanned: true })
+        found = true
+      }
+    }
+    if (!found) {
+      const versionId = hint?.versionId && hint.versionId > 0 ? hint.versionId : 0
+      const name = hint?.modelName?.trim() || `Model #${modelId}`
+      const stub: WatchRuleTestModel = {
+        id: modelId,
+        versionId,
+        name,
+        type: hint?.modelType || 'LORA',
+        baseModel: hint?.baseModel || '',
+        previewUrl: hint?.previewUrl,
+        previewUrls: hint?.previewUrl ? [hint.previewUrl] : [],
+        pageUrl: hint?.pageUrl,
+        tags: hint?.tags ?? [],
+        creator: hint?.author,
+        inInventory: false,
+        isBanned: true,
+        sourceDomain: hint?.sourceDomain
+      }
+      const allRules = getWatchRules()
+      const rule = allRules.find((r) => r.enabled) ?? allRules[0]
+      this.seedBrowseModels(rule?.id ?? '__banned__', [stub])
+    }
+    const enabled = getWatchRules().filter((r) => r.enabled)
+    const models = this.crawlBrowseModels().filter((m) => m.id === modelId)
+    const stats = this.browseGalleryStats(this.crawlBrowseModels())
+    const rule = enabled[0] ?? getWatchRules()[0]
+    const result = buildWatchRuleTestResult(
+      models,
+      {
+        pageSize: models.length,
+        currentPage: 1,
+        nextCursor: null,
+        totalItems: this.crawlBrowseModels().length
+      },
+      this.browseEnumsOrFallback()
+    )
+    result.crawlSource = 'night'
+    // Delta only — avoid quiet-harvest "full" snapshot wiping the live Browse gallery.
+    this.emit('crawl:page', {
+      ruleId: rule?.id ?? '__banned__',
+      ruleName: rule?.name ?? 'Banned',
+      pageNumber: 1,
+      pageModelsAdded: models.length,
+      pageModelsOnPage: models.length,
+      galleryTotal: this.crawlBrowseModels().length,
+      galleryStats: stats,
+      galleryMode: 'delta',
+      result
+    })
+  }
+
   banModel(modelId: number, modelName = ''): void {
+    const pending = inventory.getAllPendingVersions().find((p) => p.modelId === modelId)
+    const incomplete = inventory.getIncompleteModel(modelId)
     const deleted = deleteModelFromLibrary(modelId)
     inventory.banModel(modelId, modelName || deleted[0]?.modelName || '')
     this.dismissPendingForModel(modelId)
-    this.removeModelFromBrowseGallery(modelId)
+    this.markModelBannedInBrowseGallery(modelId, {
+      modelName: modelName || pending?.modelName || incomplete?.modelName || deleted[0]?.modelName,
+      versionId: pending?.versionId ?? incomplete?.resolvedVersionId,
+      modelType: incomplete?.modelType,
+      baseModel: pending?.baseModel || incomplete?.baseModel,
+      author: pending?.author || incomplete?.author,
+      previewUrl: pending?.previewUrl || incomplete?.previewUrl,
+      pageUrl: incomplete?.pageUrl,
+      sourceDomain: incomplete?.sourceDomain,
+      tags: incomplete?.tags
+    })
     if (deleted.length > 0) {
       this.log('info', `Deleted and excluded: ${modelName || modelId}`)
     } else {
-      this.log('info', `Excluded model ${modelId} from future downloads`)
+      this.log('info', `Excluded model ${modelId} from downloads`)
     }
   }
 

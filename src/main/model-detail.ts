@@ -27,12 +27,22 @@ export async function fetchCivitaiModelDetail(
   const swarmTriggers = trainedWordsFromSwarm(swarmPath)
   const apiTriggers = version.trainedWords?.map((w) => w.trim()).filter(Boolean) ?? []
 
-  const versions = (model.modelVersions ?? []).map((v) => ({
-    id: v.id,
-    name: v.name,
-    baseModel: v.baseModel,
-    createdAt: v.createdAt
-  }))
+  const versions = (model.modelVersions ?? []).map((v) => {
+    const vStats = pickVersionStats(v)
+    const previewUrls = (v.images ?? []).map((img) => img.url).filter(Boolean)
+    return {
+      id: v.id,
+      name: v.name,
+      baseModel: v.baseModel,
+      createdAt: v.createdAt,
+      downloadCount: vStats.downloadCount,
+      thumbsUpCount: vStats.thumbsUpCount,
+      previewUrl: previewUrls[0],
+      previewUrls: previewUrls.length ? previewUrls : undefined,
+      availability: v.availability,
+      earlyAccessEndsAt: v.earlyAccessEndsAt ?? null
+    }
+  })
 
   return {
     modelId: model.id,

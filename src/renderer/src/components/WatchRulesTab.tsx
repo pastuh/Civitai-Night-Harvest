@@ -7,7 +7,6 @@ import type {
   CivitaiDomain,
   CivitaiEnums,
   ContentFilter,
-  DownloadQueueItem,
   InventoryRecord,
   TagFolderRule,
   DeferredDownload,
@@ -26,13 +25,17 @@ import {
   preferBrowseModel,
   resolveSearchDomains
 } from '../../../shared/utils'
+import { canWaitForDeferredUnlock } from '../../../shared/early-access'
 import { collectTagSuggestions } from '../../../shared/tag-routing'
 import { BaseModelPicker, parseBaseModelList } from './BaseModelPicker'
 import { SearchBrowsePanel } from './SearchBrowsePanel'
+import type { ModelDetailTarget } from './ModelDetailModal'
 import { NightCrawlQuietPanel } from './NightCrawlQuietPanel'
 import { SkippedTagsPanel } from './SkippedTagsPanel'
 import { useT, type TranslateFn } from '../i18n/context'
 import { FieldHint } from './FieldHint'
+import { watchRulesEqual } from '../utils/watch-rules-equal'
+import { useQueuedMembership } from '../hooks/useDownloadQueue'
 
 function previewErrorMessage(t: TranslateFn, raw: string): string {
   const { status, detail } = parseCivitaiApiError(raw)
@@ -123,8 +126,8 @@ interface Props {
   settings: AppSettingsPublic
   tagRules: TagFolderRule[]
   inventory: InventoryRecord[]
-  queue: DownloadQueueItem[]
-  queuePaused: boolean
+  /** Precomputed owned version ids — avoids rebuilding from inventory on every Browse render. */
+  ownedVersionIds?: Set<number>
   status: AppStatus
   activity: ActivityEntry[]
   deferred?: DeferredDownload[]
@@ -149,13 +152,16 @@ interface Props {
   onSave: (rules: WatchRule[]) => Promise<void>
   onStartDownloads: () => Promise<void>
   onRetryDeferred?: () => Promise<void>
-  onJumpToGallery?: (modelId: number) => void
+  onJumpToGallery?: (modelId: number, modelName?: string) => void
+  onOpenModelDetail?: (target: ModelDetailTarget) => void
   onOpenTagFolders?: (tag: string) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onRefreshInventory?: () => Promise<void>
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
   onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
   onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void | Promise<void>
+  browseViewPrefs?: import('../view-prefs').BrowseViewPrefs
+  onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
 }
 
 function newId(): string {
@@ -193,8 +199,7 @@ export function WatchRulesTab({
   settings,
   tagRules,
   inventory,
-  queue,
-  queuePaused,
+  ownedVersionIds: ownedVersionIdsProp,
   status,
   activity,
   deferred = [],
@@ -208,13 +213,17 @@ export function WatchRulesTab({
   onStartDownloads,
   onRetryDeferred,
   onJumpToGallery,
+  onOpenModelDetail,
   onOpenTagFolders,
   onSaveTagRules,
   onRefreshInventory,
   onSaveSettings,
   onBrowseModelBanChange,
-  onBrowseSnapshot
+  onBrowseSnapshot,
+  browseViewPrefs,
+  onBrowseViewPrefsChange
 }: Props) {
+  const { paused: queuePaused } = useQueuedMembership()
   const t = useT()
   const [draft, setDraft] = useState<WatchRule[]>(rules)
   const [enums, setEnums] = useState<CivitaiEnums | null>(null)
@@ -311,6 +320,10 @@ export function WatchRulesTab({
     () => new Set(deferred.map((d) => d.versionId)),
     [deferred]
   )
+  const deferredWaitVersionIds = useMemo(
+    () => new Set(deferred.filter((d) => canWaitForDeferredUnlock(d)).map((d) => d.versionId)),
+    [deferred]
+  )
 
   const tagSuggestions = useMemo(
     () =>
@@ -328,7 +341,7 @@ export function WatchRulesTab({
     setSaveState('saved')
   }, [rules])
 
-  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(rules), [draft, rules])
+  const dirty = useMemo(() => !watchRulesEqual(draft, rules), [draft, rules])
 
   useEffect(() => {
     if (!userEditedRef.current) return
@@ -879,9 +892,8 @@ export function WatchRulesTab({
           crawlProgress={crawlProgress}
           tagRules={tagRules}
           inventory={inventory}
+          ownedVersionIds={ownedVersionIdsProp}
           contentFilter={browseFilter}
-          queue={queue}
-          queuePaused={queuePaused}
           onContentFilterChange={setBrowseFilter}
           onLoadMore={() => void loadMore()}
           onRetryDeferred={onRetryDeferred}
@@ -890,6 +902,7 @@ export function WatchRulesTab({
           onSearchWithTag={(tag) => void searchWithTag(tag)}
           searchingTag={searchingTag}
           onJumpToGallery={onJumpToGallery}
+          onOpenModelDetail={onOpenModelDetail}
           onOpenTagFolders={onOpenTagFolders}
           onSaveTagRules={onSaveTagRules}
           onQueueAll={() => void queueAll()}
@@ -904,6 +917,7 @@ export function WatchRulesTab({
           updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? false}
           deferredAwaitingCount={deferred.length}
           deferredVersionIds={deferredVersionIds}
+          deferredWaitVersionIds={deferredWaitVersionIds}
           banFunctionMode={settings.banFunctionMode ?? false}
           onBanFunctionModeChange={(enabled) => onSaveSettings({ banFunctionMode: enabled })}
           onBrowseModelBanChange={onBrowseModelBanChange}
@@ -919,6 +933,8 @@ export function WatchRulesTab({
           checkpointFolder={settings.checkpointOutputFolder}
           resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
           resultsPageSize={settings.resultsPageSize ?? 100}
+          viewPrefs={browseViewPrefs}
+          onViewPrefsChange={onBrowseViewPrefsChange}
         />
       ) : settings.nightMode && !showQuietActions ? (
         <NightCrawlQuietPanel

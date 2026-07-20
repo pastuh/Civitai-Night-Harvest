@@ -62,6 +62,11 @@ export interface AppSettings {
   manualQueueMode: boolean
   /** Blur preview thumbnails in the UI */
   blurPreviews: boolean
+  /**
+   * Keep Browse / Library filter, sort, and show/hide checkboxes when switching tabs
+   * (until you change them yourself).
+   */
+  preserveFilters: boolean
   /** Hover × on gallery/download cards to exclude models */
   banFunctionMode: boolean
   /** Civitai tags to skip in auto-download and hide from Browse gallery */
@@ -153,6 +158,7 @@ export interface AppSettingsPublic {
   crawlAutoDownload: boolean
   manualQueueMode: boolean
   blurPreviews: boolean
+  preserveFilters: boolean
   banFunctionMode: boolean
   hiddenTags: string[]
   launchAtLogin: boolean
@@ -200,6 +206,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   crawlAutoDownload: true,
   manualQueueMode: false,
   blurPreviews: false,
+  preserveFilters: false,
   banFunctionMode: false,
   hiddenTags: [],
   launchAtLogin: false,
@@ -288,6 +295,8 @@ export interface CivitaiFile {
 export interface CivitaiModelVersion {
   id: number
   name: string
+  /** Present on GET /model-versions/{id} payloads. */
+  modelId?: number
   createdAt: string
   updatedAt?: string
   status?: string
@@ -319,6 +328,10 @@ export interface CivitaiModel {
   allowDifferentLicense?: boolean
   modelVersions: CivitaiModelVersion[]
   creator?: { username?: string; image?: string }
+  /** Present on some API payloads even when modelVersions is empty. */
+  baseModels?: string[]
+  availability?: string
+  supportsGeneration?: boolean
 }
 
 export interface CivitaiSearchResult {
@@ -456,6 +469,8 @@ export interface DeferredDownload {
   modelId: number
   versionId: number
   modelName: string
+  /** Civitai version title when known (e.g. style name in a LoRA pack). */
+  versionName?: string
   modelType: string
   routingTag: string
   previewUrl?: string
@@ -481,7 +496,42 @@ export interface PendingVersion {
   author: string
   previewUrl?: string
   existingFolder: string
+  /** Total Civitai versions on the model when the pending row was created. */
+  totalVersions?: number
 }
+
+/**
+ * Model listed by Civitai search/detail with empty `modelVersions` (API gap).
+ * Tracked until a version id is resolved (HTML / pasted download URL / later API fix).
+ */
+export interface IncompleteModel {
+  modelId: number
+  modelName: string
+  modelType: string
+  author: string
+  baseModel: string
+  tags: string[]
+  pageUrl: string
+  sourceDomain: CivitaiDomain
+  previewUrl?: string
+  /** Filled after HTML scrape, pasted download URL, or when /models/{id} starts returning versions. */
+  resolvedVersionId?: number
+  resolvedVersionName?: string
+  detectedAt: string
+  lastCheckedAt: string
+  lastError?: string
+}
+
+export type IncompleteDownloadResult =
+  | {
+      status: 'queued'
+      modelId: number
+      versionId: number
+      browseModel?: WatchRuleTestModel
+    }
+  | { status: 'need_url'; modelId: number; reason: string }
+  | { status: 'skipped'; modelId: number; reason: string }
+  | { status: 'failed'; modelId: number; reason: string }
 
 export interface DownloadRequest {
   modelId: number
@@ -547,6 +597,11 @@ export interface PreviewResolveRequest {
   sourceDomain?: CivitaiDomain
   nsfw?: boolean
   nsfwLevel?: number
+  /**
+   * Only return images attached to this version (no cross-version fallback).
+   * Used by Model details “Load previews”.
+   */
+  strictVersion?: boolean
 }
 
 export interface PreviewResolveResult {
@@ -638,6 +693,11 @@ export interface CrawlPagePayload {
   hasMorePages?: boolean
   /** Models queued for download from this API page */
   pageQueued?: number
+  /**
+   * `delta` — result.sampleModels are this page only; renderer merges into live gallery.
+   * `full` — replace live gallery (snapshots / quiet empty / resets).
+   */
+  galleryMode?: 'delta' | 'full'
   result: WatchRuleTestResult
 }
 
@@ -647,6 +707,8 @@ export interface BrowseGalleryStats {
   excluded: number
   skipTag: number
   awaiting: number
+  /** Owned model, newer version — waits on New Versions (not auto-queued). */
+  awaitingConfirm: number
   missing: number
   total: number
 }
@@ -825,6 +887,13 @@ export interface CivitaiModelDetailVersion {
   name: string
   baseModel: string
   createdAt?: string
+  downloadCount?: number
+  thumbsUpCount?: number
+  previewUrl?: string
+  /** All candidate preview URLs for this version (when API provides them). */
+  previewUrls?: string[]
+  availability?: string
+  earlyAccessEndsAt?: string | null
 }
 
 export interface CivitaiModelDetail {

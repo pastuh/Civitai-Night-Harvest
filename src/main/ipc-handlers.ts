@@ -22,6 +22,7 @@ import { DownloadQueue } from './download-queue'
 import { DownloadService } from './download-service'
 import * as inventory from './inventory'
 import { repairMissingPreviews, syncInventoryWithDiskAsync } from './library-sync'
+import { setLibraryPreviewFromUrl } from './library-preview'
 import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch } from './preview-enrich'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
@@ -101,10 +102,13 @@ const IPC_CHANNELS = [
   'model:ban',
   'model:unban',
   'model:getBanned',
+  'model:setAutoUpdate',
+  'model:getAutoUpdate',
   'inventory:assignTag',
   'inventory:assignByCivitaiTag',
   'inventory:deleteVersion',
   'inventory:patchNsfw',
+  'inventory:setPreviewFromUrl',
   'model:preview',
   'download:enqueue',
   'download:getQueue',
@@ -340,7 +344,12 @@ export function registerMediaProtocol(): void {
   try {
     protocol.registerFileProtocol('media', (request, callback) => {
       try {
-        const url = decodeURIComponent(request.url.replace(/^media:\/\//, ''))
+        let url = decodeURIComponent(request.url.replace(/^media:\/\//, ''))
+        // Cache-busting query (?t=…) must not be part of the filesystem path.
+        const q = url.indexOf('?')
+        if (q >= 0) url = url.slice(0, q)
+        const hash = url.indexOf('#')
+        if (hash >= 0) url = url.slice(0, hash)
         // Never let Chromium open files on a missing drive — freezes the app.
         if (!isOutputPathRootReachable(url)) {
           callback({ error: -6 /* net::ERR_FILE_NOT_FOUND */ })
@@ -375,16 +384,12 @@ export function initIpc(): void {
       sched?.log(level, message, undefined, { source: 'download', modelId: meta?.modelId, versionId: meta?.versionId }),
     onAllIdle: () => {
       sched?.setStatus('idle')
-      // Do not refill browse pipeline here — when items finish/link/skip quickly,
-      // refill caused queue count thrash (8→4→8). Crawl / Start / page hooks top up.
+      // Top up toward AUTO_QUEUE_PIPELINE_CAP after the pump drains (debounced in maybeFill).
+      sched?.maybeFillDownloadQueue()
     },
     onQueueMutated: () => {
-      const pipeline = downloadQueue
-        .getItems()
-        .filter((i) => i.status === 'queued' || i.status === 'downloading').length
-      if (pipeline === 0) {
-        sched?.maybeFillDownloadQueue()
-      }
+      // Ban / dismiss / finish frees slots — refill up to the auto-queue cap (not only when empty).
+      sched?.maybeFillDownloadQueue()
     }
   })
   scheduler = new ScanScheduler(clientPool, downloadQueue, () => mainWindow)
@@ -720,13 +725,34 @@ export function initIpc(): void {
 
   ipcMain.handle('model:ban', (_e, payload: { modelId: number; modelName?: string }) => {
     // Ban = exclude from future downloads + delete library files if any exist.
-    // Keep non-library work cheap (Browse harvest ×) when nothing is on disk.
+    // Keep card in Browse as banned (do not remove from gallery).
+    const pending = inventory.getAllPendingVersions().find((p) => p.modelId === payload.modelId)
+    const incomplete = inventory.getIncompleteModel(payload.modelId)
+    const deferred = inventory
+      .getAllDeferredDownloads()
+      .find((d) => d.modelId === payload.modelId)
     const deleted = deleteModelFromLibrary(payload.modelId)
-    const modelName = payload.modelName ?? deleted[0]?.modelName ?? ''
+    const modelName =
+      payload.modelName ??
+      deleted[0]?.modelName ??
+      pending?.modelName ??
+      incomplete?.modelName ??
+      deferred?.modelName ??
+      ''
     inventory.banModel(payload.modelId, modelName)
     inventory.removePendingForModel(payload.modelId)
     scheduler.dismissPendingForModel(payload.modelId)
-    scheduler.removeModelFromBrowseGallery(payload.modelId)
+    scheduler.markModelBannedInBrowseGallery(payload.modelId, {
+      modelName,
+      versionId: pending?.versionId ?? incomplete?.resolvedVersionId ?? deferred?.versionId,
+      modelType: incomplete?.modelType ?? deferred?.modelType,
+      baseModel: pending?.baseModel || incomplete?.baseModel,
+      author: pending?.author || incomplete?.author,
+      previewUrl: pending?.previewUrl || incomplete?.previewUrl || deferred?.previewUrl,
+      pageUrl: incomplete?.pageUrl,
+      sourceDomain: incomplete?.sourceDomain,
+      tags: incomplete?.tags
+    })
     downloadQueue.cancelByModelId(payload.modelId)
     if (deleted.length > 0) {
       scheduler.log(
@@ -750,6 +776,34 @@ export function initIpc(): void {
   ipcMain.handle('model:getBanned', () => inventory.getBannedModels())
 
   ipcMain.handle(
+    'model:setAutoUpdate',
+    (
+      _e,
+      payload: { modelId: number; enabled: boolean; modelName?: string }
+    ): { modelId: number; enabled: boolean } => {
+      if (payload.enabled && inventory.isModelBanned(payload.modelId)) {
+        throw new Error('Cannot auto-update a banned model')
+      }
+      inventory.setModelAutoUpdate(
+        payload.modelId,
+        payload.enabled,
+        payload.modelName ?? ''
+      )
+      scheduler.log(
+        'info',
+        payload.enabled
+          ? `Auto-update on: model #${payload.modelId}${payload.modelName ? ` (${payload.modelName})` : ''}`
+          : `Auto-update off: model #${payload.modelId}`,
+        undefined,
+        { modelId: payload.modelId, source: 'auto-update' }
+      )
+      return { modelId: payload.modelId, enabled: payload.enabled }
+    }
+  )
+
+  ipcMain.handle('model:getAutoUpdate', () => inventory.getAutoUpdateModels())
+
+  ipcMain.handle(
     'inventory:deleteVersion',
     (_e, payload: { versionId: number; ban?: boolean }) => {
       const record = deleteVersionFromLibrary(payload.versionId)
@@ -758,7 +812,14 @@ export function initIpc(): void {
         inventory.banModel(record.modelId, record.modelName)
         inventory.removePendingForModel(record.modelId)
         scheduler.dismissPendingForModel(record.modelId)
-        scheduler.removeModelFromBrowseGallery(record.modelId)
+        scheduler.markModelBannedInBrowseGallery(record.modelId, {
+          modelName: record.modelName,
+          versionId: record.versionId,
+          baseModel: record.baseModel,
+          author: record.author,
+          sourceDomain: record.civitaiDomain,
+          tags: record.civitaiTags
+        })
         downloadQueue.cancelByModelId(record.modelId)
         scheduler.log('info', `Deleted and excluded: ${record.modelName}`, undefined, {
           source: 'library',
@@ -787,6 +848,23 @@ export function initIpc(): void {
       if ('isNsfw' in payload) patch.isNsfw = payload.isNsfw
       if ('nsfwLevel' in payload) patch.nsfwLevel = payload.nsfwLevel
       inventory.patchVersionFileMeta(payload.versionId, patch)
+    }
+  )
+
+  ipcMain.handle(
+    'inventory:setPreviewFromUrl',
+    async (_e, payload: { versionId: number; imageUrl: string }) => {
+      const versionId = payload.versionId
+      const imageUrl = (payload.imageUrl ?? '').trim()
+      if (versionId <= 0 || !imageUrl) {
+        throw new Error('versionId and imageUrl are required')
+      }
+      if (inventory.hasVersion(versionId)) {
+        const record = await setLibraryPreviewFromUrl(versionId, imageUrl)
+        return { savedToLibrary: true as const, record }
+      }
+      inventory.updatePendingPreviewUrl(versionId, imageUrl)
+      return { savedToLibrary: false as const }
     }
   )
 
@@ -1065,7 +1143,8 @@ export function initIpc(): void {
         reason: item.reason,
         failureKind: item.failureKind,
         lastAttemptAt: item.lastAttemptAt,
-        earlyAccessEndsAt: item.earlyAccessEndsAt
+        earlyAccessEndsAt: item.earlyAccessEndsAt,
+        bumpAttempt: false
       })
     })
   })
@@ -1093,6 +1172,53 @@ export function initIpc(): void {
   ipcMain.handle('deferred:dismiss', (_e, versionId: number) => {
     downloadQueue.dismissDeferred(versionId)
     return inventory.getAllDeferredDownloads()
+  })
+
+  ipcMain.handle('incomplete:get', () => scheduler.getIncompleteModels())
+
+  ipcMain.handle('incomplete:recheck', async () => {
+    const result = await scheduler.recheckIncompleteModels(true)
+    if (result.resolved > 0) {
+      scheduler.log(
+        'info',
+        `Incomplete recheck: ${result.resolved} model(s) now have version data`,
+        undefined,
+        { source: 'system' }
+      )
+    }
+    return { ...result, items: scheduler.getIncompleteModels() }
+  })
+
+  ipcMain.handle(
+    'incomplete:download',
+    async (_e, payload: { modelId: number; downloadUrl?: string }) => {
+      const { downloadIncompleteModel } = await import('./incomplete-resolve')
+      const result = await downloadIncompleteModel({
+        pool: clientPool,
+        downloadQueue,
+        getWindow: () => mainWindow,
+        modelId: payload.modelId,
+        downloadUrl: payload.downloadUrl
+      })
+      if (result.status === 'queued') {
+        if (result.browseModel) {
+          scheduler.promoteIncompleteQueuedToBrowse(result.browseModel)
+        }
+        scheduler.log(
+          'info',
+          `Incomplete → queued: model #${result.modelId} version ${result.versionId}`,
+          undefined,
+          { source: 'system', modelId: result.modelId, versionId: result.versionId }
+        )
+      }
+      return { ...result, queue: downloadQueue.getState(), items: scheduler.getIncompleteModels() }
+    }
+  )
+
+  ipcMain.handle('incomplete:dismiss', (_e, modelId: number) => {
+    inventory.removeIncompleteModel(modelId)
+    scheduler.notifyIncompleteList()
+    return scheduler.getIncompleteModels()
   })
 
   ipcMain.handle('shell:showInFolder', (_e, filePath: string) => {

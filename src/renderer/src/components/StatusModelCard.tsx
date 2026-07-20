@@ -6,10 +6,12 @@ interface Props {
   badges?: ReactNode
   details?: ReactNode
   previewUrl?: string
-  actions: ReactNode
   /** Extra controls next to the title (e.g. Ban ×). Clicks do not open the card. */
   titleActions?: ReactNode
   onOpen?: () => void
+  /** Action buttons under the card body. Omit when title actions cover everything. */
+  actions?: ReactNode
+  className?: string
 }
 
 export function StatusModelCard({
@@ -20,11 +22,12 @@ export function StatusModelCard({
   previewUrl,
   actions,
   titleActions,
-  onOpen
+  onOpen,
+  className
 }: Props) {
   return (
     <div
-      className={`card status-model-card${onOpen ? ' status-model-card-clickable' : ''}`}
+      className={`gallery-card status-gallery-card${onOpen ? ' status-model-card-clickable' : ''}${className ? ` ${className}` : ''}`}
       onClick={onOpen}
       onKeyDown={
         onOpen
@@ -39,30 +42,36 @@ export function StatusModelCard({
       role={onOpen ? 'button' : undefined}
       tabIndex={onOpen ? 0 : undefined}
     >
-      <div className="card-header status-model-card-header">
-        <div className="status-model-card-body">
-          <div className="status-model-card-title-row">
-            <strong className="status-model-card-title">{title}</strong>
-            {titleActions && (
-              <div
-                className="status-model-card-title-actions"
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-              >
-                {titleActions}
-              </div>
-            )}
-          </div>
-          {meta && <div className="muted status-model-card-meta">{meta}</div>}
-          {badges}
-          {details}
-        </div>
-        {previewUrl && (
-          <img src={previewUrl} alt="" className="preview-img status-model-card-thumb" />
+      <div className="gallery-thumb-wrap" aria-hidden="true">
+        {previewUrl ? (
+          <img src={previewUrl} alt="" className="gallery-thumb" decoding="async" />
+        ) : (
+          <div className="gallery-thumb placeholder" />
         )}
       </div>
-      <div className="row status-model-card-actions" onClick={(e) => e.stopPropagation()}>
-        {actions}
+      <div className="gallery-card-body">
+        <div className="gallery-card-title-row status-model-card-title-row">
+          <strong className="status-model-card-title" title={title}>
+            {title}
+          </strong>
+          {titleActions && (
+            <div
+              className="status-model-card-title-actions"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              {titleActions}
+            </div>
+          )}
+        </div>
+        {meta && <div className="muted status-model-card-meta">{meta}</div>}
+        {badges}
+        {details}
+        {actions ? (
+          <div className="row status-model-card-actions" onClick={(e) => e.stopPropagation()}>
+            {actions}
+          </div>
+        ) : null}
       </div>
     </div>
   )

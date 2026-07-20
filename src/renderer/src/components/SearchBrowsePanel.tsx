@@ -32,18 +32,24 @@ import {
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
 import { displayFolderForTag, findRuleForTag, modelHasHiddenTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
+import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
-import { ModelDetailModal, type ModelDetailTarget } from './ModelDetailModal'
+import type { ModelDetailTarget } from './ModelDetailModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { useT } from '../i18n/context'
 import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole, cardTagFolderRoleClass } from './gallery-card-utils'
 import { useResultsWindow } from '../hooks/useResultsWindow'
+import { useDownloadQueue } from '../hooks/useDownloadQueue'
 import { ResultsPager } from './ResultsPager'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
 import {
   normalizeResultsDisplayMode,
   normalizeResultsPageSize
 } from '../../../shared/results-display'
+import {
+  DEFAULT_BROWSE_VIEW_PREFS,
+  type BrowseViewPrefs
+} from '../view-prefs'
 
 function previewUrlsFor(model: WatchRuleTestModel): string[] {
   if (model.previewUrls?.length) return model.previewUrls
@@ -95,9 +101,10 @@ interface Props {
   result: WatchRuleTestResult
   tagRules: TagFolderRule[]
   inventory: InventoryRecord[]
+  ownedVersionIds?: Set<number>
   contentFilter: ContentFilter
-  queue: DownloadQueueItem[]
-  queuePaused: boolean
+  queue?: DownloadQueueItem[]
+  queuePaused?: boolean
   onContentFilterChange: (f: ContentFilter) => void
   onLoadMore: () => void
   onRetryDeferred?: () => Promise<void>
@@ -105,7 +112,8 @@ interface Props {
   loadMoreError?: string | null
   onSearchWithTag?: (tag: string) => void
   searchingTag?: string | null
-  onJumpToGallery?: (modelId: number) => void
+  onJumpToGallery?: (modelId: number, modelName?: string) => void
+  onOpenModelDetail?: (target: ModelDetailTarget) => void
   /** Open Tag folders with search prefilled (card tag click). */
   onOpenTagFolders?: (tag: string) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
@@ -121,6 +129,8 @@ interface Props {
   updateBrowseOnCrawl?: boolean
   deferredAwaitingCount?: number
   deferredVersionIds?: Set<number>
+  /** Deferred versions that will unlock for free (wait). */
+  deferredWaitVersionIds?: Set<number>
   appStatus?: AppStatus
   uiExtended?: boolean
   banFunctionMode?: boolean
@@ -150,6 +160,9 @@ interface Props {
   checkpointFolder?: string
   resultsDisplayMode?: import('../../../shared/results-display').ResultsDisplayMode
   resultsPageSize?: import('../../../shared/results-display').ResultsPageSize
+  /** When set (Settings → Preserve filters), remount restores these values. */
+  viewPrefs?: BrowseViewPrefs
+  onViewPrefsChange?: (prefs: BrowseViewPrefs) => void
 }
 
 interface ContextMenuState {
@@ -162,9 +175,10 @@ export function SearchBrowsePanel({
   result,
   tagRules,
   inventory,
+  ownedVersionIds: ownedVersionIdsProp,
   contentFilter,
-  queue,
-  queuePaused,
+  queue: queueProp,
+  queuePaused: queuePausedProp,
   onContentFilterChange,
   onLoadMore,
   onRetryDeferred,
@@ -173,6 +187,7 @@ export function SearchBrowsePanel({
   onSearchWithTag,
   searchingTag,
   onJumpToGallery,
+  onOpenModelDetail,
   onOpenTagFolders,
   onSaveTagRules,
   onQueueAll,
@@ -187,6 +202,7 @@ export function SearchBrowsePanel({
   updateBrowseOnCrawl = false,
   deferredAwaitingCount = 0,
   deferredVersionIds,
+  deferredWaitVersionIds,
   appStatus = 'idle',
   uiExtended = false,
   banFunctionMode = false,
@@ -203,11 +219,17 @@ export function SearchBrowsePanel({
   loraFolder = '',
   checkpointFolder = '',
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
-  resultsPageSize: resultsPageSizeProp = 100
+  resultsPageSize: resultsPageSizeProp = 100,
+  viewPrefs,
+  onViewPrefsChange
 }: Props) {
   const t = useT()
+  const liveQueue = useDownloadQueue()
+  const queue = queueProp ?? liveQueue.items
+  const queuePaused = queuePausedProp ?? liveQueue.paused
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
+  const browseInitial = viewPrefs ?? DEFAULT_BROWSE_VIEW_PREFS
   // Optimistic Ban On/Off — settings IPC can lag or be overwritten while harvest runs.
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
   useEffect(() => {
@@ -224,8 +246,18 @@ export function SearchBrowsePanel({
     () => deferredVersionIds ?? new Set<number>(),
     [deferredVersionIds]
   )
+  const waitAccessVersionIds = useMemo(
+    () => deferredWaitVersionIds ?? new Set<number>(),
+    [deferredWaitVersionIds]
+  )
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>(() =>
-    contentFilter === 'sfw' ? 'sfw' : contentFilter === 'nsfw' ? 'nsfw' : 'all'
+    viewPrefs
+      ? viewPrefs.ratingFilter
+      : contentFilter === 'sfw'
+        ? 'sfw'
+        : contentFilter === 'nsfw'
+          ? 'nsfw'
+          : 'all'
   )
 
   const onRatingFilterChange = (filter: RatingFilter) => {
@@ -238,12 +270,14 @@ export function SearchBrowsePanel({
     }
   }
 
-  const [tagFilter, setTagFilter] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [onlyMissing, setOnlyMissing] = useState(true)
-  const [hideBanned, setHideBanned] = useState(false)
-  const [showBlockedModels, setShowBlockedModels] = useState(false)
-  const [hideAwaitingAccess, setHideAwaitingAccess] = useState(false)
+  const [tagFilter, setTagFilter] = useState<string | null>(browseInitial.tagFilter)
+  const [searchQuery, setSearchQuery] = useState(browseInitial.searchQuery)
+  const [onlyMissing, setOnlyMissing] = useState(browseInitial.onlyMissing)
+  const [hideBanned, setHideBanned] = useState(browseInitial.hideBanned)
+  const [showBlockedModels, setShowBlockedModels] = useState(browseInitial.showBlockedModels)
+  const [hideAwaitingAccess, setHideAwaitingAccess] = useState(browseInitial.hideAwaitingAccess)
+  /** Default off — hide owned-model newer versions awaiting New Versions confirm. */
+  const [showAwaitingConfirm, setShowAwaitingConfirm] = useState(browseInitial.showAwaitingConfirm)
   const [routingTag, setRoutingTag] = useState('')
   const [queuingId, setQueuingId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -260,7 +294,9 @@ export function SearchBrowsePanel({
   loadingMoreRef.current = loadingMore
   const [tagsOpen, setTagsOpen] = useState(false)
   const [tagSearch, setTagSearch] = useState('')
-  const [browseSort, setBrowseSort] = useState<'default' | 'folder' | 'downloads'>('default')
+  const [browseSort, setBrowseSort] = useState<'default' | 'folder' | 'downloads'>(
+    browseInitial.browseSort
+  )
   const tagsPopoverRef = useRef<HTMLDivElement>(null)
   const tagCatalogRef = useRef<Map<number, WatchRuleTestModel>>(new Map())
   const [tagCatalogTick, setTagCatalogTick] = useState(0)
@@ -269,9 +305,34 @@ export function SearchBrowsePanel({
   const gridSentinelRef = useRef<HTMLDivElement>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
   const pageScrollReadyRef = useRef(false)
-  const [detailTarget, setDetailTarget] = useState<ModelDetailTarget | null>(null)
   const autoAdvanceAttemptsRef = useRef(0)
   const [autoAdvanceHint, setAutoAdvanceHint] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!onViewPrefsChange) return
+    onViewPrefsChange({
+      onlyMissing,
+      hideBanned,
+      hideAwaitingAccess,
+      showAwaitingConfirm,
+      showBlockedModels,
+      browseSort,
+      ratingFilter,
+      searchQuery,
+      tagFilter
+    })
+  }, [
+    onlyMissing,
+    hideBanned,
+    hideAwaitingAccess,
+    showAwaitingConfirm,
+    showBlockedModels,
+    browseSort,
+    ratingFilter,
+    searchQuery,
+    tagFilter,
+    onViewPrefsChange
+  ])
 
   const hasMore = browseHasMorePages(result)
 
@@ -380,7 +441,8 @@ export function SearchBrowsePanel({
             versionId: m.versionId,
             sourceDomain: m.sourceDomain,
             nsfw: m.nsfw,
-            nsfwLevel: m.nsfwLevel
+            nsfwLevel: m.nsfwLevel,
+            strictVersion: true
           })),
           ratingFilterToApiContent(ratingFilter)
         )
@@ -494,7 +556,7 @@ export function SearchBrowsePanel({
 
   const openDetail = (model: WatchRuleTestModel) => {
     if (!model.versionId) return
-    setDetailTarget({
+    onOpenModelDetail?.({
       kind: 'browse',
       modelId: model.id,
       versionId: model.versionId,
@@ -514,9 +576,23 @@ export function SearchBrowsePanel({
     [localBanned, localUnbanned]
   )
 
-  const ownedVersionIds = useMemo(
+  const ownedVersionIdsFromInventory = useMemo(
     () => new Set(inventory.map((r) => r.versionId)),
     [inventory]
+  )
+  const ownedVersionIds = ownedVersionIdsProp ?? ownedVersionIdsFromInventory
+  const ownedModelIds = useMemo(
+    () => new Set(inventory.map((r) => r.modelId).filter((id) => id > 0)),
+    [inventory]
+  )
+
+  const isAwaitingConfirmModel = useCallback(
+    (m: WatchRuleTestModel) =>
+      !m.inInventory &&
+      !ownedVersionIds.has(m.versionId) &&
+      ownedModelIds.has(m.id) &&
+      !isBanned(m),
+    [ownedModelIds, ownedVersionIds, isBanned]
   )
 
   /** Stable key for queue membership (not byte progress) — avoids refiltering gallery on every download tick. */
@@ -586,7 +662,8 @@ export function SearchBrowsePanel({
     const out: WatchRuleTestModel[] = []
     for (const m of modelsWithPreviews) {
       const banned = isBanned(m)
-      if (hideBanned && banned) continue
+      // Do not drop banned here — Hide excluded filters cards in `filtered`, while
+      // catalog bar/legend must still count Banned.
       const inInventory = m.inInventory || ownedVersionIds.has(m.versionId)
       // Reuse the same object when flags unchanged — ModelCard memo can skip re-renders.
       if (banned === Boolean(m.isBanned) && inInventory === Boolean(m.inInventory)) {
@@ -596,7 +673,7 @@ export function SearchBrowsePanel({
       }
     }
     return out
-  }, [modelsWithPreviews, isBanned, ownedVersionIds, hideBanned])
+  }, [modelsWithPreviews, isBanned, ownedVersionIds])
 
   const ruleKeywordExtras = useMemo(() => {
     const extras: string[] = []
@@ -695,6 +772,7 @@ export function SearchBrowsePanel({
         ) {
           continue
         }
+        if (!showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
         if (searchQuery.trim() && !modelMatchesBrowseSearch(m, searchQuery)) continue
@@ -713,6 +791,8 @@ export function SearchBrowsePanel({
     showBlockedModels,
     hideAwaitingAccess,
     awaitingAccessVersionIds,
+    showAwaitingConfirm,
+    isAwaitingConfirmModel,
     hiddenTags,
     tagFilter,
     searchQuery,
@@ -1140,17 +1220,20 @@ export function SearchBrowsePanel({
     if (useLiveStats && liveStats) {
       const total = liveStats.total
       const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
+      const awaitingConfirm = liveStats.awaitingConfirm ?? 0
       return {
         owned: liveStats.owned,
         excluded: liveStats.excluded,
         skipTag: liveStats.skipTag,
         awaiting: liveStats.awaiting,
+        awaitingConfirm,
         missingEligible: liveStats.missing,
         total,
         ownedPct: pct(liveStats.owned),
         excludedPct: pct(liveStats.excluded),
         skipTagPct: pct(liveStats.skipTag),
         awaitingPct: pct(liveStats.awaiting),
+        awaitingConfirmPct: pct(awaitingConfirm),
         missingPct: pct(liveStats.missing),
         ownedOfDownloadablePct:
           liveStats.owned + liveStats.missing > 0
@@ -1163,6 +1246,7 @@ export function SearchBrowsePanel({
     let excluded = 0
     let skipTag = 0
     let awaiting = 0
+    let awaitingConfirm = 0
     let missingEligible = 0
     for (const m of ruleScopedModels) {
       if (m.inInventory) {
@@ -1181,21 +1265,27 @@ export function SearchBrowsePanel({
         awaiting++
         continue
       }
+      if (isAwaitingConfirmModel(m)) {
+        awaitingConfirm++
+        continue
+      }
       missingEligible++
     }
-    const total = owned + excluded + skipTag + awaiting + missingEligible
+    const total = owned + excluded + skipTag + awaiting + awaitingConfirm + missingEligible
     const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
     return {
       owned,
       excluded,
       skipTag,
       awaiting,
+      awaitingConfirm,
       missingEligible,
       total,
       ownedPct: pct(owned),
       excludedPct: pct(excluded),
       skipTagPct: pct(skipTag),
       awaitingPct: pct(awaiting),
+      awaitingConfirmPct: pct(awaitingConfirm),
       missingPct: pct(missingEligible),
       ownedOfDownloadablePct:
         owned + missingEligible > 0 ? Math.round((owned / (owned + missingEligible)) * 100) : 0
@@ -1210,7 +1300,8 @@ export function SearchBrowsePanel({
     crawlPageMeta?.galleryStats,
     result.crawlSource,
     updateBrowseOnCrawl,
-    isBanned
+    isBanned,
+    isAwaitingConfirmModel
   ])
 
   const showBrowseStatsDebug =
@@ -1606,6 +1697,14 @@ export function SearchBrowsePanel({
                 />
                 {t('browse.hideAwaitingAccess')}
               </label>
+              <label className="checkbox-field" title={t('browse.showAwaitingConfirmTitle')}>
+                <input
+                  type="checkbox"
+                  checked={showAwaitingConfirm}
+                  onChange={(e) => setShowAwaitingConfirm(e.target.checked)}
+                />
+                {t('browse.showAwaitingConfirm')}
+              </label>
               {hiddenTags.length > 0 && (
                 <label className="checkbox-field" title={t('browse.showBlockedTitle')}>
                   <input
@@ -1987,6 +2086,7 @@ export function SearchBrowsePanel({
             owned: catalogBreakdown.owned,
             missing: catalogBreakdown.missingEligible,
             awaiting: catalogBreakdown.awaiting,
+            awaitingConfirm: catalogBreakdown.awaitingConfirm,
             skipTag: catalogBreakdown.skipTag,
             excluded: catalogBreakdown.excluded
           })}
@@ -2019,6 +2119,15 @@ export function SearchBrowsePanel({
                 title={t('browse.barSegAwaiting', { count: catalogBreakdown.awaiting })}
               />
             )}
+            {catalogBreakdown.awaitingConfirmPct > 0 && (
+              <div
+                className="browse-download-progress-seg browse-download-progress-seg-awaiting-confirm"
+                style={{ width: `${catalogBreakdown.awaitingConfirmPct}%` }}
+                title={t('browse.barSegAwaitingConfirm', {
+                  count: catalogBreakdown.awaitingConfirm
+                })}
+              />
+            )}
             {catalogBreakdown.missingPct > 0 && (
               <div
                 className="browse-download-progress-seg browse-download-progress-seg-missing"
@@ -2046,6 +2155,21 @@ export function SearchBrowsePanel({
               {t('browse.barLegendNew')}{' '}
               <strong className="browse-progress-legend-count">{catalogBreakdown.missingEligible}</strong>
             </span>
+            {catalogBreakdown.awaitingConfirm > 0 && (
+              <span
+                className="browse-progress-legend-item"
+                title={t('browse.barLegendAwaitingConfirmHint')}
+              >
+                <span
+                  className="browse-progress-dot browse-progress-dot-awaiting-confirm"
+                  aria-hidden
+                />
+                {t('browse.barLegendAwaitingConfirm')}{' '}
+                <strong className="browse-progress-legend-count">
+                  {catalogBreakdown.awaitingConfirm}
+                </strong>
+              </span>
+            )}
             {catalogBreakdown.awaiting > 0 && (
               <span className="browse-progress-legend-item">
                 <span className="browse-progress-dot browse-progress-dot-awaiting" aria-hidden />
@@ -2097,6 +2221,7 @@ export function SearchBrowsePanel({
             searchQuery={searchQuery}
             browseSettledDimPercent={browseSettledDimPercent}
             awaitingAccessVersionIds={awaitingAccessVersionIds}
+            waitAccessVersionIds={waitAccessVersionIds}
             queueItemFor={queueItemFor}
             queuePaused={queuePaused}
             queuingId={queuingId}
@@ -2346,7 +2471,7 @@ export function SearchBrowsePanel({
             {contextMenu.model.inInventory && onJumpToGallery && (
               <button
                 {...contextMenuButtonProps(
-                  () => onJumpToGallery(contextMenu.model.id),
+                  () => onJumpToGallery(contextMenu.model.id, contextMenu.model.name),
                   closeContextMenu
                 )}
               >
@@ -2356,13 +2481,9 @@ export function SearchBrowsePanel({
         </ContextMenuPortal>
       )}
 
-      {detailTarget && (
-        <ModelDetailModal target={detailTarget} onClose={() => setDetailTarget(null)} />
-      )}
-
       {deferredCount > 0 && (
         <p className="browse-deferred-notice muted ui-extended-only">
-          {deferredCount} awaiting access (403/early access) — in the <strong>Awaiting access</strong> tab,
+          {deferredCount} Early access — in the <strong>Early access</strong> tab,
           not in the download queue. They do not block other downloads.
         </p>
       )}
@@ -2374,7 +2495,7 @@ export function SearchBrowsePanel({
         !crawlPageMeta?.catalogComplete && (
           <p className="browse-crawl-idle-notice muted ui-extended-only">
             Queueing downloadable models from the browse filter (not already in your library). Early-access
-            models go to <strong>Awaiting access</strong>, not the download bar.
+            models go to <strong>Early access</strong>, not the download bar.
           </p>
         )}
       {appStatus === 'scanning' &&
@@ -2401,7 +2522,7 @@ export function SearchBrowsePanel({
             ) : (
               <>
                 Catalog fully scanned — {missingCount} model(s) still not in library. Early-access models
-                go to <strong>Awaiting access</strong>, not the download bar.
+                go to <strong>Early access</strong>, not the download bar.
               </>
             )}
           </p>
@@ -2437,6 +2558,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   searchQuery,
   browseSettledDimPercent,
   awaitingAccessVersionIds,
+  waitAccessVersionIds,
   queueItemFor,
   queuePaused,
   queuingId,
@@ -2459,6 +2581,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   searchQuery: string
   browseSettledDimPercent: number
   awaitingAccessVersionIds: Set<number>
+  waitAccessVersionIds: Set<number>
   queueItemFor: (model: WatchRuleTestModel) => DownloadQueueItem | undefined
   queuePaused: boolean
   queuingId: number | null
@@ -2470,7 +2593,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   banFunctionMode: boolean
   onTagClick: (tag: string) => void
   onEnqueue: (model: WatchRuleTestModel) => void
-  onJumpToGallery?: (modelId: number) => void
+  onJumpToGallery?: (modelId: number, modelName?: string) => void
   onViewDetails?: (model: WatchRuleTestModel) => void
   onBanModel?: (modelId: number, modelName: string) => void
   onUnbanModel?: (modelId: number, modelName: string) => void
@@ -2487,6 +2610,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
           browseSettledDimPercent > 0 && settled && !matchesSearch
             ? 1 - browseSettledDimPercent / 100
             : undefined
+        const awaitingAccess = m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)
         return (
           <ModelCard
             key={browseModelDedupeKey(m)}
@@ -2495,7 +2619,8 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             settledDimOpacity={dimOpacity}
             queueItem={queueItemFor(m)}
             queuePaused={queuePaused}
-            awaitingAccess={m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)}
+            awaitingAccess={awaitingAccess}
+            waitAccessVersionIds={waitAccessVersionIds}
             queuing={queuingId === m.versionId}
             routingTag={routingTag}
             tagRules={tagRules}
@@ -2523,6 +2648,7 @@ const ModelCard = memo(function ModelCard({
   queueItem,
   queuePaused = false,
   awaitingAccess = false,
+  waitAccessVersionIds,
   queuing,
   routingTag,
   tagRules = [],
@@ -2545,6 +2671,7 @@ const ModelCard = memo(function ModelCard({
   queueItem?: DownloadQueueItem
   queuePaused?: boolean
   awaitingAccess?: boolean
+  waitAccessVersionIds?: Set<number>
   queuing: boolean
   routingTag: string
   tagRules?: TagFolderRule[]
@@ -2554,13 +2681,17 @@ const ModelCard = memo(function ModelCard({
   onTagClick: (tag: string) => void
   onEnqueue: (model: WatchRuleTestModel) => void
   onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
-  onJumpToGallery?: (modelId: number) => void
+  onJumpToGallery?: (modelId: number, modelName?: string) => void
   onViewDetails?: (model: WatchRuleTestModel) => void
   banFunctionMode?: boolean
   onBanModel?: (modelId: number, modelName: string) => void
   onUnbanModel?: (modelId: number, modelName: string) => void
 }) {
   const t = useT()
+  const accessGate = accessGateBadgeKind(model, {
+    awaitingAccess,
+    waitVersionIds: waitAccessVersionIds
+  })
   const statusClass = model.isBanned ? 'banned' : model.inInventory ? 'owned' : 'missing'
   const isQueued = queueItem?.status === 'queued' && !model.inInventory
   const showQueuedStyle = isQueued && queueItem?.manual === true
@@ -2610,14 +2741,20 @@ const ModelCard = memo(function ModelCard({
     queueStatusFoot = 'failed'
   } else if (isSkipped) {
     queueStatusFoot = 'skipped'
-  } else if (isDeferred || awaitingAccess || model.isEarlyAccess) {
-    queueStatusFoot = 'awaiting access'
+  } else if (
+    !model.isBanned &&
+    (isDeferred || awaitingAccess || model.isEarlyAccess)
+  ) {
+    queueStatusFoot = 'early access'
   } else if (tagSkipBlocked && !model.inInventory && !inQueueActive) {
     badge = 'Skip tag'
     badgeClass = 'badge-skipped'
   } else if (model.inInventory) {
     badge = 'Owned'
     badgeClass = 'badge-owned'
+  } else if (model.isBanned && accessGate) {
+    badge = accessGate === 'paid' ? 'Paid' : 'Early'
+    badgeClass = accessGate === 'paid' ? 'badge-paid' : 'badge-early'
   } else if (isQueued && !showQueuedStyle && !model.isBanned) {
     badge = t('browse.badgeQueuedShort')
     badgeClass = 'badge-queued-pending'
@@ -2625,9 +2762,16 @@ const ModelCard = memo(function ModelCard({
     badge = model.isEarlyAccess || awaitingAccess ? 'Soon' : 'New'
     badgeClass = model.isEarlyAccess || awaitingAccess ? 'badge-soon' : 'badge-new'
   }
-  if (model.isEarlyAccess && !model.inInventory && !queueItem && !queueStatusFoot) {
-    badge = badge ? `${badge} · EA` : 'Early access'
-    badgeClass = badgeClass || 'badge-deferred'
+  if (
+    accessGate &&
+    !model.isBanned &&
+    !model.inInventory &&
+    !queueItem &&
+    !queueStatusFoot
+  ) {
+    const gateLabel = accessGate === 'paid' ? 'Paid' : 'Early'
+    badge = badge ? `${badge} · ${gateLabel}` : gateLabel
+    badgeClass = badgeClass || (accessGate === 'paid' ? 'badge-paid' : 'badge-early')
   }
 
   const statusFoot = isDownloading && queueItem
@@ -2640,6 +2784,8 @@ const ModelCard = memo(function ModelCard({
       badgeClass === 'badge-new' ||
       badgeClass === 'badge-queued-pending' ||
       badgeClass === 'badge-soon' ||
+      badgeClass === 'badge-early' ||
+      badgeClass === 'badge-paid' ||
       tagSkipBlocked ||
       Boolean(badge && !queueStatusFoot && !isDownloading))
 
@@ -2682,7 +2828,7 @@ const ModelCard = memo(function ModelCard({
   const cardStyle = settledDimOpacity != null ? { opacity: settledDimOpacity } : undefined
 
   const statusHint = isDeferred
-    ? queueItem?.reason ?? 'Awaiting access — retry when API key or Civitai access is ready'
+    ? queueItem?.reason ?? 'Early access — retry when unlocked or access is ready'
     : isFailed
     ? queueItem?.reason ?? 'Download failed'
     : isSkipped
@@ -2736,7 +2882,7 @@ const ModelCard = memo(function ModelCard({
           title="Go to in gallery"
           onClick={(e) => {
             e.stopPropagation()
-            onJumpToGallery(model.id)
+            onJumpToGallery(model.id, model.name)
           }}
         >
           →

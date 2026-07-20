@@ -8,8 +8,6 @@ import type {
 
   DownloadQueueItem,
 
-  InventoryRecord,
-
   LibrarySyncProgress,
 
   LibraryVersionScanProgress,
@@ -22,57 +20,37 @@ import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
 import { formatBytes } from '../../../shared/utils'
 
 import { useT } from '../i18n/context'
-
-
+import { useDownloadQueue } from '../hooks/useDownloadQueue'
 
 interface Props {
-
   status: AppStatus
-
-  queue: DownloadQueueItem[]
-
-  queuePaused: boolean
-
+  /** Optional override; defaults to live download-queue store. */
+  queue?: DownloadQueueItem[]
+  queuePaused?: boolean
   /** Extended UI shows detailed per-item status. Minimal shows only counts. */
   uiExtended?: boolean
-
   deferredDownloads?: DeferredDownload[]
-
-  inventory?: InventoryRecord[]
-
+  /** Optional NSFW flags for unlock-today breakdown (avoids full inventory scans). */
+  nsfwByVersionId?: Map<number, boolean | undefined>
   extraMessage?: string | null
-
   syncProgress?: LibrarySyncProgress | null
-
   /** Hide paused queue counts while startup sync / scan is in progress */
-
   suppressIdlePipeline?: boolean
-
   versionScanning?: boolean
-
   versionScanProgress?: LibraryVersionScanProgress | null
-
   scanningRuleNames?: string[]
-
   crawlPageNumber?: number | null
-
   crawlGalleryTotal?: number | null
-
   crawlCatalogComplete?: boolean
-
   crawlHasMorePages?: boolean
-
   crawlProgress?: CrawlProgressPayload | null
-
   /** Harvest/Browse waiting for first API page (status bar is the only fetch indicator in quiet mode). */
   galleryAwaiting?: boolean
-
   /** Idle browse gallery — waiting for user Scan or Night harvest */
   showReadyIdle?: boolean
-
 }
 
-
+const EMPTY_NSFW_MAP = new Map<number, boolean | undefined>()
 
 function syncProgressLabel(
 
@@ -377,35 +355,24 @@ function downloadPct(item: DownloadQueueItem): number {
 
 
 function unlockTodayBreakdown(
-
   deferred: DeferredDownload[],
-
-  inventory: InventoryRecord[]
-
+  nsfwByVersionId: Map<number, boolean | undefined>
 ): { total: number; sfw: number; nsfw: number; unknown: number } {
-
   const today = deferred.filter((d) => shouldShowDeferredInDownloadStrip(d))
-
   let sfw = 0
-
   let nsfw = 0
-
   let unknown = 0
-
   for (const d of today) {
-
-    const rec = inventory.find((r) => r.versionId === d.versionId)
-
-    if (rec?.isNsfw === true) nsfw++
-
-    else if (rec?.isNsfw === false) sfw++
-
+    if (!nsfwByVersionId.has(d.versionId)) {
+      unknown++
+      continue
+    }
+    const flag = nsfwByVersionId.get(d.versionId)
+    if (flag === true) nsfw++
+    else if (flag === false) sfw++
     else unknown++
-
   }
-
   return { total: today.length, sfw, nsfw, unknown }
-
 }
 
 
@@ -529,47 +496,29 @@ function resolveStatusDotKind(
 
 
 export function GlobalStatusBar({
-
   status,
-
-  queue,
-
-  queuePaused,
-
+  queue: queueProp,
+  queuePaused: queuePausedProp,
   deferredDownloads = [],
-
-  inventory = [],
-
+  nsfwByVersionId,
   extraMessage,
-
   syncProgress,
-
   suppressIdlePipeline = false,
-
   versionScanning = false,
-
   versionScanProgress = null,
-
   scanningRuleNames = [],
-
   crawlPageNumber = null,
-
   crawlGalleryTotal = null,
-
   crawlCatalogComplete = false,
-
   crawlHasMorePages = false,
-
   crawlProgress = null,
-
   galleryAwaiting = false,
-
   showReadyIdle = false,
-
   uiExtended = false
-
 }: Props) {
-
+  const liveQueue = useDownloadQueue()
+  const queue = queueProp ?? liveQueue.items
+  const queuePaused = queuePausedProp ?? liveQueue.paused
   const t = useT()
 
   const [waitTick, setWaitTick] = useState(0)
@@ -608,11 +557,8 @@ export function GlobalStatusBar({
 
 
   const unlockToday = useMemo(
-
-    () => unlockTodayBreakdown(deferredDownloads, inventory),
-
-    [deferredDownloads, inventory]
-
+    () => unlockTodayBreakdown(deferredDownloads, nsfwByVersionId ?? EMPTY_NSFW_MAP),
+    [deferredDownloads, nsfwByVersionId]
   )
 
 

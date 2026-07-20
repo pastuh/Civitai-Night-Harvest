@@ -7,7 +7,7 @@ import type {
   CivitaiSearchResult
 } from './types'
 import { getApiBase, getSiteBase } from './utils'
-import { withNetworkRetry } from './network-retry'
+import { formatCivitaiHttpError, withNetworkRetry } from './network-retry'
 import type { CivitaiVersionMini } from './early-access'
 
 export interface CivitaiClientOptions {
@@ -70,13 +70,7 @@ export class CivitaiClient {
     )
     if (!res.ok) {
       const body = await res.text().catch(() => '')
-      let detail = body.slice(0, 200)
-      try {
-        const parsed = JSON.parse(body) as { error?: unknown }
-        if (typeof parsed.error === 'string') detail = parsed.error
-      } catch {
-        /* keep raw snippet */
-      }
+      const detail = formatCivitaiHttpError(res.status, body)
       throw new Error(`Civitai API ${res.status}: ${detail}`)
     }
     return res.json() as Promise<T>

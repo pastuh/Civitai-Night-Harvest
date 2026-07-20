@@ -1158,6 +1158,7 @@ export class DownloadQueue {
     modelId: number
     versionId: number
     modelName: string
+    versionName?: string
     modelType: string
     routingTag: string
     previewUrl?: string
@@ -1182,6 +1183,7 @@ export class DownloadQueue {
       modelId: params.modelId,
       versionId: params.versionId,
       modelName: params.modelName,
+      versionName: params.versionName,
       modelType: params.modelType,
       routingTag: params.routingTag,
       previewUrl: params.previewUrl,

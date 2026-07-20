@@ -737,6 +737,21 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
+              checked={draft.preserveFilters ?? false}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                update('preserveFilters', enabled)
+                void onSave({ preserveFilters: enabled })
+              }}
+            />
+            {t('settings.fields.preserveFilters')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.preserveFilters')}</p>
+        </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
               checked={draft.banFunctionMode ?? false}
               onChange={(e) => {
                 const enabled = e.target.checked

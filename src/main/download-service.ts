@@ -327,7 +327,9 @@ export class DownloadService {
         }
       }
 
-      let previewCandidates = resolveVersionPreviewCandidates(model, versionId)
+      let previewCandidates = resolveVersionPreviewCandidates(model, versionId, undefined, {
+        strictVersion: true
+      })
       let usedPreviewUrl = request.previewUrl?.trim() || previewCandidates[0] || ''
       if (request.previewUrl?.trim()) {
         previewCandidates = uniqueUrls([request.previewUrl, ...previewCandidates])
@@ -586,7 +588,8 @@ export class DownloadService {
           client.getDomain(),
           model,
           getSettings().contentFilter,
-          { nsfw: model.nsfw, nsfwLevel: model.nsfwLevel, model }
+          { nsfw: model.nsfw, nsfwLevel: model.nsfwLevel, model },
+          true
         )
         previewCandidates = resolved.previewUrls
         usedPreviewUrl = previewCandidates[0] ?? usedPreviewUrl

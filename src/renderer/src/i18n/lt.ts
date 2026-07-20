@@ -17,11 +17,14 @@ export const lt: Messages = {
   },
   tabs: {
     browse: 'Naršymas',
+    browseBadgeTitle:
+      'Iš viso Browse planuojamų atsisiųsti modelių (New). Ne tik dabartinė ~10 juosta — eilė pildoma atlaisvėjus vietoms.',
     library: 'Biblioteka',
     download: 'Atsisiuntimas',
     tagFolders: 'Tag aplankai',
-    newVersions: 'Naujos versijos',
-    awaitingAccess: 'Laukia prieigos',
+    newVersions: 'Atnaujinimai',
+    awaitingAccess: 'Early access',
+    incomplete: 'Incomplete',
     activity: 'Veikla',
     help: 'Pagalba',
     settings: 'Nustatymai'
@@ -79,7 +82,7 @@ export const lt: Messages = {
     title: 'Nustatymai',
     lead: 'Naujas? Peržiūrėkite Pagalbos skiltį.',
     nsfwCallout:
-      'NSFW ir restricted modeliams reikia API rakto. Be jo atsisiuntimai gali nepavykti arba patekti į Laukia prieigos.',
+      'NSFW ir restricted modeliams reikia API rakto. Be jo atsisiuntimai gali nepavykti arba patekti į Early access.',
     sections: {
       general: 'Bendri',
       library: 'Biblioteka ir API',
@@ -102,7 +105,7 @@ export const lt: Messages = {
       contentFilter: 'Turinio filtras (numatytas)',
       nightMode: 'Night mode',
       autoStartDownloads: 'Auto-start atsisiuntimai eilėje',
-      autoDownloadNewVersions: 'Auto-download turimų modelių naujas versijas',
+      autoDownloadNewVersions: 'Auto-download turimų modelių atnaujinimus',
       nightDownloadAll: 'Night mode: eilė visiems Browse atitikmenims (blokuojami tagai vis tiek praleidžiami)',
       scanInterval: 'Scan intervalas (min)',
       parallelDownloads: 'Lygiagūs atsisiuntimai',
@@ -114,6 +117,7 @@ export const lt: Messages = {
       scanOnStartup: 'Scan paleidus programą',
       autoRetryDeferred: 'Pakartoti laukiančius po scan',
       blurPreviews: 'Blur preview nuotraukos',
+      preserveFilters: 'Išsaugoti filtrus',
       showBannedInGallery: 'Rodyti banned galerijoje',
       banFunctionMode: 'Ban function (× šalia kortelės pavadinimo)',
       browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
@@ -224,7 +228,19 @@ export const lt: Messages = {
       updateBrowseOnCrawl:
         'Tas pats kaip 👁 mygtukas šalia Blur antraštėje. Off = išvalo Browse korteles ir tylesnis UI (atsisiuntimai vis tiek vyksta); On = gyvas Browse tinklelis.',
       domain:
-        'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.'
+        'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.',
+      preserveFilters:
+        'Browse ir Library filtrai, rikiavimas ir show/hide checkbox lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
+      banFunctionMode:
+        'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
+      blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
+      downloadStripVisibility:
+        'Pagal nutylėjimą juostos nėra — Clear queue dešinėje prie tabų. Įjunkite Browse / Browse+Library / Visus tabus, kad matytumėte pilną download juostą (Clear queue tada bus juostoje).',
+      downloadStripLayout:
+        'Row = horizontalus scroll · Grid = kortelių tinklelis · Minimal = vertikalus sąrašas su miniatiūra, statuso stulpeliu, skirtuku ir pavadinimu; progresas baigiasi ties skirtuku.',
+      galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
+      queueGridSize:
+        'Download juostos kortelės plotis (miniatiūra) Row ir Grid režimams. Didesnėms kortelėms reikia aukštesnės juostos.'
     },
     actions: {
       slugSync: 'Pervardinti bibliotekos failus pagal formatą',
@@ -311,6 +327,10 @@ export const lt: Messages = {
     browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort); domenas virš Results',
     browseResults:
       'Results — paieška pagal pavadinimą/autorių; filtrų juosta (turinys, hide owned, ban); Sort ir Tags dešinėje; spustelėkite kortelę į eilę / pašalinti. Rodymo režimas (lazy / puslapiai / auto-advance) — Settings.',
+    browseDetails:
+      'ℹ ant kortelės atidaro **Model details** (pilnas puslapis) — versijos dešinėje, lipni Back/Civitai/Show List/Ban juosta, trūkstamų versijų download, Load/Save preview turimoms versijoms',
+    browsePreviews:
+      'Preview yra **pagal versiją** (ne bendras modelio paveikslėlis). Load previews krauna tik tos versijos nuotraukas; Save preview įrašo `.preview.jpg` pasirinktai turimai versijai',
     browseTags:
       'Tags langas — filtruoti grid · 🚫 blokuoti tag nuo auto-queue · blokuoti tagai rodomi viršuje',
     browseManualQueue:
@@ -321,11 +341,20 @@ export const lt: Messages = {
     browseContextSkipTag:
       'Dešinis pelės mygtukas ant modelio → Skip tag — blokuoti tag nuo auto-queue (spauskite tag chip; jau blokuoti — pritemę)',
     libraryFolders: 'Tag Folders — Civitai tag → poaplankis po LoRA/Checkpoint keliais',
-    libraryBadge: 'Library skilties **+N** — nauji modeliai nuo paskutinio apsilankymo; ženkliukas dingsta atidarius Library',
+    libraryBadge:
+      'Library skilties **+N** — nauji atsisiuntimai nuo paskutinio apsilankymo; atidarius Library su ženkliuku įsijungia **Session downloads**. **Show List** iš Updates vis tiek atidaro All models su pin’intu modeliu',
+    librarySession:
+      '**Session downloads** — šoninis filtras viskam, kas pridėta į biblioteką per šį app paleidimą (ne tas pats kaip Show List)',
+    libraryByDate:
+      '**Atsisiųsta pagal datą** — Šiandien / Vakar / 7 dienos, dienos ar nuo–iki laukai, ir dienų sąrašas su atsisiuntimais (`downloadedAt`)',
+    libraryDetails:
+      'ℹ atidaro tą patį Model details puslapį kaip Browse — versijų perjungimas, save preview, Civitai',
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group arba download order. Tas pats Settings rezultatų rodymas (lazy / puslapiai) kaip Browse.',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
     libraryTags: 'Spustelėkite tag ant kortelės — atidaromi Tag folders su ta paieška',
+    libraryPreserve:
+      'Nustatymai → **Išsaugoti filtrus** — Browse/Library filtrai, rikiavimas ir show/hide checkbox lieka keičiant tabus',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
     edgeQueued: 'Eilės accentas viršuje — siuntimo eilėje',
     edgeDownloading: 'Žalia juosta ant miniatiūros — aktyviai siunčiama',
@@ -343,11 +372,11 @@ export const lt: Messages = {
     dlStripPriority:
       'Dešinis pelės mygtukas ant juostos kortelės → Prioritetinis atsisiuntimas — perkelia į eilės priekį (arba iškart po aktyvių siuntimų)',
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
-    dlAwaiting: 'Awaiting access — 403, early access arba trūksta API rakto',
+    dlAwaiting: 'Early access — gated download arba trūksta API rakto',
     dlNewVersions:
-      'New Versions — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256; praleidžia modelius, tikrintus per paskutines 2 d.). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
+      'Atnaujinimai — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256; praleidžia modelius, tikrintus per paskutines 2 d.). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
     dlTabBadges:
-      'Skiltų ženkliukai — Browse: aktyvi eilė · Library: +N naujų nuo paskutinio apsilankymo · New Versions / Awaiting access: laukiančių skaičius',
+      'Skiltų ženkliukai — Browse: planuojami New · Library: +N naujų nuo paskutinio apsilankymo · Atnaujinimai / Early access: laukiančių skaičius',
     dlActivity:
       'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
@@ -362,7 +391,7 @@ export const lt: Messages = {
       autoStart:
         'Išjungus (aktyvus Pause) vykdomi siuntimai sustabdomi; Harvest vis tiek gali pildyti eilę. Išjunkite Pause, kad pradėtų siųsti. Auto/Manual valdo ar Harvest deda modelius į eilę.',
       autoDownloadNewVersions:
-        'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda New Versions — Queue / Ban / Dismiss. Visiškai nauji Browse modeliai tvarkomi atskirai.',
+        'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda Atnaujinimai — Queue / Ban / Dismiss, arba kortelėje „Visada atnaujinti“ tik tam modeliui. Visiškai nauji Browse modeliai tvarkomi atskirai.',
       scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = off (night mode nustato 60 min jei reikia).',
       parallelDownloads: 'Kiek modelių siunčiama vienu metu. 1 = vienas failas pilnu greičiu.',
       domain:
@@ -375,10 +404,12 @@ export const lt: Messages = {
         'Kaip Browse ir Library langina jau įkrautus rezultatus: lazy scroll, klasikiniai puslapiai arba auto-advance pro tuščius Hide owned Browse puslapius.',
       resultsPageSize: 'Kortelių skaičius puslapyje arba scroll bloke (60 arba 100).',
       scanOnStartup: 'Vienas scan atidarius programą.',
-      autoRetryDeferred: 'Po kiekvieno scan bando pakartoti Laukia prieigos modelius (403 laukia ~4h).',
+      autoRetryDeferred: 'Po kiekvieno scan bando pakartoti Early access modelius (403 laukia ~4h).',
       blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
+      preserveFilters:
+        'Browse ir Library filtrai, rikiavimas ir show/hide checkbox lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
       showBanned: 'Rodo banned modelius raudonai, kad galėtumėte unban.',
-      banFunctionMode: 'Rodo raudoną × šalia modelio pavadinimo Browse, Library ir download juostoje.',
+      banFunctionMode: 'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
       hashVerify: 'Lyginama SHA256 diske su Civitai /model-versions/by-hash.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
@@ -428,7 +459,7 @@ export const lt: Messages = {
       downloading: 'siunčiami',
       waitingToSend: 'Laukia eilėje',
       skipped: 'Praleista',
-      awaiting: 'Laukia prieigos',
+      awaiting: 'Early access',
       retry: 'Kartoti',
       libraryShort: 'Biblioteka',
       browseShort: 'Naršymas',
@@ -440,7 +471,10 @@ export const lt: Messages = {
     scanningPage: 'Skenuojama API p.{page} · galerijoje {total}',
     modeAll: '🌙 All — siunčiami visi nauji modeliai',
     modeTags: '🌙 Tags — tik su jūsų naudojamais tagais',
-    hideAwaitingAccess: 'Slėpti laukiančius prieigos',
+    hideAwaitingAccess: 'Slėpti awaiting',
+    showAwaitingConfirm: 'Rodyti atnaujinimus',
+    showAwaitingConfirmTitle:
+      'Rodyti naujesnes versijas modelių, kuriuos jau turite (kaip Atnaujinimai tabas — ten patvirtinkite)',
     banModeOff: 'Ban Off',
     banModeOn: 'Ban On',
     banModeTitle: 'Raudonas × šalia pavadinimo — blokuoti modelį (Browse, Library ir download juosta)',
@@ -452,16 +486,20 @@ export const lt: Messages = {
     barLegendOwned: 'Owned',
     barLegendBanned: 'Banned',
     barLegendSkipTag: 'Blocked',
-    barLegendAwaiting: 'Awaiting access',
+    barLegendAwaiting: 'Awaiting',
+    barLegendAwaitingConfirm: 'Atnaujinimai',
+    barLegendAwaitingConfirmHint:
+      'Jau turite kitą versiją — patvirtinkite Atnaujinimai tab’e (arba Visada atnaujinti) prieš eilę',
     barLegendNew: 'New',
-    barLegendNewHint: 'Dar ne bibliotekoje — galima eilėn',
+    barLegendNewHint: 'Dar ne bibliotekoje — galima auto-eilėn',
     barTooltip:
-      '{total} loaded = {owned} owned + {missing} new + {awaiting} awaiting + {skipTag} blocked by tag + {excluded} banned',
+      '{total} loaded = {owned} owned + {missing} new + {awaitingConfirm} updates + {awaiting} awaiting + {skipTag} blocked by tag + {excluded} banned',
     barSegOwned: '{count} jau turite',
     barSegMissing: '{count} dar neatsiųsta',
     barSegExcluded: '{count} blokuota / banned',
     barSegSkipTag: '{count} blokuoja tag',
     barSegAwaiting: '{count} laukia prieigos',
+    barSegAwaitingConfirm: '{count} owned modelio atnaujinimai laukia patvirtinimo',
     tagFetchStatusPrep: 'Ruošiami papildomi tag paieškos variantai ({total})…',
     tagFetchStatusTag: 'Tag {step}/{total}: „{tag}“ — kraunama iš Civitai…',
     tagFetchBarTooltip:
@@ -557,13 +595,13 @@ export const lt: Messages = {
     hideExcluded: 'Slėpti blokuotus',
     showBlockedTitle:
       'Rodyti modelius su blocked tag (🚫) tinklelyje — auto-download vis tiek nevyks',
-    showBlocked: 'Rodyti blocked modelius',
+    showBlocked: 'Rodyti blocked',
     tagFilterBlockedCleared:
       'Tag filtras išvalytas — „{tag}“ blocked (įjunkite Rodyti blocked modelius)',
     tagFilterBlockedConflict: 'Tag filtras konfliktuoja su blocked tag — Tags → All',
     hiddenByBlockedTags:
       '{count} paslėpta blocked tag: {tags} — įjunkite Rodyti blocked modelius',
-    hideAwaitingTitle: 'Slėpti Laukia prieigos / early access modelius',
+    hideAwaitingTitle: 'Slėpti Early access modelius (EA / gated, nėra API rakto)',
     routingTagPlaceholder: 'Routing tag',
     routingNoFolder: 'Nėra aplanko — pasirinkite 📁 ant tag arba pridėkite Tag Folders',
     shownCount: 'Rodoma {shown}{total}',
@@ -589,7 +627,7 @@ export const lt: Messages = {
     legendOwned: 'Green = owned',
     legendNew: 'Cyan edge / badge = new (not in library)',
     legendBlocked: 'Purple = blocked by tag',
-    legendAwaiting: 'Orange = awaiting access',
+    legendAwaiting: 'Orange = Early access',
     legendAutoQueued: 'Eilės kraštas = siuntimo eilėje',
     legendDl: 'Gintarinis kraštas = siunčiama',
     queueAll: 'Eilė visiems (puslapis po puslapio)',
@@ -680,6 +718,7 @@ export const lt: Messages = {
     searchActive: 'paieška: „{q}“',
     empty: 'Veiklos įrašų dar nėra.',
     noMatches: 'Pagal filtrus nieko nerasta.',
+    showMore: 'Rodyti daugiau (liko {remaining})',
     openInLibrary: 'Library →',
     level: {
       success: 'Sėkmė',
@@ -698,7 +737,7 @@ export const lt: Messages = {
       banned: 'Blokuoti / excluded',
       skippedFind: 'Praleisti atradimai',
       discovery: 'Nauji modeliai',
-      newVersion: 'Naujos versijos',
+      newVersion: 'Atnaujinimai',
       download: 'Atsisiuntimai ir eilė',
       repairSync: 'Taisymai ir sinchronizacija',
       library: 'Bibliotekos tikrinimai',
@@ -712,24 +751,83 @@ export const lt: Messages = {
     emptyHint:
       'Nėra laukiančių atnaujinimų. Harvest pats papildo šį sąrašą, kai randa naujesnes versijas modelių, kuriuos jau turite.',
     baseFilterHint:
-      'Tik versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
+      'Rodomos visos trūkstamos versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
     emptyAfterBan: 'Ban’inti įrašai pašalinti.',
     dismissHint: 'Paslėpti tik šį pasiūlymą (bibliotekos failų neliesti).',
     ban: 'Ban',
     banHint: 'Ištrina visas turimas šio modelio versijas ir exclude’ina nuo būsimų siuntimų',
     banConfirm:
       'Ban „{name}“? Bus ištrintos visos {count} turimos versijos iš bibliotekos/disko ir modelis exclude’intas.',
-    queueDownload: 'Queue download',
+    queueDownload: 'Download',
     queueHint: 'Atsisiųsti šią naujesnę versiją; jau turimas palikti',
-    openInLibrary: 'Atidaryti Library',
+    alwaysUpdate: 'Sync',
+    alwaysUpdateHint:
+      'Į eilę šią versiją ir ateityje automatiškai siųsti naujas šio modelio versijas (net jei Settings auto-download išjungtas)',
+    openInLibrary: 'Show List',
     offeredVersion: 'Nauja versija:',
     ownedVersions: 'Turite {count}: {list}',
     ownedNone: 'Šiam modelio id bibliotekoje failų nerasta.',
+    versionsCount: 'Versijos: {owned}/{total}',
     listTitle: 'Atnaujinimai laukia patvirtinimo ({count})',
     checkLibrary: 'Tikrinti dar kartą',
     checkLibraryTitle:
       'Dar kartą patikrinti visus turimus modelius per Civitai API (apeina 2 d. per-model skip, kurį naudoja fono check). Po vieną užklausą modeliui.',
     checking: 'Tikrinama…'
+  },
+  modelDetail: {
+    back: 'Atgal',
+    banned: 'Užbaninta',
+    ban: 'Ban',
+    unban: 'Unban',
+    banConfirm:
+      'Ban „{name}“? Bus ištrintos visos {count} turimos versijos iš bibliotekos/disko ir modelis exclude’intas nuo būsimų siuntimų.',
+    civitaiPage: 'Civitai page ↗',
+    openInExplorer: 'Atidaryti Explorer',
+    deleteFiles: 'Ištrinti failus ir exclude',
+    loading: 'Kraunama Civitai informacija…',
+    license: 'Licencija',
+    commercialUse: 'Komercinis naudojimas',
+    derivatives: 'Derivatives',
+    creditRequired: 'Reikia credit',
+    differentLicense: 'Kita licencija',
+    allowed: 'Leidžiama',
+    notAllowed: 'Neleidžiama',
+    noCreditNeeded: 'Credit nereikia',
+    creditNeeded: 'Reikia credit',
+    mustDifferentLicense: 'Turi naudoti kitą licenciją',
+    sameLicenseOk: 'Ta pati licencija OK',
+    triggerWords: 'Trigger words',
+    fromSwarm: 'iš swarm.json',
+    downloadedAt: 'Atsisiųsta {when}',
+    pathModel: 'Modelis',
+    pathPreview: 'Preview',
+    pathSwarm: 'Swarm JSON',
+    versionsHeading: 'Versijos ({count})',
+    sort: 'Rikiuoti',
+    sortDefault: 'Numatyta',
+    sortDownloads: 'Atsisiuntimai',
+    sortLikes: 'Likes',
+    inLibrary: 'Bibliotekoje',
+    notOwned: 'Neturima',
+    earlyAccess: 'Early access',
+    download: 'Download',
+    queueEarlyAccess: 'Į eilę (Early access)',
+    inQueue: 'Eilėje',
+    downloadHint: 'Atsisiųsti šią versiją',
+    downloadEarlyHint: 'Įdėti early-access versiją į eilę (lauks Early access, kol atrakins)',
+    loadPreviews: 'Įkelti preview',
+    loadingPreviews: 'Kraunami preview…',
+    loadPreviewsHint:
+      'Gauti tik šios versijos nuotraukas iš Civitai (be kitų versijų)',
+    noVersionPreviews: 'Šiai versijai Civitai nerasta nuotraukų.',
+    previewOf: '{current} / {total}',
+    openTagFoldersHint: 'Atidaryti Tag folders — rasti ar priskirti „{tag}“',
+    savePreview: 'Išsaugoti preview',
+    savingPreview: 'Saugoma…',
+    savePreviewHint:
+      'Atsisiųsti pasirinktą paveikslėlį ir nustatyti kaip šios versijos bibliotekos thumbnail (.preview.jpg)',
+    previewSaved: 'Preview išsaugotas bibliotekoje.',
+    previewSavedPending: 'Preview URL atnaujintas Updates sąraše (dar nėra bibliotekoje).'
   },
   load: {
     failed: 'Nepavyko įkelti',
@@ -847,7 +945,7 @@ export const lt: Messages = {
       'Spauskite preview detalėms. Spauskite Civitai tag — Tag folders su paieška. Žalias tagas / „Aplankas:“ eilutė = priskyrimas. Pažymėkite → Move. Dešinis — ban / unban / delete.',
     selectedHint: 'Pažymėta {count} — pasirinkite tag dešinėje → Move',
     emptyFiltered: 'Pagal paiešką ar filtrą modelių nėra.',
-    emptyNone: 'Modelių dar nėra. Atsisiųskite per Atsisiuntimo skiltį arba paleiskite watch scan.',
+    emptyNone: 'Modelių dar nėra. Įtraukite į eilę per Browse arba paleiskite watch scan.',
     downloadingCount: 'Siunčiama {count} modelių…',
     modelNotInLibrary: 'Modelio dar nėra bibliotekoje',
     enableShowBanned: 'Įjunkite „Rodyti banned“ žemiau, kad matytumėte banned modelius tinklelyje',
@@ -891,7 +989,7 @@ export const lt: Messages = {
     tagRoleUnmappedHint: 'Nepriskirta — „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
     folderLabel: 'Aplankas: {folder}',
     folderAssignedTitle: 'Priskirtas aplankas: {folder}',
-    earlyAccessWait: 'Early access laukimas:',
+    earlyAccessWait: 'Early:',
     sidebarTitle: 'Filtras ir perkėlimas',
     sidebarSearchPlaceholder: 'Ieškoti tagų…',
     sidebarHint:
@@ -903,6 +1001,13 @@ export const lt: Messages = {
     duplicateOf: 'Dublikatas: {name}',
     deleteLocal: 'Ištrinti vietinius failus',
     sessionDownloads: 'Sesijos atsisiuntimai',
+    downloadedByDate: 'Atsisiųsta pagal datą',
+    downloadedToday: 'Šiandien',
+    downloadedYesterday: 'Vakar',
+    downloadedLast7Days: '7 dienos',
+    downloadedDay: 'Diena',
+    downloadedFrom: 'Nuo',
+    downloadedTo: 'Iki',
     bannedOnly: 'Tik banned ({count})',
     baseModels: 'Base modeliai',
     folderRoutes: 'Aplankų maršrutai',
@@ -1020,8 +1125,8 @@ export const lt: Messages = {
     movingBanner: 'Perkeliami bibliotekos modeliai pagal tagus…'
   },
   deferredTab: {
-    title: 'Laukia prieigos',
-    titleCount: 'Laukia prieigos ({count})',
+    title: 'Early access',
+    titleCount: 'Early access ({count})',
     emptyLead:
       'Modeliai blokuojami dėl API rakto, early access ar teisių. Auto-retry kai galima (max {max} bandymai).',
     desc: 'Early access rodo atrakinimo laiką. Neblokuoja kitų atsisiuntimų.',
@@ -1029,12 +1134,45 @@ export const lt: Messages = {
     retryOne: 'Bandyti → eilė',
     dismiss: 'Atmesti',
     openCivitai: 'Civitai ↗',
+    ban: 'Ban',
+    banHint: 'Visam laikui išjungti — nebegrįš į Early access ir nebus auto-siunčiamas',
+    banConfirm:
+      'Ban „{name}“? Pašalinamas iš Early access, Browse auto-siuntimo ir būsimo harvest. Vėliau galima unban Nustatymuose.',
+    emptyAfterBan: 'Užblokuoti įrašai pašalinti.',
     waiting: 'Laukia {duration} · bandymai {count}',
     autoRetryPaused: ' · auto-retry pauzuotas',
     unlocksAt: 'Atrakinama {when}',
     unlocksIn: ' · po {countdown}',
+    unlocksInShort: 'Atrakinama po {countdown}',
+    reasonWait: '— Sub/Buzz/Wait',
+    reasonBuy: '— Sub/Buzz',
+    filterLabel: 'Prieiga',
+    filterAll: 'Visi',
+    filterWait: 'Atrakinama (laukti)',
+    filterBuy: 'Be atrakinimo datos',
+    emptyFiltered: 'Šiam filtrui modelių nėra.',
     extraBuzz: 'Papildoma Buzz kaina atsisiųsti dabar',
     freeTrial: 'Nemokamų generacijų: {count}'
+  },
+  incompleteTab: {
+    title: 'Incomplete',
+    titleCount: 'Incomplete ({count})',
+    emptyLead:
+      'Modeliai, kuriuos Civitai rodo be versijos duomenų (tuščias modelVersions). Į Browse pagal nutylėjimą neįtraukiami.',
+    recheck: 'Tikrinti API',
+    download: 'Siųsti → eilė',
+    pasteLink: 'Įklijuoti download nuorodą…',
+    downloadWithUrl: 'Naudoti nuorodą → eilė',
+    openCivitai: 'Civitai ↗',
+    ban: 'Ban',
+    banHint: 'Visam laikui išjungti šį modelį — nebegrįš į Incomplete ir nebus auto-siunčiamas',
+    banConfirm:
+      'Ban „{name}“? Pašalinamas iš Incomplete, Browse auto-siuntimo ir būsimo harvest. Vėliau galima unban Nustatymuose.',
+    emptyAfterBan: 'Užblokuoti įrašai pašalinti.',
+    waiting: 'Sekama {duration}',
+    versionName: ' · {name}',
+    badgeWaiting: 'Laukia versijos duomenų',
+    badgeReady: 'Versija rasta'
   },
   globalStatus: {
     preparingDownloads: 'Ruošiami atsisiuntimai…',

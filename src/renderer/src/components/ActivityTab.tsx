@@ -77,21 +77,23 @@ function recordsEqual(a: Record<string, boolean>, b: Record<string, boolean>): b
 
 function ActivityEntryMeta({
   entry,
-  inventory,
-  watchRules,
+  byVersionId,
+  byModelId,
+  ruleById,
   onJumpToModel
 }: {
   entry: ActivityEntry
-  inventory: InventoryRecord[]
-  watchRules: WatchRule[]
+  byVersionId: Map<number, InventoryRecord>
+  byModelId: Map<number, InventoryRecord>
+  ruleById: Map<string, WatchRule>
   onJumpToModel?: (modelId: number) => void
 }) {
   const t = useT()
   const rec =
-    (entry.versionId != null && inventory.find((r) => r.versionId === entry.versionId)) ||
-    (entry.modelId != null && inventory.find((r) => r.modelId === entry.modelId)) ||
+    (entry.versionId != null ? byVersionId.get(entry.versionId) : undefined) ||
+    (entry.modelId != null ? byModelId.get(entry.modelId) : undefined) ||
     null
-  const rule = entry.ruleId ? watchRules.find((r) => r.id === entry.ruleId) : undefined
+  const rule = entry.ruleId ? ruleById.get(entry.ruleId) : undefined
   const baseModel = rec?.baseModel?.trim()
   const modelId = entry.modelId ?? rec?.modelId
 
@@ -137,6 +139,23 @@ export function ActivityTab({
 }: Props) {
   const t = useT()
   const nameToModelId = useMemo(() => buildModelNameIndex(inventory), [inventory])
+  const byVersionId = useMemo(() => {
+    const map = new Map<number, InventoryRecord>()
+    for (const r of inventory) map.set(r.versionId, r)
+    return map
+  }, [inventory])
+  const byModelId = useMemo(() => {
+    const map = new Map<number, InventoryRecord>()
+    for (const r of inventory) {
+      if (!map.has(r.modelId)) map.set(r.modelId, r)
+    }
+    return map
+  }, [inventory])
+  const ruleById = useMemo(() => {
+    const map = new Map<string, WatchRule>()
+    for (const r of watchRules) map.set(r.id, r)
+    return map
+  }, [watchRules])
 
   const presentCategories = useMemo(() => categoriesPresentInLog(entries), [entries])
 
@@ -147,6 +166,7 @@ export function ActivityTab({
   const [levels, setLevels] = useState(defaultLevels)
   const [sources, setSources] = useState(defaultSources)
   const [categoryOverrides, setCategoryOverrides] = useState<Partial<Record<ActivityCategory, boolean>>>({})
+  const [visibleLimit, setVisibleLimit] = useState(250)
 
   const defaultCategories = useMemo(
     () => defaultCategoryVisibility(presentCategories),
@@ -324,7 +344,7 @@ export function ActivityTab({
             {entries.length === 0 ? t('activity.empty') : t('activity.noMatches')}
           </div>
         )}
-        {filtered.map((e) => {
+        {filtered.slice(0, visibleLimit).map((e) => {
           const source = e.source ?? 'system'
           return (
             <div key={e.id} className={`log-entry ${e.level} log-source-${source}`}>
@@ -336,8 +356,9 @@ export function ActivityTab({
               <span className="muted">{new Date(e.timestamp).toLocaleString()}</span>
               <ActivityEntryMeta
                 entry={e}
-                inventory={inventory}
-                watchRules={watchRules}
+                byVersionId={byVersionId}
+                byModelId={byModelId}
+                ruleById={ruleById}
                 onJumpToModel={onJumpToModel}
               />
               <div className="log-entry-message">
@@ -348,6 +369,13 @@ export function ActivityTab({
             </div>
           )
         })}
+        {filtered.length > visibleLimit && (
+          <div className="log-entry activity-log-more">
+            <button type="button" className="btn-sm" onClick={() => setVisibleLimit((n) => n + 250)}>
+              {t('activity.showMore', { remaining: filtered.length - visibleLimit })}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

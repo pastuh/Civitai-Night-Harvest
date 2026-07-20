@@ -5,17 +5,18 @@ import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
 import { describeNsfwRating } from '../../../shared/nsfw-rating'
 import { formatBytes, getModelPageUrl } from '../../../shared/utils'
 import { PreviewThumb } from './PreviewThumb'
-import { ModelDetailModal, type ModelDetailTarget } from './ModelDetailModal'
+import type { ModelDetailTarget } from './ModelDetailModal'
 import { useT } from '../i18n/context'
 import type { TranslateFn } from '../i18n/context'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
+import { useDownloadQueue } from '../hooks/useDownloadQueue'
 
 const COLLAPSED_KEY = 'csd:downloads-strip-collapsed'
 const STALL_MS = 90_000
 
 interface Props {
-  queue: DownloadQueueItem[]
-  queuePaused: boolean
+  queue?: DownloadQueueItem[]
+  queuePaused?: boolean
   deferred?: DeferredDownload[]
   stripLayout?: DownloadStripLayout
   banFunctionMode?: boolean
@@ -25,6 +26,8 @@ interface Props {
   onDismissFailed?: (queueId: string) => Promise<void>
   onPrioritizeDownload?: (queueId: string) => Promise<void>
   onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
+  onJumpToGallery?: (modelId: number, modelName?: string) => void
+  onOpenModelDetail?: (target: ModelDetailTarget) => void
 }
 
 function pct(item: DownloadQueueItem): number {
@@ -406,8 +409,8 @@ export function StripClearQueueButton({
 
 
 export function ActiveDownloadsStrip({
-  queue,
-  queuePaused,
+  queue: queueProp,
+  queuePaused: queuePausedProp,
   deferred = [],
   stripLayout = 'minimal',
   banFunctionMode = false,
@@ -416,8 +419,13 @@ export function ActiveDownloadsStrip({
   onRetryFailed,
   onDismissFailed,
   onPrioritizeDownload,
-  onBrowseModelBanChange
+  onBrowseModelBanChange,
+  onJumpToGallery: _onJumpToGallery,
+  onOpenModelDetail
 }: Props) {
+  const liveQueue = useDownloadQueue()
+  const queue = queueProp ?? liveQueue.items
+  const queuePaused = queuePausedProp ?? liveQueue.paused
   const t = useT()
   const stalledIds = useDownloadStalls(queue)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -426,7 +434,6 @@ export function ActiveDownloadsStrip({
     y: number
     item: DownloadQueueItem
   } | null>(null)
-  const [detailTarget, setDetailTarget] = useState<ModelDetailTarget | null>(null)
   const [bannedIds, setBannedIds] = useState<Set<number>>(() => new Set())
   useEffect(() => {
     void window.api.getBannedModels().then((list) => {
@@ -453,7 +460,7 @@ export function ActiveDownloadsStrip({
   }
 
   const openDetail = (item: DownloadQueueItem) => {
-    setDetailTarget({
+    onOpenModelDetail?.({
       kind: 'browse',
       modelId: item.modelId,
       versionId: item.versionId,
@@ -739,10 +746,6 @@ export function ActiveDownloadsStrip({
               </button>
             )}
         </ContextMenuPortal>
-      )}
-
-      {detailTarget && (
-        <ModelDetailModal target={detailTarget} onClose={() => setDetailTarget(null)} />
       )}
     </div>
   )

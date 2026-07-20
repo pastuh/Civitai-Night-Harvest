@@ -7,6 +7,8 @@ interface Props {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  /** Use danger styling for destructive confirms (Ban / delete). */
+  danger?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -16,6 +18,7 @@ export function ConfirmModal({
   message,
   confirmLabel,
   cancelLabel,
+  danger = false,
   onConfirm,
   onCancel
 }: Props) {
@@ -44,7 +47,11 @@ export function ConfirmModal({
           <button type="button" onClick={onCancel}>
             {cancelLabel ?? t('common.cancel')}
           </button>
-          <button type="button" className="primary" onClick={onConfirm}>
+          <button
+            type="button"
+            className={danger ? 'danger-btn' : 'primary'}
+            onClick={onConfirm}
+          >
             {confirmLabel ?? t('common.confirm')}
           </button>
         </div>

@@ -23,6 +23,8 @@ import type {
   DownloadProgress,
   PendingVersion,
   DeferredDownload,
+  IncompleteModel,
+  IncompleteDownloadResult,
   ScanResult,
   LibraryVersionScanProgress,
   LibraryVersionScanResult,
@@ -110,6 +112,12 @@ const api = {
     versionId: number,
     patch: { isNsfw?: boolean | null; nsfwLevel?: number | null }
   ): Promise<void> => ipcRenderer.invoke('inventory:patchNsfw', { versionId, ...patch }),
+
+  setPreviewFromUrl: (
+    versionId: number,
+    imageUrl: string
+  ): Promise<{ savedToLibrary: boolean; record?: InventoryRecord }> =>
+    ipcRenderer.invoke('inventory:setPreviewFromUrl', { versionId, imageUrl }),
 
   previewModel: (input: string) => ipcRenderer.invoke('model:preview', input),
 
@@ -214,6 +222,9 @@ const api = {
     ipcRenderer.invoke('model:ban', { modelId, modelName }),
   unbanModel: (modelId: number) => ipcRenderer.invoke('model:unban', modelId),
   getBannedModels: () => ipcRenderer.invoke('model:getBanned'),
+  setModelAutoUpdate: (modelId: number, enabled: boolean, modelName?: string) =>
+    ipcRenderer.invoke('model:setAutoUpdate', { modelId, enabled, modelName }),
+  getAutoUpdateModels: () => ipcRenderer.invoke('model:getAutoUpdate'),
   dismissPending: (versionId: number): Promise<void> =>
     ipcRenderer.invoke('pending:dismiss', versionId),
 
@@ -231,6 +242,21 @@ const api = {
     ipcRenderer.invoke('deferred:retry', versionId),
   dismissDeferred: (versionId: number): Promise<DeferredDownload[]> =>
     ipcRenderer.invoke('deferred:dismiss', versionId),
+
+  getIncomplete: (): Promise<IncompleteModel[]> => ipcRenderer.invoke('incomplete:get'),
+  recheckIncomplete: (): Promise<{
+    checked: number
+    resolved: number
+    items: IncompleteModel[]
+  }> => ipcRenderer.invoke('incomplete:recheck'),
+  downloadIncomplete: (payload: {
+    modelId: number
+    downloadUrl?: string
+  }): Promise<
+    IncompleteDownloadResult & { queue: DownloadQueueState; items: IncompleteModel[] }
+  > => ipcRenderer.invoke('incomplete:download', payload),
+  dismissIncomplete: (modelId: number): Promise<IncompleteModel[]> =>
+    ipcRenderer.invoke('incomplete:dismiss', modelId),
 
   toMediaUrl: (filePath: string): string => `media://${encodeURIComponent(filePath)}`,
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showInFolder', filePath),
@@ -275,6 +301,11 @@ const api = {
     const handler = (_: unknown, d: DeferredDownload[]) => cb(d)
     ipcRenderer.on('deferred:versions', handler)
     return () => ipcRenderer.removeListener('deferred:versions', handler)
+  },
+  onIncompleteList: (cb: (items: IncompleteModel[]) => void) => {
+    const handler = (_: unknown, items: IncompleteModel[]) => cb(items)
+    ipcRenderer.on('incomplete:list', handler)
+    return () => ipcRenderer.removeListener('incomplete:list', handler)
   },
   onScanComplete: (cb: (r: ScanResult[]) => void) => {
     const handler = (_: unknown, r: ScanResult[]) => cb(r)

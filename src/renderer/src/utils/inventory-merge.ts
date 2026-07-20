@@ -1,4 +1,4 @@
-import type { InventoryRecord } from '../../shared/types'
+import type { InventoryRecord } from '../../../shared/types'
 
 function sameInventoryRecord(a: InventoryRecord, b: InventoryRecord): boolean {
   return (

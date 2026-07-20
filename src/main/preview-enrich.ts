@@ -87,9 +87,12 @@ function toResolved(
   modelId: number,
   versionId: number,
   model: CivitaiModel,
-  filter: ContentFilter
+  filter: ContentFilter,
+  strictVersion = false
 ): ResolvedPreview {
-  const previewUrls = toDisplayPreviewUrls(resolveVersionPreviewCandidates(model, versionId, filter))
+  const previewUrls = toDisplayPreviewUrls(
+    resolveVersionPreviewCandidates(model, versionId, filter, { strictVersion })
+  )
   return {
     modelId,
     versionId,
@@ -105,7 +108,8 @@ export async function resolvePreviewsForModelWithFallback(
   preferredDomain: CivitaiDomain | undefined,
   seed?: CivitaiModel,
   contentFilter: ContentFilter = 'all',
-  hints?: DownloadDomainHints
+  hints?: DownloadDomainHints,
+  strictVersion = false
 ): Promise<ResolvedPreview> {
   const mergedHints = hintsFromSeed(seed, hints)
   const domains = previewDomainsToTry(pool, preferredDomain, mergedHints)
@@ -113,7 +117,14 @@ export async function resolvePreviewsForModelWithFallback(
   let last: ResolvedPreview = { modelId, versionId, previewUrls: [] }
   for (const domain of domains) {
     const client = pool.forDomain(domain)
-    last = await resolvePreviewsForModel(client, modelId, versionId, seed, contentFilter)
+    last = await resolvePreviewsForModel(
+      client,
+      modelId,
+      versionId,
+      seed,
+      contentFilter,
+      strictVersion
+    )
     if (last.previewUrls.length) return last
   }
   return last
@@ -124,12 +135,13 @@ export async function resolvePreviewsForModel(
   modelId: number,
   versionId: number,
   seed?: CivitaiModel,
-  contentFilter: ContentFilter = 'all'
+  contentFilter: ContentFilter = 'all',
+  strictVersion = false
 ): Promise<ResolvedPreview> {
   let model: CivitaiModel | null = seed ?? null
 
   if (model) {
-    const initial = toResolved(modelId, versionId, model, contentFilter)
+    const initial = toResolved(modelId, versionId, model, contentFilter, strictVersion)
     if (initial.previewUrls.length) return initial
   }
 
@@ -137,7 +149,7 @@ export async function resolvePreviewsForModel(
     const fullVersion = await client.getModelVersion(versionId)
     if (!model) model = await client.getModel(modelId)
     mergeVersionImages(model, versionId, fullVersion.images ?? [])
-    const fromVersion = toResolved(modelId, versionId, model, contentFilter)
+    const fromVersion = toResolved(modelId, versionId, model, contentFilter, strictVersion)
     if (fromVersion.previewUrls.length) return fromVersion
   } catch {
     /* continue */
@@ -147,15 +159,19 @@ export async function resolvePreviewsForModel(
     const gallery = await client.searchImagesForVersion(versionId)
     if (!model) model = await client.getModel(modelId)
     mergeVersionImages(model, versionId, gallery)
-    const fromGallery = toResolved(modelId, versionId, model, contentFilter)
+    const fromGallery = toResolved(modelId, versionId, model, contentFilter, strictVersion)
     if (fromGallery.previewUrls.length) return fromGallery
   } catch {
     /* continue */
   }
 
+  if (strictVersion) {
+    return { modelId, versionId, previewUrls: [] }
+  }
+
   try {
     model = await client.getModel(modelId)
-    return toResolved(modelId, versionId, model, contentFilter)
+    return toResolved(modelId, versionId, model, contentFilter, false)
   } catch {
     return { modelId, versionId, previewUrls: [] }
   }
@@ -169,6 +185,7 @@ export async function resolvePreviewsBatch(
     sourceDomain?: CivitaiDomain
     nsfw?: boolean
     nsfwLevel?: number
+    strictVersion?: boolean
   }[],
   contentFilter: ContentFilter
 ): Promise<ResolvedPreview[]> {
@@ -181,7 +198,8 @@ export async function resolvePreviewsBatch(
       item.sourceDomain,
       undefined,
       contentFilter,
-      { nsfw: item.nsfw, nsfwLevel: item.nsfwLevel }
+      { nsfw: item.nsfw, nsfwLevel: item.nsfwLevel },
+      item.strictVersion === true
     )
   })
   return results
@@ -205,7 +223,8 @@ export async function enrichTestModelPreviews(
       m.sourceDomain,
       undefined,
       contentFilter,
-      { nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }
+      { nsfw: m.nsfw, nsfwLevel: m.nsfwLevel },
+      true
     )
     if (!resolved.previewUrls.length) return
     m.previewUrl = resolved.previewUrl
@@ -227,7 +246,11 @@ export async function enrichModelPreviews(
     .filter(
       ({ model, versionId }) =>
         versionId > 0 &&
-        !toDisplayPreviewUrls(resolveVersionPreviewCandidates(model, versionId, contentFilter)).length
+        !toDisplayPreviewUrls(
+          resolveVersionPreviewCandidates(model, versionId, contentFilter, {
+            strictVersion: true
+          })
+        ).length
     )
 
   if (!missing.length) return
@@ -240,7 +263,8 @@ export async function enrichModelPreviews(
       crawlDomain,
       model,
       contentFilter,
-      { nsfw: model.nsfw, nsfwLevel: model.nsfwLevel, model }
+      { nsfw: model.nsfw, nsfwLevel: model.nsfwLevel, model },
+      true
     )
   })
 }
@@ -250,5 +274,5 @@ export function previewsFromModel(
   versionId: number,
   contentFilter: ContentFilter
 ): ResolvedPreview {
-  return toResolved(model.id, versionId, model, contentFilter)
+  return toResolved(model.id, versionId, model, contentFilter, true)
 }
