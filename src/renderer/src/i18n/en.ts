@@ -16,7 +16,7 @@ export const en = {
   tabs: {
     browse: 'Browse',
     browseBadgeTitle:
-      'Queued/downloading now + Harvest Auto-New backlog (only when Browse cards are shown, matches enabled rules). No Updates/banned/hidden ghosts.',
+      'Models in the download pipeline (queued or downloading), including Harvest Auto and your Queue from Updates or Model details.',
     library: 'Library',
     download: 'Download',
     tagFolders: 'Tag Folders',
@@ -59,7 +59,7 @@ export const en = {
     tooltipDownloadsResume: 'Resume downloads',
     tooltipBlur: 'Blur previews',
     tooltipBrowseLiveOn:
-      'Live gallery ON — cards update during harvest. Click 👁 to hide cards (quiet / lighter UI; downloads continue).',
+      'Live gallery ON — cards update during harvest. Click 👁 to hide cards (downloads continue).',
     tooltipBrowseLiveOff:
       'Quiet ON — Browse cards hidden so the UI stays light; harvest downloads in the background. Click to show live gallery, or Show Browse snapshot.',
     tooltipScheduledScan: 'Next automatic harvest peek (Harvest only)',
@@ -224,7 +224,7 @@ export const en = {
         'Browse and Library use the same mode on already-loaded results. Lazy = infinite scroll in chunks. Pages = classic Prev/Next. Auto-advance = lazy, and when Hide owned leaves Browse empty it can load the next Civitai page if more pages are available (Library treats Auto-advance as Lazy).',
       resultsPageSize: 'How many cards per page (Pages) or per scroll chunk (Lazy / Auto-advance).',
       updateBrowseOnCrawl:
-        'Same as the 👁 button next to Blur in the header. Off = clear Browse cards and quieter UI (downloads still run); On = live Browse grid.',
+        'Show Browse cards while harvest runs. Off = hide cards (quieter UI; downloads continue).',
       domain:
         'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.',
       preserveFilters:
@@ -319,11 +319,12 @@ export const en = {
       '🌙 Harvesting — queues every new model that matches your enabled Browse rules (blocked tags still skipped). Folder / Tags assignment is separate and can wait until after download.',
     headerDownloads:
       '**Auto** / **Manual** — separate header toggles: Auto queues eligible models (up to 10 in pipeline); Manual only queues cards you click. **Pause** (red) stops active downloads without switching mode.',
+    headerEye: '👁 — hide Browse cards during harvest (quieter UI; downloads continue)',
     headerScan: 'Scan — run all enabled Browse rules once and refresh Results',
     headerBlur: 'Blur — hide preview thumbnails',
-    browseRules: 'Rules — Civitai filters (type, base model, keywords, sort); pick domain above Results',
+    browseRules: 'Rules — Civitai filters (type, base model, keywords, sort)',
     browseResults:
-      'Results — search by name/author; filter toolbar (content, hide owned, ban mode); Sort and Tags in the right toolbar box; click a card to queue or remove. Display mode (lazy / pages / auto-advance) is set in Settings.',
+      'Results — search, filters (Hide owned, etc.), Loaded / Owned / Yield stats, Sort and Tags; click a card to queue',
     browseDetails:
       'ℹ on a card opens **Model details** (full page) — versions on the right, sticky Back/Civitai/Show List/Ban bar, download missing versions, Load/Save preview for owned versions',
     browsePreviews:
@@ -343,7 +344,7 @@ export const en = {
     librarySession:
       '**Session downloads** — sidebar filter for everything added to the library during this app run (not the same as Show List)',
     libraryByDate:
-      '**Downloaded by date** — Today / Yesterday / Last 7 days, day or from–to pickers, and a list of days that have downloads (`downloadedAt`)',
+      '**Downloaded by date** — Today / Yesterday / Last 7 days, or the calendar: click one day, or two days for a from–to range. Shows how many downloads match the selection.',
     libraryDetails:
       'ℹ opens the same Model details page as Browse — switch versions, save preview, open on Civitai',
     librarySort:
@@ -373,7 +374,7 @@ export const en = {
     dlNewVersions:
       'Updates — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256; skips models polled within 2 days). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
     dlTabBadges:
-      'Tab badges — Browse: queue + New only when Auto will queue them (not raw fetch stats) · Library: +N after download · Updates / Early access: pending confirms',
+      'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access: items waiting',
     dlActivity:
       'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:
@@ -394,8 +395,7 @@ export const en = {
       backfill: 'Walk full catalog once, then peek newest page only. Downloads run between pages.',
       newestPeek: 'During night crawl, re-check page 1 at most this often for brand-new models.',
       connections: 'Multi-stream on direct CDN links only. Civitai API links use single stream.',
-      updateBrowse:
-        'Append each crawl page to Browse results. Off = clear gallery cards and crawl downloads only; check Activity log.',
+      updateBrowse: 'Show Browse cards while harvest runs. Off = hide cards (quieter UI; downloads continue).',
       resultsDisplayMode:
         'How Browse and Library window already-loaded results: lazy scroll, classic pages, or auto-advance past empty Hide-owned Browse pages.',
       resultsPageSize: 'Cards per page or scroll chunk (60 or 100).',
@@ -422,10 +422,11 @@ export const en = {
     },
     progressBar: {
       green: 'Green = owned',
-      red: 'Red = excluded',
+      red: 'Red = banned',
       yellow: 'Yellow = blocked tag',
       gray: 'Gray = Early access',
-      empty: 'Empty = still to download'
+      teal: 'Teal = Yield (this session)',
+      yieldNote: 'Yield — models sent to the download strip this session (grows as you queue or Auto sends).'
     }
   },
   resultsPager: {
@@ -437,8 +438,6 @@ export const en = {
     loaded: 'Showing {shown} of {total} visible',
     loadedFiltered: '{loaded} loaded · {owned} hidden (owned) · {visible} visible',
     noVisibleYet: 'No visible models yet',
-    emptyOwnedHint: 'All loaded models are owned — use Next / Load more to fetch the next Civitai page.',
-    crawlPage: 'Harvest is on Civitai page {page} — use Next to skip ahead manually.',
     moreApi: 'more on Civitai',
     showMore: 'Show more',
     loadMoreApi: 'Load next Civitai page',
@@ -486,12 +485,13 @@ export const en = {
     barLegendAwaitingConfirm: 'Updates',
     barLegendAwaitingConfirmHint:
       'You already own another version — confirm on the Updates tab (or Always update) before queueing',
-    barLegendNew: 'New',
-    barLegendNewHint: 'Not in your library yet — can auto-queue for download',
+    barLegendYield: 'Yield',
+    barLegendYieldHint:
+      'Models sent to the download strip this session (Auto, Updates, Model details). Count only grows.',
     barTooltip:
-      '{total} loaded = {owned} owned + {missing} new + {awaitingConfirm} updates + {awaiting} awaiting + {skipTag} blocked by tag + {excluded} banned',
+      '{total} loaded · {owned} owned · Yield {yield} · {awaitingConfirm} updates · {awaiting} awaiting · {skipTag} blocked · {excluded} banned',
     barSegOwned: '{count} already owned',
-    barSegMissing: '{count} not downloaded yet',
+    barSegYield: '{count} Yield this session',
     barSegExcluded: '{count} excluded / banned',
     barSegSkipTag: '{count} blocked by tag',
     barSegAwaiting: '{count} Early access',
@@ -997,9 +997,10 @@ export const en = {
     downloadedToday: 'Today',
     downloadedYesterday: 'Yesterday',
     downloadedLast7Days: 'Last 7 days',
-    downloadedDay: 'Day',
-    downloadedFrom: 'From',
-    downloadedTo: 'To',
+    calendarPrevMonth: 'Previous month',
+    calendarNextMonth: 'Next month',
+    calendarRangeHint: 'Click a day, or two days for a range',
+    downloadsInSelection: 'Downloads: {count}',
     bannedOnly: 'Banned only ({count})',
     baseModels: 'Base models',
     folderRoutes: 'Folder routes',

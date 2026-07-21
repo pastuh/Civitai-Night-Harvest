@@ -145,6 +145,32 @@ export function primaryClusterKey(
   return civitaiTags[0].toLowerCase()
 }
 
+/** O(tags) lookup after O(variants) build — use for sorting large libraries. */
+export function buildPrimaryClusterKeyLookup(
+  clusters: TagCluster[]
+): (civitaiTags: string[] | undefined) => string {
+  const tagToBest = new Map<string, { index: number; label: string }>()
+  for (let index = 0; index < clusters.length; index++) {
+    const cluster = clusters[index]
+    const label = cluster.label.toLowerCase()
+    for (const v of cluster.variants) {
+      const key = v.name.toLowerCase()
+      const prev = tagToBest.get(key)
+      if (!prev || index < prev.index) tagToBest.set(key, { index, label })
+    }
+  }
+  return (civitaiTags) => {
+    if (!civitaiTags?.length) return '\uffff'
+    let best: { index: number; label: string } | null = null
+    for (const raw of civitaiTags) {
+      const hit = tagToBest.get(raw.trim().toLowerCase())
+      if (!hit) continue
+      if (!best || hit.index < best.index) best = hit
+    }
+    return best?.label ?? civitaiTags[0].toLowerCase()
+  }
+}
+
 export function isTagAssignedToRecord(routingTag: string | undefined, tagName: string): boolean {
   if (!routingTag?.trim()) return false
   return routingTag.trim().toLowerCase() === tagName.trim().toLowerCase()

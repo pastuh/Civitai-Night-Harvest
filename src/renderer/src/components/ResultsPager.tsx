@@ -7,10 +7,6 @@ interface Props {
   totalPages: number
   /** Models visible after toolbar filters (Hide owned, etc.). */
   totalItems: number
-  /** All models loaded into Browse for this rule (before Hide owned). */
-  loadedTotal?: number
-  hiddenOwned?: number
-  catalogPage?: number | null
   pageSize: number
   /** How many items are currently mounted (lazy) or on this page (pages). */
   shownCount: number
@@ -29,9 +25,6 @@ export function ResultsPager({
   page,
   totalPages,
   totalItems,
-  loadedTotal = 0,
-  hiddenOwned = 0,
-  catalogPage = null,
   pageSize,
   shownCount,
   hasMoreLazy,
@@ -44,66 +37,34 @@ export function ResultsPager({
   autoAdvanceHint
 }: Props) {
   const t = useT()
-  const showLoadedMeta = loadedTotal > 0 && (loadedTotal !== totalItems || hiddenOwned > 0)
-  const emptyOwnedPage = totalItems === 0 && hiddenOwned > 0 && canLoadMoreApi
 
-  if (
-    totalItems === 0 &&
-    loadedTotal === 0 &&
-    !canLoadMoreApi &&
-    !autoAdvanceHint &&
-    !emptyOwnedPage
-  ) {
-    return null
+  // Nothing visible (e.g. Hide owned) — don't show Prev/Next or loaded/hidden counters.
+  if (totalItems === 0) {
+    if (!autoAdvanceHint) return null
+    return (
+      <div className="results-pager" role="status">
+        <p className="muted results-pager-hint">{autoAdvanceHint}</p>
+      </div>
+    )
   }
 
-  const from = mode === 'pages' && totalItems > 0 ? (page - 1) * pageSize + 1 : totalItems > 0 ? 1 : 0
+  const from = mode === 'pages' ? (page - 1) * pageSize + 1 : 1
   const to = mode === 'pages' ? Math.min(page * pageSize, totalItems) : shownCount
 
-  const statusLine = (() => {
-    if (mode === 'pages') {
-      if (totalItems > 0) {
-        return (
-          <>
-            {t('resultsPager.pageOf', { page, totalPages })}
-            {' · '}
-            {t('resultsPager.showing', { from, to, total: totalItems })}
-          </>
-        )
-      }
-      if (showLoadedMeta) {
-        return t('resultsPager.loadedFiltered', {
-          visible: totalItems,
-          loaded: loadedTotal,
-          owned: hiddenOwned
-        })
-      }
-      return t('resultsPager.noVisibleYet')
-    }
-    if (totalItems > 0) {
-      return t('resultsPager.loaded', { shown: shownCount, total: totalItems })
-    }
-    if (showLoadedMeta) {
-      return t('resultsPager.loadedFiltered', {
-        visible: totalItems,
-        loaded: loadedTotal,
-        owned: hiddenOwned
-      })
-    }
-    return t('resultsPager.noVisibleYet')
-  })()
+  const statusLine =
+    mode === 'pages' ? (
+      <>
+        {t('resultsPager.pageOf', { page, totalPages })}
+        {' · '}
+        {t('resultsPager.showing', { from, to, total: totalItems })}
+      </>
+    ) : (
+      t('resultsPager.loaded', { shown: shownCount, total: totalItems })
+    )
 
   return (
     <div className="results-pager" role="navigation" aria-label={t('resultsPager.label')}>
       {autoAdvanceHint && <p className="muted results-pager-hint">{autoAdvanceHint}</p>}
-      {emptyOwnedPage && !autoAdvanceHint && (
-        <p className="muted results-pager-hint">{t('resultsPager.emptyOwnedHint')}</p>
-      )}
-      {catalogPage != null && catalogPage > 0 && loadedTotal > 0 && totalItems === 0 && (
-        <p className="muted results-pager-hint">
-          {t('resultsPager.crawlPage', { page: catalogPage })}
-        </p>
-      )}
       {mode === 'pages' ? (
         <div className="results-pager-row">
           <button

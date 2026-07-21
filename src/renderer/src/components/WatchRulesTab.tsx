@@ -162,6 +162,8 @@ interface Props {
   onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void | Promise<void>
   browseViewPrefs?: import('../view-prefs').BrowseViewPrefs
   onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
+  /** Session Yield — models that entered the download pipeline (only grows). */
+  sessionYieldCount?: number
 }
 
 function newId(): string {
@@ -221,7 +223,8 @@ export function WatchRulesTab({
   onBrowseModelBanChange,
   onBrowseSnapshot,
   browseViewPrefs,
-  onBrowseViewPrefsChange
+  onBrowseViewPrefsChange,
+  sessionYieldCount = 0
 }: Props) {
   const { paused: queuePaused } = useQueuedMembership()
   const t = useT()
@@ -881,6 +884,7 @@ export function WatchRulesTab({
             if (gallery) await onBrowseSnapshot?.(gallery)
           }}
           galleryStats={crawlProgress?.galleryStats ?? crawlPageMeta?.galleryStats ?? null}
+          sessionYieldCount={sessionYieldCount}
         />
       )}
 
@@ -935,6 +939,7 @@ export function WatchRulesTab({
           resultsPageSize={settings.resultsPageSize ?? 100}
           viewPrefs={browseViewPrefs}
           onViewPrefsChange={onBrowseViewPrefsChange}
+          sessionYieldCount={sessionYieldCount}
         />
       ) : settings.nightMode && !showQuietActions ? (
         <NightCrawlQuietPanel
@@ -947,6 +952,7 @@ export function WatchRulesTab({
             if (gallery) await onBrowseSnapshot?.(gallery)
           }}
           galleryStats={crawlProgress?.galleryStats ?? crawlPageMeta?.galleryStats ?? null}
+          sessionYieldCount={sessionYieldCount}
         />
       ) : !settings.nightMode ? (
         <section className="browse-results-empty">

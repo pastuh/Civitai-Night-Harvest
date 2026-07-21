@@ -124,6 +124,19 @@ export default function App() {
   const [preferLibrarySession, setPreferLibrarySession] = useState(false)
   const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
   const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
+  const onLibraryViewPrefsChange = useCallback((prefs: LibraryViewPrefs) => {
+    setLibraryViewPrefs((prev) =>
+      prev.libraryFilter === prefs.libraryFilter &&
+      prev.librarySort === prefs.librarySort &&
+      prev.nsfwFilter === prefs.nsfwFilter &&
+      prev.hideFolderAssigned === prefs.hideFolderAssigned &&
+      prev.modelSearch === prefs.modelSearch &&
+      prev.modelLetter === prefs.modelLetter
+        ? prev
+        : prefs
+    )
+  }, [])
+  const clearPreferLibrarySession = useCallback(() => setPreferLibrarySession(false), [])
   const [startupReady, setStartupReady] = useState(false)
   const [browseGalleryAwaiting, setBrowseGalleryAwaiting] = useState(true)
   const [watchRulesSaveState, setWatchRulesSaveState] = useState<'saved' | 'saving' | 'unsaved'>('saved')
@@ -169,7 +182,31 @@ export default function App() {
   const bannedPendingModelIdsRef = useRef<Set<number>>(new Set())
   /** Full banned model id set — badge must not count banned/queued leftovers. */
   const [bannedModelIds, setBannedModelIds] = useState<Set<number>>(() => new Set())
+  /** Session Yield: versionIds that entered the download pipeline (only grows). */
+  const sessionYieldIdsRef = useRef<Set<number>>(new Set())
+  const [sessionYieldCount, setSessionYieldCount] = useState(0)
   const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
+
+  const noteSessionYield = useCallback((items: DownloadQueueItem[]) => {
+    const set = sessionYieldIdsRef.current
+    let added = 0
+    for (const item of items) {
+      if (item.status !== 'queued' && item.status !== 'downloading' && item.status !== 'done') {
+        continue
+      }
+      if (item.versionId <= 0) continue
+      if (set.has(item.versionId)) continue
+      set.add(item.versionId)
+      added++
+    }
+    if (added > 0) setSessionYieldCount(set.size)
+  }, [])
+
+  // Any queue structure change (Auto / Updates / details / Manual) grows Yield for this session.
+  useEffect(() => {
+    void queueStructureKeyForBadge
+    noteSessionYield(getDownloadQueueSnapshot().items)
+  }, [queueStructureKeyForBadge, noteSessionYield])
 
   /** Keep existing row order; append newly detected offers at the bottom. */
   const applyPendingVersions = useCallback((pend: PendingVersion[]) => {
@@ -574,6 +611,7 @@ export default function App() {
       prevQueueStatus.clear()
       for (const item of q.items) prevQueueStatus.set(item.id, item.status)
 
+      noteSessionYield(q.items)
       setDownloadQueueState({ items: q.items, paused: q.paused })
       const hasActive = q.items.some((i) => i.status === 'queued' || i.status === 'downloading')
       if (needsInventory || (hadActive && !hasActive)) {
@@ -1701,9 +1739,11 @@ export default function App() {
               sessionDownloadIds={sessionDownloadIds}
               highlightVersionIds={libraryHighlightIds}
               preferSessionFilter={preferLibrarySession}
-              onPreferSessionHandled={() => setPreferLibrarySession(false)}
+              onPreferSessionHandled={clearPreferLibrarySession}
               viewPrefs={settings.preserveFilters ? libraryViewPrefs : undefined}
-              onViewPrefsChange={settings.preserveFilters ? setLibraryViewPrefs : undefined}
+              onViewPrefsChange={
+                settings.preserveFilters ? onLibraryViewPrefsChange : undefined
+              }
               isActive
               resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
               resultsPageSize={settings.resultsPageSize ?? 100}
@@ -1740,6 +1780,7 @@ export default function App() {
             onOpenModelDetail={openModelDetail}
             browseViewPrefs={settings.preserveFilters ? browseViewPrefs : undefined}
             onBrowseViewPrefsChange={settings.preserveFilters ? setBrowseViewPrefs : undefined}
+            sessionYieldCount={sessionYieldCount}
           />
         ) : null}
         {!modelDetailTarget && tab === 'tags' ? (

@@ -15,6 +15,8 @@ interface Props {
   onShowBrowseSnapshot?: () => Promise<void>
   /** Catalog breakdown from harvest (no cards mounted). */
   galleryStats?: BrowseGalleryStats | null
+  /** Session Yield — models that entered the download pipeline (only grows). */
+  sessionYieldCount?: number
 }
 
 export function NightCrawlQuietPanel({
@@ -23,7 +25,8 @@ export function NightCrawlQuietPanel({
   queuePaused,
   onStartDownloads,
   onShowBrowseSnapshot,
-  galleryStats = null
+  galleryStats = null,
+  sessionYieldCount = 0
 }: Props) {
   const t = useT()
 
@@ -39,7 +42,7 @@ export function NightCrawlQuietPanel({
   const skipTag = stats?.skipTag ?? 0
   const awaiting = stats?.awaiting ?? 0
   const awaitingConfirm = stats?.awaitingConfirm ?? 0
-  const missing = stats?.missing ?? 0
+  const yieldPct = total > 0 ? Math.min(100, (sessionYieldCount / total) * 100) : 0
 
   return (
     <section className="panel night-quiet-panel night-quiet-panel-minimal" style={{ marginTop: 12 }}>
@@ -54,14 +57,14 @@ export function NightCrawlQuietPanel({
         </div>
       )}
 
-      {total > 0 && (
+      {(total > 0 || sessionYieldCount > 0) && (
         <div className="browse-download-progress night-quiet-progress">
           <div
             className="browse-download-progress-bar-wrap"
             title={t('browse.barTooltip', {
               total,
               owned,
-              missing,
+              yield: sessionYieldCount,
               awaiting,
               awaitingConfirm,
               skipTag,
@@ -103,11 +106,11 @@ export function NightCrawlQuietPanel({
                 title={t('browse.barSegAwaitingConfirm', { count: awaitingConfirm })}
               />
             )}
-            {pct(missing) > 0 && (
+            {yieldPct > 0 && (
               <div
                 className="browse-download-progress-seg browse-download-progress-seg-missing"
-                style={{ width: `${pct(missing)}%` }}
-                title={t('browse.barSegMissing', { count: missing })}
+                style={{ width: `${yieldPct}%` }}
+                title={t('browse.barSegYield', { count: sessionYieldCount })}
               />
             )}
           </div>
@@ -122,13 +125,10 @@ export function NightCrawlQuietPanel({
               {t('browse.barLegendOwned')}{' '}
               <strong className="browse-progress-legend-count">{owned}</strong>
             </span>
-            <span
-              className="browse-progress-legend-item"
-              title={missing > 0 ? t('browse.barLegendNewHint') : undefined}
-            >
+            <span className="browse-progress-legend-item" title={t('browse.barLegendYieldHint')}>
               <span className="browse-progress-dot browse-progress-dot-missing" aria-hidden />
-              {t('browse.barLegendNew')}{' '}
-              <strong className="browse-progress-legend-count">{missing}</strong>
+              {t('browse.barLegendYield')}{' '}
+              <strong className="browse-progress-legend-count">{sessionYieldCount}</strong>
             </span>
             {awaitingConfirm > 0 && (
               <span

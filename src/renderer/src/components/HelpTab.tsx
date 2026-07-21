@@ -87,6 +87,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.headerHarvest')}</li>
             <li>{t('help.headerNightModes')}</li>
             <li>{t('help.headerDownloads')}</li>
+            <li>{t('help.headerEye')}</li>
             <li>{t('help.headerBlur')}</li>
           </ul>
         </section>
@@ -190,8 +191,9 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <p className="muted">
             {t('help.progressBar.green')} · {t('help.progressBar.red')} · {t('help.progressBar.yellow')} ·{' '}
-            {t('help.progressBar.gray')} · {t('help.progressBar.empty')}
+            {t('help.progressBar.gray')} · {t('help.progressBar.teal')}
           </p>
+          <p className="muted">{t('help.progressBar.yieldNote')}</p>
         </section>
       </div>
 

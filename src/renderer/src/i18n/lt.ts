@@ -18,7 +18,7 @@ export const lt: Messages = {
   tabs: {
     browse: 'Naršymas',
     browseBadgeTitle:
-      'Queued/siunčiami + Harvest Auto-New (tik kai Browse kortelės rodomos, atitinka taisykles). Be Updates/ban/hidden vaiduoklių.',
+      'Modeliai download eilėje (queued arba siunčiami), įskaitant Harvest Auto ir tavo Queue iš Updates ar Model details.',
     library: 'Biblioteka',
     download: 'Atsisiuntimas',
     tagFolders: 'Tag aplankai',
@@ -61,7 +61,7 @@ export const lt: Messages = {
     tooltipDownloadsResume: 'Tęsti siuntimus',
     tooltipBlur: 'Sulieti preview nuotraukas',
     tooltipBrowseLiveOn:
-      'Gyva galerija ĮJUNGTA — kortelės atsinaujina harvest metu. Spauskite 👁, kad paslėptumėte korteles (quiet / lengvesnis UI; siuntimai tęsiasi).',
+      'Gyva galerija ĮJUNGTA — kortelės atsinaujina harvest metu. Spauskite 👁, kad paslėptumėte korteles (siuntimai tęsiasi).',
     tooltipBrowseLiveOff:
       'Quiet ĮJUNGTA — Browse kortelės paslėptos, UI lengvesnis; harvest siunčia fone. Spauskite gyvai galerijai arba Show Browse snapshot.',
     tooltipScheduledScan: 'Kitas automatinis harvest peek (tik Harvest)',
@@ -226,7 +226,7 @@ export const lt: Messages = {
         'Browse ir Library naudoja tą patį režimą jau įkrautiems rezultatams. Lazy = infinite scroll blokais. Puslapiai = Ankstesnis/Kitas. Auto-advance = lazy, o kai Hide owned palieka Browse tuščią — gali krauti kitą Civitai puslapį, jei jis prieinamas (Library Auto-advance = Lazy).',
       resultsPageSize: 'Kiek kortelių puslapyje (Pages) arba scroll bloke (Lazy / Auto-advance).',
       updateBrowseOnCrawl:
-        'Tas pats kaip 👁 mygtukas šalia Blur antraštėje. Off = išvalo Browse korteles ir tylesnis UI (atsisiuntimai vis tiek vyksta); On = gyvas Browse tinklelis.',
+        'Rodyti Browse korteles harvest metu. Off = slėpti korteles (tylesnis UI; siuntimai tęsiasi).',
       domain:
         'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.',
       preserveFilters:
@@ -322,11 +322,12 @@ export const lt: Messages = {
       '🌙 Harvesting — eilėn deda visus naujus modelius pagal įjungtas Browse taisykles (blokuojami tagai vis tiek praleidžiami). Aplanką / Tags galite priskirti vėliau po atsisiuntimo.',
     headerDownloads:
       '**Auto** / **Manual** — atskiri antraštės mygtukai: Auto deda tinkamus modelius į eilę (iki 10 pipeline); Manual — tik paspaustos kortelės. **Pause** (raudonas) sustabdo siuntimus nekeisdamas režimo.',
+    headerEye: '👁 — slepia Browse korteles harvest metu (tylesnis UI; siuntimai tęsiasi)',
     headerScan: 'Scan — vieną kartą paleisti visas enabled Browse taisykles ir atnaujinti Results',
     headerBlur: 'Blur — slėpti preview miniatiūras',
-    browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort); domenas virš Results',
+    browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort)',
     browseResults:
-      'Results — paieška pagal pavadinimą/autorių; filtrų juosta (turinys, hide owned, ban); Sort ir Tags dešinėje; spustelėkite kortelę į eilę / pašalinti. Rodymo režimas (lazy / puslapiai / auto-advance) — Settings.',
+      'Results — paieška, filtrai (Hide owned ir kt.), Loaded / Owned / Yield statistika, Sort ir Tags; spustelėkite kortelę į eilę',
     browseDetails:
       'ℹ ant kortelės atidaro **Model details** (pilnas puslapis) — versijos dešinėje, lipni Back/Civitai/Show List/Ban juosta, trūkstamų versijų download, Load/Save preview turimoms versijoms',
     browsePreviews:
@@ -346,7 +347,7 @@ export const lt: Messages = {
     librarySession:
       '**Session downloads** — šoninis filtras viskam, kas pridėta į biblioteką per šį app paleidimą (ne tas pats kaip Show List)',
     libraryByDate:
-      '**Atsisiųsta pagal datą** — Šiandien / Vakar / 7 dienos, dienos ar nuo–iki laukai, ir dienų sąrašas su atsisiuntimais (`downloadedAt`)',
+      '**Atsisiųsta pagal datą** — Šiandien / Vakar / 7 dienos, arba kalendorius: viena diena, arba dvi dienos nuo–iki intervalui. Rodo, kiek atsisiuntimų atitinka pasirinkimą.',
     libraryDetails:
       'ℹ atidaro tą patį Model details puslapį kaip Browse — versijų perjungimas, save preview, Civitai',
     librarySort:
@@ -376,7 +377,7 @@ export const lt: Messages = {
     dlNewVersions:
       'Atnaujinimai — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256; praleidžia modelius, tikrintus per paskutines 2 d.). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
     dlTabBadges:
-      'Skiltų ženkliukai — Browse: eilė + New tik kai Auto dės į eilę (ne gryna fetch statistika) · Library: +N po atsisiuntimo · Atnaujinimai / Early access: laukia patvirtinimo',
+      'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access: laukiantys',
     dlActivity:
       'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
@@ -399,7 +400,7 @@ export const lt: Messages = {
       backfill: 'Peržiūri visą katalogą kartą, tada tik newest puslapį. Atsisiuntimai tarp puslapių.',
       newestPeek: 'Night crawl metu page 1 tikrinamas ne dažniau nei nurodytas intervalas.',
       connections: 'Multi-stream tik tiesioginiams CDN linkams. Civitai API — vienas stream.',
-      updateBrowse: 'Prideda kiekvieną crawl puslapį į Browse rezultatus. Off = išvalo galerijos korteles ir tik crawl; žiūrėkite Activity.',
+      updateBrowse: 'Rodyti Browse korteles harvest metu. Off = slėpti korteles (tylesnis UI; siuntimai tęsiasi).',
       resultsDisplayMode:
         'Kaip Browse ir Library langina jau įkrautus rezultatus: lazy scroll, klasikiniai puslapiai arba auto-advance pro tuščius Hide owned Browse puslapius.',
       resultsPageSize: 'Kortelių skaičius puslapyje arba scroll bloke (60 arba 100).',
@@ -426,10 +427,11 @@ export const lt: Messages = {
     },
     progressBar: {
       green: 'Žalia = turite',
-      red: 'Raudona = blokuota',
+      red: 'Raudona = banned',
       yellow: 'Geltona = blocked tag',
-      gray: 'Pilka = laukia prieigos',
-      empty: 'Tuščia = dar siųsti'
+      gray: 'Pilka = Early access',
+      teal: 'Žalsva = Yield (ši sesija)',
+      yieldNote: 'Yield — modeliai, išsiųsti į download juostą šią sesiją (auga kai dedate į eilę arba Auto siunčia).'
     }
   },
   resultsPager: {
@@ -441,8 +443,6 @@ export const lt: Messages = {
     loaded: 'Rodoma {shown} iš {visible} matomų',
     loadedFiltered: '{loaded} įkelta · {owned} paslėpta (owned) · {visible} matoma',
     noVisibleYet: 'Matomų modelių dar nėra',
-    emptyOwnedHint: 'Visi įkelti modeliai jau turimi — spauskite Kitas / Load more kitam Civitai puslapiui.',
-    crawlPage: 'Harvest Civitai puslapyje {page} — Kitas leidžia praleisti rankiniu būdu.',
     moreApi: 'daugiau Civitai',
     showMore: 'Rodyti daugiau',
     loadMoreApi: 'Krauti kitą Civitai puslapį',
@@ -490,12 +490,13 @@ export const lt: Messages = {
     barLegendAwaitingConfirm: 'Atnaujinimai',
     barLegendAwaitingConfirmHint:
       'Jau turite kitą versiją — patvirtinkite Atnaujinimai tab’e (arba Visada atnaujinti) prieš eilę',
-    barLegendNew: 'New',
-    barLegendNewHint: 'Dar ne bibliotekoje — galima auto-eilėn',
+    barLegendYield: 'Yield',
+    barLegendYieldHint:
+      'Modeliai, išsiųsti į download juostą šią sesiją (Auto, Updates, Model details). Skaičius tik auga.',
     barTooltip:
-      '{total} loaded = {owned} owned + {missing} new + {awaitingConfirm} updates + {awaiting} awaiting + {skipTag} blocked by tag + {excluded} banned',
+      '{total} loaded · {owned} owned · Yield {yield} · {awaitingConfirm} updates · {awaiting} awaiting · {skipTag} blocked · {excluded} banned',
     barSegOwned: '{count} jau turite',
-    barSegMissing: '{count} dar neatsiųsta',
+    barSegYield: '{count} Yield šią sesiją',
     barSegExcluded: '{count} blokuota / banned',
     barSegSkipTag: '{count} blokuoja tag',
     barSegAwaiting: '{count} laukia prieigos',
@@ -1005,9 +1006,10 @@ export const lt: Messages = {
     downloadedToday: 'Šiandien',
     downloadedYesterday: 'Vakar',
     downloadedLast7Days: '7 dienos',
-    downloadedDay: 'Diena',
-    downloadedFrom: 'Nuo',
-    downloadedTo: 'Iki',
+    calendarPrevMonth: 'Ankstesnis mėnuo',
+    calendarNextMonth: 'Kitas mėnuo',
+    calendarRangeHint: 'Spustelėkite dieną, arba dvi dienas intervalui',
+    downloadsInSelection: 'Atsisiuntimai: {count}',
     bannedOnly: 'Tik banned ({count})',
     baseModels: 'Base modeliai',
     folderRoutes: 'Aplankų maršrutai',

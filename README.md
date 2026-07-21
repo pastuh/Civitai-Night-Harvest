@@ -11,22 +11,20 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 
 ## What it does
 
-- **Harvest** — walks enabled Browse rules against the Civitai API (catalog **backfill** page by page, then **peek** for newest); queues and downloads in the background
-- **Browse rules** — Civitai search filters (model type, base model, keywords, sort, SFW/NSFW, creator)
-- **Quiet gallery (👁)** — hide Browse cards while harvest runs (lighter UI); downloads continue. **Show Browse snapshot** loads what is already in memory and turns live gallery back on
-- **Results gallery** — live updates when 👁 is off; search by name/author; sort, tag filter, content filters; Loaded / Owned / New / Updates / Awaiting / Banned stats
-- **Model details** — full-page view from Browse, Library, Updates, etc.: sticky toolbar, versions on the right (with dates), per-version download, Load/Save preview for owned versions
-- **Version-specific previews** — Updates/Browse/download cards use that version’s image (not one shared model thumbnail)
-- **Download modes** — **Auto** (auto-queue from harvest, up to 10 in pipeline) or **Manual** (click cards); **Pause** stops file downloads only — harvest/API can keep running and fill the queue
-- **Clear queue** — empties the download strip; does not switch Auto/Manual or enable Pause
-- **Local library** — SQLite inventory, duplicate detection by version, tag-based folder routing; tab badge **+N** for new downloads since last Library visit
-- **API host** — search/crawl use **civitai.red** (fixed)
-- **Queue & retries** — download strip with progress, priority, color-coded states; awaiting-access / early-access; **Updates** tab for owned-model version updates (filled during Harvest + background API check; optional auto-download in Settings)
-- **Activity log** — crawl and download history (verbosity configurable in Settings, including Off)
-- **Bottom status bar** — API fetch / peek wait / queue summary (works with quiet harvest)
-- **Settings** — backfill vs peek interval, strip layout/visibility, results windowing (lazy / pages / auto-advance), **Preserve filters**, optional optimization slider
+- **Harvest** — walks your Browse rules through the Civitai catalog, then peeks for newest models; queues and downloads in the background
+- **Browse rules** — search filters (model type, base model, keywords, sort, SFW/NSFW, creator)
+- **👁 Quiet gallery** — hide Browse cards while harvest runs; downloads continue. **Show Browse snapshot** brings cards back
+- **Browse results** — search, filters, sort, tags; progress stats: Loaded, Owned, Yield, Updates, Awaiting, Banned
+- **Model details** — full page with versions, download, and preview save
+- **Auto / Manual / Pause** — auto-queue from harvest, click-to-queue, or pause downloads
+- **Library** — local inventory, tag folders, session and date filters; tab **+N** for new downloads
+- **Updates** — newer versions of models you already own (Queue / Ban / Dismiss)
+- **Download strip** — progress, priority, retries; Early access when a model is gated
+- **Activity** — crawl and download history
+- **Status bar** — fetch, wait, and queue summary at the bottom
+- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters
 
-For UI details, open the in-app **Help** tab.
+Open the in-app **Help** tab for a short UI guide.
 
 ---
 
@@ -34,101 +32,88 @@ For UI details, open the in-app **Help** tab.
 
 | Control | Purpose |
 |--------|---------|
-| **Harvest** | Start/stop continuous catalog crawl (+ scheduled peek). There is no separate Scan button. |
-| **Auto / Manual** | Auto-queue eligible models vs manual queue only |
-| **Pause** | Stop active downloads (harvest continues unless you turn Harvest off) |
-| **👁** | Quiet ON = hide Browse cards; Quiet OFF = live gallery during harvest |
-| **Clear queue** | Remove items from the strip (does not change Auto/Manual or Pause) |
+| **Harvest** | Start or stop continuous catalog crawl |
+| **Auto / Manual** | Auto-queue matches, or queue only cards you click |
+| **Pause** | Pause file downloads |
+| **👁** | Hide or show Browse cards during harvest |
+| **Blur** | Hide preview thumbnails |
+| **Clear queue** | Empty the download strip |
 
 ---
 
-## Harvest & backfill
+## Harvest
 
 With **Backfill older catalog pages** on (default):
 
-1. On each app session / Harvest start, walk **all** catalog API pages for enabled rules (~100 models per page until the catalog ends).
-2. Then switch to **peek-only** — re-check the newest page on the **Newest peek** interval (default 15 min).
-
-With backfill off, continuous harvest relies on peek / “queue all” settings instead of a full catalog walk.
-
-Turning **Harvest off** currently clears the in-memory Browse gallery. To review models without more API work: keep Harvest on, use **Pause**, and turn 👁 off (or use snapshot).
+1. Walk catalog pages for enabled rules until the catalog ends.
+2. Then peek the newest page on the **Newest peek** interval (default 15 min).
 
 ---
 
-## Updates tab
+## Updates
 
-For **models you already own**, when Civitai has **missing same-base versions** (not only the newest). This is **not** brand-new models (those show as Browse **New**). If enabled Browse Rules set `baseModels`, that filter applies too:
+For models you already own, when a newer matching version appears:
 
-1. **During Harvest** — as catalog pages are fetched, matching owned-model missing versions are added here (or auto-queued if **Settings → Auto-download new versions** is on).
-2. **Background check** — after startup / during Harvest peek, the app also polls owned models via Civitai `GET /models/{id}` (one request per model — **not** SHA256). Models successfully checked within the **last 2 days** are skipped. Manual **Check again** forces a full re-poll.
+1. During Harvest, matching updates are listed (or auto-queued if **Auto-download new versions** is on).
+2. A background check also looks for updates on owned models.
 
-Cards show **Versions: owned/total**, the version name, and a **version-specific** preview. Use **Queue / Sync / Show List / Ban**. **Show List** opens Library on **All models** pinned to that model (not Session downloads).
-
-Brand-new models (not in your library) appear as Browse **New** and are handled by Harvest Auto-queue — they do not belong on this tab.
+Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that model).
 
 ---
 
-## Library tab
+## Library
 
-- **+N badge** — downloads since you last opened Library; opening Library **with a badge** selects **Session downloads** so you can review what just arrived
-- **Session downloads** — everything added to the library during this app run
-- **Downloaded by date** — Today / Yesterday / Last 7 days, day or from–to pickers, and days that have downloads
-- **Show List** (from Updates / details) — pins one model under **All models** (does not force Session)
-- Sort, content filter, tag sidebar, per-card folder assignment
-- **ℹ** opens **Model details** (same full page as Browse)
+- **+N** — new downloads since you last opened Library (opens **Session downloads**)
+- **Session downloads** — everything added this app run
+- **Downloaded by date** — Today / Yesterday / 7 days, or a calendar (one day, or click two days for a range); shows download count for the selection
+- Sort, filters, tag sidebar, folder assignment
+- **ℹ** — Model details
 
 ---
 
-## Browse Results
+## Browse
 
-- **Search** — filter gallery by model or author name
-- **Filters** — content (All/SFW/NSFW), hide owned, excluded, blocked tags, awaiting access, **Show updates** (owned-model updates); ban mode toggle
-- **Stats** — Loaded = Owned + New + Updates + Awaiting + Blocked + Banned (categories do not overlap). **New** = not in library (eligible to auto-queue). **Updates** = newer/missing versions of a model you already own (confirm on Updates tab)
-- **Sort** — folder tag, Civitai downloads, or download order
-- **Tags** — popover filter from tags seen in results
-- **Gallery settings** — optionally move owned/excluded/awaiting cards to the end; dim them; results display mode (lazy / pages / auto-advance)
-- **Model details** — ℹ opens full-page details with per-version actions and previews
+- **Search** — by model or author
+- **Filters** — content, hide owned, excluded, blocked tags, awaiting, show updates; ban mode
+- **Yield** — how many models entered the download strip this session (grows as you queue / Auto sends)
+- **Sort & Tags** — arrange and filter the grid
+- **ℹ** — Model details
 
 ---
 
 ## Preserve filters
 
-**Settings → Preserve filters** keeps Browse and Library filter, sort, and show/hide checkboxes when you switch tabs (until you change them yourself). Off = filters reset when the tab unmounts (previous behavior).
+**Settings → Preserve filters** keeps Browse and Library filters when you switch tabs.
 
 ---
 
-## Download strip layout
-
-Settings → **Download strip** visibility and layout:
+## Download strip
 
 | Mode | Description |
 |------|-------------|
-| **Row** | Horizontal scroll of thumbnail cards |
-| **Grid** | Wrapped rows of thumbnail cards |
-| **Minimal** | Compact list with inline progress |
+| **Row** | Horizontal scroll of cards |
+| **Grid** | Wrapped card grid |
+| **Minimal** | Compact list with progress |
 
-Also adjust **Download strip card size** for Row and Grid modes.
+Card size is adjustable for Row and Grid.
 
 ---
 
 ## Quick start
 
-1. **Settings** → set **LoRA** and **Checkpoint** folders plus Civitai **API key** for NSFW/restricted content.
-2. **Browse** → **Rules** → enable at least one rule → **Save rules**.
-3. Click **Harvest** in the header (leave **Backfill** on for a full catalog pass).
-4. Use **Auto** for hands-off queueing, or **Manual** and click cards. Turn off **Pause** to download.
-5. Optional: press **👁** for a quieter UI while harvest runs; use **Show Browse snapshot** when you want to see cards again.
+1. **Settings** → LoRA and Checkpoint folders; API key for NSFW if needed.
+2. **Browse → Rules** → enable a rule → **Save**.
+3. Press **Harvest** (Backfill on for a full catalog pass).
+4. **Auto** for hands-off queueing, or **Manual** and click cards; turn **Pause** off to download.
+5. Optional: **👁** for a quieter harvest UI; snapshot or turn 👁 off to see cards again.
 
-Optional: **Tag Folders** tab maps Civitai tags to subfolders on disk.
+**Tag Folders** maps Civitai tags to subfolders on disk.
 
 ---
 
 ## NSFW & API key
 
-Many NSFW and restricted models need a Civitai API key. Without one, downloads may fail (403) or appear under **Awaiting access**.  
-Mature content on **civitai.red** often requires a key.
-
-Create a key at [civitai.com](https://civitai.com) → Account → **API Keys**.
+Many NSFW and restricted models need a Civitai API key. Create one at [civitai.com](https://civitai.com) → Account → **API Keys**.
 
 ---
 
@@ -148,11 +133,3 @@ npm run dev
 ```bash
 npm run build
 ```
-
-Installer/portable output under `dist/` when packaged with electron-builder.
-
----
-
-## License
-
-See the repository license file if present.

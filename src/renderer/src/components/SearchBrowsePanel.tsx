@@ -163,6 +163,8 @@ interface Props {
   /** When set (Settings → Preserve filters), remount restores these values. */
   viewPrefs?: BrowseViewPrefs
   onViewPrefsChange?: (prefs: BrowseViewPrefs) => void
+  /** Session Yield — models that entered download pipeline (only grows). */
+  sessionYieldCount?: number
 }
 
 interface ContextMenuState {
@@ -221,7 +223,8 @@ export function SearchBrowsePanel({
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
   resultsPageSize: resultsPageSizeProp = 100,
   viewPrefs,
-  onViewPrefsChange
+  onViewPrefsChange,
+  sessionYieldCount = 0
 }: Props) {
   const t = useT()
   const liveQueue = useDownloadQueue()
@@ -920,7 +923,6 @@ export function SearchBrowsePanel({
   ])
 
   const effectiveCanLoadMore = canLoadMorePages || canManualLoadMore
-  const catalogPageNumber = crawlProgress?.pageNumber ?? crawlPageMeta?.pageNumber ?? null
 
   useEffect(() => {
     hasMoreRef.current = effectiveCanLoadMore
@@ -2084,7 +2086,7 @@ export function SearchBrowsePanel({
           title={t('browse.barTooltip', {
             total: catalogBreakdown.total,
             owned: catalogBreakdown.owned,
-            missing: catalogBreakdown.missingEligible,
+            yield: sessionYieldCount,
             awaiting: catalogBreakdown.awaiting,
             awaitingConfirm: catalogBreakdown.awaitingConfirm,
             skipTag: catalogBreakdown.skipTag,
@@ -2128,11 +2130,13 @@ export function SearchBrowsePanel({
                 })}
               />
             )}
-            {catalogBreakdown.missingPct > 0 && (
+            {sessionYieldCount > 0 && catalogBreakdown.total > 0 && (
               <div
                 className="browse-download-progress-seg browse-download-progress-seg-missing"
-                style={{ width: `${catalogBreakdown.missingPct}%` }}
-                title={t('browse.barSegMissing', { count: catalogBreakdown.missingEligible })}
+                style={{
+                  width: `${Math.min(100, (sessionYieldCount / catalogBreakdown.total) * 100)}%`
+                }}
+                title={t('browse.barSegYield', { count: sessionYieldCount })}
               />
             )}
           </div>
@@ -2147,13 +2151,10 @@ export function SearchBrowsePanel({
               {t('browse.barLegendOwned')}{' '}
               <strong className="browse-progress-legend-count">{catalogBreakdown.owned}</strong>
             </span>
-            <span
-              className="browse-progress-legend-item"
-              title={catalogBreakdown.missingEligible > 0 ? t('browse.barLegendNewHint') : undefined}
-            >
+            <span className="browse-progress-legend-item" title={t('browse.barLegendYieldHint')}>
               <span className="browse-progress-dot browse-progress-dot-missing" aria-hidden />
-              {t('browse.barLegendNew')}{' '}
-              <strong className="browse-progress-legend-count">{catalogBreakdown.missingEligible}</strong>
+              {t('browse.barLegendYield')}{' '}
+              <strong className="browse-progress-legend-count">{sessionYieldCount}</strong>
             </span>
             {catalogBreakdown.awaitingConfirm > 0 && (
               <span
@@ -2309,9 +2310,6 @@ export function SearchBrowsePanel({
             page={resultsWindow.page}
             totalPages={resultsWindow.totalPages}
             totalItems={resultsWindow.totalItems}
-            loadedTotal={ruleScopedModels.length}
-            hiddenOwned={filterBreakdown.owned}
-            catalogPage={catalogPageNumber}
             pageSize={resultsPageSize}
             shownCount={gridModels.length}
             hasMoreLazy={resultsWindow.hasMoreLazy}
@@ -2341,7 +2339,7 @@ export function SearchBrowsePanel({
             />
           )}
 
-          {effectiveCanLoadMore && (
+          {effectiveCanLoadMore && displayModels.length > 0 && (
             <div className="browse-pagination-footer">
               <p className="muted browse-pagination-text">
                 {t('browse.loadedModelsCount', { count: loadedLabel })}

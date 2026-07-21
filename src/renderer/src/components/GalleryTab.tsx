@@ -31,13 +31,14 @@ import {
 } from '../../../shared/tag-routing'
 import {
   buildTagClusters,
-  primaryClusterKey,
+  buildPrimaryClusterKeyLookup,
   recordMatchesCluster,
   type TagCluster
 } from '../../../shared/tag-cluster'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { ResultsPager } from './ResultsPager'
+import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
 import {
   normalizeResultsDisplayMode,
@@ -184,6 +185,8 @@ function GalleryTabInner({
   const initial = viewPrefs ?? DEFAULT_LIBRARY_VIEW_PREFS
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>(initial.libraryFilter)
+  /** First click in calendar; second click completes a range. */
+  const [dateRangeAnchor, setDateRangeAnchor] = useState<string | null>(null)
   const [librarySort, setLibrarySort] = useState<LibrarySort>(initial.librarySort)
   const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>(initial.nsfwFilter)
   const [hideFolderAssigned, setHideFolderAssigned] = useState(initial.hideFolderAssigned)
@@ -300,7 +303,53 @@ function GalleryTabInner({
       .sort((a, b) => b.day.localeCompare(a.day))
   }, [inventory])
 
-  const recentDownloadDays = useMemo(() => downloadDayCounts.slice(0, 45), [downloadDayCounts])
+  const downloadCountByDay = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const { day, count } of downloadDayCounts) map.set(day, count)
+    return map
+  }, [downloadDayCounts])
+
+  const calendarFrom =
+    libraryFilter.type === 'byDate'
+      ? libraryFilter.day
+      : libraryFilter.type === 'byDateRange'
+        ? libraryFilter.from
+        : null
+  const calendarTo =
+    libraryFilter.type === 'byDate'
+      ? libraryFilter.day
+      : libraryFilter.type === 'byDateRange'
+        ? libraryFilter.to
+        : null
+
+  const selectedDateDownloadCount = useMemo(() => {
+    if (!calendarFrom || !calendarTo) return null
+    const from = calendarFrom <= calendarTo ? calendarFrom : calendarTo
+    const to = calendarFrom <= calendarTo ? calendarTo : calendarFrom
+    let total = 0
+    for (const [day, count] of downloadCountByDay) {
+      if (day >= from && day <= to) total += count
+    }
+    return total
+  }, [calendarFrom, calendarTo, downloadCountByDay])
+
+  const applyCalendarDay = useCallback((day: string) => {
+    if (dateRangeAnchor == null) {
+      setDateRangeAnchor(day)
+      setLibraryFilter({ type: 'byDate', day })
+      return
+    }
+    const from = dateRangeAnchor <= day ? dateRangeAnchor : day
+    const to = dateRangeAnchor <= day ? day : dateRangeAnchor
+    setDateRangeAnchor(null)
+    if (from === to) setLibraryFilter({ type: 'byDate', day: from })
+    else setLibraryFilter({ type: 'byDateRange', from, to })
+  }, [dateRangeAnchor])
+
+  const applyDatePreset = useCallback((next: LibraryFilter) => {
+    setDateRangeAnchor(null)
+    setLibraryFilter(next)
+  }, [])
 
   const filteredBaseModelOptions = useMemo(() => {
     const q = tagSearch.trim().toLowerCase()
@@ -345,6 +394,35 @@ function GalleryTabInner({
         route.display.toLowerCase().includes(q)
     )
   }, [tagRules, tagSearch, loraFolder, checkpointFolder])
+
+  /** One pass — never re-scan inventory×rules on every parent re-render. */
+  const tagSubfolderCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const route of filteredTagSubfolders) {
+      map.set(
+        route.name,
+        countInventoryInTagSubfolder(
+          route.name,
+          inventory,
+          tagRules,
+          loraFolder,
+          checkpointFolder
+        )
+      )
+    }
+    return map
+  }, [filteredTagSubfolders, inventory, tagRules, loraFolder, checkpointFolder])
+
+  const folderRuleCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const rule of filteredFolderRules) {
+      map.set(
+        rule.id,
+        countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)
+      )
+    }
+    return map
+  }, [filteredFolderRules, inventory, loraFolder, checkpointFolder])
 
   const modelSearchLetters = useMemo(() => {
     const set = new Set<string>()
@@ -527,16 +605,22 @@ function GalleryTabInner({
               a.modelName.localeCompare(b.modelName)
           )
           break
-        case 'tagGroup':
+        case 'tagGroup': {
+          const keyFor = buildPrimaryClusterKeyLookup(tagClusters)
+          const clusterKeyByVersion = new Map<number, string>()
+          for (const r of list) {
+            clusterKeyByVersion.set(r.versionId, keyFor(r.civitaiTags))
+          }
           list.sort(
             (a, b) =>
-              primaryClusterKey(a.civitaiTags, tagClusters).localeCompare(
-                primaryClusterKey(b.civitaiTags, tagClusters)
+              (clusterKeyByVersion.get(a.versionId) ?? '\uffff').localeCompare(
+                clusterKeyByVersion.get(b.versionId) ?? '\uffff'
               ) ||
               (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
               a.modelName.localeCompare(b.modelName)
           )
           break
+        }
         case 'downloads':
           list.sort(
             (a, b) =>
@@ -602,6 +686,7 @@ function GalleryTabInner({
   )
   const gridRecords = resultsWindow.visible
   const gridSentinelRef = useRef<HTMLDivElement>(null)
+  const galleryMainScrollRef = useRef<HTMLDivElement>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
   const pageScrollReadyRef = useRef(false)
 
@@ -619,11 +704,21 @@ function GalleryTabInner({
 
   useEffect(() => {
     if (libraryDisplayMode === 'pages') return
+    const root = galleryMainScrollRef.current
     const el = gridSentinelRef.current
     if (!el || !resultsWindow.hasMoreLazy) return
-    const obs = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) resultsWindow.expandLazy()
-    })
+    let scheduled = false
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || scheduled) return
+        scheduled = true
+        requestAnimationFrame(() => {
+          scheduled = false
+          resultsWindow.expandLazy()
+        })
+      },
+      { root: root ?? null, rootMargin: '120px', threshold: 0 }
+    )
     obs.observe(el)
     return () => obs.disconnect()
   }, [libraryDisplayMode, resultsWindow.hasMoreLazy, resultsWindow.expandLazy, gridRecords.length])
@@ -1120,7 +1215,7 @@ function GalleryTabInner({
           {uiExtended && syncMessage && <p className="muted">{syncMessage}</p>}
           {message && <p>{message}</p>}
           </div>
-          <div className="gallery-main-scroll">
+          <div ref={galleryMainScrollRef} className="gallery-main-scroll">
           {!sortedInventory.length ? (
             <p className="muted">
               {inventory.length > 0 &&
@@ -1236,7 +1331,7 @@ function GalleryTabInner({
                   className={`btn-sm ${
                     filterActive({ type: 'byDate', day: localDayKey() }) ? 'primary' : ''
                   }`}
-                  onClick={() => setLibraryFilter({ type: 'byDate', day: localDayKey() })}
+                  onClick={() => applyDatePreset({ type: 'byDate', day: localDayKey() })}
                 >
                   {t('gallery.downloadedToday')}
                 </button>
@@ -1248,7 +1343,7 @@ function GalleryTabInner({
                       : ''
                   }`}
                   onClick={() =>
-                    setLibraryFilter({ type: 'byDate', day: shiftDayKey(localDayKey(), -1) })
+                    applyDatePreset({ type: 'byDate', day: shiftDayKey(localDayKey(), -1) })
                   }
                 >
                   {t('gallery.downloadedYesterday')}
@@ -1264,7 +1359,7 @@ function GalleryTabInner({
                   }`}
                   onClick={() => {
                     const to = localDayKey()
-                    setLibraryFilter({
+                    applyDatePreset({
                       type: 'byDateRange',
                       from: shiftDayKey(to, -6),
                       to
@@ -1274,86 +1369,17 @@ function GalleryTabInner({
                   {t('gallery.downloadedLast7Days')}
                 </button>
               </div>
-              <div className="sidebar-date-pickers">
-                <label className="sidebar-date-field">
-                  <span>{t('gallery.downloadedDay')}</span>
-                  <input
-                    type="date"
-                    value={libraryFilter.type === 'byDate' ? libraryFilter.day : ''}
-                    onChange={(e) => {
-                      const day = e.target.value
-                      if (day) setLibraryFilter({ type: 'byDate', day })
-                    }}
-                  />
-                </label>
-                <label className="sidebar-date-field">
-                  <span>{t('gallery.downloadedFrom')}</span>
-                  <input
-                    type="date"
-                    value={
-                      libraryFilter.type === 'byDateRange'
-                        ? libraryFilter.from
-                        : libraryFilter.type === 'byDate'
-                          ? libraryFilter.day
-                          : ''
-                    }
-                    onChange={(e) => {
-                      const from = e.target.value
-                      if (!from) return
-                      const to =
-                        libraryFilter.type === 'byDateRange'
-                          ? libraryFilter.to
-                          : libraryFilter.type === 'byDate'
-                            ? libraryFilter.day
-                            : from
-                      setLibraryFilter({
-                        type: 'byDateRange',
-                        from,
-                        to: to < from ? from : to
-                      })
-                    }}
-                  />
-                </label>
-                <label className="sidebar-date-field">
-                  <span>{t('gallery.downloadedTo')}</span>
-                  <input
-                    type="date"
-                    value={
-                      libraryFilter.type === 'byDateRange'
-                        ? libraryFilter.to
-                        : libraryFilter.type === 'byDate'
-                          ? libraryFilter.day
-                          : ''
-                    }
-                    onChange={(e) => {
-                      const to = e.target.value
-                      if (!to) return
-                      const from =
-                        libraryFilter.type === 'byDateRange'
-                          ? libraryFilter.from
-                          : libraryFilter.type === 'byDate'
-                            ? libraryFilter.day
-                            : to
-                      setLibraryFilter({
-                        type: 'byDateRange',
-                        from: from > to ? to : from,
-                        to
-                      })
-                    }}
-                  />
-                </label>
-              </div>
-              {recentDownloadDays.map(({ day, count }) => (
-                <button
-                  key={day}
-                  type="button"
-                  className={`sidebar-tag ${filterActive({ type: 'byDate', day }) ? 'active' : ''}`}
-                  onClick={() => setLibraryFilter({ type: 'byDate', day })}
-                >
-                  <span className="tag-name">{day}</span>
-                  <span className="muted tag-count-inline">{count}</span>
-                </button>
-              ))}
+              <SidebarDownloadCalendar
+                from={calendarFrom}
+                to={calendarTo}
+                daysWithCounts={downloadCountByDay}
+                onPickDay={applyCalendarDay}
+              />
+              {selectedDateDownloadCount != null && (
+                <p className="sidebar-date-download-count muted">
+                  {t('gallery.downloadsInSelection', { count: selectedDateDownloadCount })}
+                </p>
+              )}
             </>
           )}
 
@@ -1387,13 +1413,7 @@ function GalleryTabInner({
                 >
                   <span className="tag-name">{route.name}</span>
                   <span className="muted tag-count-inline">
-                    {countInventoryInTagSubfolder(
-                      route.name,
-                      inventory,
-                      tagRules,
-                      loraFolder,
-                      checkpointFolder
-                    )}
+                    {tagSubfolderCounts.get(route.name) ?? 0}
                   </span>
                 </button>
               ))}
@@ -1423,7 +1443,7 @@ function GalleryTabInner({
                 >
                   {formatTagRuleLabel(rule)}
                   <span className="muted tag-count-inline">
-                    {countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)}
+                    {folderRuleCounts.get(rule.id) ?? 0}
                   </span>
                 </button>
                 {selected.size > 0 && (

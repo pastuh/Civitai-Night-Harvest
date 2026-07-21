@@ -335,8 +335,7 @@
 .status-tab-header,
 .browse-results-title-row,
 .pending-scan-header,
-.tag-sidebar-head,
-.sidebar-section-title {
+.tag-sidebar-head {
   background: var(--section-head-bg);
   border: 1px solid var(--section-head-border);
   border-radius: var(--radius-sm);
@@ -371,9 +370,12 @@
 
 .sidebar-section-title {
   display: block;
-  padding: 6px 10px;
+  padding: 4px 0 2px;
   margin: var(--space-sm) 0 var(--space-xs);
-  font-size: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
