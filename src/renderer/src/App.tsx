@@ -50,10 +50,12 @@ import { hasAllOutputFolders } from '../../shared/utils'
 import { formatLibrarySyncSummary } from './utils/library-sync-summary'
 import { mergeInventoryPreserveIdentity } from './utils/inventory-merge'
 import { applyCrawlPageToLiveGallery } from './utils/crawl-gallery-merge'
+import { countBrowsePlannedDownloads } from './utils/browse-planned-count'
 import {
   setDownloadQueueState,
   useHasPipelineQueue,
-  useHasStatusPipeline
+  useHasStatusPipeline,
+  useQueueStructureKey
 } from './hooks/useDownloadQueue'
 import { getDownloadQueueSnapshot, queueStructureKey } from './utils/download-queue-store'
 import { collectTagSuggestions } from '../../shared/tag-routing'
@@ -99,6 +101,7 @@ export default function App() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const hasPipelineQueue = useHasPipelineQueue()
   const hasStatusPipeline = useHasStatusPipeline()
+  const queueStructureKeyForBadge = useQueueStructureKey()
   const [status, setStatus] = useState<AppStatus>('idle')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -164,6 +167,8 @@ export default function App() {
   const libraryBadgeSeenRef = useRef<Set<number> | null>(null)
   /** Models banned from New Versions this session — ignore stale scan echoes that re-add them. */
   const bannedPendingModelIdsRef = useRef<Set<number>>(new Set())
+  /** Full banned model id set — badge must not count banned/queued leftovers. */
+  const [bannedModelIds, setBannedModelIds] = useState<Set<number>>(() => new Set())
   const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
 
   /** Keep existing row order; append newly detected offers at the bottom. */
@@ -356,7 +361,7 @@ export default function App() {
     async (options?: { syncDisk?: boolean; busyMessage?: string; busySubMessage?: string }) => {
       const run = async () => {
         try {
-          const [s, tags, watch, act, pend, def, incompleteItems, inv, q] = await Promise.all([
+          const [s, tags, watch, act, pend, def, incompleteItems, inv, q, banned] = await Promise.all([
             window.api.getSettings(),
             window.api.getTagRules(),
             window.api.getWatchRules(),
@@ -365,7 +370,8 @@ export default function App() {
             window.api.getDeferred(),
             window.api.getIncomplete(),
             window.api.getInventory({ syncDisk: options?.syncDisk ?? false }),
-            window.api.getDownloadQueue()
+            window.api.getDownloadQueue(),
+            window.api.getBannedModels()
           ])
           setSettings(s)
           setTagRules(tags)
@@ -374,6 +380,7 @@ export default function App() {
           applyPendingVersions(pend)
           setDeferred(def)
           setIncomplete(incompleteItems)
+          setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
           startTransition(() => {
             setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
           })
@@ -1017,6 +1024,13 @@ export default function App() {
         tags?: string[]
       }
     ) => {
+      setBannedModelIds((prev) => {
+        const next = new Set(prev)
+        if (banned) next.add(modelId)
+        else next.delete(modelId)
+        return next
+      })
+      if (banned) bannedPendingModelIdsRef.current.add(modelId)
       setLiveCrawlBrowse((prev) => {
         const makeBanned = (base?: WatchRuleTestModel): WatchRuleTestModel => ({
           id: modelId,
@@ -1281,37 +1295,38 @@ export default function App() {
     (startupReady && Boolean(settings?.nightMode) && !storageOffline && !busy)
 
   const browsePlannedDownloadCount = useMemo(() => {
-    const fromStats =
-      crawlPageMeta?.galleryStats?.missing ?? crawlProgress?.galleryStats?.missing ?? null
-    if (fromStats != null) return fromStats
-
-    const models = liveCrawlBrowse?.sampleModels
-    if (!models?.length) return 0
-    const ownedVersions = ownedVersionIds
-    const ownedModels = new Set(inventory.map((r) => r.modelId).filter((id) => id > 0))
-    const hidden = settings?.hiddenTags ?? []
-    const deferredIds = new Set(deferred.map((d) => d.versionId))
-    let n = 0
-    for (const m of models) {
-      if (m.inInventory || ownedVersions.has(m.versionId)) continue
-      if (m.isBanned) continue
-      if (hidden.some((t) => (m.tags ?? []).some((x) => x.toLowerCase() === t.toLowerCase()))) {
-        continue
-      }
-      if (m.isEarlyAccess || deferredIds.has(m.versionId)) continue
-      if (ownedModels.has(m.id)) continue // awaiting confirm — not auto-planned
-      n++
-    }
-    return n
+    void queueStructureKeyForBadge
+    return countBrowsePlannedDownloads({
+        queueItems: getDownloadQueueSnapshot().items,
+        browseModels: liveCrawlBrowse?.sampleModels,
+        watchRules,
+        inventory,
+        pending,
+        deferred,
+        bannedModelIds,
+        hiddenTags: settings?.hiddenTags ?? [],
+        manualQueueMode: settings?.manualQueueMode ?? false,
+        nightMode: settings?.nightMode === true,
+        crawlAutoDownload: settings?.crawlAutoDownload ?? true,
+        updateBrowseOnCrawl: settings?.updateBrowseOnCrawl ?? false,
+        allowQuietBrowseCards
+      })
   }, [
-    crawlPageMeta?.galleryStats?.missing,
-    crawlProgress?.galleryStats?.missing,
-    liveCrawlBrowse?.sampleModels,
-    ownedVersionIds,
-    inventory,
-    settings?.hiddenTags,
-    deferred
-  ])
+      liveCrawlBrowse?.sampleModels,
+      watchRules,
+      inventory,
+      pending,
+      deferred,
+      bannedModelIds,
+      settings?.hiddenTags,
+      settings?.manualQueueMode,
+      settings?.nightMode,
+      settings?.crawlAutoDownload,
+      settings?.updateBrowseOnCrawl,
+      allowQuietBrowseCards,
+      queueStructureKeyForBadge
+    ]
+  )
 
   const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
     {

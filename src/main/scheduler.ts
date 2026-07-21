@@ -2375,6 +2375,8 @@ export class ScanScheduler {
     const deleted = deleteModelFromLibrary(modelId)
     inventory.banModel(modelId, modelName || deleted[0]?.modelName || '')
     this.dismissPendingForModel(modelId)
+    // Drop any leftover pipeline rows (Updates Ban used to leave queued ghosts).
+    this.downloadQueue.cancelByModelId(modelId)
     this.markModelBannedInBrowseGallery(modelId, {
       modelName: modelName || pending?.modelName || incomplete?.modelName || deleted[0]?.modelName,
       versionId: pending?.versionId ?? incomplete?.resolvedVersionId,

@@ -16,7 +16,7 @@ export const en = {
   tabs: {
     browse: 'Browse',
     browseBadgeTitle:
-      'Total models planned to download from Browse (New). Not limited to the current strip of ~10 — they fill the queue as slots free.',
+      'Queued/downloading now + Harvest Auto-New backlog (only when Browse cards are shown, matches enabled rules). No Updates/banned/hidden ghosts.',
     library: 'Library',
     download: 'Download',
     tagFolders: 'Tag Folders',
@@ -373,7 +373,7 @@ export const en = {
     dlNewVersions:
       'Updates — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256; skips models polled within 2 days). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
     dlTabBadges:
-      'Tab badges — Browse: planned New downloads · Library: +N new downloads since last visit · Updates / Early access: pending counts',
+      'Tab badges — Browse: queue + New only when Auto will queue them (not raw fetch stats) · Library: +N after download · Updates / Early access: pending confirms',
     dlActivity:
       'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:

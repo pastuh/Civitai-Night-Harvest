@@ -18,7 +18,7 @@ export const lt: Messages = {
   tabs: {
     browse: 'Naršymas',
     browseBadgeTitle:
-      'Iš viso Browse planuojamų atsisiųsti modelių (New). Ne tik dabartinė ~10 juosta — eilė pildoma atlaisvėjus vietoms.',
+      'Queued/siunčiami + Harvest Auto-New (tik kai Browse kortelės rodomos, atitinka taisykles). Be Updates/ban/hidden vaiduoklių.',
     library: 'Biblioteka',
     download: 'Atsisiuntimas',
     tagFolders: 'Tag aplankai',
@@ -376,7 +376,7 @@ export const lt: Messages = {
     dlNewVersions:
       'Atnaujinimai — Queue / Dismiss / Ban naujesnėms Civitai versijoms modelių, kuriuos jau turite (tas pats base model kaip turima versija; taip pat gerbiami Browse Rules baseModels, jei nustatyti). Sąrašas pildomas Harvest metu ir foniniu check’u (po vieną API GET turimam modeliui — ne SHA256; praleidžia modelius, tikrintus per paskutines 2 d.). Settings → Auto-download new versions: ON = eilėn; OFF = patvirtinimas čia.',
     dlTabBadges:
-      'Skiltų ženkliukai — Browse: planuojami New · Library: +N naujų nuo paskutinio apsilankymo · Atnaujinimai / Early access: laukiančių skaičius',
+      'Skiltų ženkliukai — Browse: eilė + New tik kai Auto dės į eilę (ne gryna fetch statistika) · Library: +N po atsisiuntimo · Atnaujinimai / Early access: laukia patvirtinimo',
     dlActivity:
       'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
