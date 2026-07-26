@@ -1,6 +1,7 @@
 import type { InventoryGetResult } from '../../../shared/types'
 import type { AppLocale } from '../../../shared/locale'
 import { translate } from '../i18n/context'
+import { formatModelWeight } from '../../../shared/utils'
 
 export function formatLibrarySyncSummary(inv: InventoryGetResult, locale: AppLocale = 'en'): string {
   const checked = inv.checked ?? inv.items.length
@@ -42,6 +43,20 @@ export function formatLibrarySyncSummary(inv: InventoryGetResult, locale: AppLoc
   }
   if (inv.repairedRatings && inv.repairedRatings > 0) {
     parts.push(translate(locale, 'syncSummary.ratings', { count: inv.repairedRatings }))
+  }
+  if (inv.repairedSwarmHints && inv.repairedSwarmHints > 0) {
+    parts.push(translate(locale, 'syncSummary.swarmHints', { count: inv.repairedSwarmHints }))
+  }
+  if (inv.suspiciousFileCount && inv.suspiciousFileCount > 0) {
+    parts.push(translate(locale, 'syncSummary.suspicious', { count: inv.suspiciousFileCount }))
+    const samples = (inv.suspiciousFiles ?? []).slice(0, 3).map((f) => {
+      const disk = formatModelWeight(f.diskBytes)
+      const exp = f.expectedBytes ? formatModelWeight(f.expectedBytes) : null
+      return exp ? `${f.modelName} (${disk}/${exp})` : `${f.modelName} (${disk})`
+    })
+    if (samples.length) {
+      parts.push(translate(locale, 'syncSummary.suspiciousSamples', { list: samples.join('; ') }))
+    }
   }
   if (!parts.length) {
     return translate(locale, 'syncSummary.allOk', { count: checked })

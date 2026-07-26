@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { AppSettingsPublic, TagFolderRule } from '../../../shared/types'
 import { getDefaultFolderForType, pickPreviewImage, resolveVersionPreviewCandidates } from '../../../shared/utils'
-import { findRuleForTag, parseTagRuleNames, resolveFolderForTag } from '../../../shared/tag-routing'
+import { findRuleForTag, parseTagRuleNames, resolveFolderForTag, UNSORTED_FOLDER_NAME } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 
 interface Props {
@@ -82,12 +82,12 @@ export function DownloadTab({ settings, tagRules, onRefresh, onOpenTagSettings }
         {
           modelId: preview.modelId,
           versionId: preview.versionId,
-          routingTag: routingTag.trim() || preview.baseModel.trim() || undefined
+          routingTag: routingTag.trim() || UNSORTED_FOLDER_NAME
         },
         {
           modelName: preview.name,
           previewUrl: preview.imageUrl,
-          routingTag: routingTag.trim() || preview.baseModel.trim() || undefined,
+          routingTag: routingTag.trim() || UNSORTED_FOLDER_NAME,
           modelType: preview.modelType
         }
       )

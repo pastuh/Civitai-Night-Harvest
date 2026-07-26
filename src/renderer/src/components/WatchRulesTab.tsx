@@ -158,6 +158,8 @@ interface Props {
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onRefreshInventory?: () => Promise<void>
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
+  /** Forgotten models — always hidden in Browse results. */
+  forgottenModelIds?: Set<number>
   onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
   onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void | Promise<void>
   browseViewPrefs?: import('../view-prefs').BrowseViewPrefs
@@ -220,6 +222,7 @@ export function WatchRulesTab({
   onSaveTagRules,
   onRefreshInventory,
   onSaveSettings,
+  forgottenModelIds,
   onBrowseModelBanChange,
   onBrowseSnapshot,
   browseViewPrefs,
@@ -855,13 +858,35 @@ export function WatchRulesTab({
         </div>
       )}
 
-      <section className="browse-blocked-tags-section" aria-label="Blocked tags">
+      <section className="browse-blocked-tags-section" aria-label="Tag policies">
         <SkippedTagsPanel
           compact
           hiddenTags={settings.hiddenTags ?? []}
           tagSuggestions={tagSuggestions}
           onChange={async (tags) => onSaveSettings({ hiddenTags: tags })}
         />
+        <div className="browse-filters-bar browse-banned-tags-bar" aria-label={t('browse.bannedTagsLabel')}>
+          <div className="browse-filters-bar-lead browse-blocked-tags-lead">
+            <span className="browse-blocked-tags-label" title={t('browse.bannedTagsHint')}>
+              {t('browse.bannedTagsLabel')}
+            </span>
+            {(settings.bannedTags ?? []).length === 0 ? (
+              <span className="muted browse-blocked-tags-empty">{t('browse.bannedTagsEmpty')}</span>
+            ) : (
+              <div className="skipped-tags-bar-chips">
+                {(settings.bannedTags ?? []).map((tag) => (
+                  <span
+                    key={tag}
+                    className="tag-chip is-blocked-tag"
+                    title={t('browse.bannedTagsHint')}
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </section>
 
       {previewError && (
@@ -914,6 +939,8 @@ export function WatchRulesTab({
           queueAllNotice={queueAllNotice}
           onRefreshInventory={onRefreshInventory}
           hiddenTags={settings.hiddenTags ?? []}
+          bannedTags={settings.bannedTags ?? []}
+          forgottenModelIds={forgottenModelIds}
           onHiddenTagsChange={async (tags) => onSaveSettings({ hiddenTags: tags })}
           crawlStatus={crawlStatus}
           backfillCatalog={settings.backfillCatalog ?? true}

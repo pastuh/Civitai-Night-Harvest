@@ -12,6 +12,8 @@ import type {
   PendingVersion,
   DeferredDownload,
   IncompleteModel,
+  MissingModel,
+  ExclusionReviewItem,
   LibraryVersionScanProgress,
   ScanScheduleInfo,
   TagAssignmentPrompt,
@@ -30,8 +32,10 @@ import { ActivityTab } from './components/ActivityTab'
 import { PendingTab } from './components/PendingTab'
 import { DeferredTab } from './components/DeferredTab'
 import { IncompleteTab } from './components/IncompleteTab'
+import { MissingTab } from './components/MissingTab'
 import { GalleryTab } from './components/GalleryTab'
 import { HelpTab } from './components/HelpTab'
+import { loadEaFavoriteIds, toggleEaFavoriteId } from './ea-favorites'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
@@ -64,7 +68,20 @@ import { applyAppearanceToDocument, appearanceFromSettings } from '../../shared/
 /** Wall-clock when this renderer session started — Activity log default filter. */
 const APP_SESSION_STARTED_AT = Date.now()
 
-type Tab = 'gallery' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'incomplete' | 'activity' | 'help' | 'settings'
+function collectSessionBanIds(
+  items: Array<{ kind: string; modelId: number; at: string }>,
+  prev: number[] = []
+): number[] {
+  const next = new Set(prev)
+  for (const x of items) {
+    if (x.kind !== 'bannedManual' && x.kind !== 'bannedByTag' && x.kind !== 'pausedByTag' && x.kind !== 'forgotten') continue
+    const ts = Date.parse(x.at)
+    if (Number.isFinite(ts) && ts >= APP_SESSION_STARTED_AT) next.add(x.modelId)
+  }
+  return [...next]
+}
+
+type Tab = 'gallery' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'incomplete' | 'missing' | 'activity' | 'help' | 'settings'
 
 function shouldShowDownloadStrip(visibility: DownloadStripVisibility, tab: Tab): boolean {
   switch (visibility) {
@@ -86,6 +103,12 @@ interface BusyState {
   syncProgress?: LibrarySyncProgress | null
 }
 
+/** Where to restore UI after opening Tag folders from a tag chip. */
+type TagFoldersReturnTo =
+  | { kind: 'modelDetail'; target: ModelDetailTarget; previousTab: Tab }
+  | { kind: 'gallery'; modelId: number; versionId: number; modelName: string }
+  | { kind: 'missing' }
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('watch')
   const tabRef = useRef<Tab>('watch')
@@ -97,6 +120,8 @@ export default function App() {
   const [pending, setPending] = useState<PendingVersion[]>([])
   const [deferred, setDeferred] = useState<DeferredDownload[]>([])
   const [incomplete, setIncomplete] = useState<IncompleteModel[]>([])
+  const [missing, setMissing] = useState<MissingModel[]>([])
+  const [exclusions, setExclusions] = useState<ExclusionReviewItem[]>([])
   const [inventory, setInventory] = useState<InventoryRecord[]>([])
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const hasPipelineQueue = useHasPipelineQueue()
@@ -112,6 +137,7 @@ export default function App() {
   const [galleryFocusCivitaiTag, setGalleryFocusCivitaiTag] = useState<string | null>(null)
   const [modelDetailTarget, setModelDetailTarget] = useState<ModelDetailTarget | null>(null)
   const [tagsFocusSearch, setTagsFocusSearch] = useState<string | null>(null)
+  const [tagFoldersReturnTo, setTagFoldersReturnTo] = useState<TagFoldersReturnTo | null>(null)
   const [scheduleInfo, setScheduleInfo] = useState<ScanScheduleInfo | null>(null)
   const [tagPromptQueue, setTagPromptQueue] = useState<TagAssignmentPrompt[]>([])
   const [versionScanProgress, setVersionScanProgress] = useState<LibraryVersionScanProgress | null>(null)
@@ -119,9 +145,14 @@ export default function App() {
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null)
   const [sessionDownloadIds, setSessionDownloadIds] = useState<number[]>([])
+  const [sessionBanModelIds, setSessionBanModelIds] = useState<number[]>([])
   const [libraryHighlightIds, setLibraryHighlightIds] = useState<number[]>([])
   /** One-shot: open Library on Session downloads (badge click). Cleared after Gallery consumes it. */
   const [preferLibrarySession, setPreferLibrarySession] = useState(false)
+  const [eaFavoriteIds, setEaFavoriteIds] = useState<number[]>(() => loadEaFavoriteIds())
+  const toggleEaFavorite = useCallback((modelId: number) => {
+    setEaFavoriteIds((prev) => toggleEaFavoriteId(prev, modelId))
+  }, [])
   const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
   const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
   const onLibraryViewPrefsChange = useCallback((prefs: LibraryViewPrefs) => {
@@ -184,6 +215,7 @@ export default function App() {
   const bannedPendingModelIdsRef = useRef<Set<number>>(new Set())
   /** Full banned model id set — badge must not count banned/queued leftovers. */
   const [bannedModelIds, setBannedModelIds] = useState<Set<number>>(() => new Set())
+  const [forgottenModelIds, setForgottenModelIds] = useState<Set<number>>(() => new Set())
   /** Session Yield: versionIds that entered the download pipeline (only grows). */
   const sessionYieldIdsRef = useRef<Set<number>>(new Set())
   const [sessionYieldCount, setSessionYieldCount] = useState(0)
@@ -400,7 +432,8 @@ export default function App() {
     async (options?: { syncDisk?: boolean; busyMessage?: string; busySubMessage?: string }) => {
       const run = async () => {
         try {
-          const [s, tags, watch, act, pend, def, incompleteItems, inv, q, banned] = await Promise.all([
+          const [s, tags, watch, act, pend, def, incompleteItems, missingItems, exclusionItems, inv, q, banned] =
+            await Promise.all([
             window.api.getSettings(),
             window.api.getTagRules(),
             window.api.getWatchRules(),
@@ -408,6 +441,8 @@ export default function App() {
             window.api.getPending(),
             window.api.getDeferred(),
             window.api.getIncomplete(),
+            window.api.getMissing(),
+            window.api.getExclusions(),
             window.api.getInventory({ syncDisk: options?.syncDisk ?? false }),
             window.api.getDownloadQueue(),
             window.api.getBannedModels()
@@ -419,7 +454,13 @@ export default function App() {
           applyPendingVersions(pend)
           setDeferred(def)
           setIncomplete(incompleteItems)
+          setMissing(missingItems)
+          setExclusions(exclusionItems)
+          setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
           setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
+          setForgottenModelIds(
+            new Set(banned.filter((b) => b.forgotten).map((b) => b.modelId).filter((id) => id > 0))
+          )
           startTransition(() => {
             setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
           })
@@ -475,7 +516,7 @@ export default function App() {
         message: translate('en', 'load.starting'),
         subMessage: translate('en', 'load.loadingSettings')
       })
-      const [s, tags, watch, act, pend, def, incompleteItems, inv] = await Promise.all([
+      const [s, tags, watch, act, pend, def, incompleteItems, missingItems, exclusionItems, inv] = await Promise.all([
         window.api.getSettings(),
         window.api.getTagRules(),
         window.api.getWatchRules(),
@@ -483,6 +524,8 @@ export default function App() {
         window.api.getPending(),
         window.api.getDeferred(),
         window.api.getIncomplete(),
+        window.api.getMissing(),
+        window.api.getExclusions(),
         window.api.getInventory({ syncDisk: false })
       ])
       loadedLocale = s.locale ?? 'en'
@@ -494,6 +537,9 @@ export default function App() {
       applyPendingVersions(pend)
       setDeferred(def)
       setIncomplete(incompleteItems)
+      setMissing(missingItems)
+      setExclusions(exclusionItems)
+      setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
       startTransition(() => {
         setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
       })
@@ -503,67 +549,11 @@ export default function App() {
       setDownloadQueueState({ items: q.items, paused: q.paused || s.crawlAutoDownload === false })
       setStatus(await window.api.getScanStatus())
 
-      // One continuous busy popup — single disk sync (import + verify). Do not split into
-      // skipDiskImport + diskImportOnly + scheduler sync (that flashed "Scanning disk" twice).
+      // Disk folder walk is Settings → Sync only (not every launch).
       setBusy({
-        message: translate(loc, 'app.busySyncingLibrary'),
-        subMessage: translate(loc, 'appBusy.phaseImport'),
-        // Start on import — not checking. Starting at "checking" made AppBusyOverlay
-        // discard real import progress (phase rank went backwards).
-        syncProgress: {
-          phase: 'import',
-          current: 0,
-          total: 0,
-          modelName: '',
-          action: translate(loc, 'appBusy.phaseStarting')
-        }
+        message: translate(loc, 'app.busyPreparingSession'),
+        subMessage: translate(loc, 'load.loadingSettingsRules')
       })
-      setSyncProgress(null)
-      const synced = await window.api.getInventory({
-        syncDisk: true,
-        skipHashBackfill: true,
-        skipIdentityBackfill: true
-      })
-      startTransition(() => {
-        setInventory((prev) => mergeInventoryPreserveIdentity(prev, synced.items))
-      })
-      setSyncMessage(formatLibrarySyncSummary(synced, loc))
-      if (synced.storageError) {
-        setStorageErrorModal(synced.storageError)
-        setActionError(synced.storageError)
-        setStorageOffline(true)
-        setBrowseGalleryAwaiting(false)
-        setBusy(null)
-        setSyncProgress(null)
-        setBackgroundStatus(null)
-        setStartupReady(true)
-        setTab('settings')
-        try {
-          const s = await window.api.getSettings()
-          setSettings(s)
-          setDownloadQueueState({ items: getDownloadQueueSnapshot().items, paused: true })
-        } catch {
-          /* ignore */
-        }
-        // Ready for UI only — main will not start crawl while drive is offline.
-        await window.api.notifyRendererReady()
-        return
-      }
-      const qAfter = await window.api.reconcileDownloadQueue()
-      setDownloadQueueState({ items: qAfter.items, paused: qAfter.paused })
-
-      // Keep overlay for session prep — do not reset progress to 0% / re-show Scanning disk.
-      setBusy((prev) =>
-        prev
-          ? {
-              ...prev,
-              subMessage: translate(loc, 'app.busyPreparingSession')
-            }
-          : {
-              message: translate(loc, 'app.busySyncingLibrary'),
-              subMessage: translate(loc, 'app.busyPreparingSession')
-            }
-      )
       await window.api.notifyRendererReady()
       setStartupReady(true)
     }, translate('en', 'load.loadingSettings'))
@@ -571,6 +561,13 @@ export default function App() {
         try {
           const enrichedDeferred = await window.api.enrichDeferred()
           setDeferred(enrichedDeferred)
+        } catch {
+          /* ignore */
+        }
+        // Prune Updates rows already waiting in Early access (persisted from prior session).
+        try {
+          const pend = await window.api.getPending()
+          applyPendingVersions(pend)
         } catch {
           /* ignore */
         }
@@ -774,6 +771,33 @@ export default function App() {
       }),
       window.api.onIncompleteList((items) => {
         setIncomplete(items)
+      }),
+      window.api.onMissingList((items) => {
+        setMissing(items)
+      }),
+      window.api.onExclusionsList((items) => {
+        setExclusions(items)
+        setSessionBanModelIds((prev) => collectSessionBanIds(items, prev))
+        setForgottenModelIds(
+          new Set(items.filter((i) => i.kind === 'forgotten').map((i) => i.modelId))
+        )
+        setBannedModelIds((prev) => {
+          const next = new Set(prev)
+          for (const i of items) {
+            if (i.kind === 'bannedManual' || i.kind === 'forgotten') next.add(i.modelId)
+          }
+          return next
+        })
+      }),
+      window.api.onHiddenTagApplyProgress((payload) => {
+        if (payload.phase === 'done') {
+          setBackgroundStatus(payload.message)
+          window.setTimeout(() => {
+            setBackgroundStatus((prev) => (prev === payload.message ? null : prev))
+          }, 4000)
+          return
+        }
+        setBackgroundStatus(payload.message)
       }),
       window.api.onDownloadQueue((q) => {
         const key = queueStructureKey(q)
@@ -1070,7 +1094,10 @@ export default function App() {
         else next.delete(modelId)
         return next
       })
-      if (banned) bannedPendingModelIdsRef.current.add(modelId)
+      if (banned) {
+        bannedPendingModelIdsRef.current.add(modelId)
+        setSessionBanModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]))
+      }
       setLiveCrawlBrowse((prev) => {
         const makeBanned = (base?: WatchRuleTestModel): WatchRuleTestModel => ({
           id: modelId,
@@ -1133,11 +1160,57 @@ export default function App() {
     setModelDetailTarget(null)
   }, [])
 
-  const openTagFolders = useCallback((tag: string) => {
-    setModelDetailTarget(null)
-    setTagsFocusSearch(tag)
-    setTab('tags')
-  }, [])
+  const openTagFolders = useCallback(
+    (
+      tag: string,
+      returnTo?: TagFoldersReturnTo | null
+    ) => {
+      if (returnTo) {
+        setTagFoldersReturnTo(returnTo)
+      } else if (modelDetailTarget) {
+        setTagFoldersReturnTo({
+          kind: 'modelDetail',
+          target: modelDetailTarget,
+          previousTab: tab
+        })
+      } else {
+        setTagFoldersReturnTo(null)
+      }
+      setModelDetailTarget(null)
+      setTagsFocusSearch(tag)
+      setTab('tags')
+    },
+    [modelDetailTarget, tab]
+  )
+
+  const returnFromTagFolders = useCallback(() => {
+    const ret = tagFoldersReturnTo
+    setTagFoldersReturnTo(null)
+    setTagsFocusSearch(null)
+    if (!ret) {
+      setTab('gallery')
+      return
+    }
+    if (ret.kind === 'modelDetail') {
+      setTab(ret.previousTab)
+      const target = ret.target
+      if (target.kind === 'library') {
+        const fresh = inventory.find((r) => r.versionId === target.record.versionId)
+        setModelDetailTarget(
+          fresh ? { ...target, record: fresh, siblingRecords: undefined } : target
+        )
+      } else {
+        setModelDetailTarget(target)
+      }
+      return
+    }
+    if (ret.kind === 'missing') {
+      setTab('missing')
+      return
+    }
+    // Library stayed laid out under Tag folders overlay — restore tab only (no search/pin).
+    setTab('gallery')
+  }, [tagFoldersReturnTo, inventory])
 
   const clearGalleryFocusModel = useCallback(() => {
     setGalleryFocusModelId(null)
@@ -1332,7 +1405,9 @@ export default function App() {
     Boolean(crawlProgress) ||
     hasStatusPipeline ||
     unlockTodayCount > 0 ||
-    (startupReady && Boolean(settings?.nightMode) && !storageOffline && !busy)
+    (startupReady && Boolean(settings?.nightMode) && !storageOffline && !busy) ||
+    Boolean(tagFoldersReturnTo) ||
+    Boolean(modelDetailTarget)
 
   const browsePlannedDownloadCount = useMemo(() => {
     void queueStructureKeyForBadge
@@ -1345,6 +1420,7 @@ export default function App() {
         deferred,
         bannedModelIds,
         hiddenTags: settings?.hiddenTags ?? [],
+        bannedTags: settings?.bannedTags ?? [],
         manualQueueMode: settings?.manualQueueMode ?? false,
         nightMode: settings?.nightMode === true,
         crawlAutoDownload: settings?.crawlAutoDownload ?? true,
@@ -1359,6 +1435,7 @@ export default function App() {
       deferred,
       bannedModelIds,
       settings?.hiddenTags,
+      settings?.bannedTags,
       settings?.manualQueueMode,
       settings?.nightMode,
       settings?.crawlAutoDownload,
@@ -1379,6 +1456,7 @@ export default function App() {
     { id: 'pending', label: m.tabs.newVersions, badge: pendingBadgeCount },
     { id: 'awaiting', label: m.tabs.awaitingAccess, badge: deferred.length || undefined },
     { id: 'incomplete', label: m.tabs.incomplete, badge: incomplete.length || undefined },
+    { id: 'missing', label: m.tabs.missing, badge: missing.filter((x) => !x.acknowledged).length || undefined },
     { id: 'tags', label: m.tabs.tagFolders }
   ]
   const endTabs: { id: Tab; label: string }[] = [
@@ -1386,6 +1464,55 @@ export default function App() {
     { id: 'help', label: m.tabs.help },
     { id: 'settings', label: m.tabs.settings }
   ]
+
+  // Keep Library/Browse/Missing mounted under model-detail / Tag folders overlay so scroll/filters survive.
+  const keepLibraryMounted =
+    tab === 'gallery' ||
+    tagFoldersReturnTo?.kind === 'gallery' ||
+    (tagFoldersReturnTo?.kind === 'modelDetail' &&
+      tagFoldersReturnTo.target.kind === 'library')
+  const keepWatchMounted =
+    tab === 'watch' ||
+    (tagFoldersReturnTo?.kind === 'modelDetail' &&
+      tagFoldersReturnTo.target.kind === 'browse')
+  const keepMissingMounted =
+    tab === 'missing' || tagFoldersReturnTo?.kind === 'missing'
+  /** Tag folders opened from Library — show as overlay, keep grid laid out underneath. */
+  const tagsCoveringLibrary =
+    tab === 'tags' && tagFoldersReturnTo?.kind === 'gallery'
+  const tagsCoveringMissing = tab === 'tags' && tagFoldersReturnTo?.kind === 'missing'
+  const galleryOnTab = tab === 'gallery'
+  const watchOnTab = tab === 'watch'
+  const missingOnTab = tab === 'missing'
+  const galleryInteractive = galleryOnTab && !modelDetailTarget
+  const watchInteractive = watchOnTab && !modelDetailTarget
+  const missingInteractive = missingOnTab && !modelDetailTarget && !tagsCoveringMissing
+
+  const tagsTab = (
+    <TagsTab
+      rules={tagRules}
+      tagSuggestions={tagSuggestions}
+      inventory={inventory}
+      loraFolder={settings?.loraOutputFolder ?? ''}
+      checkpointFolder={settings?.checkpointOutputFolder ?? ''}
+      confirmTagFolderMoves={settings?.confirmTagFolderMoves !== false}
+      bannedTags={settings?.bannedTags ?? []}
+      onBannedTagsChange={async (tags) => {
+        await saveSettings({ bannedTags: tags })
+      }}
+      onSave={saveTagRules}
+      onRefresh={refresh}
+      onMoveStatus={setBackgroundStatus}
+      focusSearchTag={tagsFocusSearch}
+      onFocusSearchHandled={() => setTagsFocusSearch(null)}
+      onFilterLibrary={(tag) => {
+        setPreferLibrarySession(false)
+        setGalleryFocusCivitaiTag(tag)
+        setTab('gallery')
+        setTagFoldersReturnTo(null)
+      }}
+    />
+  )
 
   return (
     <I18nProvider locale={locale}>
@@ -1576,6 +1703,7 @@ export default function App() {
               title={t.title}
               onClick={() => {
                 setModelDetailTarget(null)
+                if (t.id !== 'tags') setTagFoldersReturnTo(null)
                 if (t.id === 'gallery') {
                   // Badge = new downloads since last Library visit → open Session filter.
                   // Capture before tab change zeros newLibraryCount.
@@ -1602,6 +1730,7 @@ export default function App() {
               className={`tab ${tab === t.id ? 'active' : ''}`}
               onClick={() => {
                 setModelDetailTarget(null)
+                if (t.id !== 'tags') setTagFoldersReturnTo(null)
                 setTab(t.id)
               }}
             >
@@ -1650,72 +1779,31 @@ export default function App() {
           </div>
         )}
 
-      <main className={`content ${tab === 'gallery' && !modelDetailTarget ? 'content-gallery' : ''}${modelDetailTarget ? ' content-model-detail' : ''}`}>
-        {modelDetailTarget ? (
-          <ModelDetailPage
-            target={modelDetailTarget}
-            onClose={closeModelDetail}
-            ownedVersionIds={[...ownedVersionIds]}
-            ownedRecords={inventory.filter((r) => {
-              const mid =
-                modelDetailTarget.kind === 'library'
-                  ? modelDetailTarget.record.modelId
-                  : modelDetailTarget.modelId
-              return r.modelId === mid && r.modelId > 0
-            })}
-            onShowInLibrary={jumpToGallery}
-            onOpenTagFolders={openTagFolders}
-            onBannedChange={(modelId, banned) => markBrowseModelBan(modelId, banned)}
-            onInventoryRefresh={refreshInventory}
-            onQueueRefresh={refreshQueueOnly}
-            onShowInFolder={(path) => void window.api.showInFolder(path)}
-            onSelectLibraryRecord={(rec) => {
-              setModelDetailTarget((prev) =>
-                prev?.kind === 'library'
-                  ? {
-                      ...prev,
-                      record: rec,
-                      siblingRecords: inventory.filter(
-                        (r) =>
-                          r.modelId === rec.modelId &&
-                          r.versionId !== rec.versionId &&
-                          r.modelId > 0
-                      )
-                    }
-                  : prev
-              )
-            }}
-            onDelete={
-              modelDetailTarget.kind === 'library'
-                ? () => {
-                    const rec = modelDetailTarget.record
-                    const ok = window.confirm(
-                      translate(settings.locale ?? 'en', 'gallery.deleteConfirm', {
-                        name: rec.modelName
-                      })
-                    )
-                    if (!ok) return
-                    void (async () => {
-                      await window.api.deleteInventoryVersion(rec.versionId, { ban: true })
-                      markBrowseModelBan(rec.modelId, true, {
-                        name: rec.modelName,
-                        versionId: rec.versionId,
-                        baseModel: rec.baseModel,
-                        creator: rec.author,
-                        previewUrl: rec.previewPath
-                          ? window.api.toMediaUrl(rec.previewPath)
-                          : undefined
-                      })
-                      closeModelDetail()
-                      await refreshInventory()
-                    })()
-                  }
-                : undefined
-            }
-          />
-        ) : null}
-        {!modelDetailTarget && tab === 'gallery' ? (
-          <div className="gallery-layout-host">
+      <main
+        className={`content${
+          galleryOnTab ||
+          tagsCoveringLibrary ||
+          missingOnTab ||
+          tagsCoveringMissing ||
+          (keepLibraryMounted && modelDetailTarget?.kind === 'library') ||
+          (keepMissingMounted && Boolean(modelDetailTarget))
+            ? ' content-gallery'
+            : ''
+        }${modelDetailTarget || tagsCoveringLibrary || tagsCoveringMissing ? ' content-with-overlay' : ''}${
+          keepLibraryMounted || keepWatchMounted || keepMissingMounted ? ' content-stack' : ''
+        }`}
+      >
+        {keepLibraryMounted ? (
+          <div
+            className={`gallery-layout-host${
+              galleryOnTab || tagsCoveringLibrary
+                ? modelDetailTarget || tagsCoveringLibrary
+                  ? ' tab-panel-under-overlay'
+                  : ''
+                : ' tab-keepalive-offscreen'
+            }`}
+            aria-hidden={!galleryInteractive}
+          >
             <GalleryTab
               inventory={inventory}
               tagRules={tagRules}
@@ -1730,6 +1818,8 @@ export default function App() {
               onLibraryExcludedTagsChange={async (tags) => {
                 await saveSettings({ libraryExcludedTags: tags })
               }}
+              blockedTags={settings.bannedTags ?? []}
+              pausedTags={settings.hiddenTags ?? []}
               tagSuggestions={tagSuggestions}
               confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
               onSaveTagRules={saveTagRules}
@@ -1754,64 +1844,141 @@ export default function App() {
               onViewPrefsChange={
                 settings.preserveFilters ? onLibraryViewPrefsChange : undefined
               }
-              isActive
+              isActive={galleryOnTab || tagsCoveringLibrary}
               resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
               resultsPageSize={settings.resultsPageSize ?? 100}
               onOpenModelDetail={openModelDetail}
+              eaFavoriteIds={eaFavoriteIds}
+              onToggleEaFavorite={toggleEaFavorite}
             />
           </div>
         ) : null}
-        {!modelDetailTarget && tab === 'watch' ? (
-          <WatchRulesTab
-            rules={watchRules}
-            onSave={saveWatchRules}
-            settings={settings}
-            tagRules={tagRules}
-            inventory={inventory}
-            ownedVersionIds={ownedVersionIds}
-            status={status}
-            activity={activity}
-            deferred={deferred}
-            liveCrawlBrowse={liveCrawlBrowse}
-            allowQuietBrowseCards={allowQuietBrowseCards}
-            crawlPageMeta={crawlPageMeta}
-            crawlProgress={crawlProgress}
-            onStartDownloads={startDownloads}
-            onRetryDeferred={retryDeferred}
-            onJumpToGallery={jumpToGallery}
-            onOpenTagFolders={openTagFolders}
-            onSaveTagRules={saveTagRules}
-            onRefreshInventory={refreshInventory}
-            onSaveSettings={saveSettings}
-            onBrowseModelBanChange={markBrowseModelBan}
-            onBrowseSnapshot={applyBrowseSnapshot}
-            browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
-            onSaveStateChange={setWatchRulesSaveState}
-            onOpenModelDetail={openModelDetail}
-            browseViewPrefs={settings.preserveFilters ? browseViewPrefs : undefined}
-            onBrowseViewPrefsChange={settings.preserveFilters ? setBrowseViewPrefs : undefined}
-            sessionYieldCount={sessionYieldCount}
-          />
+        {keepWatchMounted ? (
+          <div
+            className={
+              watchOnTab
+                ? modelDetailTarget
+                  ? 'tab-panel-under-overlay'
+                  : undefined
+                : 'tab-keepalive-offscreen'
+            }
+            aria-hidden={!watchInteractive}
+          >
+            <WatchRulesTab
+              rules={watchRules}
+              onSave={saveWatchRules}
+              settings={settings}
+              tagRules={tagRules}
+              inventory={inventory}
+              ownedVersionIds={ownedVersionIds}
+              status={status}
+              activity={activity}
+              deferred={deferred}
+              liveCrawlBrowse={liveCrawlBrowse}
+              allowQuietBrowseCards={allowQuietBrowseCards}
+              crawlPageMeta={crawlPageMeta}
+              crawlProgress={crawlProgress}
+              onStartDownloads={startDownloads}
+              onRetryDeferred={retryDeferred}
+              onJumpToGallery={jumpToGallery}
+              onOpenTagFolders={openTagFolders}
+              onSaveTagRules={saveTagRules}
+              onRefreshInventory={refreshInventory}
+              onSaveSettings={saveSettings}
+              forgottenModelIds={forgottenModelIds}
+              onBrowseModelBanChange={markBrowseModelBan}
+              onBrowseSnapshot={applyBrowseSnapshot}
+              browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
+              onSaveStateChange={setWatchRulesSaveState}
+              onOpenModelDetail={openModelDetail}
+              browseViewPrefs={settings.preserveFilters ? browseViewPrefs : undefined}
+              onBrowseViewPrefsChange={settings.preserveFilters ? setBrowseViewPrefs : undefined}
+              sessionYieldCount={sessionYieldCount}
+            />
+          </div>
+        ) : null}
+        {modelDetailTarget ? (
+          <div className="model-detail-overlay">
+            <ModelDetailPage
+              target={modelDetailTarget}
+              onClose={closeModelDetail}
+              ownedVersionIds={[...ownedVersionIds]}
+              ownedRecords={inventory.filter((r) => {
+                const mid =
+                  modelDetailTarget.kind === 'library'
+                    ? modelDetailTarget.record.modelId
+                    : modelDetailTarget.modelId
+                return r.modelId === mid && r.modelId > 0
+              })}
+              onShowInLibrary={jumpToGallery}
+              onOpenTagFolders={openTagFolders}
+              onBannedChange={(modelId, banned) => markBrowseModelBan(modelId, banned)}
+              onInventoryRefresh={refreshInventory}
+              onQueueRefresh={refreshQueueOnly}
+              onShowInFolder={(path) => void window.api.showInFolder(path)}
+              inventory={inventory}
+              tagRules={tagRules}
+              tagSuggestions={tagSuggestions}
+              confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
+              loraFolder={settings.loraOutputFolder}
+              checkpointFolder={settings.checkpointOutputFolder}
+              fastTagMode={settings.fastTagMode ?? false}
+              onFastTagModeChange={(enabled) => void saveSettings({ fastTagMode: enabled })}
+              onSaveTagRules={saveTagRules}
+              onSelectLibraryRecord={(rec) => {
+                setModelDetailTarget((prev) =>
+                  prev?.kind === 'library'
+                    ? {
+                        ...prev,
+                        record: rec,
+                        siblingRecords: inventory.filter(
+                          (r) =>
+                            r.modelId === rec.modelId &&
+                            r.versionId !== rec.versionId &&
+                            r.modelId > 0
+                        )
+                      }
+                    : prev
+                )
+              }}
+              onDelete={
+                modelDetailTarget.kind === 'library'
+                  ? () => {
+                      const rec = modelDetailTarget.record
+                      const ok = window.confirm(
+                        translate(settings.locale ?? 'en', 'gallery.deleteConfirm', {
+                          name: rec.modelName
+                        })
+                      )
+                      if (!ok) return
+                      void (async () => {
+                        await window.api.deleteInventoryVersion(rec.versionId, { ban: true })
+                        markBrowseModelBan(rec.modelId, true, {
+                          name: rec.modelName,
+                          versionId: rec.versionId,
+                          baseModel: rec.baseModel,
+                          creator: rec.author,
+                          previewUrl: rec.previewPath
+                            ? window.api.toMediaUrl(rec.previewPath)
+                            : undefined
+                        })
+                        closeModelDetail()
+                        await refreshInventory()
+                      })()
+                    }
+                  : undefined
+              }
+            />
+          </div>
         ) : null}
         {!modelDetailTarget && tab === 'tags' ? (
-          <TagsTab
-            rules={tagRules}
-            tagSuggestions={tagSuggestions}
-            inventory={inventory}
-            loraFolder={settings?.loraOutputFolder ?? ''}
-            checkpointFolder={settings?.checkpointOutputFolder ?? ''}
-            confirmTagFolderMoves={settings?.confirmTagFolderMoves !== false}
-            onSave={saveTagRules}
-            onRefresh={refresh}
-            onMoveStatus={setBackgroundStatus}
-            focusSearchTag={tagsFocusSearch}
-            onFocusSearchHandled={() => setTagsFocusSearch(null)}
-            onFilterLibrary={(tag) => {
-              setPreferLibrarySession(false)
-              setGalleryFocusCivitaiTag(tag)
-              setTab('gallery')
-            }}
-          />
+          tagsCoveringLibrary || tagsCoveringMissing ? (
+            <div className="model-detail-overlay" role="presentation">
+              {tagsTab}
+            </div>
+          ) : (
+            tagsTab
+          )
         ) : null}
         {!modelDetailTarget && tab === 'pending' ? (
           <PendingTab
@@ -1847,6 +2014,8 @@ export default function App() {
             onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
             onShowInLibrary={jumpToGallery}
             onOpenModelDetail={openModelDetail}
+            eaFavoriteIds={eaFavoriteIds}
+            onToggleEaFavorite={toggleEaFavorite}
             isActive
           />
         ) : null}
@@ -1863,6 +2032,48 @@ export default function App() {
             onOpenModelDetail={openModelDetail}
             isActive
           />
+        ) : null}
+        {keepMissingMounted ? (
+          <div
+            className={`gallery-layout-host${
+              missingOnTab || tagsCoveringMissing
+                ? modelDetailTarget || tagsCoveringMissing
+                  ? ' tab-panel-under-overlay'
+                  : ''
+                : ' tab-keepalive-offscreen'
+            }`}
+            aria-hidden={!missingInteractive}
+          >
+            <MissingTab
+              items={exclusions}
+              inventory={inventory}
+              hiddenTags={settings?.hiddenTags ?? []}
+              bannedTags={settings?.bannedTags ?? []}
+              sessionStartedAt={APP_SESSION_STARTED_AT}
+              sessionBanModelIds={sessionBanModelIds}
+              resultsDisplayMode={settings?.resultsDisplayMode ?? 'autoAdvance'}
+              resultsPageSize={settings?.resultsPageSize ?? 100}
+              onRefresh={async () => {
+                const [missingItems, exclusionItems, banned] = await Promise.all([
+                  window.api.getMissing(),
+                  window.api.getExclusions(),
+                  window.api.getBannedModels()
+                ])
+                setMissing(missingItems)
+                setExclusions(exclusionItems)
+                setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+                setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
+                setForgottenModelIds(
+                  new Set(
+                    banned.filter((b) => b.forgotten).map((b) => b.modelId).filter((id) => id > 0)
+                  )
+                )
+              }}
+              onOpenModelDetail={openModelDetail}
+              onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'missing' })}
+              isActive={missingInteractive}
+            />
+          </div>
         ) : null}
         {!modelDetailTarget && tab === 'activity' ? (
           <ActivityTab
@@ -1897,6 +2108,28 @@ export default function App() {
         uiExtended={uiExtended}
         deferredDownloads={deferred}
         nsfwByVersionId={nsfwByVersionId}
+        onNavigateBack={
+          modelDetailTarget
+            ? closeModelDetail
+            : tagFoldersReturnTo
+              ? returnFromTagFolders
+              : undefined
+        }
+        navigateBackTitle={
+          modelDetailTarget
+            ? missingOnTab
+              ? translate(locale, 'tagsTab.backToMissing')
+              : modelDetailTarget.kind === 'library'
+                ? translate(locale, 'tagsTab.backToLibrary')
+                : translate(locale, 'tagsTab.backToBrowse')
+            : tagFoldersReturnTo?.kind === 'modelDetail'
+              ? translate(locale, 'tagsTab.backToModelDetail')
+              : tagFoldersReturnTo?.kind === 'gallery'
+                ? translate(locale, 'tagsTab.backToLibrary')
+                : tagFoldersReturnTo?.kind === 'missing'
+                  ? translate(locale, 'tagsTab.backToMissing')
+                  : undefined
+        }
         extraMessage={
           storageOffline
             ? null

@@ -6,7 +6,7 @@ import * as inventory from './inventory'
 import { importModelsFromDisk } from './disk-import'
 import { fetchFirstWorkingPreview } from './preview-fetch'
 import { resolvePreviewsForModelWithFallback } from './preview-enrich'
-import { buildSwarmJson } from './swarm-json'
+import { buildSwarmJson, buildUsageHint, hasHardcodedLoraStrengthHint } from './swarm-json'
 import {
   checkConfiguredOutputFoldersReachable,
   safePathExists
@@ -265,6 +265,186 @@ export async function repairMissingPreviews(
   }
 
   return { repairedPreviews, repairedRatings }
+}
+
+/**
+ * Patch .swarm.json files that still contain the old invented LoRA strength range.
+ * Fetches each model from Civitai and rewrites only modelspec.usage_hint.
+ */
+export async function repairHardcodedSwarmUsageHints(
+  pool: CivitaiClientPool,
+  records: InventoryRecord[],
+  onProgress?: (p: LibrarySyncProgress) => void
+): Promise<{ repaired: number; checked: number; failed: number }> {
+  const candidates = records.filter((r) => {
+    if (!r.modelId || r.modelId <= 0 || !r.versionId || r.versionId <= 0) return false
+    if (!r.swarmPath || safePathExists(r.swarmPath) !== true) return false
+    try {
+      const swarm = JSON.parse(readFileSync(r.swarmPath, 'utf-8')) as Record<string, unknown>
+      const hint =
+        typeof swarm['modelspec.usage_hint'] === 'string' ? swarm['modelspec.usage_hint'] : ''
+      return hasHardcodedLoraStrengthHint(hint)
+    } catch {
+      return false
+    }
+  })
+
+  const total = candidates.length
+  let repaired = 0
+  let failed = 0
+  const modelCache = new Map<string, CivitaiModel>()
+  const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  if (total === 0) {
+    onProgress?.({
+      phase: 'metadata',
+      current: 0,
+      total: 1,
+      modelName: '…',
+      action: 'No hardcoded swarm usage hints'
+    })
+    return { repaired: 0, checked: 0, failed: 0 }
+  }
+
+  onProgress?.({
+    phase: 'metadata',
+    current: 0,
+    total,
+    modelName: candidates[0]?.modelName ?? '…',
+    action: `Fixing hardcoded usage_hint on ${total} swarm.json file(s)`
+  })
+
+  for (let i = 0; i < candidates.length; i++) {
+    if (i > 0 && i % 8 === 0) await yieldToEventLoop()
+    const record = candidates[i]
+    const report = (action: string) =>
+      onProgress?.({
+        phase: 'metadata',
+        current: i + 1,
+        total,
+        modelName: record.modelName,
+        action
+      })
+
+    report('Fetching model from Civitai for usage_hint')
+    try {
+      const domain = record.civitaiDomain ?? pool.primaryDomain()
+      const cacheKey = `${domain}:${record.modelId}`
+      let model = modelCache.get(cacheKey)
+      if (!model) {
+        model = await pool.forDomain(domain).getModel(record.modelId)
+        modelCache.set(cacheKey, model)
+      }
+      const version =
+        model.modelVersions.find((v) => v.id === record.versionId) ?? model.modelVersions[0]
+      if (!version) {
+        failed++
+        report('Version not found on Civitai')
+        continue
+      }
+
+      const swarmPath = record.swarmPath
+      const swarm = JSON.parse(readFileSync(swarmPath, 'utf-8')) as Record<string, unknown>
+      const nextHint = buildUsageHint(model, version).trim()
+      if (nextHint) {
+        swarm['modelspec.usage_hint'] = nextHint
+      } else {
+        delete swarm['modelspec.usage_hint']
+      }
+
+      writeFileSync(swarmPath, JSON.stringify(swarm, null, 2), 'utf-8')
+      repaired++
+      report(nextHint ? 'usage_hint updated from Civitai' : 'Removed invented strength hint')
+    } catch {
+      failed++
+      report('Failed to update usage_hint')
+    }
+  }
+
+  return { repaired, checked: total, failed }
+}
+
+/** LoRA/Checkpoint weight files this small are almost never valid (failed / stub download). */
+const ABSURD_SMALL_WEIGHT_BYTES = 400 * 1024
+
+export type SuspiciousLibraryFile = {
+  modelId: number
+  versionId: number
+  modelName: string
+  versionName: string
+  modelPath: string
+  diskBytes: number
+  expectedBytes?: number
+  reason: 'too_small' | 'truncated_vs_expected'
+}
+
+/**
+ * Flag on-disk weight files that look truncated vs inventory/API size, or absurdly small.
+ * Skips embedding-like extensions; safetensors/ckpt under ~400KB are reported when no expected size.
+ */
+export function findSuspiciousModelFiles(records: InventoryRecord[]): SuspiciousLibraryFile[] {
+  const out: SuspiciousLibraryFile[] = []
+  for (const record of records) {
+    if (safePathExists(record.modelPath) !== true) continue
+    const lower = record.modelPath.toLowerCase()
+    if (!/\.(safetensors|ckpt|sft)$/i.test(lower)) continue
+
+    let diskBytes = 0
+    try {
+      diskBytes = statSync(record.modelPath).size
+    } catch {
+      continue
+    }
+    if (diskBytes <= 0) continue
+
+    const expected =
+      record.fileSizeBytes && record.fileSizeBytes > 0 ? record.fileSizeBytes : undefined
+
+    if (expected && expected >= 1024 * 1024 && diskBytes < expected * 0.5) {
+      out.push({
+        modelId: record.modelId,
+        versionId: record.versionId,
+        modelName: record.modelName,
+        versionName: record.versionName,
+        modelPath: record.modelPath,
+        diskBytes,
+        expectedBytes: expected,
+        reason: 'truncated_vs_expected'
+      })
+      continue
+    }
+
+    if (
+      expected &&
+      expected > ABSURD_SMALL_WEIGHT_BYTES * 2 &&
+      diskBytes < ABSURD_SMALL_WEIGHT_BYTES
+    ) {
+      out.push({
+        modelId: record.modelId,
+        versionId: record.versionId,
+        modelName: record.modelName,
+        versionName: record.versionName,
+        modelPath: record.modelPath,
+        diskBytes,
+        expectedBytes: expected,
+        reason: 'truncated_vs_expected'
+      })
+      continue
+    }
+
+    if (!expected && diskBytes < ABSURD_SMALL_WEIGHT_BYTES) {
+      out.push({
+        modelId: record.modelId,
+        versionId: record.versionId,
+        modelName: record.modelName,
+        versionName: record.versionName,
+        modelPath: record.modelPath,
+        diskBytes,
+        reason: 'too_small'
+      })
+    }
+  }
+  return out
 }
 
 export function syncInventoryWithDisk(): { removedMissing: number; enrichedMeta: number } {

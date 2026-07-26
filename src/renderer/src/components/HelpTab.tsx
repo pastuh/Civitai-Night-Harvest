@@ -106,6 +106,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.browseDetails')}</li>
             <li>{t('help.browsePreviews')}</li>
             <li>{t('help.browseTags')}</li>
+            <li>{t('help.browsePausedBanned')}</li>
             <li>{t('help.browseManualQueue')}</li>
             <li>{t('help.browseSettled')}</li>
             <li>{t('help.browseBan')}</li>
@@ -123,6 +124,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           <ul>
             <li>{t('help.libraryFolders')}</li>
             <li>{t('help.libraryPriority')}</li>
+            <li>{t('help.libraryTagBan')}</li>
             <li>{t('help.libraryBadge')}</li>
             <li>{t('help.librarySession')}</li>
             <li>{t('help.libraryByDate')}</li>
@@ -135,6 +137,22 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.libraryManual')}</li>
             <li>{t('help.libraryPreserve')}</li>
             <li>{t('help.libraryConfirmMoves')}</li>
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
+              📭
+            </span>
+            {t('help.sections.missing')}
+          </h3>
+          <ul>
+            <li>{t('help.missingOverview')}</li>
+            <li>{t('help.missingKinds')}</li>
+            <li>{t('help.missingFilters')}</li>
+            <li>{t('help.missingAllow')}</li>
+            <li>{t('help.missingForget')}</li>
           </ul>
         </section>
 

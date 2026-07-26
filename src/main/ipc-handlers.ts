@@ -3,6 +3,7 @@ import { CivitaiClient } from '../shared/civitai-client'
 import { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type {
   AppSettingsSave,
+  BanModelStub,
   ContentFilter,
   DownloadRequest,
   InventoryRecord,
@@ -16,8 +17,9 @@ import type {
 import { buildModelSlug, parseModelId, apiNsfwParam, apiEarlyAccessParam, apiTagSearchVariants, matchesContentFilter, resolveSearchDomains, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, domainLabel, civitaiSearchParamsFromRule, parseRuleFilterTags, getDefaultFolderForType } from '../shared/utils'
 import {
   findRuleForTag,
-  modelHasHiddenTag,
+  modelHasPolicyTag,
   normalizeHiddenTags,
+  parseTagRuleNames,
   pickBestMatchingFolderTag,
   shouldSkipTagBulkMove
 } from '../shared/tag-routing'
@@ -27,15 +29,16 @@ import { enrichDeferredDownloads } from '../shared/early-access'
 import { DownloadQueue } from './download-queue'
 import { DownloadService } from './download-service'
 import * as inventory from './inventory'
-import { repairMissingPreviews, syncInventoryWithDiskAsync } from './library-sync'
+import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync, findSuspiciousModelFiles } from './library-sync'
 import { setLibraryPreviewFromUrl } from './library-preview'
 import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch } from './preview-enrich'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
-import { moveRecordToTagFolder, moveRecordsToTagFolder } from './model-move'
+import { moveRecordToTagFolder, moveRecordsToTagFolder, reconcileLibraryTagFolders } from './model-move'
 import { deleteModelFromLibrary, deleteVersionFromLibrary } from './model-delete'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
+import { emitMissingList, recheckMissingModels } from './missing-models'
 import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
 import { recognizeLocalModels } from './recognize-local-models'
 import { syncLibrarySlugs } from './slug-rename'
@@ -106,12 +109,14 @@ const IPC_CHANNELS = [
   'watch:queueAll',
   'inventory:getAll',
   'model:ban',
+  'model:forget',
   'model:unban',
   'model:getBanned',
   'model:setAutoUpdate',
   'model:getAutoUpdate',
   'inventory:assignTag',
   'inventory:assignByCivitaiTag',
+  'inventory:reconcileTagFolders',
   'inventory:deleteVersion',
   'inventory:patchNsfw',
   'inventory:setPreviewFromUrl',
@@ -403,13 +408,59 @@ export function initIpc(): void {
   sched = scheduler
   downloadQueue.restoreFromDisk()
 
+  /** Queue one model as manual so blocked tags cannot re-skip it. */
+  function tryManualQueueExclusionModel(
+    modelId: number,
+    stub?: {
+      versionId?: number
+      modelName?: string
+      modelType?: string
+      baseModel?: string
+      author?: string
+      previewUrl?: string
+      tags?: string[]
+      sourceDomain?: CivitaiDomain
+    }
+  ): boolean {
+    if (!modelId || modelId <= 0) return false
+    if (inventory.isModelBanned(modelId)) return false
+    const browse = scheduler.getBrowseGalleryModels().find((m) => m.id === modelId)
+    const versionId = stub?.versionId ?? browse?.versionId
+    if (!versionId || versionId <= 0) return false
+    if (inventory.hasVersion(versionId)) return false
+    const id = downloadQueue.enqueue(
+      {
+        modelId,
+        versionId,
+        sourceDomain: stub?.sourceDomain ?? browse?.sourceDomain
+      },
+      {
+        modelName: stub?.modelName || browse?.name,
+        modelType: stub?.modelType || browse?.type,
+        baseModel: stub?.baseModel || browse?.baseModel,
+        author: stub?.author || browse?.creator,
+        previewUrl: stub?.previewUrl || browse?.previewUrl,
+        civitaiTags: stub?.tags?.length ? stub.tags : browse?.tags,
+        manual: true
+      }
+    )
+    if (!id) return false
+    if (!downloadQueue.getState().paused) downloadQueue.start()
+    return true
+  }
+
   ipcMain.handle('settings:get', () => toPublicSettings(getSettings()))
 
   ipcMain.handle('settings:save', async (_e, partial: AppSettingsSave) => {
     const hadKey = Boolean(getSettings().apiKey)
-    const prevHiddenTags =
-      partial.hiddenTags !== undefined
-        ? normalizeHiddenTags(getSettings().hiddenTags ?? [])
+    const prev = getSettings()
+    const prevPaused =
+      partial.hiddenTags !== undefined || partial.bannedTags !== undefined
+        ? normalizeHiddenTags(prev.hiddenTags ?? [])
+        : null
+    const prevBanned =
+      partial.hiddenTags !== undefined || partial.bannedTags !== undefined
+        ? normalizeHiddenTags(prev.bannedTags ?? [])
         : null
     const next = saveSettingsFromUi(partial)
     resetStorageAlertGate()
@@ -424,8 +475,14 @@ export function initIpc(): void {
       sendToRenderer(() => mainWindow, 'settings:changed', toPublicSettings(next))
     }
     clientPool.update(next.domain, next.apiKey)
-    if (partial.hiddenTags !== undefined && prevHiddenTags) {
-      sched.onHiddenTagsChanged(prevHiddenTags, normalizeHiddenTags(next.hiddenTags))
+    if (prevPaused && prevBanned) {
+      await sched.onTagPolicyChanged(
+        { paused: prevPaused, banned: prevBanned },
+        {
+          paused: normalizeHiddenTags(next.hiddenTags ?? []),
+          banned: normalizeHiddenTags(next.bannedTags ?? [])
+        }
+      )
     }
     scheduler.onSettingsChanged()
     // Refresh Civitai profile only when the API key itself changes — not on Pause / every save.
@@ -671,6 +728,8 @@ export function initIpc(): void {
       let items = inventory.getAllVersions()
       let repairedPreviews = 0
       let repairedRatings = 0
+      let repairedSwarmHints = 0
+      let suspiciousFiles: import('../shared/types').SuspiciousLibraryFile[] = []
       const offline = Boolean(storageError) || isConfiguredOutputOffline()
       if (offline) {
         // Avoid media:// loads on offline roots (Chromium open of F:\ freezes the app).
@@ -682,6 +741,31 @@ export function initIpc(): void {
         if (!storageError) {
           const reach = checkConfiguredOutputFoldersReachable()
           if (!reach.ok) storageError = reach.message
+        }
+      }
+      if (options?.syncDisk && !offline && !options?.diskImportOnly) {
+        const emitHints = createThrottledProgressEmitter(
+          () => mainWindow,
+          'library:syncProgress',
+          300
+        )
+        const hintRepair = await repairHardcodedSwarmUsageHints(clientPool, items, emitHints)
+        repairedSwarmHints = hintRepair.repaired
+        emitHints({
+          phase: 'checking',
+          current: 0,
+          total: Math.max(items.length, 1),
+          modelName: '…',
+          action: 'Checking for truncated / tiny model files'
+        })
+        suspiciousFiles = findSuspiciousModelFiles(items)
+        if (suspiciousFiles.length) {
+          scheduler.log(
+            'warn',
+            `Suspicious model files: ${suspiciousFiles.length} (tiny or truncated vs expected size)`,
+            undefined,
+            { source: 'library' }
+          )
         }
       }
       if (options?.repairPreviews && !offline) {
@@ -701,6 +785,7 @@ export function initIpc(): void {
         if (
           repairedPreviews > 0 ||
           repairedRatings > 0 ||
+          repairedSwarmHints > 0 ||
           enrichedMeta > 0 ||
           hashesBackfilled > 0 ||
           importedFromDisk > 0 ||
@@ -708,12 +793,17 @@ export function initIpc(): void {
         ) {
           items = inventory.getAllVersions()
         }
+      } else if (repairedSwarmHints > 0) {
+        items = inventory.getAllVersions()
       }
       return {
         items,
         removedMissing,
         repairedPreviews,
         repairedRatings,
+        repairedSwarmHints,
+        suspiciousFiles: suspiciousFiles.length ? suspiciousFiles.slice(0, 25) : undefined,
+        suspiciousFileCount: suspiciousFiles.length || undefined,
         enrichedMeta,
         hashesBackfilled,
         checked,
@@ -729,7 +819,15 @@ export function initIpc(): void {
     }
   )
 
-  ipcMain.handle('model:ban', (_e, payload: { modelId: number; modelName?: string }) => {
+  ipcMain.handle(
+    'model:ban',
+    (
+      _e,
+      payload: {
+        modelId: number
+        modelName?: string
+      } & Partial<BanModelStub>
+    ) => {
     // Ban = exclude from future downloads + delete library files if any exist.
     // Keep card in Browse as banned (do not remove from gallery).
     const pending = inventory.getAllPendingVersions().find((p) => p.modelId === payload.modelId)
@@ -745,21 +843,54 @@ export function initIpc(): void {
       incomplete?.modelName ??
       deferred?.modelName ??
       ''
-    inventory.banModel(payload.modelId, modelName)
+    const stub: BanModelStub = {
+      modelName,
+      versionId:
+        payload.versionId ??
+        pending?.versionId ??
+        incomplete?.resolvedVersionId ??
+        deferred?.versionId ??
+        deleted[0]?.versionId,
+      modelType:
+        payload.modelType || incomplete?.modelType || deferred?.modelType || undefined,
+      baseModel:
+        payload.baseModel ||
+        pending?.baseModel ||
+        incomplete?.baseModel ||
+        deleted[0]?.baseModel,
+      author:
+        payload.author || pending?.author || incomplete?.author || deleted[0]?.author,
+      previewUrl:
+        payload.previewUrl ||
+        pending?.previewUrl ||
+        incomplete?.previewUrl ||
+        deferred?.previewUrl ||
+        (deleted[0]?.previewPath ? deleted[0].previewPath : undefined),
+      pageUrl: payload.pageUrl || incomplete?.pageUrl,
+      sourceDomain:
+        payload.sourceDomain || incomplete?.sourceDomain || deleted[0]?.civitaiDomain,
+      tags: payload.tags?.length
+        ? payload.tags
+        : incomplete?.tags?.length
+          ? incomplete.tags
+          : deleted[0]?.civitaiTags
+    }
+    inventory.banModel(payload.modelId, modelName, stub)
     inventory.removePendingForModel(payload.modelId)
     scheduler.dismissPendingForModel(payload.modelId)
     scheduler.markModelBannedInBrowseGallery(payload.modelId, {
       modelName,
-      versionId: pending?.versionId ?? incomplete?.resolvedVersionId ?? deferred?.versionId,
-      modelType: incomplete?.modelType ?? deferred?.modelType,
-      baseModel: pending?.baseModel || incomplete?.baseModel,
-      author: pending?.author || incomplete?.author,
-      previewUrl: pending?.previewUrl || incomplete?.previewUrl || deferred?.previewUrl,
-      pageUrl: incomplete?.pageUrl,
-      sourceDomain: incomplete?.sourceDomain,
-      tags: incomplete?.tags
+      versionId: stub.versionId,
+      modelType: stub.modelType,
+      baseModel: stub.baseModel,
+      author: stub.author,
+      previewUrl: stub.previewUrl,
+      pageUrl: stub.pageUrl,
+      sourceDomain: stub.sourceDomain,
+      tags: stub.tags
     })
     downloadQueue.cancelByModelId(payload.modelId)
+    emitMissingList(() => mainWindow)
     if (deleted.length > 0) {
       scheduler.log(
         'info',
@@ -773,13 +904,189 @@ export function initIpc(): void {
     return { modelId: payload.modelId, deletedVersions: deleted.length }
   })
 
+  ipcMain.handle(
+    'model:forget',
+    (
+      _e,
+      payload: {
+        modelId: number
+        modelName?: string
+      } & Partial<BanModelStub>
+    ) => {
+      const pending = inventory.getAllPendingVersions().find((p) => p.modelId === payload.modelId)
+      const incomplete = inventory.getIncompleteModel(payload.modelId)
+      const deferred = inventory
+        .getAllDeferredDownloads()
+        .find((d) => d.modelId === payload.modelId)
+      const tagSkip = inventory.getTagSkipReview(payload.modelId)
+      const missing = inventory.getMissingModel(payload.modelId)
+      const deleted = deleteModelFromLibrary(payload.modelId)
+      const modelName =
+        payload.modelName ??
+        deleted[0]?.modelName ??
+        pending?.modelName ??
+        incomplete?.modelName ??
+        deferred?.modelName ??
+        tagSkip?.modelName ??
+        missing?.modelName ??
+        ''
+      const stub: BanModelStub = {
+        modelName,
+        versionId:
+          payload.versionId ??
+          pending?.versionId ??
+          incomplete?.resolvedVersionId ??
+          deferred?.versionId ??
+          tagSkip?.versionId ??
+          missing?.versionId ??
+          deleted[0]?.versionId,
+        modelType:
+          payload.modelType ||
+          incomplete?.modelType ||
+          deferred?.modelType ||
+          tagSkip?.modelType ||
+          missing?.modelType ||
+          undefined,
+        baseModel:
+          payload.baseModel ||
+          pending?.baseModel ||
+          incomplete?.baseModel ||
+          tagSkip?.baseModel ||
+          missing?.baseModel ||
+          deleted[0]?.baseModel,
+        author:
+          payload.author ||
+          pending?.author ||
+          incomplete?.author ||
+          tagSkip?.author ||
+          missing?.author ||
+          deleted[0]?.author,
+        previewUrl:
+          payload.previewUrl ||
+          pending?.previewUrl ||
+          incomplete?.previewUrl ||
+          deferred?.previewUrl ||
+          tagSkip?.previewUrl ||
+          missing?.previewUrl ||
+          (deleted[0]?.previewPath ? deleted[0].previewPath : undefined),
+        pageUrl: payload.pageUrl || incomplete?.pageUrl || tagSkip?.pageUrl || missing?.pageUrl,
+        sourceDomain:
+          payload.sourceDomain ||
+          incomplete?.sourceDomain ||
+          tagSkip?.sourceDomain ||
+          missing?.sourceDomain ||
+          deleted[0]?.civitaiDomain,
+        tags: payload.tags?.length
+          ? payload.tags
+          : incomplete?.tags?.length
+            ? incomplete.tags
+            : tagSkip?.tags?.length
+              ? tagSkip.tags
+              : deleted[0]?.civitaiTags
+      }
+      inventory.forgetModel(payload.modelId, modelName, stub)
+      inventory.removePendingForModel(payload.modelId)
+      scheduler.dismissPendingForModel(payload.modelId)
+      scheduler.markModelBannedInBrowseGallery(payload.modelId, {
+        modelName,
+        versionId: stub.versionId,
+        modelType: stub.modelType,
+        baseModel: stub.baseModel,
+        author: stub.author,
+        previewUrl: stub.previewUrl,
+        pageUrl: stub.pageUrl,
+        sourceDomain: stub.sourceDomain,
+        tags: stub.tags
+      })
+      downloadQueue.cancelByModelId(payload.modelId)
+      emitMissingList(() => mainWindow)
+      scheduler.log(
+        'info',
+        `Forgot model ${modelName || payload.modelId} — hidden everywhere`,
+        undefined,
+        { source: 'ban', modelId: payload.modelId }
+      )
+      return { modelId: payload.modelId, deletedVersions: deleted.length }
+    }
+  )
+
   ipcMain.handle('model:unban', (_e, modelId: number) => {
+    // Snapshot stub before delete — used for manual queue (bypass blocked tags).
+    const banned = inventory.getBannedModels().find((b) => b.modelId === modelId)
+    const tagSkip = inventory.getTagSkipReview(modelId)
     inventory.unbanModel(modelId)
-    scheduler.log('info', `Removed exclusion for model ${modelId}`)
-    return { modelId }
+    inventory.removeTagSkipReview(modelId)
+    const queued = tryManualQueueExclusionModel(modelId, {
+      versionId: banned?.versionId ?? tagSkip?.versionId,
+      modelName: banned?.modelName ?? tagSkip?.modelName,
+      modelType: banned?.modelType ?? tagSkip?.modelType,
+      baseModel: banned?.baseModel ?? tagSkip?.baseModel,
+      author: banned?.author ?? tagSkip?.author,
+      previewUrl: banned?.previewUrl ?? tagSkip?.previewUrl,
+      tags: banned?.tags?.length ? banned.tags : tagSkip?.tags,
+      sourceDomain: banned?.sourceDomain ?? tagSkip?.sourceDomain
+    })
+    scheduler.log(
+      'info',
+      queued
+        ? `Unbanned model ${modelId} — queued for download (manual, ignores blocked tags)`
+        : `Removed exclusion for model ${modelId}`,
+      undefined,
+      { source: 'system', modelId }
+    )
+    emitMissingList(() => mainWindow)
+    return { modelId, queued }
   })
 
   ipcMain.handle('model:getBanned', () => inventory.getBannedModels())
+
+  ipcMain.handle('exclusions:get', () => {
+    try {
+      inventory.enrichExclusionStubsFromBrowse(scheduler.getBrowseGalleryModels())
+    } catch {
+      /* browse cache optional */
+    }
+    return inventory.getExclusionReviewItems()
+  })
+
+  ipcMain.handle('exclusions:dismissTagSkip', (_e, modelId: number) => {
+    inventory.removeTagSkipReview(modelId)
+    emitMissingList(() => mainWindow)
+    return inventory.getExclusionReviewItems()
+  })
+
+  /** Allow one tag-skipped model: persistent exception + remove review + manual queue. */
+  ipcMain.handle('exclusions:allowTagSkip', (_e, modelId: number) => {
+    const tagSkip = inventory.getTagSkipReview(modelId)
+    inventory.addTagSkipAllow(modelId)
+    inventory.removeTagSkipReview(modelId)
+    const queued = tryManualQueueExclusionModel(modelId, {
+      versionId: tagSkip?.versionId,
+      modelName: tagSkip?.modelName,
+      modelType: tagSkip?.modelType,
+      baseModel: tagSkip?.baseModel,
+      author: tagSkip?.author,
+      previewUrl: tagSkip?.previewUrl,
+      tags: tagSkip?.tags,
+      sourceDomain: tagSkip?.sourceDomain
+    })
+    if (queued) {
+      scheduler.log(
+        'info',
+        `Allowed tag-skipped model ${modelId} — queued (manual; allowlisted vs pause/ban tags)`,
+        undefined,
+        { source: 'system', modelId }
+      )
+    }
+    emitMissingList(() => mainWindow)
+    return { modelId, queued, items: inventory.getExclusionReviewItems() }
+  })
+
+  ipcMain.handle('exclusions:acknowledgeTagSkip', (_e, modelId: number) => {
+    inventory.acknowledgeTagSkipReview(modelId)
+    emitMissingList(() => mainWindow)
+    return inventory.getExclusionReviewItems()
+  })
 
   ipcMain.handle(
     'model:setAutoUpdate',
@@ -939,6 +1246,22 @@ export function initIpc(): void {
     }
   )
 
+  ipcMain.handle('inventory:reconcileTagFolders', () => {
+    const tagRules = getTagRules()
+    const result = reconcileLibraryTagFolders(tagRules)
+    let queueUpdated = 0
+    const seen = new Set<string>()
+    for (const rule of tagRules) {
+      for (const name of parseTagRuleNames(rule.tagName)) {
+        const key = name.toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
+      }
+    }
+    return { ...result, queueUpdated }
+  })
+
   ipcMain.handle('model:preview', async (_e, input: string) => {
     const modelId = parseModelId(input)
     if (!modelId) throw new Error('Invalid model URL or ID')
@@ -984,7 +1307,8 @@ export function initIpc(): void {
     }
     if (
       meta?.manual !== true &&
-      modelHasHiddenTag(meta?.civitaiTags ?? [], settings.hiddenTags ?? [])
+      !inventory.isTagSkipAllowed(request.modelId) &&
+      modelHasPolicyTag(meta?.civitaiTags ?? [], settings.hiddenTags, settings.bannedTags)
     ) {
       return ''
     }
@@ -1250,6 +1574,35 @@ export function initIpc(): void {
     return scheduler.getIncompleteModels()
   })
 
+  ipcMain.handle('missing:get', () => inventory.getAllMissingModels())
+
+  ipcMain.handle('missing:getOne', (_e, modelId: number) => inventory.getMissingModel(modelId))
+
+  ipcMain.handle('missing:recheck', async (_e, opts?: { onlySuspect?: boolean }) => {
+    const result = await recheckMissingModels(clientPool, () => mainWindow, opts)
+    if (result.recovered > 0 || result.confirmed > 0) {
+      scheduler.log(
+        'info',
+        `Missing recheck: ${result.checked} checked, ${result.recovered} recovered, ${result.confirmed} unavailable`,
+        undefined,
+        { source: 'system' }
+      )
+    }
+    return result
+  })
+
+  ipcMain.handle('missing:dismiss', (_e, modelId: number) => {
+    inventory.removeMissingModel(modelId)
+    emitMissingList(() => mainWindow)
+    return inventory.getAllMissingModels()
+  })
+
+  ipcMain.handle('missing:acknowledge', (_e, modelId: number) => {
+    inventory.acknowledgeMissingModel(modelId)
+    emitMissingList(() => mainWindow)
+    return inventory.getAllMissingModels()
+  })
+
   ipcMain.handle('shell:showInFolder', (_e, filePath: string) => {
     if (filePath) shell.showItemInFolder(filePath)
   })
@@ -1265,7 +1618,18 @@ export function initIpc(): void {
     'model:getDetail',
     async (
       _e,
-      payload: { modelId: number; versionId: number; domain?: CivitaiDomain; swarmPath?: string }
+      payload: {
+        modelId: number
+        versionId: number
+        domain?: CivitaiDomain
+        swarmPath?: string
+        modelName?: string
+        previewUrl?: string
+        author?: string
+        baseModel?: string
+        modelType?: string
+        localOnly?: boolean
+      }
     ) => {
       const domain = payload.domain ?? clientPool.primary().getDomain()
       return fetchCivitaiModelDetail(
@@ -1273,7 +1637,16 @@ export function initIpc(): void {
         payload.modelId,
         payload.versionId,
         domain,
-        payload.swarmPath
+        payload.swarmPath,
+        () => mainWindow,
+        {
+          modelName: payload.modelName,
+          previewUrl: payload.previewUrl,
+          author: payload.author,
+          baseModel: payload.baseModel,
+          modelType: payload.modelType
+        },
+        { localOnly: payload.localOnly === true }
       )
     }
   )

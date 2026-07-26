@@ -4,16 +4,25 @@ import { app } from 'electron'
 import type {
   ActivityEntry,
   ActivityLevel,
+  BanModelStub,
+  BannedModel,
   DownloadQueueItem,
+  ExclusionReviewItem,
   InventoryRecord,
   InventorySnapshot,
   PendingVersion,
   DeferredDownload,
   DeferredFailureKind,
   IncompleteModel,
-  CivitaiDomain
+  MissingModel,
+  MissingModelStatus,
+  CivitaiDomain,
+  TagPolicyKind,
+  TagSkipReview
 } from '../shared/types'
-import { expandCivitaiTagNames } from '../shared/tag-routing'
+import { MAX_MISSING_CONFIRM_HITS, MAX_TAG_SKIP_REVIEWS } from '../shared/types'
+import { expandCivitaiTagNames, matchingHiddenTags } from '../shared/tag-routing'
+import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { safePathExists } from './output-paths'
 
 let db: Database.Database | null = null
@@ -225,6 +234,100 @@ function migrateInventorySchema(database: Database.Database): void {
       last_error TEXT
     );
   `)
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS missing_models (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      version_id INTEGER,
+      model_name TEXT NOT NULL DEFAULT '',
+      model_type TEXT NOT NULL DEFAULT 'LORA',
+      author TEXT NOT NULL DEFAULT '',
+      base_model TEXT NOT NULL DEFAULT '',
+      preview_url TEXT,
+      page_url TEXT NOT NULL DEFAULT '',
+      source_domain TEXT NOT NULL DEFAULT 'com',
+      hit_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'suspect',
+      first_seen_at TEXT NOT NULL,
+      last_hit_at TEXT NOT NULL,
+      last_hit_day TEXT NOT NULL,
+      last_error TEXT,
+      from_early_access INTEGER NOT NULL DEFAULT 0,
+      acknowledged INTEGER NOT NULL DEFAULT 0
+    );
+  `)
+  {
+    const missingCols = database.prepare('PRAGMA table_info(missing_models)').all() as Array<{ name: string }>
+    if (!missingCols.some((c) => c.name === 'from_early_access')) {
+      database.exec(
+        `ALTER TABLE missing_models ADD COLUMN from_early_access INTEGER NOT NULL DEFAULT 0`
+      )
+    }
+    if (!missingCols.some((c) => c.name === 'acknowledged')) {
+      database.exec(
+        `ALTER TABLE missing_models ADD COLUMN acknowledged INTEGER NOT NULL DEFAULT 0`
+      )
+    }
+  }
+
+  {
+    const bannedCols = database.prepare('PRAGMA table_info(banned_models)').all() as Array<{ name: string }>
+    const addBanned = (name: string, ddl: string) => {
+      if (!bannedCols.some((c) => c.name === name)) {
+        database.exec(`ALTER TABLE banned_models ADD COLUMN ${ddl}`)
+      }
+    }
+    addBanned('version_id', 'version_id INTEGER')
+    addBanned('preview_url', 'preview_url TEXT')
+    addBanned('page_url', "page_url TEXT NOT NULL DEFAULT ''")
+    addBanned('source_domain', "source_domain TEXT NOT NULL DEFAULT ''")
+    addBanned('author', "author TEXT NOT NULL DEFAULT ''")
+    addBanned('base_model', "base_model TEXT NOT NULL DEFAULT ''")
+    addBanned('model_type', "model_type TEXT NOT NULL DEFAULT ''")
+    addBanned('tags_json', "tags_json TEXT NOT NULL DEFAULT '[]'")
+    addBanned('forgotten', 'forgotten INTEGER NOT NULL DEFAULT 0')
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS tag_skip_reviews (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      version_id INTEGER,
+      model_name TEXT NOT NULL DEFAULT '',
+      model_type TEXT NOT NULL DEFAULT 'LORA',
+      author TEXT NOT NULL DEFAULT '',
+      base_model TEXT NOT NULL DEFAULT '',
+      preview_url TEXT,
+      page_url TEXT NOT NULL DEFAULT '',
+      source_domain TEXT NOT NULL DEFAULT 'com',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      blocked_tag TEXT NOT NULL DEFAULT '',
+      hit_count INTEGER NOT NULL DEFAULT 1,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      acknowledged INTEGER NOT NULL DEFAULT 0
+    );
+  `)
+  {
+    let skipCols = database.prepare('PRAGMA table_info(tag_skip_reviews)').all() as Array<{ name: string }>
+    if (skipCols.length && !skipCols.some((c) => c.name === 'matched_model_tag')) {
+      database.exec(
+        `ALTER TABLE tag_skip_reviews ADD COLUMN matched_model_tag TEXT NOT NULL DEFAULT ''`
+      )
+      skipCols = database.prepare('PRAGMA table_info(tag_skip_reviews)').all() as Array<{ name: string }>
+    }
+    if (skipCols.length && !skipCols.some((c) => c.name === 'policy')) {
+      database.exec(
+        `ALTER TABLE tag_skip_reviews ADD COLUMN policy TEXT NOT NULL DEFAULT 'paused'`
+      )
+    }
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS tag_skip_allowlist (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      created_at TEXT NOT NULL
+    );
+  `)
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -317,6 +420,12 @@ export function getVersionsForModel(modelId: number): InventoryRecord[] {
   return rows.map((r) => rowToRecord(r as Record<string, unknown>))
 }
 
+export function isModelOwned(modelId: number): boolean {
+  if (!modelId || modelId <= 0) return false
+  const row = getDb().prepare('SELECT 1 FROM versions WHERE model_id = ? LIMIT 1').get(modelId)
+  return Boolean(row)
+}
+
 export function isModelIgnored(modelId: number): boolean {
   if (isModelBanned(modelId)) return true
   const row = getDb()
@@ -330,13 +439,79 @@ export function isModelBanned(modelId: number): boolean {
   return Boolean(row)
 }
 
-export function banModel(modelId: number, modelName = ''): void {
+/** Confirmed Missing (Unavailable) — skip auto harvest; manual Retry still allowed. */
+export function isMissingUnavailable(modelId: number): boolean {
+  if (!modelId || modelId <= 0) return false
+  const row = getDb()
+    .prepare(`SELECT 1 FROM missing_models WHERE model_id = ? AND status = 'unavailable'`)
+    .get(modelId)
+  return Boolean(row)
+}
+
+export function banModel(modelId: number, modelName = '', stub?: BanModelStub): void {
+  if (!modelId || modelId <= 0) return
+  const name = stub?.modelName?.trim() || modelName.trim() || `Model #${modelId}`
+  const now = new Date().toISOString()
+  const tagsJson = JSON.stringify(stub?.tags ?? [])
   getDb()
-    .prepare('INSERT OR REPLACE INTO banned_models (model_id, model_name, banned_at) VALUES (?, ?, ?)')
-    .run(modelId, modelName, new Date().toISOString())
+    .prepare(
+      `INSERT INTO banned_models (
+        model_id, model_name, banned_at, version_id, preview_url, page_url,
+        source_domain, author, base_model, model_type, tags_json, forgotten
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      ON CONFLICT(model_id) DO UPDATE SET
+        model_name = excluded.model_name,
+        banned_at = excluded.banned_at,
+        version_id = COALESCE(excluded.version_id, banned_models.version_id),
+        preview_url = COALESCE(excluded.preview_url, banned_models.preview_url),
+        page_url = CASE WHEN excluded.page_url != '' THEN excluded.page_url ELSE banned_models.page_url END,
+        source_domain = CASE WHEN excluded.source_domain != '' THEN excluded.source_domain ELSE banned_models.source_domain END,
+        author = CASE WHEN excluded.author != '' THEN excluded.author ELSE banned_models.author END,
+        base_model = CASE WHEN excluded.base_model != '' THEN excluded.base_model ELSE banned_models.base_model END,
+        model_type = CASE WHEN excluded.model_type != '' THEN excluded.model_type ELSE banned_models.model_type END,
+        tags_json = CASE WHEN excluded.tags_json != '[]' THEN excluded.tags_json ELSE banned_models.tags_json END,
+        forgotten = 0`
+    )
+    .run(
+      modelId,
+      name,
+      now,
+      stub?.versionId && stub.versionId > 0 ? stub.versionId : null,
+      stub?.previewUrl || null,
+      stub?.pageUrl || '',
+      stub?.sourceDomain === 'red' ? 'red' : stub?.sourceDomain === 'com' ? 'com' : '',
+      stub?.author || '',
+      stub?.baseModel || '',
+      stub?.modelType || '',
+      tagsJson
+    )
   setModelIgnored(modelId, true)
   clearModelAutoUpdate(modelId)
   removeIncompleteModel(modelId)
+  removeTagSkipReview(modelId)
+}
+
+/** Ban + hide everywhere (Missing/Browse/Library) unless Show forgotten. */
+export function forgetModel(modelId: number, modelName = '', stub?: BanModelStub): void {
+  banModel(modelId, modelName, stub)
+  getDb().prepare('UPDATE banned_models SET forgotten = 1 WHERE model_id = ?').run(modelId)
+  removeMissingModel(modelId)
+  removeTagSkipAllow(modelId)
+}
+
+export function isModelForgotten(modelId: number): boolean {
+  if (!modelId || modelId <= 0) return false
+  const row = getDb()
+    .prepare('SELECT forgotten FROM banned_models WHERE model_id = ?')
+    .get(modelId) as { forgotten: number } | undefined
+  return Boolean(row?.forgotten)
+}
+
+export function getForgottenModelIds(): Set<number> {
+  const rows = getDb()
+    .prepare('SELECT model_id FROM banned_models WHERE forgotten = 1')
+    .all() as { model_id: number }[]
+  return new Set(rows.map((r) => r.model_id))
 }
 
 export function unbanModel(modelId: number): void {
@@ -344,18 +519,479 @@ export function unbanModel(modelId: number): void {
   setModelIgnored(modelId, false)
 }
 
-export function getBannedModels(): Array<{ modelId: number; modelName: string; bannedAt: string }> {
+function parseTagsJson(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function getBannedModels(): BannedModel[] {
   const rows = getDb().prepare('SELECT * FROM banned_models ORDER BY banned_at DESC').all()
-  return rows.map((r) => ({
-    modelId: (r as Record<string, unknown>).model_id as number,
-    modelName: (r as Record<string, unknown>).model_name as string,
-    bannedAt: (r as Record<string, unknown>).banned_at as string
-  }))
+  return rows.map((r) => {
+    const row = r as Record<string, unknown>
+    const versionId = row.version_id as number | null | undefined
+    const domain = (row.source_domain as string) === 'red' ? 'red' : (row.source_domain as string) === 'com' ? 'com' : undefined
+    return {
+      modelId: row.model_id as number,
+      modelName: (row.model_name as string) || `Model #${row.model_id}`,
+      bannedAt: row.banned_at as string,
+      versionId: versionId && versionId > 0 ? versionId : undefined,
+      previewUrl: (row.preview_url as string) || undefined,
+      pageUrl: (row.page_url as string) || undefined,
+      sourceDomain: domain,
+      author: (row.author as string) || undefined,
+      baseModel: (row.base_model as string) || undefined,
+      modelType: (row.model_type as string) || undefined,
+      tags: parseTagsJson(row.tags_json),
+      reason: 'manual' as const,
+      forgotten: Boolean(row.forgotten)
+    }
+  })
 }
 
 export function getBannedModelIds(): Set<number> {
   const rows = getDb().prepare('SELECT model_id FROM banned_models').all() as { model_id: number }[]
   return new Set(rows.map((r) => r.model_id))
+}
+
+function rowToTagSkip(row: Record<string, unknown>): TagSkipReview {
+  const domain = (row.source_domain as string) === 'red' ? 'red' : 'com'
+  const versionId = row.version_id as number | null | undefined
+  const policyRaw = String(row.policy ?? 'paused').toLowerCase()
+  const policy: TagPolicyKind = policyRaw === 'banned' ? 'banned' : 'paused'
+  return {
+    modelId: row.model_id as number,
+    versionId: versionId && versionId > 0 ? versionId : undefined,
+    modelName: (row.model_name as string) || `Model #${row.model_id}`,
+    modelType: (row.model_type as string) || 'LORA',
+    author: (row.author as string) || '',
+    baseModel: (row.base_model as string) || '',
+    previewUrl: (row.preview_url as string) || undefined,
+    pageUrl: (row.page_url as string) || '',
+    sourceDomain: domain,
+    tags: parseTagsJson(row.tags_json),
+    blockedTag: (row.blocked_tag as string) || '',
+    matchedModelTag: (row.matched_model_tag as string) || undefined,
+    policy,
+    hitCount: Math.max(1, Number(row.hit_count) || 1),
+    firstSeenAt: row.first_seen_at as string,
+    lastSeenAt: row.last_seen_at as string,
+    acknowledged: Number(row.acknowledged) === 1
+  }
+}
+
+export type TagSkipInput = {
+  modelId: number
+  versionId?: number
+  modelName?: string
+  modelType?: string
+  author?: string
+  baseModel?: string
+  previewUrl?: string
+  pageUrl?: string
+  sourceDomain?: CivitaiDomain
+  tags?: string[]
+  blockedTag: string
+  matchedModelTag?: string
+  policy?: TagPolicyKind
+}
+
+export function isTagSkipAllowed(modelId: number): boolean {
+  if (!modelId || modelId <= 0) return false
+  const row = getDb().prepare('SELECT 1 FROM tag_skip_allowlist WHERE model_id = ?').get(modelId)
+  return Boolean(row)
+}
+
+export function addTagSkipAllow(modelId: number): void {
+  if (!modelId || modelId <= 0) return
+  getDb()
+    .prepare(
+      `INSERT INTO tag_skip_allowlist (model_id, created_at) VALUES (?, ?)
+       ON CONFLICT(model_id) DO NOTHING`
+    )
+    .run(modelId, new Date().toISOString())
+}
+
+export function removeTagSkipAllow(modelId: number): void {
+  if (!modelId || modelId <= 0) return
+  getDb().prepare('DELETE FROM tag_skip_allowlist WHERE model_id = ?').run(modelId)
+}
+
+export function getTagSkipAllowlistIds(): number[] {
+  const rows = getDb().prepare('SELECT model_id FROM tag_skip_allowlist').all() as Array<{
+    model_id: number
+  }>
+  return rows.map((r) => r.model_id)
+}
+
+export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
+  if (!input.modelId || input.modelId <= 0) return null
+  if (!input.blockedTag.trim()) return null
+  if (isModelBanned(input.modelId)) return null
+  if (isTagSkipAllowed(input.modelId)) return null
+  if (isModelOwned(input.modelId)) return null
+  if (input.versionId && input.versionId > 0 && hasVersion(input.versionId)) return null
+
+  const policy: TagPolicyKind = input.policy === 'banned' ? 'banned' : 'paused'
+  const now = new Date().toISOString()
+  const existing = getDb()
+    .prepare('SELECT * FROM tag_skip_reviews WHERE model_id = ?')
+    .get(input.modelId) as Record<string, unknown> | undefined
+
+  if (existing) {
+    const tagsJson =
+      input.tags && input.tags.length
+        ? JSON.stringify(input.tags)
+        : ((existing.tags_json as string) || '[]')
+    // Permanent ban upgrades a pause review.
+    const nextPolicy =
+      policy === 'banned' || String(existing.policy ?? '') === 'banned' ? 'banned' : 'paused'
+    getDb()
+      .prepare(
+        `UPDATE tag_skip_reviews SET
+          version_id = COALESCE(?, version_id),
+          model_name = CASE WHEN ? != '' THEN ? ELSE model_name END,
+          model_type = CASE WHEN ? != '' THEN ? ELSE model_type END,
+          author = CASE WHEN ? != '' THEN ? ELSE author END,
+          base_model = CASE WHEN ? != '' THEN ? ELSE base_model END,
+          preview_url = COALESCE(?, preview_url),
+          page_url = CASE WHEN ? != '' THEN ? ELSE page_url END,
+          source_domain = CASE WHEN ? != '' THEN ? ELSE source_domain END,
+          tags_json = ?,
+          blocked_tag = ?,
+          matched_model_tag = CASE WHEN ? != '' THEN ? ELSE matched_model_tag END,
+          policy = ?,
+          hit_count = hit_count + 1,
+          last_seen_at = ?
+        WHERE model_id = ?`
+      )
+      .run(
+        input.versionId && input.versionId > 0 ? input.versionId : null,
+        input.modelName?.trim() || '',
+        input.modelName?.trim() || '',
+        input.modelType?.trim() || '',
+        input.modelType?.trim() || '',
+        input.author?.trim() || '',
+        input.author?.trim() || '',
+        input.baseModel?.trim() || '',
+        input.baseModel?.trim() || '',
+        input.previewUrl || null,
+        input.pageUrl?.trim() || '',
+        input.pageUrl?.trim() || '',
+        input.sourceDomain === 'red' ? 'red' : input.sourceDomain === 'com' ? 'com' : '',
+        input.sourceDomain === 'red' ? 'red' : input.sourceDomain === 'com' ? 'com' : '',
+        tagsJson,
+        input.blockedTag.trim(),
+        input.matchedModelTag?.trim() || '',
+        input.matchedModelTag?.trim() || '',
+        nextPolicy,
+        now,
+        input.modelId
+      )
+    return getTagSkipReview(input.modelId)
+  }
+
+  const name = input.modelName?.trim() || `Model #${input.modelId}`
+  getDb()
+    .prepare(
+      `INSERT INTO tag_skip_reviews (
+        model_id, version_id, model_name, model_type, author, base_model,
+        preview_url, page_url, source_domain, tags_json, blocked_tag, matched_model_tag,
+        policy, hit_count, first_seen_at, last_seen_at, acknowledged
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0)`
+    )
+    .run(
+      input.modelId,
+      input.versionId && input.versionId > 0 ? input.versionId : null,
+      name,
+      input.modelType?.trim() || 'LORA',
+      input.author?.trim() || '',
+      input.baseModel?.trim() || '',
+      input.previewUrl || null,
+      input.pageUrl?.trim() || '',
+      input.sourceDomain === 'red' ? 'red' : 'com',
+      JSON.stringify(input.tags ?? []),
+      input.blockedTag.trim(),
+      input.matchedModelTag?.trim() || '',
+      policy,
+      now,
+      now
+    )
+  pruneTagSkipReviews()
+  return getTagSkipReview(input.modelId)
+}
+
+function pruneTagSkipReviews(): void {
+  const count = (
+    getDb().prepare('SELECT COUNT(*) AS c FROM tag_skip_reviews').get() as { c: number }
+  ).c
+  if (count <= MAX_TAG_SKIP_REVIEWS) return
+  const excess = count - MAX_TAG_SKIP_REVIEWS
+  getDb()
+    .prepare(
+      `DELETE FROM tag_skip_reviews WHERE model_id IN (
+        SELECT model_id FROM tag_skip_reviews ORDER BY last_seen_at ASC LIMIT ?
+      )`
+    )
+    .run(excess)
+}
+
+export function getTagSkipReview(modelId: number): TagSkipReview | null {
+  const row = getDb().prepare('SELECT * FROM tag_skip_reviews WHERE model_id = ?').get(modelId)
+  return row ? rowToTagSkip(row as Record<string, unknown>) : null
+}
+
+export function getAllTagSkipReviews(): TagSkipReview[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM tag_skip_reviews ORDER BY last_seen_at DESC')
+    .all()
+  return rows.map((r) => rowToTagSkip(r as Record<string, unknown>))
+}
+
+export function removeTagSkipReview(modelId: number): void {
+  getDb().prepare('DELETE FROM tag_skip_reviews WHERE model_id = ?').run(modelId)
+}
+
+export function acknowledgeTagSkipReview(modelId: number): TagSkipReview | null {
+  if (!getTagSkipReview(modelId)) return null
+  getDb()
+    .prepare('UPDATE tag_skip_reviews SET acknowledged = 1 WHERE model_id = ?')
+    .run(modelId)
+  return getTagSkipReview(modelId)
+}
+
+/** Drop tag-skip rows that no longer exact/alias-match, or are owned / allowlisted. */
+export function pruneStaleTagSkipReviews(
+  activePausedTags?: string[],
+  activeBannedTags?: string[]
+): number {
+  let removed = 0
+  const paused = activePausedTags
+  const banned = activeBannedTags
+  for (const row of getAllTagSkipReviews()) {
+    if (isTagSkipAllowed(row.modelId) || isModelOwned(row.modelId)) {
+      removeTagSkipReview(row.modelId)
+      removed++
+      continue
+    }
+    if (!row.blockedTag.trim()) {
+      removeTagSkipReview(row.modelId)
+      removed++
+      continue
+    }
+    const still = matchingHiddenTags(row.tags, [row.blockedTag])
+    if (!still.length) {
+      removeTagSkipReview(row.modelId)
+      removed++
+      continue
+    }
+    if (paused != null && banned != null) {
+      const inBanned = matchingHiddenTags(row.tags, banned).length > 0
+      const inPaused = matchingHiddenTags(row.tags, paused).length > 0
+      if (!inBanned && !inPaused) {
+        removeTagSkipReview(row.modelId)
+        removed++
+        continue
+      }
+      const wantPolicy: TagPolicyKind = inBanned ? 'banned' : 'paused'
+      if (row.policy !== wantPolicy || (inBanned && row.policy !== 'banned')) {
+        getDb()
+          .prepare('UPDATE tag_skip_reviews SET policy = ? WHERE model_id = ?')
+          .run(wantPolicy, row.modelId)
+      }
+    }
+  }
+  return removed
+}
+
+/** Remove reviews for unblocked tags. */
+export function removeTagSkipReviewsForTags(tags: string[]): number {
+  const list = tags.map((t) => t.trim()).filter(Boolean)
+  if (!list.length) return 0
+  let removed = 0
+  for (const row of getAllTagSkipReviews()) {
+    if (list.some((t) => tagAliasMatch(t, row.blockedTag))) {
+      removeTagSkipReview(row.modelId)
+      removed++
+    }
+  }
+  return removed
+}
+
+/** Unified Missing-page feed: 404 + manual bans + tag-skip reviews. */
+export function getExclusionReviewItems(): ExclusionReviewItem[] {
+  pruneStaleTagSkipReviews()
+  const missing = getAllMissingModels().map(
+    (m): ExclusionReviewItem => ({
+      kind: 'missing',
+      modelId: m.modelId,
+      versionId: m.versionId,
+      modelName: m.modelName,
+      modelType: m.modelType,
+      author: m.author,
+      baseModel: m.baseModel,
+      previewUrl: m.previewUrl,
+      pageUrl: m.pageUrl,
+      sourceDomain: m.sourceDomain,
+      at: m.lastHitAt,
+      hitCount: m.hitCount,
+      status: m.status,
+      acknowledged: m.acknowledged,
+      fromEarlyAccess: m.fromEarlyAccess
+    })
+  )
+
+  const bannedIds = new Set<number>()
+  const banned = getBannedModels().map((b): ExclusionReviewItem => {
+    bannedIds.add(b.modelId)
+    return {
+      kind: b.forgotten ? 'forgotten' : 'bannedManual',
+      modelId: b.modelId,
+      versionId: b.versionId,
+      modelName: b.modelName,
+      modelType: b.modelType,
+      author: b.author,
+      baseModel: b.baseModel,
+      previewUrl: b.previewUrl,
+      pageUrl: b.pageUrl,
+      sourceDomain: b.sourceDomain,
+      tags: b.tags,
+      at: b.bannedAt
+    }
+  })
+
+  const tagSkips = getAllTagSkipReviews()
+    .filter((s) => !bannedIds.has(s.modelId) && !isModelOwned(s.modelId) && !isTagSkipAllowed(s.modelId))
+    .map(
+      (s): ExclusionReviewItem => ({
+        kind: s.policy === 'banned' ? 'bannedByTag' : 'pausedByTag',
+        modelId: s.modelId,
+        versionId: s.versionId,
+        modelName: s.modelName,
+        modelType: s.modelType,
+        author: s.author,
+        baseModel: s.baseModel,
+        previewUrl: s.previewUrl,
+        pageUrl: s.pageUrl,
+        sourceDomain: s.sourceDomain,
+        tags: s.tags,
+        at: s.lastSeenAt,
+        blockedTag: s.blockedTag,
+        matchedModelTag: s.matchedModelTag,
+        hitCount: s.hitCount,
+        acknowledged: s.acknowledged
+      })
+    )
+
+  return [...missing, ...banned, ...tagSkips].sort(
+    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+  )
+}
+
+/** Fill missing preview/tags on ban + tag-skip stubs from in-memory Browse gallery cards. */
+export function enrichExclusionStubsFromBrowse(
+  models: Array<{
+    id: number
+    name?: string
+    type?: string
+    baseModel?: string
+    creator?: string
+    previewUrl?: string
+    pageUrl?: string
+    sourceDomain?: CivitaiDomain
+    tags?: string[]
+    versionId?: number
+  }>
+): number {
+  if (!models.length) return 0
+  const byId = new Map<number, (typeof models)[number]>()
+  for (const m of models) {
+    if (m.id > 0) byId.set(m.id, m)
+  }
+  if (!byId.size) return 0
+
+  let updated = 0
+  const db = getDb()
+
+  for (const row of getAllTagSkipReviews()) {
+    const m = byId.get(row.modelId)
+    if (!m) continue
+    const needPreview = !row.previewUrl && Boolean(m.previewUrl)
+    const needTags = (!row.tags || row.tags.length === 0) && (m.tags?.length ?? 0) > 0
+    const needMeta =
+      (!row.author && m.creator) ||
+      (!row.baseModel && m.baseModel) ||
+      (!row.pageUrl && m.pageUrl)
+    if (!needPreview && !needTags && !needMeta) continue
+    db.prepare(
+      `UPDATE tag_skip_reviews SET
+        preview_url = COALESCE(preview_url, ?),
+        tags_json = CASE WHEN tags_json = '[]' OR tags_json = '' THEN ? ELSE tags_json END,
+        author = CASE WHEN author = '' THEN ? ELSE author END,
+        base_model = CASE WHEN base_model = '' THEN ? ELSE base_model END,
+        page_url = CASE WHEN page_url = '' THEN ? ELSE page_url END,
+        model_name = CASE WHEN model_name = '' OR model_name LIKE 'Model #%' THEN ? ELSE model_name END,
+        model_type = CASE WHEN model_type = '' OR model_type = 'LORA' THEN COALESCE(NULLIF(?, ''), model_type) ELSE model_type END,
+        version_id = COALESCE(version_id, ?),
+        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END
+      WHERE model_id = ?`
+    ).run(
+      m.previewUrl || null,
+      JSON.stringify(m.tags ?? []),
+      m.creator || '',
+      m.baseModel || '',
+      m.pageUrl || '',
+      m.name || row.modelName,
+      m.type || '',
+      m.versionId && m.versionId > 0 ? m.versionId : null,
+      m.sourceDomain === 'red' ? 'red' : m.sourceDomain === 'com' ? 'com' : '',
+      row.modelId
+    )
+    updated++
+  }
+
+  for (const row of getBannedModels()) {
+    const m = byId.get(row.modelId)
+    if (!m) continue
+    const needPreview = !row.previewUrl && Boolean(m.previewUrl)
+    const needTags = (!row.tags || row.tags.length === 0) && (m.tags?.length ?? 0) > 0
+    const needMeta =
+      (!row.author && m.creator) ||
+      (!row.baseModel && m.baseModel) ||
+      (!row.pageUrl && m.pageUrl)
+    if (!needPreview && !needTags && !needMeta) continue
+    db.prepare(
+      `UPDATE banned_models SET
+        preview_url = COALESCE(preview_url, ?),
+        tags_json = CASE WHEN tags_json = '[]' OR tags_json = '' THEN ? ELSE tags_json END,
+        author = CASE WHEN author = '' THEN ? ELSE author END,
+        base_model = CASE WHEN base_model = '' THEN ? ELSE base_model END,
+        page_url = CASE WHEN page_url = '' THEN ? ELSE page_url END,
+        model_name = CASE WHEN model_name = '' OR model_name LIKE 'Model #%' THEN ? ELSE model_name END,
+        model_type = CASE WHEN model_type = '' THEN ? ELSE model_type END,
+        version_id = COALESCE(version_id, ?),
+        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END
+      WHERE model_id = ?`
+    ).run(
+      m.previewUrl || null,
+      JSON.stringify(m.tags ?? []),
+      m.creator || '',
+      m.baseModel || '',
+      m.pageUrl || '',
+      m.name || row.modelName,
+      m.type || '',
+      m.versionId && m.versionId > 0 ? m.versionId : null,
+      m.sourceDomain === 'red' ? 'red' : m.sourceDomain === 'com' ? 'com' : '',
+      row.modelId
+    )
+    updated++
+  }
+
+  return updated
 }
 
 /** Per-model: always queue new versions (even when Settings auto-download is off). */
@@ -823,16 +1459,6 @@ export function removeDeferredForModel(modelId: number): void {
   getDb().prepare('DELETE FROM deferred_downloads WHERE model_id = ?').run(modelId)
 }
 
-function parseTagsJson(raw: unknown): string[] {
-  if (typeof raw !== 'string' || !raw) return []
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : []
-  } catch {
-    return []
-  }
-}
-
 function rowToIncomplete(row: Record<string, unknown>): IncompleteModel {
   const resolvedVid = row.resolved_version_id as number | null | undefined
   const domain = (row.source_domain as string) === 'red' ? 'red' : 'com'
@@ -944,6 +1570,174 @@ export function updateIncompleteModelResolved(
 
 export function removeIncompleteModel(modelId: number): void {
   getDb().prepare('DELETE FROM incomplete_models WHERE model_id = ?').run(modelId)
+}
+
+function rowToMissing(row: Record<string, unknown>): MissingModel {
+  const domain = (row.source_domain as string) === 'red' ? 'red' : 'com'
+  const statusRaw = row.status as string
+  const status: MissingModelStatus = statusRaw === 'unavailable' ? 'unavailable' : 'suspect'
+  const versionId = row.version_id as number | null | undefined
+  return {
+    modelId: row.model_id as number,
+    versionId: versionId && versionId > 0 ? versionId : undefined,
+    modelName: (row.model_name as string) || `Model #${row.model_id}`,
+    modelType: (row.model_type as string) || 'LORA',
+    author: (row.author as string) || '',
+    baseModel: (row.base_model as string) || '',
+    previewUrl: (row.preview_url as string) || undefined,
+    pageUrl: (row.page_url as string) || '',
+    sourceDomain: domain,
+    hitCount: Math.max(1, Number(row.hit_count) || 1),
+    status,
+    firstSeenAt: row.first_seen_at as string,
+    lastHitAt: row.last_hit_at as string,
+    lastError: (row.last_error as string) || undefined,
+    fromEarlyAccess: Number(row.from_early_access) === 1,
+    acknowledged: Number(row.acknowledged) === 1
+  }
+}
+
+export function getAllMissingModels(): MissingModel[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM missing_models ORDER BY last_hit_at DESC')
+    .all()
+  return rows.map((r) => rowToMissing(r as Record<string, unknown>))
+}
+
+export function getMissingModel(modelId: number): MissingModel | null {
+  const row = getDb().prepare('SELECT * FROM missing_models WHERE model_id = ?').get(modelId)
+  return row ? rowToMissing(row as Record<string, unknown>) : null
+}
+
+export function removeMissingModel(modelId: number): void {
+  getDb().prepare('DELETE FROM missing_models WHERE model_id = ?').run(modelId)
+}
+
+export function acknowledgeMissingModel(modelId: number): MissingModel | null {
+  if (!getMissingModel(modelId)) return null
+  getDb()
+    .prepare(`UPDATE missing_models SET acknowledged = 1 WHERE model_id = ?`)
+    .run(modelId)
+  return getMissingModel(modelId)
+}
+
+export type MissingHitInput = {
+  modelId: number
+  versionId?: number
+  modelName?: string
+  modelType?: string
+  author?: string
+  baseModel?: string
+  previewUrl?: string
+  pageUrl?: string
+  sourceDomain?: CivitaiDomain
+  error?: string
+  fromEarlyAccess?: boolean
+}
+
+/**
+ * Record a Civitai 404. Hit count increases at most once per UTC calendar day.
+ * At MAX_MISSING_CONFIRM_HITS the status becomes unavailable.
+ */
+export function recordMissingModelHit(input: MissingHitInput): MissingModel | null {
+  if (!input.modelId || input.modelId <= 0) return null
+  if (isModelBanned(input.modelId)) return null
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const today = nowIso.slice(0, 10)
+  const existing = getDb()
+    .prepare('SELECT * FROM missing_models WHERE model_id = ?')
+    .get(input.modelId) as Record<string, unknown> | undefined
+
+  if (!existing) {
+    const name = input.modelName?.trim() || `Model #${input.modelId}`
+    getDb()
+      .prepare(
+        `INSERT INTO missing_models (
+          model_id, version_id, model_name, model_type, author, base_model,
+          preview_url, page_url, source_domain, hit_count, status,
+          first_seen_at, last_hit_at, last_hit_day, last_error, from_early_access
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'suspect', ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.modelId,
+        input.versionId && input.versionId > 0 ? input.versionId : null,
+        name,
+        input.modelType || 'LORA',
+        input.author || '',
+        input.baseModel || '',
+        input.previewUrl || null,
+        input.pageUrl || '',
+        input.sourceDomain === 'red' ? 'red' : 'com',
+        nowIso,
+        nowIso,
+        today,
+        input.error || null,
+        input.fromEarlyAccess ? 1 : 0
+      )
+    return getMissingModel(input.modelId)
+  }
+
+  const lastHitDay = (existing.last_hit_day as string) || ''
+  let hitCount = Math.max(1, Number(existing.hit_count) || 1)
+  let status: MissingModelStatus =
+    (existing.status as string) === 'unavailable' ? 'unavailable' : 'suspect'
+  const shouldIncrement = lastHitDay !== today && status !== 'unavailable'
+  const fromEarlyAccess =
+    Number(existing.from_early_access) === 1 || Boolean(input.fromEarlyAccess)
+
+  if (shouldIncrement) {
+    hitCount = Math.min(MAX_MISSING_CONFIRM_HITS, hitCount + 1)
+    if (hitCount >= MAX_MISSING_CONFIRM_HITS) status = 'unavailable'
+  } else if (hitCount >= MAX_MISSING_CONFIRM_HITS) {
+    status = 'unavailable'
+  }
+
+  const modelName =
+    input.modelName?.trim() || (existing.model_name as string) || `Model #${input.modelId}`
+  getDb()
+    .prepare(
+      `UPDATE missing_models SET
+        version_id = COALESCE(?, version_id),
+        model_name = ?,
+        model_type = CASE WHEN ? != '' THEN ? ELSE model_type END,
+        author = CASE WHEN ? != '' THEN ? ELSE author END,
+        base_model = CASE WHEN ? != '' THEN ? ELSE base_model END,
+        preview_url = COALESCE(?, preview_url),
+        page_url = CASE WHEN ? != '' THEN ? ELSE page_url END,
+        source_domain = CASE WHEN ? != '' THEN ? ELSE source_domain END,
+        hit_count = ?,
+        status = ?,
+        last_hit_at = ?,
+        last_hit_day = CASE WHEN ? THEN ? ELSE last_hit_day END,
+        last_error = COALESCE(?, last_error),
+        from_early_access = ?
+      WHERE model_id = ?`
+    )
+    .run(
+      input.versionId && input.versionId > 0 ? input.versionId : null,
+      modelName,
+      input.modelType || '',
+      input.modelType || '',
+      input.author || '',
+      input.author || '',
+      input.baseModel || '',
+      input.baseModel || '',
+      input.previewUrl || null,
+      input.pageUrl || '',
+      input.pageUrl || '',
+      input.sourceDomain || '',
+      input.sourceDomain === 'red' ? 'red' : input.sourceDomain === 'com' ? 'com' : '',
+      hitCount,
+      status,
+      nowIso,
+      shouldIncrement ? 1 : 0,
+      today,
+      input.error || null,
+      fromEarlyAccess ? 1 : 0,
+      input.modelId
+    )
+  return getMissingModel(input.modelId)
 }
 
 const ACTIVITY_LOG_MAX = 5000

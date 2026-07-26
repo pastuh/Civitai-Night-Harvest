@@ -18,7 +18,8 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Model details** — full page with versions, download, and preview save
 - **Auto / Manual / Pause** — auto-queue from harvest, click-to-queue, or pause downloads
 - **Library** — local inventory; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
-- **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; custom paths
+- **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; unmatched downloads go to `\*\Unsorted`
+- **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; per-model **Allow**; **Forget** (hide everywhere); click a tag → Tag Folders
 - **Updates** — newer versions of models you already own (Queue / Ban / Dismiss)
 - **Download strip** — progress, priority, retries; Early access when a model is gated
 - **Activity** — crawl and download history
@@ -81,23 +82,38 @@ Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that mod
 - Map Civitai tags to disk under each base model: `\*\folder` (or a custom absolute path)
 - **Mass** — select many tags and assign one folder name
 - **Priority** — when a model matches several tags, higher wins (▲/▼; skips `0`). Equal priorities: first matching tag. Manual Library assigns always win
+- **Ban** — permanent ban-by-tag (skip auto-download). Temporary pause is Browse → **Paused** only
+- No matching Tag Folders rule → `\*\Unsorted` under the version’s base model (not the shared base-model root)
 - Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog
+- **Sync folders** also rewrites old invented `Suggested LoRA strength: 0.6–1.0` lines in `.swarm.json` using Civitai description text (API has no dedicated weight field)
+
+---
+
+## Missing
+
+- **404 / Suspect** — Civitai not found; recheck and acknowledge
+- **Paused by tag** — temporary Browse exclude; **Banned by tag** — permanent Tag Folders ban
+- **Banned manual** — model ban from Library/Browse
+- Per model: **Allow** (exception vs pause/ban tags + queue) or **Forget On** → × (hide everywhere; **Show forgotten** to review)
+- Click a tag chip → Tag Folders (manage ban/unban there). Opening Model details keeps Missing filters and scroll
 
 ---
 
 ## Browse
 
 - **Search** — by model or author
-- **Filters** — content, hide owned, excluded, blocked tags, awaiting, show updates; ban mode
+- **Filters** — content, hide owned, paused tags (temporary), banned tags (read-only; edit in Tag Folders), awaiting, show updates; ban mode
+- **Paused** bar — temporary exclude tags (amber chips on cards)
+- **Banned** bar — permanent ban-by-tag list (purple chips; manage in Tag Folders)
 - **Yield** — how many models entered the download strip this session (grows as you queue / Auto sends)
-- **Sort & Tags** — arrange and filter the grid
+- **Sort & Tags** — arrange and filter the grid (⏸ pause a tag from the Tags popover)
 - **ℹ** — Model details
 
 ---
 
 ## Preserve filters
 
-**Settings → Preserve filters** keeps Browse and Library filters when you switch tabs.
+**Settings → Preserve filters** keeps Browse and Library filters when you switch tabs. Missing keeps its filters while Model details / Tag Folders overlays are open.
 
 ---
 
@@ -120,6 +136,7 @@ Card size is adjustable for Row and Grid.
 3. Press **Harvest** (Backfill on for a full catalog pass).
 4. **Auto** for hands-off queueing, or **Manual** and click cards; turn **Pause** off to download.
 5. Optional: **👁** for a quieter harvest UI; snapshot or turn 👁 off to see cards again.
+6. Optional: **Settings → Sync library from disk** when you import/move files, fix swarm hints, or check for tiny/truncated downloads (not run on every app launch).
 
 Use **Tag Folders** (and Library **Fast tag**) to map Civitai tags to subfolders on disk.
 

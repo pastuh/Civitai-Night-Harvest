@@ -76,8 +76,10 @@ export interface AppSettings {
   confirmTagFolderMoves: boolean
   /** Library: click a card tag → assign folder popup (default off). */
   fastTagMode: boolean
-  /** Civitai tags to skip in auto-download and hide from Browse gallery */
+  /** Civitai tags to temporarily pause (Browse exclude) — skip auto-download while listed */
   hiddenTags: string[]
+  /** Permanent ban-by-tag (Missing) — skip auto-download until unbanned */
+  bannedTags: string[]
   /**
    * Library: folder-assigned tags to ignore when “Ignore excluded” is on
    * (e.g. concept) so Hide folder-assigned still shows those models.
@@ -176,6 +178,7 @@ export interface AppSettingsPublic {
   /** Library: click a card tag → assign folder popup (default off). */
   fastTagMode: boolean
   hiddenTags: string[]
+  bannedTags: string[]
   libraryExcludedTags: string[]
   launchAtLogin: boolean
   newestPeekIntervalMinutes: number
@@ -227,6 +230,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmTagFolderMoves: true,
   fastTagMode: false,
   hiddenTags: [],
+  bannedTags: [],
   libraryExcludedTags: [],
   launchAtLogin: false,
   newestPeekIntervalMinutes: 15,
@@ -547,6 +551,39 @@ export interface IncompleteModel {
   lastError?: string
 }
 
+/** Calendar-day 404 confirmations before a model is marked Unavailable. */
+export const MAX_MISSING_CONFIRM_HITS = 10
+
+export type MissingModelStatus = 'suspect' | 'unavailable'
+
+/**
+ * Model that returned Civitai API 404. Hit count rises at most once per calendar day;
+ * at MAX_MISSING_CONFIRM_HITS it becomes Unavailable.
+ */
+export interface MissingModel {
+  modelId: number
+  versionId?: number
+  modelName: string
+  modelType: string
+  author: string
+  baseModel: string
+  previewUrl?: string
+  pageUrl: string
+  sourceDomain: CivitaiDomain
+  hitCount: number
+  status: MissingModelStatus
+  firstSeenAt: string
+  lastHitAt: string
+  lastError?: string
+  /** Model was Early access / awaiting before (or when) it hit 404 — keep awaiting border color as dashed. */
+  fromEarlyAccess?: boolean
+  /**
+   * User acknowledged this entry — still verified until Unavailable, but not treated as “new”
+   * for tab badge / sort priority.
+   */
+  acknowledged?: boolean
+}
+
 export type IncompleteDownloadResult =
   | {
       status: 'queued'
@@ -669,6 +706,103 @@ export interface BannedModel {
   modelId: number
   modelName: string
   bannedAt: string
+  versionId?: number
+  previewUrl?: string
+  pageUrl?: string
+  sourceDomain?: CivitaiDomain
+  author?: string
+  baseModel?: string
+  modelType?: string
+  tags?: string[]
+  /** Always 'manual' for banned_models rows. */
+  reason?: 'manual'
+  /** Hidden everywhere unless Show forgotten (Missing). */
+  forgotten?: boolean
+}
+
+/** Optional metadata when banning — stored for Missing review (no swarm.json). */
+export type BanModelStub = {
+  modelName?: string
+  versionId?: number
+  previewUrl?: string
+  pageUrl?: string
+  sourceDomain?: CivitaiDomain
+  author?: string
+  baseModel?: string
+  modelType?: string
+  tags?: string[]
+}
+
+/** Pause (Browse exclude) vs permanent ban-by-tag (Missing). */
+export type TagPolicyKind = 'paused' | 'banned'
+
+/** Model skipped by pause/ban tag — review stub in Missing (not a hard model ban). */
+export interface TagSkipReview {
+  modelId: number
+  versionId?: number
+  modelName: string
+  modelType: string
+  author: string
+  baseModel: string
+  previewUrl?: string
+  pageUrl: string
+  sourceDomain: CivitaiDomain
+  tags: string[]
+  blockedTag: string
+  /** Model tag that matched the blocked tag (exact/alias). */
+  matchedModelTag?: string
+  /** paused = Browse exclude; banned = permanent ban-by-tag */
+  policy: TagPolicyKind
+  hitCount: number
+  firstSeenAt: string
+  lastSeenAt: string
+  acknowledged?: boolean
+}
+
+/** Cap stored tag-skip review stubs (oldest pruned). */
+export const MAX_TAG_SKIP_REVIEWS = 500
+
+export type ExclusionKind =
+  | 'missing'
+  | 'bannedManual'
+  | 'bannedByTag'
+  | 'pausedByTag'
+  | 'forgotten'
+
+/** Unified Missing-page row: 404 missing, manual ban, or tag-skip review. */
+export interface ExclusionReviewItem {
+  kind: ExclusionKind
+  modelId: number
+  versionId?: number
+  modelName: string
+  modelType?: string
+  author?: string
+  baseModel?: string
+  previewUrl?: string
+  pageUrl?: string
+  sourceDomain?: CivitaiDomain
+  tags?: string[]
+  /** Sort / “when” timestamp */
+  at: string
+  blockedTag?: string
+  /** Model tag that matched blockedTag (for tag-skip kinds). */
+  matchedModelTag?: string
+  hitCount?: number
+  status?: MissingModelStatus
+  acknowledged?: boolean
+  fromEarlyAccess?: boolean
+}
+
+/** Progress while applying a Tag Folders / Browse block. */
+export type HiddenTagApplyProgress = {
+  phase: 'purge' | 'scan' | 'cleanup' | 'refresh' | 'done'
+  tags: string[]
+  scanned: number
+  total: number
+  matched: number
+  purged: number
+  staleRemoved: number
+  message: string
 }
 
 export interface TagCount {
@@ -801,11 +935,27 @@ export interface InventorySnapshot {
   slugsByFolder: Map<string, Set<string>>
 }
 
+export interface SuspiciousLibraryFile {
+  modelId: number
+  versionId: number
+  modelName: string
+  versionName: string
+  modelPath: string
+  diskBytes: number
+  expectedBytes?: number
+  reason: 'too_small' | 'truncated_vs_expected'
+}
+
 export interface InventoryGetResult {
   items: InventoryRecord[]
   removedMissing: number
   repairedPreviews: number
   repairedRatings?: number
+  /** .swarm.json files where invented LoRA strength hint was rewritten from Civitai */
+  repairedSwarmHints?: number
+  /** Truncated / absurdly small weight files found during Sync */
+  suspiciousFileCount?: number
+  suspiciousFiles?: SuspiciousLibraryFile[]
   enrichedMeta?: number
   hashesBackfilled?: number
   /** Models scanned during syncDisk */
@@ -947,6 +1097,24 @@ export interface CivitaiModelDetail {
   sourceDomain: CivitaiDomain
   /** All Civitai versions for this model (newest first). */
   versions: CivitaiModelDetailVersion[]
+  /** True when Civitai API failed and detail was built from on-disk swarm.json only. */
+  loadedOffline?: boolean
+  /** SwarmUI .swarm.json modelspec (from disk when owned, else preview of what download writes). */
+  swarmMeta?: {
+    source: 'disk' | 'preview'
+    title?: string
+    description?: string
+    date?: string
+    author?: string
+    tags?: string
+    usageHint?: string
+    triggerPhrase?: string
+    trainedWords?: string[]
+    resolution?: string
+    modelId?: string
+    versionId?: string
+    sha256?: string
+  }
 }
 
 export interface LibrarySyncProgress {

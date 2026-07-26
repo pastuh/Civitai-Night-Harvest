@@ -163,7 +163,13 @@ export const PendingTab = memo(function PendingTab({
       previewUrl: item.previewUrl
     })
     try {
-      await window.api.banModel(item.modelId, item.modelName)
+      await window.api.banModel(item.modelId, item.modelName, {
+        modelName: item.modelName,
+        versionId: item.versionId,
+        previewUrl: item.previewUrl,
+        author: item.author,
+        baseModel: item.baseModel
+      })
       await onLibraryRefresh?.()
     } catch {
       setHiddenModelIds((prev) => {

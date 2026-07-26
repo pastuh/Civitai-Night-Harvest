@@ -23,6 +23,7 @@ export const en = {
     newVersions: 'Updates',
     awaitingAccess: 'Early access',
     incomplete: 'Incomplete',
+    missing: 'Missing',
     activity: 'Activity',
     help: 'Help',
     settings: 'Settings'
@@ -206,7 +207,7 @@ export const en = {
       slugSyncSkipped: 'skipped {skipped} (name collision or file missing)',
       slugSyncRepaired: 'repaired {repaired} paths',
       diskSyncHint:
-        'Scans LoRA and Checkpoint folders (and tag folders) for model files, imports .swarm.json models and unrecognized customs, hashes customs, checks duplicates vs Library and Civitai (SHA256), removes stale DB entries, then updates the download queue.',
+        'Scans LoRA and Checkpoint folders (and tag folders) for model files, imports .swarm.json models and unrecognized customs, hashes customs, checks duplicates vs Library and Civitai (SHA256), removes stale DB entries, fixes old invented LoRA strength hints in .swarm.json, flags tiny/truncated .safetensors, then updates the download queue. Not run automatically on app start — press this button when you want it.',
       diskSyncDone: 'Disk sync finished — see Library tab for the summary.',
       activityLogHint:
         'Controls what is saved to the activity log and SQLite database. Less logging reduces disk writes and UI updates during long crawls.',
@@ -282,17 +283,17 @@ export const en = {
     }
   },
   skippedTags: {
-    title: 'Blocked tags (skip auto-download)',
-    hint: 'No auto-queue during night crawl. Add via Tags list 🚫 or below.',
-    none: 'No blocked tags yet.',
+    title: 'Exclude tags (temporary pause)',
+    hint: 'Pause auto-download for these tags while listed. Permanent ban-by-tag is managed on Missing.',
+    none: 'No paused tags yet.',
     placeholder: 'e.g. character',
-    block: 'Block tag',
-    compactLabel: 'Blocked',
-    compactEmpty: 'None — use 🚫 in Tags popover or add below',
-    compactHint: 'Blocked tags are skipped during auto-download. Remove with × on chip or ↩ in Tags list.',
-    blockPlaceholder: 'Block tag…',
+    block: 'Pause tag',
+    compactLabel: 'Paused',
+    compactEmpty: 'None — pause a tag below or via Tags',
+    compactHint: 'Paused tags skip auto-download until removed. Permanent bans live on Missing.',
+    blockPlaceholder: 'Pause tag…',
     blockPlaceholderShort: 'Tag…',
-    blockBtn: 'Block'
+    blockBtn: 'Pause'
   },
   help: {
     title: 'Guide',
@@ -304,6 +305,7 @@ export const en = {
       header: 'Main controls (header)',
       browse: 'Browse tab',
       library: 'Library & folders',
+      missing: 'Missing tab',
       edges: 'Gallery card colors',
       downloads: 'Downloads & tabs',
       domains: 'Domains (.com / .red)',
@@ -319,7 +321,7 @@ export const en = {
     quickStart3: 'Header → 🌙 Harvest to walk the catalog; set **Auto** for hands-off queueing (or **Manual** and click cards)',
     headerHarvest: '🌙 Harvest — walks enabled Browse rules page by page; queues and downloads new models',
     headerNightModes:
-      '🌙 Harvesting — queues every new model that matches your enabled Browse rules (blocked tags still skipped). Folder / Tags assignment is separate and can wait until after download.',
+      '🌙 Harvesting — queues every new model that matches your enabled Browse rules (paused / banned tags still skipped). Folder / Tags assignment is separate and can wait until after download.',
     headerDownloads:
       '**Auto** / **Manual** — separate header toggles: Auto queues eligible models (up to 10 in pipeline); Manual only queues cards you click. **Pause** (red) stops active downloads without switching mode.',
     headerEye: '👁 — hide Browse cards during harvest (quieter UI; downloads continue)',
@@ -333,18 +335,22 @@ export const en = {
     browsePreviews:
       'Previews are **per version** (not one shared model image). Load previews fetches only that version’s images; Save preview writes `.preview.jpg` for the selected owned version',
     browseTags:
-      'Tags popover — filter the grid · 🚫 block tag from auto-queue · blocked tags listed at top when any exist',
+      'Tags popover — filter the grid · ⏸ pause tag (temporary Browse exclude) · permanent bans are managed in Tag Folders (purple chips)',
+    browsePausedBanned:
+      '**Paused** bar — temporary exclude. **Banned** bar — permanent ban-by-tag (read-only here; Ban / Unban in Tag Folders). Amber = pause · purple = permanent on cards',
     browseManualQueue:
       'Manual — crawl/scan and Auto pipeline do not add models; only your card clicks enter the queue (unlimited)',
     browseSettled:
       'Settings → Browse gallery — optionally send owned/excluded/awaiting cards to the end and dim them (hover restores; search matches stay bright)',
     browseBan: 'Ban On — red × on cards excludes a model from future auto-queue',
     browseContextSkipTag:
-      'Right-click a model → Skip tag — block a tag from auto-queue (click a tag chip; already-blocked tags are dimmed)',
+      'Right-click a model → pause a tag (temporary). Permanent ban-by-tag: Tag Folders **Ban** column',
     libraryFolders:
-      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). **Mass** assigns many tags to one folder name.',
+      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted`.',
     libraryPriority:
       'Tag Folders **Priority** — when a model matches several tags, higher number wins (▲/▼ skip 0). Equal priorities: first matching tag. Priority 0 = fixed auto-route. Manual Library assigns always win.',
+    libraryTagBan:
+      'Tag Folders **Ban** — permanent ban-by-tag (skip auto-download). Temporary pause lives only on Browse → Paused. Skipped models appear under Missing for per-model Allow.',
     libraryBadge:
       'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Show List** from Updates still opens All models pinned to that model',
     librarySession:
@@ -368,12 +374,22 @@ export const en = {
       'Settings → **Preserve filters** — keep Browse/Library filters, sort, and show/hide checkboxes when switching tabs',
     libraryConfirmMoves:
       'Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog (Tag folders / Fast tag)',
+    missingOverview:
+      'Missing — 404 / Suspect reviews, models skipped by pause or ban-by-tag, and manual bans. Opening Model details or Tag Folders keeps your Missing filters and scroll.',
+    missingKinds:
+      'Kinds — Missing (404), Paused by tag (temporary Browse exclude), Banned by tag (Tag Folders Ban), Banned manual, Forgotten',
+    missingFilters:
+      'Hide banned / Hide paused (on by default), Show forgotten, Session bans / Session pause sidebar filters',
+    missingAllow:
+      'Per model — **Allow** (exception vs pause/ban tags + queue). Tag ban/unban is only in Tag Folders — click a tag chip to jump there',
+    missingForget:
+      '**Forget On** — × on cards hides the model everywhere and stops suggestions; **Show forgotten** to review; × again = Unforget',
     edgeOwned: 'Green top border — already in your library',
     edgeQueued: 'Queue accent top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',
     edgeNew: 'Teal top border — new, not queued',
     edgeAwaiting: 'Yellow — Early access',
-    edgeBlocked: 'Purple — skipped (blocked tag or excluded)',
+    edgeBlocked: 'Purple — permanent ban-by-tag · amber — paused (Browse exclude)',
     dlStrip:
       'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode.',
     dlStripLayouts:
@@ -387,7 +403,7 @@ export const en = {
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Early access tab — gated download, or missing API key',
     dlNewVersions:
-      'Updates — approve/dismiss/ban newer Civitai versions of models you already own (same base model as a version you have; also respects Browse Rules baseModels when set). Filled during Harvest and by a background library check (one API GET per owned model — not SHA256; skips models polled within 2 days). Settings → Auto-download new versions: ON queues them; OFF leaves them here for confirmation.',
+      'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model. If the version is Early access, it moves to Awaiting and should leave Updates. Filled during Harvest and by a background library check (one API GET per owned model). Settings → Auto-download new versions: ON queues them globally.',
     dlTabBadges:
       'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access: items waiting',
     dlActivity:
@@ -545,15 +561,20 @@ export const en = {
     tagsSearch: 'Search tags…',
     tagsAll: 'All tags',
     tagsHintLine1: 'Tag name — filter grid only (does not block downloads). Click again or × to clear.',
-    tagsHintLine2: '🚫 Block — no auto-download; hidden from grid unless “Show blocked models” is on.',
-    tagsHintLine3: '📁 Folder route for manual queue · ↩ or chip × to unblock.',
-    tagsBlockedSection: 'Blocked tags (no auto-download)',
+    tagsHintLine2: '⏸ Pause — temporary: no auto-download; hidden unless “Show blocked models” is on.',
+    tagsHintLine3: '📁 Folder route for manual queue · ↩ or chip × to unpause.',
+    tagsBlockedSection: 'Paused tags (temporary)',
     tagNameFilterTitle: 'Show models whose tags match (character → characters, fantasy character…)',
-    tagBlockTitle: 'Block tag — skip auto-download and hide from grid',
-    tagUnblockTitle: 'Unblock tag — allow auto-download again',
-    tagBlockedMsg: 'Blocked “{tag}” — excluded from auto-download',
-    tagUnblockedMsg: 'Unblocked “{tag}” — auto-download allowed again',
-    tagsUnblockedVisible: '{count} model(s) visible again after unblocking: {tags}',
+    tagBlockTitle: 'Pause tag — skip auto-download and hide from grid (temporary)',
+    tagUnblockTitle: 'Unpause tag — allow auto-download again',
+    tagBlockedMsg: 'Paused “{tag}” — temporary exclude from auto-download',
+    tagUnblockedMsg: 'Unpaused “{tag}” — auto-download allowed again',
+    tagsUnblockedVisible: '{count} model(s) visible again after unpausing: {tags}',
+    bannedTagsLabel: 'Banned',
+    bannedTagsEmpty: 'None — manage permanent bans in Tag folders',
+    bannedTagsHint: 'Permanent ban-by-tag (read-only here). Ban / unban in Tag folders.',
+    bannedTagUnbanHint: 'Unban permanent tag “{tag}”',
+    tagUnbannedMsg: 'Unbanned “{tag}” — permanent ban removed',
     tagFilterCleared: 'Tag filter cleared',
     tagFromRule: 'Tag from your Browse rule',
     tagApiSearchTitle: 'New API search with this tag',
@@ -600,6 +621,8 @@ export const en = {
     badgeOwnedTitle: 'Already in library',
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a folder',
     tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
+    tagBlockedOnCardHint: 'Blocked tag — “{tag}” is on the permanent ban-by-tag list',
+    tagPausedOnCardHint: 'Paused tag — “{tag}” is on Browse exclude (temporary)',
     badgeNewTitle: 'Not in library yet',
     badgeQueuedShort: 'Queue',
     badgeQueuedTitle: 'Auto-queued for download — waiting in pipeline',
@@ -769,9 +792,9 @@ export const en = {
       'Ban “{name}”? Deletes all {count} owned version(s) from library/disk and excludes the model.',
     queueDownload: 'Download',
     queueHint: 'Download this newer version; keep versions you already own',
-    alwaysUpdate: 'Sync',
+    alwaysUpdate: 'Always update',
     alwaysUpdateHint:
-      'Queue this version and auto-download future new versions of this model (even if Settings auto-download is off)',
+      'Queue this version (or wait in Early access) and auto-download future new versions of this model (even if Settings auto-download is off)',
     openInLibrary: 'Show List',
     offeredVersion: 'New version:',
     ownedVersions: 'You own {count}: {list}',
@@ -794,6 +817,18 @@ export const en = {
     openInExplorer: 'Open in Explorer',
     deleteFiles: 'Delete files & exclude',
     loading: 'Loading Civitai details…',
+    retryLoad: 'Retry',
+    loadFailed: 'Could not load details from Civitai',
+    notFoundHint:
+      'Model may be removed, private, or on the other Civitai site (.com / .red). You can retry without restarting.',
+    offlineLocal:
+      'Civitai did not respond — showing local library data. Retry when the network is available.',
+    offlineLocalShort: 'Local library data',
+    missingLocalHits: 'Missing {count}/{max} · local data',
+    missingHitsOnly: '{count}/{max}',
+    loadFailedShort: 'Civitai unavailable',
+    unavailable: 'Unavailable',
+    unavailableHint: 'Confirmed missing on Civitai after repeated 404 checks',
     license: 'License',
     commercialUse: 'Commercial use',
     derivatives: 'Derivatives',
@@ -806,7 +841,22 @@ export const en = {
     mustDifferentLicense: 'Must use different license',
     sameLicenseOk: 'Same license OK',
     triggerWords: 'Trigger words',
+    triggerWordsNote: 'Prompt activation words from the model — not folder tags.',
+    folderRoute: 'Folder',
     fromSwarm: 'from swarm.json',
+    swarmMeta: 'SwarmUI metadata',
+    swarmMetaDisk: 'from .swarm.json on disk',
+    swarmMetaPreview: 'preview of what download writes',
+    swarmTitle: 'Title',
+    swarmAuthor: 'Author',
+    swarmDate: 'Date',
+    swarmTags: 'Tags',
+    swarmUsageHint: 'Usage hint',
+    swarmTrigger: 'Trigger phrase',
+    swarmResolution: 'Resolution',
+    swarmSha256: 'SHA256',
+    swarmDescription: 'Description',
+    swarmNoUsageHint: 'No suggested strength in API/description',
     downloadedAt: 'Downloaded {when}',
     pathModel: 'Model',
     pathPreview: 'Preview',
@@ -832,6 +882,10 @@ export const en = {
     noVersionPreviews: 'No images found for this version on Civitai.',
     previewOf: '{current} / {total}',
     openTagFoldersHint: 'Open Tag folders — find or assign “{tag}”',
+    fastTagHint: 'Fast tag — assign folder for “{tag}”',
+    tags: 'Tags',
+    tagLegend:
+      'Borders: solid accent = final route · solid = mapped folder rule · dashed = waiting for assignment',
     savePreview: 'Save preview',
     savingPreview: 'Saving…',
     savePreviewHint:
@@ -847,6 +901,7 @@ export const en = {
   },
   app: {
     apiUnavailable: 'App API not available — restart the application.',
+    navigateBack: 'Go back',
     busyRetrying: 'Retrying…',
     needOutputFolders: 'Set LoRA and Checkpoint folders in Settings before Harvest or download.',
     outputDriveMissing:
@@ -913,6 +968,9 @@ export const en = {
     hashed: 'computed SHA256 for {count} file(s)',
     previews: 'restored {count} preview(s)',
     ratings: 'filled {count} rating(s)',
+    swarmHints: 'fixed {count} swarm usage hint(s)',
+    suspicious: 'flagged {count} tiny/truncated model file(s)',
+    suspiciousSamples: 'e.g. {list}',
     allOk: 'Library sync: checked {count} model(s) in library — all OK.',
     summary: 'Library sync ({count} in library): {parts}.'
   },
@@ -1027,15 +1085,20 @@ export const en = {
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a dynamic folder',
     openTagFoldersAssigned: 'Assigned — open Tag folders to manage “{tag}”',
     tagRoleFinalHint: 'Final folder route — “{tag}” is why this model is in its folder (click → Tag folders)',
-    tagRoleMappedHint: 'Mapped tag — “{tag}” has a folder rule, but another tag is the active route',
+    tagRoleMappedHint:
+      'Mapped tag — “{tag}” has a folder rule, but another tag is the active route for this model',
+    tagRoleMappedPendingHint:
+      'Folder rule exists for “{tag}”, but this model was never moved — still in the default / unsorted folder',
     tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
+    tagBlockedOnCardHint: 'Blocked tag — “{tag}” is on the permanent ban-by-tag list',
+    tagPausedOnCardHint: 'Paused tag — “{tag}” is on Browse exclude (temporary)',
     folderLabel: 'Folder: {folder}',
     folderAssignedTitle: 'Assigned folder: {folder}',
     earlyAccessWait: 'Early:',
     sidebarTitle: 'Filter & move',
     sidebarSearchPlaceholder: 'Search tags…',
     sidebarHint:
-      'Tag borders (subtle): solid accent tint = final route · solid = mapped · dashed = unmapped. Click → Tag folders.',
+      'Tag borders: solid accent = final route · solid = rule exists (may not be moved yet) · dashed = no rule. Click → Tag folders.',
     allModels: 'All models',
     untaggedFolder: 'Untagged folder',
     unrecognized: 'Unrecognized',
@@ -1100,8 +1163,14 @@ export const en = {
   },
   tagsTab: {
     title: 'Tag → Folder routing',
+    back: 'Back',
+    backToModelDetail: 'Back to model details',
+    backToLibraryModel: 'Back to Library model',
+    backToLibrary: 'Back to Library',
+    backToBrowse: 'Back to Browse',
+    backToMissing: 'Back to Missing',
     lead:
-      'Check tags to route downloads and move unsorted library models into {LoRA}/{base model}/{folder}. Models placed manually in Library are skipped.',
+      'Check tags to route downloads and move unsorted library models into {LoRA}/{base model}/{folder}. Use “Apply to library” to re-sort everything after priority changes. Models placed manually in Library are skipped.',
     searchPlaceholder: 'Search or add tags…',
     clearSearch: 'Clear tag search',
     addTag: 'Add',
@@ -1128,6 +1197,17 @@ export const en = {
     colCount: 'Count',
     colFolder: 'Folder',
     colPriority: 'Priority',
+    colBlock: 'Ban',
+    blockHint:
+      'Permanent ban-by-tag — models with this tag are skipped by auto-download. Temporary pause is Browse → Paused. Skipped models appear under Missing for per-model Allow (×).',
+    blockTagHint: 'Permanently ban this tag — skip auto-download',
+    unblockTagHint: 'Remove permanent ban — allow auto-download again for this tag',
+    tagBlockedMsg: 'Permanently banned “{tag}” — skipped models show in Missing',
+    tagUnblockedMsg: 'Unbanned “{tag}”',
+    blockApplyingTitle: 'Applying tag ban',
+    blockApplyingLead:
+      'Purging the download queue, scanning the Browse gallery, and listing matches under Missing for review.',
+    blockApplyingDone: 'Close',
     priorityHint:
       'Folder priority when a model matches several tags. Default 1. ▲/▼ skip 0 (−1 ↔ 1 ↔ 2). Higher wins. Negatives lose. 0 = fixed (always wins auto-routing). Equal priorities: first matching tag wins; manual Library assign still wins over every priority.',
     priorityUp: 'Increase priority (skips 0)',
@@ -1167,6 +1247,14 @@ export const en = {
     massAssignedMove:
       'Saved {count} tags → {folder}; moved {moved}, skipped {skipped} (manual/already sorted)',
     transferring: 'Transferring models by tag to folder…',
+    reconcileApply: 'Apply to library ({count})',
+    reconcileHint:
+      'Move or re-route all library models that match Tag folder rules but are not in the winning folder yet. Also runs automatically when you change a folder name or priority.',
+    reconcileConfirm:
+      'Apply tag-folder rules to {count} library models? Manual (locked) placements are skipped.',
+    reconcileDone:
+      'Library sorted: moved {moved}, skipped {skipped}, queue updated {queueUpdated}',
+    reconcileNone: 'All matching library models are already in the correct tag folders',
     renameFolderHint: 'Click to change folder name',
     renameTagHint: 'Click to rename (display name — matching stays on the original Civitai tag)',
     confirmRenameTag: 'Apply tag name',
@@ -1205,7 +1293,12 @@ export const en = {
     filterBuy: 'No unlock date yet',
     emptyFiltered: 'No models match this filter.',
     extraBuzz: 'Extra Buzz cost to download now',
-    freeTrial: 'Free trial generations: {count}'
+    freeTrial: 'Free trial generations: {count}',
+    searchPlaceholder: 'Search name, author, ID…',
+    favoriteOffHint: 'Add to favorites — pin at top of Library after download (on next visit)',
+    favoriteOnHint: 'Remove favorite — stop pinning at top of Library',
+    favoriteAdd: 'Add favorite ★',
+    favoriteRemove: 'Remove favorite ☆'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1214,7 +1307,6 @@ export const en = {
       'Models Civitai lists without version data (empty modelVersions). They are kept out of Browse until resolved.',
     recheck: 'Recheck API',
     download: 'Download → queue',
-    pasteLink: 'Paste download link…',
     downloadWithUrl: 'Use link → queue',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
@@ -1226,6 +1318,82 @@ export const en = {
     versionName: ' · {name}',
     badgeWaiting: 'Waiting for version data',
     badgeReady: 'Version resolved'
+  },
+  missingTab: {
+    title: 'Missing',
+    titleCount: 'Missing ({count})',
+    emptyLead: '404 responses from Civitai — and review banned / tag-skipped models here.',
+    emptyHiddenBanned:
+      'No Missing (404) entries. {banned} banned / paused hidden — uncheck Hide banned / Hide paused to review.',
+    desc: '404 responses from Civitai.',
+    searchPlaceholder: 'Search name, author, tag, ID…',
+    filterLabel: 'Kind',
+    filterAll: 'All',
+    filterMissing: 'Missing (404)',
+    filterBannedManual: 'Banned manual',
+    filterBannedByTag: 'Banned by tag',
+    filterPausedByTag: 'Paused by tag',
+    filterSuspect: 'Suspect',
+    filterUnavailable: 'Unavailable',
+    hideBanned: 'Hide banned',
+    hidePaused: 'Hide paused',
+    showForgotten: 'Show forgotten',
+    showBanned: 'Show banned / paused',
+    sidebarTitle: 'Filter',
+    sidebarHint: 'All · session · tags → Tag folders · calendar',
+    sidebarAll: 'All',
+    sessionBans: 'Session bans',
+    sessionPause: 'Session pause',
+    blockedTagsSection: 'Policy tags',
+    policyTagsSection: 'Policy tags',
+    policyTagsHint: 'Click a tag to open Tag folders (ban / unban there).',
+    blockedTagsSearch: 'Filter tags…',
+    blockedTagsEmpty: 'No pause / ban tags yet',
+    blockedTagFilter: 'Tag: {tag}',
+    openTagFoldersHint: 'Open Tag folders for “{tag}”',
+    clearSideFilter: 'Clear sidebar filter',
+    bannedByDate: 'Banned by date',
+    bannedToday: 'Today',
+    bannedYesterday: 'Yesterday',
+    bannedLast7Days: 'Last 7 days',
+    bansInSelection: 'Bans: {count}',
+    kindMissing: 'Missing',
+    kindBannedManual: 'Banned manual',
+    kindBannedByTag: 'Banned by tag',
+    kindPausedByTag: 'Paused by tag',
+    kindForgotten: 'Forgotten',
+    filterForgotten: 'Forgotten',
+    forget: 'Forget',
+    forgetHint: 'Forget — hide everywhere and never suggest again (Show forgotten to review)',
+    forgetMsg: 'Forgot “{name}”',
+    forgetModeOff: 'Forget Off',
+    forgetModeOn: 'Forget On',
+    forgetModeTitle: 'Show × next to titles to forget models (hide everywhere)',
+    unforgetHint: 'Unforget — allow this model again',
+    allow: 'Allow',
+    blockedTagLine: 'Blocked tag: {tag}',
+    blockedMatchLine: 'Block “{blocked}” matched model tag “{matched}”',
+    whenLine: '{when}',
+    unban: 'Unban',
+    unbanHint: 'Allow this model forever despite pause/ban tags — queue download',
+    unbanQueued: 'Model allowlisted and queued (manual — pause/ban tags ignored)',
+    allowTagSkipHint:
+      'Allow this model forever — queue download. Pause/ban tags stay on for other models',
+    sortLabel: 'Sort',
+    sortRecent: 'Recent',
+    sortHits: 'Hit count',
+    sortName: 'Name',
+    recheckSuspect: 'Recheck Suspect',
+    recheckAll: 'Recheck all',
+    recheckSuspectHint: 'Probe Civitai for Suspect models only',
+    recheckAllHint: 'Probe Civitai for every Missing entry',
+    recheckResult:
+      'Checked {checked}: {recovered} recovered, {confirmed} now Unavailable',
+    emptyFiltered: 'No models match this filter.',
+    openCivitai: 'Civitai ↗',
+    confirm: 'Mark seen',
+    confirmHint:
+      '404 only — mark as seen (badge). Stays in Missing and keeps verifying until Unavailable'
   },
   globalStatus: {
     preparingDownloads: 'Preparing downloads…',

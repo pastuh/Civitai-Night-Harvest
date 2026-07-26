@@ -48,6 +48,9 @@ interface Props {
   galleryAwaiting?: boolean
   /** Idle browse gallery — waiting for user Scan or Night harvest */
   showReadyIdle?: boolean
+  /** ← return to previous Model details / Library position (e.g. after Tag folders). */
+  onNavigateBack?: () => void
+  navigateBackTitle?: string
 }
 
 const EMPTY_NSFW_MAP = new Map<number, boolean | undefined>()
@@ -512,7 +515,9 @@ export function GlobalStatusBar({
   crawlProgress = null,
   galleryAwaiting = false,
   showReadyIdle = false,
-  uiExtended = false
+  uiExtended = false,
+  onNavigateBack,
+  navigateBackTitle
 }: Props) {
   const liveQueue = useDownloadQueue()
   const queue = queueProp ?? liveQueue.items
@@ -810,6 +815,18 @@ export function GlobalStatusBar({
   return (
 
     <footer className="global-status-bar" role="status" aria-live="polite">
+
+      {onNavigateBack ? (
+        <button
+          type="button"
+          className="global-status-back"
+          onClick={onNavigateBack}
+          title={navigateBackTitle || t('app.navigateBack')}
+          aria-label={navigateBackTitle || t('app.navigateBack')}
+        >
+          ←
+        </button>
+      ) : null}
 
       <span className={`global-status-pulse is-${dotKind}`} aria-hidden />
 

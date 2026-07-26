@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 
-import type { InventoryRecord, TagFolderRule } from '../../../shared/types'
+import type { HiddenTagApplyProgress, InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { tagsEqual, fuzzyTagMatch, tagAliasMatch } from '../../../shared/tag-fuzzy'
 import {
   findRuleForTag,
@@ -11,7 +11,7 @@ import {
   parseTagRuleNames,
   ruleCoversTag,
   countInventoryInFolder,
-  countMovableByCivitaiTag,
+  countLibraryTagFolderReconcile,
   expandCivitaiTagNames,
   tagFolderFilterMatch,
   getRulePriority,
@@ -32,6 +32,9 @@ interface Props {
   checkpointFolder: string
   /** When false, skip the bulk-move confirmation dialog. Default true. */
   confirmTagFolderMoves?: boolean
+  /** Permanent ban-by-tag — skip auto-download (same as permanent ban list). */
+  bannedTags?: string[]
+  onBannedTagsChange?: (tags: string[]) => Promise<void>
   onSave: (rules: TagFolderRule[]) => Promise<void>
   onFilterLibrary?: (tag: string) => void
   onRefresh?: () => Promise<void>
@@ -97,6 +100,8 @@ export function TagsTab({
   loraFolder,
   checkpointFolder,
   confirmTagFolderMoves = true,
+  bannedTags = [],
+  onBannedTagsChange,
   onSave,
   onFilterLibrary,
   onRefresh,
@@ -142,6 +147,7 @@ export function TagsTab({
     }
   })
   const [tagEditFrom, setTagEditFrom] = useState<string | null>(null)
+  const [blockApply, setBlockApply] = useState<HiddenTagApplyProgress | null>(null)
   const [tagEditValue, setTagEditValue] = useState('')
   const [pendingConfirm, setPendingConfirm] = useState<{
     message: string
@@ -662,17 +668,55 @@ export function TagsTab({
     }
   }
 
-  const moveTagsAfterRuleChange = async (tagsInRule: string[], routingTag: string) => {
-    let moved = 0
-    let skipped = 0
-    let queueUpdated = 0
-    for (const ruleTag of tagsInRule) {
-      const result = await window.api.assignByCivitaiTag(ruleTag, routingTag)
-      moved += result.moved
-      skipped += result.skipped ?? 0
-      queueUpdated += result.queueUpdated
+  const moveTagsAfterRuleChange = async (_tagsInRule: string[], _routingTag: string) => {
+    // Full library reconcile — priority / folder edits can change winners across many tags.
+    const result = await window.api.reconcileTagFolders()
+    return {
+      moved: result.moved,
+      skipped: result.skipped,
+      queueUpdated: result.queueUpdated
     }
-    return { moved, skipped, queueUpdated }
+  }
+
+  const reconcilePendingCount = useMemo(
+    () => countLibraryTagFolderReconcile(inventory, draft, loraFolder, checkpointFolder),
+    [inventory, draft, loraFolder, checkpointFolder]
+  )
+
+  const runLibraryReconcile = async (opts?: { confirm?: boolean }) => {
+    const count = reconcilePendingCount
+    if (count === 0) {
+      setStatusMessage(t('tagsTab.reconcileNone'), 5000)
+      return null
+    }
+    if (
+      opts?.confirm !== false &&
+      confirmTagFolderMoves &&
+      count > 1 &&
+      !(await askConfirm(t('tagsTab.reconcileConfirm', { count })))
+    ) {
+      return null
+    }
+    setMovingTag('reconcile')
+    setStatusMessage(t('tagsTab.transferring'))
+    try {
+      const result = await window.api.reconcileTagFolders()
+      setStatusMessage(
+        t('tagsTab.reconcileDone', {
+          moved: result.moved,
+          skipped: result.skipped,
+          queueUpdated: result.queueUpdated
+        }),
+        8000
+      )
+      await onRefresh?.()
+      return result
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
+      return null
+    } finally {
+      setMovingTag(null)
+    }
   }
 
   const commitFolderEdit = async (tag: string) => {
@@ -765,11 +809,61 @@ export function TagsTab({
     void commitPriority(tag, next)
   }
 
-  const movableCountForTag = useCallback(
-    (tag: string) =>
-      countMovableByCivitaiTag(inventory, tag, draft, loraFolder, checkpointFolder),
-    [inventory, draft, loraFolder, checkpointFolder]
-  )
+  const isTagBlocked = (tag: string) =>
+    bannedTags.some((h) => h.toLowerCase() === tag.trim().toLowerCase())
+
+  const toggleBlockTag = async (tag: string) => {
+    if (!onBannedTagsChange || movingTag || saveState === 'saving' || blockApply) return
+    const blocked = isTagBlocked(tag)
+    const next = blocked
+      ? bannedTags.filter((h) => h.toLowerCase() !== tag.trim().toLowerCase())
+      : [...bannedTags, tag.trim()]
+    const unsub = blocked
+      ? null
+      : window.api.onHiddenTagApplyProgress((payload) => {
+          setBlockApply(payload)
+        })
+    if (!blocked) {
+      setBlockApply({
+        phase: 'purge',
+        tags: [tag.trim()],
+        scanned: 0,
+        total: 0,
+        matched: 0,
+        purged: 0,
+        staleRemoved: 0,
+        message: t('tagsTab.blockApplyingLead')
+      })
+    }
+    try {
+      await onBannedTagsChange(next)
+      setStatusMessage(
+        blocked
+          ? t('tagsTab.tagUnblockedMsg', { tag })
+          : t('tagsTab.tagBlockedMsg', { tag }),
+        5000
+      )
+      if (!blocked) {
+        setBlockApply((prev) =>
+          prev
+            ? {
+                ...prev,
+                phase: 'done',
+                message:
+                  prev.phase === 'done'
+                    ? prev.message
+                    : t('tagsTab.tagBlockedMsg', { tag })
+              }
+            : prev
+        )
+      }
+    } catch (err) {
+      setBlockApply(null)
+      setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
+    } finally {
+      unsub?.()
+    }
+  }
 
   const persistRules = async (next: TagFolderRule[]) => {
     const cleaned = normalizeRules(next, loraFolder, checkpointFolder)
@@ -788,19 +882,6 @@ export function TagsTab({
     }
   }
 
-  const moveLibraryByTag = async (tag: string, routingTag: string) => {
-    const libCount = movableCountForTag(tag)
-    if (libCount === 0) return null
-    if (
-      confirmTagFolderMoves &&
-      libCount > 1 &&
-      !(await askConfirm(t('tagsTab.assignConfirm', { tag, count: libCount })))
-    ) {
-      return null
-    }
-    return window.api.assignByCivitaiTag(tag, routingTag)
-  }
-
   const enableAutoTag = async (tag: string) => {
     if (movingTag) return
     if (findRuleForTag(tag, draft)) return
@@ -813,21 +894,35 @@ export function TagsTab({
     try {
       await persistRules(next)
       pinAssignLabels([tag])
-      const result = await moveLibraryByTag(tag, tag)
-      await onRefresh?.()
-      if (result) {
-        setStatusMessage(
-          t('tagsTab.assignedMany', {
-            tag,
-            moved: result.moved,
-            skipped: result.skipped ?? 0,
-            queueUpdated: result.queueUpdated
-          }),
-          8000
-        )
-      } else {
+      const pending = countLibraryTagFolderReconcile(
+        inventory,
+        next,
+        loraFolder,
+        checkpointFolder
+      )
+      if (pending === 0) {
         setStatusMessage(t('tagsTab.ruleSaved', { tag }), 5000)
+        return
       }
+      if (
+        pending > 1 &&
+        confirmTagFolderMoves &&
+        !(await askConfirm(t('tagsTab.reconcileConfirm', { count: pending })))
+      ) {
+        setStatusMessage(t('tagsTab.ruleSaved', { tag }), 5000)
+        return
+      }
+      const result = await window.api.reconcileTagFolders()
+      await onRefresh?.()
+      setStatusMessage(
+        t('tagsTab.assignedMany', {
+          tag,
+          moved: result.moved,
+          skipped: result.skipped ?? 0,
+          queueUpdated: result.queueUpdated
+        }),
+        8000
+      )
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
@@ -1050,6 +1145,17 @@ export function TagsTab({
             clearable
             clearLabel={t('tagsTab.clearFolderFilter')}
           />
+          <button
+            type="button"
+            className="primary"
+            disabled={Boolean(movingTag) || reconcilePendingCount === 0}
+            title={t('tagsTab.reconcileHint')}
+            onClick={() => void runLibraryReconcile()}
+          >
+            {movingTag === 'reconcile'
+              ? t('tagsTab.transferring')
+              : t('tagsTab.reconcileApply', { count: reconcilePendingCount })}
+          </button>
           <label className="tags-hide-assigned-toggle">
             <input
               type="checkbox"
@@ -1163,6 +1269,9 @@ export function TagsTab({
                 <th className="tags-col-priority" title={t('tagsTab.priorityHint')}>
                   {t('tagsTab.colPriority')}
                 </th>
+                <th className="tags-col-block" title={t('tagsTab.blockHint')}>
+                  {t('tagsTab.colBlock')}
+                </th>
                 <th className="tags-col-actions" />
               </tr>
             </thead>
@@ -1174,9 +1283,11 @@ export function TagsTab({
                 const massOn = massAssign && massSelected.has(tag)
                 const rule = findRuleForTag(tag, draft)
                 const priority = getRulePriority(rule)
+                const blocked = isTagBlocked(tag)
                 const rowClass = [
                   assigned ? 'tags-row-assigned' : '',
-                  pinned ? 'tags-row-pinned' : ''
+                  pinned ? 'tags-row-pinned' : '',
+                  blocked ? 'tags-row-blocked' : ''
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -1341,6 +1452,23 @@ export function TagsTab({
                         <span className="muted">—</span>
                       )}
                     </td>
+                    <td className="tags-col-block">
+                      {onBannedTagsChange ? (
+                        <input
+                          type="checkbox"
+                          className="tags-check-block"
+                          checked={blocked}
+                          disabled={!!movingTag || saveState === 'saving'}
+                          onChange={() => void toggleBlockTag(tag)}
+                          title={
+                            blocked ? t('tagsTab.unblockTagHint') : t('tagsTab.blockTagHint')
+                          }
+                          aria-label={t('tagsTab.colBlock')}
+                        />
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td className="tags-col-actions">
                       {onFilterLibrary && count > 0 && (
                         <button
@@ -1474,6 +1602,56 @@ export function TagsTab({
           onConfirm={() => closeConfirm(true)}
           onCancel={() => closeConfirm(false)}
         />
+      )}
+
+      {blockApply && (
+        <div className="modal-overlay" onClick={() => blockApply.phase === 'done' && setBlockApply(null)}>
+          <div
+            className="modal-card confirm-modal tags-block-apply-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tags-block-apply-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="tags-block-apply-title">{t('tagsTab.blockApplyingTitle')}</h3>
+            <p className="confirm-modal-message muted">{t('tagsTab.blockApplyingLead')}</p>
+            <p className="tags-block-apply-status">{blockApply.message}</p>
+            {blockApply.total > 0 ? (
+              <div className="tags-block-apply-bar" aria-hidden>
+                <div
+                  className="tags-block-apply-bar-fill"
+                  style={{
+                    width: `${Math.min(100, Math.round((blockApply.scanned / blockApply.total) * 100))}%`
+                  }}
+                />
+              </div>
+            ) : null}
+            <ul className="tags-block-apply-stats muted">
+              <li>
+                {blockApply.tags.join(', ')}
+              </li>
+              <li>
+                scanned {blockApply.scanned}
+                {blockApply.total ? ` / ${blockApply.total}` : ''}
+              </li>
+              <li>matched {blockApply.matched}</li>
+              <li>purged queue {blockApply.purged}</li>
+              {blockApply.staleRemoved > 0 ? (
+                <li>false positives cleared {blockApply.staleRemoved}</li>
+              ) : null}
+            </ul>
+            <div className="modal-footer confirm-modal-actions">
+              <button
+                type="button"
+                className="primary"
+                disabled={blockApply.phase !== 'done'}
+                onClick={() => setBlockApply(null)}
+              >
+                {blockApply.phase === 'done' ? t('tagsTab.blockApplyingDone') : t('common.loading')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

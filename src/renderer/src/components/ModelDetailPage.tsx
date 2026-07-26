@@ -4,8 +4,10 @@ import type {
   CivitaiDomain,
   CivitaiModelDetail,
   CivitaiModelDetailVersion,
-  InventoryRecord
+  InventoryRecord,
+  TagFolderRule
 } from '../../../shared/types'
+import { MAX_MISSING_CONFIRM_HITS } from '../../../shared/types'
 import {
   formatCompactCount,
   isModelArchived,
@@ -14,8 +16,16 @@ import {
 } from '../../../shared/civitai-meta'
 import { isVersionEarlyAccess } from '../../../shared/early-access'
 import { formatCountdownTo } from '../../../shared/utils'
+import { tagsEqual } from '../../../shared/tag-fuzzy'
+import { isUnsortedRoutingTag } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
 import { ConfirmModal } from './ConfirmModal'
+import { FastTagAssignModal } from './FastTagAssignModal'
+import {
+  cardTagFolderRole,
+  cardTagFolderRoleClass,
+  shortCardFolderLabel
+} from './gallery-card-utils'
 import { useT } from '../i18n/context'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
 
@@ -28,12 +38,16 @@ export type ModelDetailTarget =
       previewUrls?: string[]
       previewUrl?: string
       domain?: CivitaiDomain
+      /** Open with local data only — Civitai fetch waits for Retry. */
+      deferRemote?: boolean
     }
   | {
       kind: 'library'
       record: InventoryRecord
       domain?: CivitaiDomain
       siblingRecords?: InventoryRecord[]
+      /** Open with local data only — Civitai fetch waits for Retry. */
+      deferRemote?: boolean
     }
 
 interface Props {
@@ -44,13 +58,23 @@ interface Props {
   onSelectLibraryRecord?: (record: InventoryRecord) => void
   ownedVersionIds?: number[]
   onShowInLibrary?: (modelId: number, modelName: string) => void
-  /** Open Tag folders with this Civitai tag prefilled. */
+  /** Open Tag folders with this Civitai tag prefilled (when Fast tag is off). */
   onOpenTagFolders?: (tag: string) => void
   /** Owned inventory rows for this model (disk preview paths). */
   ownedRecords?: InventoryRecord[]
   onBannedChange?: (modelId: number, banned: boolean) => void
   onInventoryRefresh?: () => void | Promise<void>
   onQueueRefresh?: () => void | Promise<void>
+  /** Fast tag assign (same as Library). */
+  inventory?: InventoryRecord[]
+  tagRules?: TagFolderRule[]
+  tagSuggestions?: string[]
+  confirmTagFolderMoves?: boolean
+  loraFolder?: string
+  checkpointFolder?: string
+  fastTagMode?: boolean
+  onFastTagModeChange?: (enabled: boolean) => void
+  onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
 }
 
 type VersionSort = 'default' | 'downloads' | 'likes'
@@ -102,13 +126,23 @@ export function ModelDetailPage({
   ownedRecords = [],
   onBannedChange,
   onInventoryRefresh,
-  onQueueRefresh
+  onQueueRefresh,
+  inventory = [],
+  tagRules = [],
+  tagSuggestions = [],
+  confirmTagFolderMoves = true,
+  loraFolder = '',
+  checkpointFolder = '',
+  fastTagMode = false,
+  onFastTagModeChange,
+  onSaveTagRules
 }: Props) {
   const t = useT()
   const queue = useDownloadQueue()
   const [detail, setDetail] = useState<CivitaiModelDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [reloadToken, setReloadToken] = useState(0)
   const [activeVersionId, setActiveVersionId] = useState(
     target.kind === 'library' ? target.record.versionId : target.versionId
   )
@@ -126,6 +160,11 @@ export function ModelDetailPage({
   const [previewSaveBusy, setPreviewSaveBusy] = useState(false)
   const [previewSaveMessage, setPreviewSaveMessage] = useState<string | null>(null)
   const [previewEpoch, setPreviewEpoch] = useState(0)
+  const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
+  const [fastTagMessage, setFastTagMessage] = useState<string | null>(null)
+  const [unavailableConfirmed, setUnavailableConfirmed] = useState(false)
+  const [missingHitCount, setMissingHitCount] = useState<number | null>(null)
+  const [allowRemote, setAllowRemote] = useState(() => !target.deferRemote)
 
   const modelId = target.kind === 'library' ? target.record.modelId : target.modelId
   const swarmPath =
@@ -169,6 +208,8 @@ export function ModelDetailPage({
     setActiveVersionId(target.kind === 'library' ? target.record.versionId : target.versionId)
     if (target.kind === 'library') setLibraryRecord(target.record)
     setVersionSort('default')
+    setAllowRemote(!target.deferRemote)
+    setReloadToken(0)
   }, [target])
 
   useEffect(() => {
@@ -183,23 +224,93 @@ export function ModelDetailPage({
 
   useEffect(() => {
     let cancelled = false
+    setUnavailableConfirmed(false)
+    setMissingHitCount(null)
+    void window.api.getMissingOne(modelId).then((row) => {
+      if (cancelled || !row) return
+      setUnavailableConfirmed(row.status === 'unavailable')
+      setMissingHitCount(row.hitCount)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [modelId, reloadToken, allowRemote])
+
+  useEffect(() => {
+    let cancelled = false
     setLoading(true)
     setError(null)
+    const localOnly = !allowRemote
     void window.api
-      .getModelDetail({ modelId, versionId: activeVersionId, domain, swarmPath })
+      .getModelDetail({
+        modelId,
+        versionId: activeVersionId,
+        domain,
+        swarmPath,
+        localOnly,
+        modelName:
+          target.kind === 'library'
+            ? target.record.modelName
+            : target.name,
+        previewUrl:
+          target.kind === 'library'
+            ? target.record.previewPath
+              ? window.api.toMediaUrl(target.record.previewPath)
+              : undefined
+            : target.previewUrl ?? target.previewUrls?.[0],
+        author: target.kind === 'library' ? target.record.author : undefined,
+        baseModel: target.kind === 'library' ? target.record.baseModel : undefined,
+        modelType: target.kind === 'library' ? target.record.modelType : undefined
+      })
       .then((d) => {
-        if (!cancelled) setDetail(d)
+        if (cancelled) return
+        setDetail(d)
+        setError(null)
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (cancelled) return
+        setDetail(null)
+        setError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (cancelled) return
+        setLoading(false)
+        void window.api.getMissingOne(modelId).then((row) => {
+          if (cancelled) return
+          setUnavailableConfirmed(row?.status === 'unavailable')
+          setMissingHitCount(row?.hitCount ?? null)
+        })
       })
     return () => {
       cancelled = true
     }
-  }, [modelId, activeVersionId, domain, swarmPath])
+  }, [modelId, activeVersionId, domain, swarmPath, reloadToken, target, allowRemote])
+
+  const retryLoad = useCallback(() => {
+    setAllowRemote(true)
+    setReloadToken((n) => n + 1)
+  }, [])
+
+  const friendlyError = useMemo(() => {
+    if (!error) return null
+    const msg = error
+      .replace(/^Error invoking remote method '[^']+':\s*/i, '')
+      .replace(/^Error:\s*/i, '')
+      .trim()
+    return msg || error
+  }, [error])
+
+  const errorLooksNotFound = Boolean(
+    friendlyError && (/\b404\b/.test(friendlyError) || /not found/i.test(friendlyError))
+  )
+
+  const hasLicenseInfo = Boolean(
+    detail &&
+      ((detail.license.commercialUse && detail.license.commercialUse !== '—') ||
+        detail.license.derivatives != null ||
+        detail.license.noCredit != null ||
+        detail.license.differentLicense != null)
+  )
 
   const activeVersionMeta = detail?.versions.find((v) => v.id === activeVersionId)
 
@@ -260,6 +371,66 @@ export function ModelDetailPage({
     const day = String(d.getDate()).padStart(2, '0')
     return `${y}-${m}-${day}`
   }
+
+  const canFastTag = Boolean(onSaveTagRules && onInventoryRefresh)
+  const onTagClick = useCallback(
+    (tag: string) => {
+      setFastTagMessage(null)
+      if (fastTagMode && canFastTag) {
+        setFastTagTarget(tag)
+        return
+      }
+      onOpenTagFolders?.(tag)
+    },
+    [fastTagMode, canFastTag, onOpenTagFolders]
+  )
+
+  const swarmDescription = detail?.swarmMeta?.description?.trim() || ''
+
+  const routingForTags =
+    libraryRecord?.routingTag?.trim() ||
+    ownedRecordForActive?.routingTag?.trim() ||
+    ''
+  const folderLabelForTags = useMemo(() => {
+    const rec = libraryRecord ?? ownedRecordForActive
+    if (!rec) return null
+    return shortCardFolderLabel(
+      rec.routingTag,
+      rec.baseModel || baseModelLabel,
+      tagRules,
+      loraFolder,
+      checkpointFolder
+    )
+  }, [
+    libraryRecord,
+    ownedRecordForActive,
+    baseModelLabel,
+    tagRules,
+    loraFolder,
+    checkpointFolder
+  ])
+
+  /** Civitai API tags + Library-saved tags (API list is often incomplete vs card chips). */
+  const displayTags = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    const push = (raw: string | undefined) => {
+      const name = raw?.trim()
+      if (!name) return
+      const key = name.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push(name)
+    }
+    for (const t of detail?.tags ?? []) push(t)
+    for (const t of libraryRecord?.civitaiTags ?? []) push(t)
+    for (const t of ownedRecordForActive?.civitaiTags ?? []) push(t)
+    // Folder route name (e.g. Fast-tag rename) may not be a Civitai tag — still show as final.
+    if (routingForTags && !isUnsortedRoutingTag(routingForTags)) {
+      if (!out.some((t) => tagsEqual(t, routingForTags))) push(routingForTags)
+    }
+    return out
+  }, [detail?.tags, libraryRecord?.civitaiTags, ownedRecordForActive?.civitaiTags, routingForTags])
 
   const sortedVersions = useMemo(
     () => (detail ? sortVersions(detail.versions, versionSort) : []),
@@ -433,14 +604,37 @@ export function ModelDetailPage({
     setBanBusy(true)
     setConfirmBan(false)
     try {
-      await window.api.banModel(modelId, title)
+      await window.api.banModel(modelId, title, {
+        modelName: title,
+        versionId: activeVersionId > 0 ? activeVersionId : undefined,
+        previewUrl:
+          activeVersionMeta?.previewUrl ?? detail?.versions?.[0]?.previewUrl ?? libraryRecord?.previewPath,
+        author: creatorLabel || undefined,
+        baseModel: baseModelLabel,
+        modelType: detail?.type,
+        sourceDomain: domain,
+        tags: detail?.tags
+      })
       setBanned(true)
       onBannedChange?.(modelId, true)
       await onInventoryRefresh?.()
     } finally {
       setBanBusy(false)
     }
-  }, [banBusy, modelId, title, onBannedChange, onInventoryRefresh])
+  }, [
+    banBusy,
+    modelId,
+    title,
+    activeVersionId,
+    detail,
+    activeVersionMeta,
+    libraryRecord,
+    creatorLabel,
+    baseModelLabel,
+    domain,
+    onBannedChange,
+    onInventoryRefresh
+  ])
 
   const runUnban = useCallback(async () => {
     if (banBusy || modelId <= 0) return
@@ -469,6 +663,14 @@ export function ModelDetailPage({
           <div className="model-detail-page-toolbar-title">
             <h2 title={title}>{title}</h2>
             {banned && <span className="model-detail-banned-badge">{t('modelDetail.banned')}</span>}
+            {unavailableConfirmed && (
+              <span
+                className="model-detail-unavailable-badge"
+                title={t('modelDetail.unavailableHint')}
+              >
+                {t('modelDetail.unavailable')}
+              </span>
+            )}
           </div>
         </div>
         <div className="model-detail-page-toolbar-actions">
@@ -596,6 +798,61 @@ export function ModelDetailPage({
               {previewSaveMessage && (
                 <p className="muted model-detail-preview-save-msg">{previewSaveMessage}</p>
               )}
+              {displayTags.length > 0 && (
+                <div className="model-detail-preview-tags">
+                  <div className="model-detail-preview-tags-head">
+                    <h4>{t('modelDetail.tags')}</h4>
+                    {onFastTagModeChange && canFastTag && (
+                      <button
+                        type="button"
+                        className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                        onClick={() => onFastTagModeChange(!fastTagMode)}
+                        title={t('gallery.fastTagModeTitle')}
+                        aria-pressed={fastTagMode}
+                      >
+                        {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
+                      </button>
+                    )}
+                  </div>
+                  <div className="model-detail-preview-tags-list">
+                    {displayTags.map((tag) => {
+                      const role = cardTagFolderRole(tag, {
+                        routingTag: routingForTags,
+                        folderLabel: folderLabelForTags,
+                        tagRules
+                      })
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          className={`tag-chip model-detail-tag-btn ${cardTagFolderRoleClass(role)}`}
+                          title={
+                            role === 'final'
+                              ? t('gallery.tagRoleFinalHint', { tag })
+                              : role === 'mapped'
+                                ? routingForTags?.trim()
+                                  ? t('gallery.tagRoleMappedHint', { tag })
+                                  : t('gallery.tagRoleMappedPendingHint', { tag })
+                                : fastTagMode && canFastTag
+                                  ? t('modelDetail.fastTagHint', { tag })
+                                  : onOpenTagFolders
+                                    ? t('gallery.tagRoleUnmappedHint', { tag })
+                                    : tag
+                          }
+                          disabled={!canFastTag && !onOpenTagFolders}
+                          onClick={() => onTagClick(tag)}
+                        >
+                          {tag}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="muted model-detail-tag-legend">{t('modelDetail.tagLegend')}</p>
+                  {fastTagMessage && (
+                    <p className="muted model-detail-preview-save-msg">{fastTagMessage}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="model-detail-page-info">
@@ -621,7 +878,39 @@ export function ModelDetailPage({
               {creatorLabel ? <p className="model-detail-author">{creatorLabel}</p> : null}
 
               {loading && <p className="muted">{t('modelDetail.loading')}</p>}
-              {error && <p className="model-detail-error">{error}</p>}
+              {!loading && (detail?.loadedOffline || (!allowRemote && detail)) ? (
+                <div className="model-detail-load-banner is-compact">
+                  <span className="muted model-detail-load-banner-text">
+                    {missingHitCount != null
+                      ? t('modelDetail.missingLocalHits', {
+                          count: missingHitCount,
+                          max: MAX_MISSING_CONFIRM_HITS
+                        })
+                      : t('modelDetail.offlineLocalShort')}
+                  </span>
+                  <button type="button" className="btn-sm" onClick={retryLoad}>
+                    {t('modelDetail.retryLoad')}
+                  </button>
+                </div>
+              ) : null}
+              {!loading && friendlyError && allowRemote ? (
+                <div className="model-detail-load-banner is-compact is-error">
+                  <span className="model-detail-error model-detail-load-banner-text">
+                    {errorLooksNotFound
+                      ? t('modelDetail.loadFailedShort')
+                      : `${t('modelDetail.loadFailed')}: ${friendlyError}`}
+                    {missingHitCount != null
+                      ? ` · ${t('modelDetail.missingHitsOnly', {
+                          count: missingHitCount,
+                          max: MAX_MISSING_CONFIRM_HITS
+                        })}`
+                      : ''}
+                  </span>
+                  <button type="button" className="btn-sm primary" onClick={retryLoad}>
+                    {t('modelDetail.retryLoad')}
+                  </button>
+                </div>
+              ) : null}
 
               {detail && (
                 <>
@@ -661,6 +950,7 @@ export function ModelDetailPage({
 
                   {detail.type ? <p className="muted model-detail-type-line">{detail.type}</p> : null}
 
+                  {hasLicenseInfo ? (
                   <section className="model-detail-section">
                     <h4>{t('modelDetail.license')}</h4>
                     <dl className="model-detail-dl">
@@ -692,6 +982,7 @@ export function ModelDetailPage({
                       </dd>
                     </dl>
                   </section>
+                  ) : null}
 
                   {detail.trainedWords && detail.trainedWords.length > 0 && (
                     <section className="model-detail-section">
@@ -701,56 +992,43 @@ export function ModelDetailPage({
                           <span className="muted model-detail-source"> {t('modelDetail.fromSwarm')}</span>
                         )}
                       </h4>
+                      <p className="muted model-detail-trigger-note">{t('modelDetail.triggerWordsNote')}</p>
                       <div className="model-detail-triggers">
                         {detail.trainedWords.map((w) => (
-                          <span key={w} className="tag-chip">
+                          <span key={w} className="model-detail-trigger-chip">
                             {w}
                           </span>
                         ))}
                       </div>
                     </section>
                   )}
-
-                  {detail.tags.length > 0 && (
-                    <div className="preview-modal-tags">
-                      {detail.tags.map((tag) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          className="tag-chip model-detail-tag-btn"
-                          title={
-                            onOpenTagFolders
-                              ? t('modelDetail.openTagFoldersHint', { tag })
-                              : tag
-                          }
-                          disabled={!onOpenTagFolders}
-                          onClick={() => onOpenTagFolders?.(tag)}
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </>
               )}
 
               {displayTarget.kind === 'library' && libraryRecord && (
                 <>
-                  {libraryRecord.routingTag ? (
-                    <span className="tag-chip selected">{libraryRecord.routingTag}</span>
-                  ) : (
-                    <span className="muted">{t('gallery.defaultFolder')}</span>
-                  )}
-                  {libraryRecord.routingLocked ? (
-                    <span
-                      className="gallery-manual-folder-badge model-detail-manual-badge"
-                      title={t('gallery.manualFolderHint', {
-                        folder: libraryRecord.routingTag || '—'
-                      })}
+                  {(folderLabelForTags || libraryRecord.routingLocked) && (
+                    <div
+                      className={`gallery-folder-line model-detail-folder-line ${folderLabelForTags ? 'is-assigned' : ''} ${libraryRecord.routingLocked ? 'is-manual' : ''}`}
+                      title={
+                        libraryRecord.routingLocked
+                          ? t('gallery.manualFolderHint', {
+                              folder: folderLabelForTags || libraryRecord.routingTag || '—'
+                            })
+                          : folderLabelForTags || undefined
+                      }
                     >
-                      {t('gallery.manualFolder')}
-                    </span>
-                  ) : null}
+                      <span className="muted model-detail-folder-label">{t('modelDetail.folderRoute')}</span>
+                      {folderLabelForTags ? (
+                        <span className="gallery-folder-path">{folderLabelForTags}</span>
+                      ) : (
+                        <span className="muted">{t('gallery.defaultFolder')}</span>
+                      )}
+                      {libraryRecord.routingLocked ? (
+                        <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
+                      ) : null}
+                    </div>
+                  )}
                   <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
                     {t('modelDetail.downloadedAt', {
                       when: new Date(libraryRecord.downloadedAt).toLocaleString()
@@ -869,8 +1147,46 @@ export function ModelDetailPage({
               </div>
             </aside>
           )}
+
+          {swarmDescription ? (
+            <section className="model-detail-page-description">
+              <h4>
+                {t('modelDetail.swarmDescription')}
+                {detail?.swarmMeta?.source === 'disk' ? (
+                  <span className="muted model-detail-source"> {t('modelDetail.swarmMetaDisk')}</span>
+                ) : detail?.swarmMeta ? (
+                  <span className="muted model-detail-source">
+                    {' '}
+                    {t('modelDetail.swarmMetaPreview')}
+                  </span>
+                ) : null}
+              </h4>
+              <pre className="model-detail-description-body">{swarmDescription}</pre>
+            </section>
+          ) : null}
         </div>
       </div>
+
+      {fastTagTarget != null && onSaveTagRules && onInventoryRefresh && (
+        <FastTagAssignModal
+          tag={fastTagTarget}
+          tagRules={tagRules}
+          inventory={inventory}
+          tagSuggestions={tagSuggestions}
+          confirmTagFolderMoves={confirmTagFolderMoves}
+          loraFolder={loraFolder}
+          checkpointFolder={checkpointFolder}
+          onClose={() => setFastTagTarget(null)}
+          onSaveTagRules={onSaveTagRules}
+          onRefresh={async () => {
+            await onInventoryRefresh()
+          }}
+          onDone={(msg) => {
+            setFastTagMessage(msg)
+            setFastTagTarget(null)
+          }}
+        />
+      )}
 
       {confirmBan && (
         <ConfirmModal

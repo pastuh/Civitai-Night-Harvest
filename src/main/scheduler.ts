@@ -9,10 +9,12 @@ import type {
   AppStatus,
   CivitaiDomain,
   CrawlPagePayload,
+  HiddenTagApplyProgress,
   PendingVersion,
   RuleQueueAllResult,
   ScanResult,
   LibraryVersionScanResult,
+  TagSkipReview,
   WatchRule,
   WatchRuleTestModel,
   WatchRuleTestResult
@@ -28,12 +30,13 @@ import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
-import { modelHasHiddenTag } from '../shared/tag-routing'
+import { firstPolicyMatch, modelHasPolicyTag } from '../shared/tag-routing'
+import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { sendToRenderer } from './window-notify'
 import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, modelMatchesRuleKeywords } from '../shared/utils'
 import { watchRuleCrawlSignature, watchRulesCrawlChanged } from '../shared/watch-rule-crawl'
-import { syncInventoryWithDiskAsync, wasLibrarySyncedRecently } from './library-sync'
 import { recheckIncompleteModels, emitIncompleteList } from './incomplete-resolve'
+import { emitMissingList, recheckMissingModels } from './missing-models'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -287,55 +290,292 @@ export class ScanScheduler {
     return total
   }
 
-  /** Re-check browse gallery after blocked-tag list changes (unblock → show + queue again). */
-  onHiddenTagsChanged(previous: string[], next: string[]): void {
-    const prevLower = new Set(previous.map((t) => t.toLowerCase()))
-    const nextLower = new Set(next.map((t) => t.toLowerCase()))
-    const unblocked = previous.filter((t) => !nextLower.has(t.toLowerCase()))
-    const blocked = next.filter((t) => !prevLower.has(t.toLowerCase()))
-
-    if (blocked.length) {
-      const removed = this.downloadQueue.purgeHiddenTags(next)
-      if (removed > 0) {
-        this.log('info', `Blocked tag(s): removed ${removed} item(s) from download queue`, undefined, {
-          source: 'system'
-        })
-      }
+  /**
+   * Queue models previously held as tag-skip reviews (e.g. after Unblock tag).
+   * Uses manual enqueue when Manual Queue Mode is on so they still enter the pipeline.
+   */
+  private queueFormerTagSkipReviews(
+    reviews: TagSkipReview[],
+    opts: { manual: boolean }
+  ): number {
+    let queued = 0
+    for (const r of reviews) {
+      const versionId = r.versionId
+      if (!r.modelId || r.modelId <= 0 || !versionId || versionId <= 0) continue
+      if (inventory.isModelBanned(r.modelId)) continue
+      if (inventory.hasVersion(versionId)) continue
+      const id = this.downloadQueue.enqueue(
+        {
+          modelId: r.modelId,
+          versionId,
+          sourceDomain: r.sourceDomain
+        },
+        {
+          modelName: r.modelName,
+          modelType: r.modelType,
+          baseModel: r.baseModel,
+          author: r.author,
+          previewUrl: r.previewUrl,
+          civitaiTags: r.tags,
+          manual: opts.manual
+        }
+      )
+      if (id) queued++
     }
+    if (queued > 0 && !this.downloadQueue.getState().paused) {
+      this.downloadQueue.start()
+    }
+    return queued
+  }
 
-    if (previous.length === next.length && unblocked.length === 0 && blocked.length === 0) {
+  /**
+   * After pause (hiddenTags) and/or permanent ban (bannedTags) lists change:
+   * purge queue, record Missing reviews, re-queue on unblock.
+   */
+  async onTagPolicyChanged(
+    previous: { paused: string[]; banned: string[] },
+    next: { paused: string[]; banned: string[] }
+  ): Promise<void> {
+    const prevPaused = new Set(previous.paused.map((t) => t.toLowerCase()))
+    const nextPaused = new Set(next.paused.map((t) => t.toLowerCase()))
+    const prevBanned = new Set(previous.banned.map((t) => t.toLowerCase()))
+    const nextBanned = new Set(next.banned.map((t) => t.toLowerCase()))
+
+    const newlyPaused = next.paused.filter((t) => !prevPaused.has(t.toLowerCase()))
+    const newlyBanned = next.banned.filter((t) => !prevBanned.has(t.toLowerCase()))
+    const unpaused = previous.paused.filter((t) => !nextPaused.has(t.toLowerCase()))
+    const unbanned = previous.banned.filter((t) => !nextBanned.has(t.toLowerCase()))
+    const fullyRemoved = [
+      ...unpaused.filter((t) => !nextBanned.has(t.toLowerCase())),
+      ...unbanned.filter((t) => !nextPaused.has(t.toLowerCase()))
+    ]
+    const newlyBlocked = [...newlyPaused, ...newlyBanned]
+
+    if (
+      newlyPaused.length === 0 &&
+      newlyBanned.length === 0 &&
+      unpaused.length === 0 &&
+      unbanned.length === 0
+    ) {
       return
     }
 
-    const galleryModels = this.refreshBrowseGalleryUi()
-    if (!unblocked.length) return
+    const emitProgress = (
+      partial: Partial<HiddenTagApplyProgress> & Pick<HiddenTagApplyProgress, 'phase' | 'message'>
+    ) => {
+      const payload: HiddenTagApplyProgress = {
+        phase: partial.phase,
+        tags: partial.tags ?? newlyBlocked,
+        scanned: partial.scanned ?? 0,
+        total: partial.total ?? 0,
+        matched: partial.matched ?? 0,
+        purged: partial.purged ?? 0,
+        staleRemoved: partial.staleRemoved ?? 0,
+        message: partial.message
+      }
+      sendToRenderer(this.window, 'hiddenTags:applyProgress', payload)
+    }
 
-    const tagLabel = unblocked.join(', ')
-    if (shouldCrawlAutoDownload()) {
-      const filled = this.fillBrowseDownloadPipeline('system', true)
-      if (filled > 0) {
-        this.log(
-          'info',
-          `Unblocked tag(s) [${tagLabel}]: queued ${filled} model(s) from browse gallery (${galleryModels} checked)`,
-          undefined,
-          { source: 'system' }
-        )
+    let purged = 0
+    let matched = 0
+    let staleRemoved = 0
+    let scanned = 0
+    let total = 0
+
+    if (newlyBlocked.length) {
+      emitProgress({
+        phase: 'purge',
+        tags: newlyBlocked,
+        message: `Removing queue items matching: ${newlyBlocked.join(', ')}…`
+      })
+      purged = this.downloadQueue.purgeHiddenTags([...next.paused, ...next.banned])
+      if (purged > 0) {
+        this.log('info', `Tag policy: removed ${purged} item(s) from download queue`, undefined, {
+          source: 'system'
+        })
+      }
+
+      const gallery = this.crawlBrowseModels()
+      total = gallery.length
+      emitProgress({
+        phase: 'scan',
+        tags: newlyBlocked,
+        scanned: 0,
+        total,
+        purged,
+        message: `Scanning browse gallery for tag policy (${total} models)…`
+      })
+
+      for (const m of gallery) {
+        scanned++
+        const hit = firstPolicyMatch(m.tags ?? [], newlyPaused, newlyBanned)
+        if (hit) {
+          inventory.recordTagSkipReview({
+            modelId: m.id,
+            versionId: m.versionId,
+            modelName: m.name,
+            modelType: m.type,
+            author: m.creator || '',
+            baseModel: m.baseModel || '',
+            previewUrl: m.previewUrl,
+            pageUrl: m.pageUrl,
+            sourceDomain: m.sourceDomain,
+            tags: m.tags ?? [],
+            blockedTag: hit.policyTag,
+            matchedModelTag: hit.modelTag,
+            policy: hit.kind
+          })
+          matched++
+        }
+        if (scanned % 40 === 0 || scanned === total) {
+          emitProgress({
+            phase: 'scan',
+            tags: newlyBlocked,
+            scanned,
+            total,
+            matched,
+            purged,
+            message: `Scanning gallery… ${scanned}/${total} · ${matched} matched`
+          })
+          await sleep(0)
+        }
+      }
+
+      emitProgress({
+        phase: 'cleanup',
+        tags: newlyBlocked,
+        scanned,
+        total,
+        matched,
+        purged,
+        message: 'Removing stale tag skips…'
+      })
+      staleRemoved = inventory.pruneStaleTagSkipReviews(next.paused, next.banned)
+      emitMissingList(this.window)
+    }
+
+    if (fullyRemoved.length) {
+      const formerSkips = inventory
+        .getAllTagSkipReviews()
+        .filter((row) => fullyRemoved.some((t) => tagAliasMatch(t, row.blockedTag)))
+      inventory.removeTagSkipReviewsForTags(fullyRemoved)
+      emitMissingList(this.window)
+
+      let queuedFromSkips = 0
+      if (shouldCrawlAutoDownload()) {
+        queuedFromSkips = this.queueFormerTagSkipReviews(formerSkips, {
+          manual: !shouldAutoQueue()
+        })
+      }
+
+      emitProgress({
+        phase: 'refresh',
+        tags: fullyRemoved,
+        scanned,
+        total,
+        matched: queuedFromSkips,
+        purged,
+        staleRemoved,
+        message: 'Refreshing Browse gallery…'
+      })
+      const galleryModels = this.refreshBrowseGalleryUi()
+      const tagLabel = fullyRemoved.join(', ')
+      if (shouldCrawlAutoDownload()) {
+        const filled = this.fillBrowseDownloadPipeline('system', true)
+        const totalQueued = queuedFromSkips + filled
+        if (totalQueued > 0) {
+          const parts: string[] = []
+          if (queuedFromSkips) parts.push(`${queuedFromSkips} from Missing`)
+          if (filled) parts.push(`${filled} from browse`)
+          this.log(
+            'info',
+            `Removed tag policy [${tagLabel}]: queued ${totalQueued} model(s)` +
+              (parts.length ? ` (${parts.join(', ')})` : '') +
+              ` · ${galleryModels} browse checked`,
+            undefined,
+            { source: 'system' }
+          )
+        } else {
+          this.log(
+            'info',
+            `Removed tag policy [${tagLabel}]: re-checked ${galleryModels} model(s) in browse gallery`,
+            undefined,
+            { source: 'system' }
+          )
+        }
       } else {
         this.log(
           'info',
-          `Unblocked tag(s) [${tagLabel}]: re-checked ${galleryModels} model(s) in browse gallery`,
+          `Removed tag policy [${tagLabel}]: browse refreshed (${galleryModels} models; Auto download off)`,
           undefined,
           { source: 'system' }
         )
       }
-    } else {
+
+      emitProgress({
+        phase: 'done',
+        tags: fullyRemoved,
+        scanned,
+        total,
+        matched: queuedFromSkips,
+        purged,
+        staleRemoved,
+        message: `Done — removed ${tagLabel}${
+          queuedFromSkips ? ` · queued ${queuedFromSkips}` : ''
+        }`
+      })
+      return
+    }
+
+    if (unpaused.length || unbanned.length || newlyPaused.length || newlyBanned.length) {
+      staleRemoved += inventory.pruneStaleTagSkipReviews(next.paused, next.banned)
+      emitMissingList(this.window)
+    }
+
+    emitProgress({
+      phase: 'refresh',
+      tags: newlyBlocked,
+      scanned,
+      total,
+      matched,
+      purged,
+      staleRemoved,
+      message: 'Refreshing Browse gallery…'
+    })
+    this.refreshBrowseGalleryUi()
+
+    if (newlyBlocked.length) {
       this.log(
         'info',
-        `Unblocked tag(s) [${tagLabel}]: browse gallery refreshed (${galleryModels} model(s) visible again)`,
+        `Tag policy [${newlyBlocked.join(', ')}]: purged ${purged} queue, recorded ${matched} for Missing, removed ${staleRemoved} stale`,
         undefined,
         { source: 'system' }
       )
     }
+
+    emitProgress({
+      phase: 'done',
+      tags: newlyBlocked,
+      scanned,
+      total,
+      matched,
+      purged,
+      staleRemoved,
+      message: newlyBlocked.length
+        ? `Done — ${matched} models for Missing review, ${purged} removed from queue${staleRemoved ? `, ${staleRemoved} stale cleared` : ''}`
+        : 'Done — tag policy updated'
+    })
+  }
+
+  /** Pause-only wrapper — prefer onTagPolicyChanged. */
+  async onHiddenTagsChanged(previous: string[], next: string[]): Promise<void> {
+    const banned = getSettings().bannedTags ?? []
+    await this.onTagPolicyChanged({ paused: previous, banned }, { paused: next, banned })
+  }
+
+  /** Public browse-gallery snapshot for enrichment / UI helpers. */
+  getBrowseGalleryModels(ruleId?: string): WatchRuleTestModel[] {
+    return this.crawlBrowseModels(ruleId)
   }
 
   /** Build merged browse gallery for UI (all enabled rules). */
@@ -595,6 +835,37 @@ export class ScanScheduler {
   private libraryVersionScanTimer: ReturnType<typeof setTimeout> | null = null
   /** True while Harvest is in peek-only wait (catalogs done) — library version poll may run then. */
   private harvestPeekIdle = false
+  /** One Missing API recheck per app session (with first library model fetch — not harvest). */
+  private missingRecheckedThisSession = false
+
+  /**
+   * Probe Missing (Suspect + Unavailable) once after launch, alongside the first
+   * library version fetch — keeps harvest scans free of extra /models/{id} traffic.
+   */
+  private async recheckMissingOnceThisSession(): Promise<void> {
+    if (this.missingRecheckedThisSession) return
+    this.missingRecheckedThisSession = true
+    const items = inventory.getAllMissingModels()
+    if (!items.length) return
+    this.log(
+      'info',
+      `Missing check: probing ${items.length} model(s) (startup / first library fetch)…`,
+      undefined,
+      { source: 'library' }
+    )
+    try {
+      const result = await recheckMissingModels(this.pool, this.getWindow)
+      this.log(
+        'success',
+        `Missing check done — ${result.checked} checked, ${result.recovered} recovered, ${result.confirmed} unavailable`,
+        undefined,
+        { source: 'library' }
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.log('warn', `Missing check failed: ${msg}`, undefined, { source: 'library' })
+    }
+  }
 
   /**
    * One Civitai GET /models/{id} per owned model (not SHA256). Slow on large libraries —
@@ -615,10 +886,18 @@ export class ScanScheduler {
       this.scheduleBackgroundLibraryVersionScan(60_000)
       return
     }
-    if (!outputFoldersConfigured()) return
-    if (inventory.getAllVersions().length === 0) return
+    if (!outputFoldersConfigured()) {
+      await this.recheckMissingOnceThisSession()
+      return
+    }
+    if (inventory.getAllVersions().length === 0) {
+      await this.recheckMissingOnceThisSession()
+      return
+    }
     const now = Date.now()
     if (this.lastLibraryVersionScanAt > 0 && now - this.lastLibraryVersionScanAt < minIntervalMs) {
+      // Library cooldown — still probe Missing once this session (Unavailable won't be harvested).
+      await this.recheckMissingOnceThisSession()
       return
     }
     await this.runLibraryVersionScan()
@@ -638,6 +917,7 @@ export class ScanScheduler {
 
     const owned = inventory.getAllVersions()
     if (!owned.length) {
+      await this.recheckMissingOnceThisSession()
       this.log('info', 'Library version check: no models in library yet', undefined, { source: 'library' })
       return { modelsChecked: 0, modelsSkipped: 0, newVersions: 0, upToDate: 0, errors: [] }
     }
@@ -657,6 +937,7 @@ export class ScanScheduler {
     )
 
     try {
+      await this.recheckMissingOnceThisSession()
       const result = await scanOwnedModelsForNewVersions(
         this.pool,
         this.downloadQueue,
@@ -761,24 +1042,16 @@ export class ScanScheduler {
       if (!reach.ok) {
         this.log('error', reach.message, undefined, { source: 'system' })
         this.downloadQueue.pause()
+        sendToRenderer(this.getWindow, 'app:storageError', reach.message)
       } else {
-        try {
-          // UI startup already walks disk under the busy popup — do not repeat that scan.
-          if (wasLibrarySyncedRecently()) {
-            this.log('info', 'Library disk sync skipped — already completed during startup popup', undefined, {
-              source: 'system'
-            })
-            this.downloadQueue.syncWithInventory()
-          } else {
-            await syncInventoryWithDiskAsync((p) => {
-              this.emit('library:syncProgress', p)
-            })
-            this.downloadQueue.syncWithInventory()
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          this.log('warn', `Library sync before crawl failed: ${msg}`, undefined, { source: 'system' })
-        }
+        // Full folder walk is Settings → Sync library from disk only (not every app launch).
+        this.downloadQueue.syncWithInventory()
+        this.log(
+          'info',
+          'Library disk sync skipped on startup — use Settings → Sync library from disk when needed',
+          undefined,
+          { source: 'system' }
+        )
       }
     }
     this.downloadQueue.purgeBrowseSessionOnStartup()
@@ -1151,7 +1424,9 @@ export class ScanScheduler {
   }
 
   private browseGalleryStats(models: WatchRuleTestModel[]): import('../shared/types').BrowseGalleryStats {
-    const hidden = getSettings().hiddenTags ?? []
+    const settings = getSettings()
+    const paused = settings.hiddenTags ?? []
+    const banned = settings.bannedTags ?? []
     const ownedModelIds = new Set(
       inventory.getAllVersions().map((r) => r.modelId).filter((id) => id > 0)
     )
@@ -1170,7 +1445,10 @@ export class ScanScheduler {
         excluded++
         continue
       }
-      if (modelHasHiddenTag(m.tags ?? [], hidden)) {
+      if (
+        !inventory.isTagSkipAllowed(m.id) &&
+        modelHasPolicyTag(m.tags ?? [], paused, banned)
+      ) {
         skipTag++
         continue
       }

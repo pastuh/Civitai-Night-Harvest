@@ -13,7 +13,7 @@ import type {
   TagFolderRule
 } from '../shared/types'
 import { extractModelFileMeta, buildModelSlug, pickPrimaryFile, resolveUniqueSlug, resolveUniqueSlugForVersion, resolveVersionPreviewCandidates } from '../shared/utils'
-import { resolveModelOutputFolder } from '../shared/tag-routing'
+import { resolveModelOutputFolder, UNSORTED_FOLDER_NAME } from '../shared/tag-routing'
 import { findRuleForTag } from '../shared/tag-routing'
 import {
   resolveDownloadDomainForVersion,
@@ -264,6 +264,15 @@ export class DownloadService {
         }
       }
 
+      if (!request.force && inventory.isMissingUnavailable(request.modelId)) {
+        return {
+          status: 'skipped',
+          reason: 'Unavailable on Civitai (Missing) — use Retry in Missing tab',
+          modelId: request.modelId,
+          versionId: request.versionId ?? 0
+        }
+      }
+
       if (request.versionId && !request.force && inventory.hasVersion(request.versionId)) {
         return {
           status: 'skipped',
@@ -379,8 +388,7 @@ export class DownloadService {
         }
       }
 
-      const routingTag =
-        request.routingTag?.trim() || version.baseModel?.trim() || undefined
+      const routingTag = request.routingTag?.trim() || UNSORTED_FOLDER_NAME
       const outputFolder = resolveOutputFolder(
         { ...request, routingTag },
         tagRules,

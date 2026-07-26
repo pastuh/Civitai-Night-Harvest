@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 
 interface Props {
   title: string
@@ -9,6 +9,7 @@ interface Props {
   /** Extra controls next to the title (e.g. Ban ×). Clicks do not open the card. */
   titleActions?: ReactNode
   onOpen?: () => void
+  onContextMenu?: (e: MouseEvent) => void
   /** Action buttons under the card body. Omit when title actions cover everything. */
   actions?: ReactNode
   className?: string
@@ -23,12 +24,14 @@ export function StatusModelCard({
   actions,
   titleActions,
   onOpen,
+  onContextMenu,
   className
 }: Props) {
   return (
     <div
       className={`gallery-card status-gallery-card${onOpen ? ' status-model-card-clickable' : ''}${className ? ` ${className}` : ''}`}
       onClick={onOpen}
+      onContextMenu={onContextMenu}
       onKeyDown={
         onOpen
           ? (e) => {

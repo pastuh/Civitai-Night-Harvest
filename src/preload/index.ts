@@ -25,6 +25,10 @@ import type {
   DeferredDownload,
   IncompleteModel,
   IncompleteDownloadResult,
+  MissingModel,
+  ExclusionReviewItem,
+  BanModelStub,
+  HiddenTagApplyProgress,
   ScanResult,
   LibraryVersionScanProgress,
   LibraryVersionScanResult,
@@ -102,6 +106,13 @@ const api = {
   ): Promise<{ moved: number; skipped: number; queueUpdated: number; versionIds: number[] }> =>
     ipcRenderer.invoke('inventory:assignByCivitaiTag', { civitaiTag, routingTag }),
 
+  reconcileTagFolders: (): Promise<{
+    moved: number
+    skipped: number
+    queueUpdated: number
+    versionIds: number[]
+  }> => ipcRenderer.invoke('inventory:reconcileTagFolders'),
+
   deleteInventoryVersion: (
     versionId: number,
     options?: { ban?: boolean }
@@ -126,6 +137,13 @@ const api = {
     versionId: number
     domain?: CivitaiDomain
     swarmPath?: string
+    modelName?: string
+    previewUrl?: string
+    author?: string
+    baseModel?: string
+    modelType?: string
+    /** Skip Civitai API — library/swarm only (Missing tab open until Retry). */
+    localOnly?: boolean
   }): Promise<CivitaiModelDetail> => ipcRenderer.invoke('model:getDetail', payload),
 
   verifyLibraryHashes: (options?: {
@@ -218,10 +236,30 @@ const api = {
   }): Promise<{ status: string; modelId: number; versionId: number }> =>
     ipcRenderer.invoke('pending:approve', payload),
   ignoreModel: (modelId: number): Promise<void> => ipcRenderer.invoke('pending:ignore', modelId),
-  banModel: (modelId: number, modelName?: string): Promise<{ modelId: number; deletedVersions: number }> =>
-    ipcRenderer.invoke('model:ban', { modelId, modelName }),
-  unbanModel: (modelId: number) => ipcRenderer.invoke('model:unban', modelId),
+  banModel: (
+    modelId: number,
+    modelName?: string,
+    stub?: BanModelStub
+  ): Promise<{ modelId: number; deletedVersions: number }> =>
+    ipcRenderer.invoke('model:ban', { modelId, modelName, ...stub }),
+  forgetModel: (
+    modelId: number,
+    modelName?: string,
+    stub?: BanModelStub
+  ): Promise<{ modelId: number; deletedVersions: number }> =>
+    ipcRenderer.invoke('model:forget', { modelId, modelName, ...stub }),
+  unbanModel: (modelId: number): Promise<{ modelId: number; queued?: boolean }> =>
+    ipcRenderer.invoke('model:unban', modelId),
   getBannedModels: () => ipcRenderer.invoke('model:getBanned'),
+  getExclusions: (): Promise<ExclusionReviewItem[]> => ipcRenderer.invoke('exclusions:get'),
+  dismissTagSkip: (modelId: number): Promise<ExclusionReviewItem[]> =>
+    ipcRenderer.invoke('exclusions:dismissTagSkip', modelId),
+  allowTagSkip: (
+    modelId: number
+  ): Promise<{ modelId: number; queued: boolean; items: ExclusionReviewItem[] }> =>
+    ipcRenderer.invoke('exclusions:allowTagSkip', modelId),
+  acknowledgeTagSkip: (modelId: number): Promise<ExclusionReviewItem[]> =>
+    ipcRenderer.invoke('exclusions:acknowledgeTagSkip', modelId),
   setModelAutoUpdate: (modelId: number, enabled: boolean, modelName?: string) =>
     ipcRenderer.invoke('model:setAutoUpdate', { modelId, enabled, modelName }),
   getAutoUpdateModels: () => ipcRenderer.invoke('model:getAutoUpdate'),
@@ -257,6 +295,22 @@ const api = {
   > => ipcRenderer.invoke('incomplete:download', payload),
   dismissIncomplete: (modelId: number): Promise<IncompleteModel[]> =>
     ipcRenderer.invoke('incomplete:dismiss', modelId),
+
+  getMissing: (): Promise<MissingModel[]> => ipcRenderer.invoke('missing:get'),
+  getMissingOne: (modelId: number): Promise<MissingModel | null> =>
+    ipcRenderer.invoke('missing:getOne', modelId),
+  recheckMissing: (
+    opts?: { onlySuspect?: boolean }
+  ): Promise<{
+    checked: number
+    recovered: number
+    confirmed: number
+    items: MissingModel[]
+  }> => ipcRenderer.invoke('missing:recheck', opts),
+  dismissMissing: (modelId: number): Promise<MissingModel[]> =>
+    ipcRenderer.invoke('missing:dismiss', modelId),
+  acknowledgeMissing: (modelId: number): Promise<MissingModel[]> =>
+    ipcRenderer.invoke('missing:acknowledge', modelId),
 
   toMediaUrl: (filePath: string): string => `media://${encodeURIComponent(filePath)}`,
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showInFolder', filePath),
@@ -306,6 +360,21 @@ const api = {
     const handler = (_: unknown, items: IncompleteModel[]) => cb(items)
     ipcRenderer.on('incomplete:list', handler)
     return () => ipcRenderer.removeListener('incomplete:list', handler)
+  },
+  onMissingList: (cb: (items: MissingModel[]) => void) => {
+    const handler = (_: unknown, items: MissingModel[]) => cb(items)
+    ipcRenderer.on('missing:list', handler)
+    return () => ipcRenderer.removeListener('missing:list', handler)
+  },
+  onExclusionsList: (cb: (items: ExclusionReviewItem[]) => void) => {
+    const handler = (_: unknown, items: ExclusionReviewItem[]) => cb(items)
+    ipcRenderer.on('exclusions:list', handler)
+    return () => ipcRenderer.removeListener('exclusions:list', handler)
+  },
+  onHiddenTagApplyProgress: (cb: (payload: HiddenTagApplyProgress) => void) => {
+    const handler = (_: unknown, payload: HiddenTagApplyProgress) => cb(payload)
+    ipcRenderer.on('hiddenTags:applyProgress', handler)
+    return () => ipcRenderer.removeListener('hiddenTags:applyProgress', handler)
   },
   onScanComplete: (cb: (r: ScanResult[]) => void) => {
     const handler = (_: unknown, r: ScanResult[]) => cb(r)

@@ -20,11 +20,12 @@ import {
 import { formatWaitDuration } from '../shared/utils'
 import {
   shouldPromptTagAssignment,
-  modelHasHiddenTag,
+  modelHasPolicyTag,
   findRuleForTag,
   normalizeHiddenTags,
   pickBestMatchingFolderTag,
-  queueItemBlockedByHiddenTags,
+  queueItemBlockedByPolicyTags,
+  effectiveSkipTags,
   resolveModelOutputFolder
 } from '../shared/tag-routing'
 import { pickNextQueuedItem } from '../shared/download-queue-order'
@@ -39,6 +40,7 @@ function countAutoPipelineItems(items: DownloadQueueItem[]): number {
   ).length
 }
 import * as inventory from './inventory'
+import { clearMissingModel, noteMissingModel404 } from './missing-models'
 import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getTagRules, getWatchRules } from './settings-store'
 import { sendToRenderer } from './window-notify'
@@ -335,11 +337,16 @@ export class DownloadQueue {
       return shouldAutoRetryDeferred(d, hasApiKey)
     }
 
-    const hiddenTags = getSettings().hiddenTags ?? []
+    const settings = getSettings()
+    const pausedTags = settings.hiddenTags ?? []
+    const bannedTags = settings.bannedTags ?? []
 
     for (const item of this.items) {
       if (item.status !== 'deferred') continue
-      if (queueItemBlockedByHiddenTags(item, hiddenTags)) {
+      if (
+        !inventory.isTagSkipAllowed(item.modelId) &&
+        queueItemBlockedByPolicyTags(item, pausedTags, bannedTags)
+      ) {
         this.items = this.items.filter((i) => i.id !== item.id)
         inventory.removeDeferredDownload(item.versionId)
         continue
@@ -347,6 +354,9 @@ export class DownloadQueue {
       if (inventory.isModelBanned(item.modelId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
+      if (!manual && inventory.isMissingUnavailable(item.modelId)) {
         continue
       }
       if (inventory.hasVersion(item.versionId)) {
@@ -369,7 +379,10 @@ export class DownloadQueue {
     }
 
     for (const d of inventory.getAllDeferredDownloads()) {
-      if (queueItemBlockedByHiddenTags({ civitaiTags: [], routingTag: d.routingTag }, hiddenTags)) {
+      if (
+        !inventory.isTagSkipAllowed(d.modelId) &&
+        queueItemBlockedByPolicyTags({ civitaiTags: [], routingTag: d.routingTag }, pausedTags, bannedTags)
+      ) {
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
@@ -377,6 +390,7 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
+      if (!manual && inventory.isMissingUnavailable(d.modelId)) continue
       if (inventory.hasVersion(d.versionId)) {
         inventory.removeDeferredDownload(d.versionId)
         continue
@@ -557,6 +571,8 @@ export class DownloadQueue {
     if (request.modelId <= 0) return ''
     if (request.versionId != null && request.versionId <= 0) return ''
     if (inventory.isModelBanned(request.modelId)) return ''
+    // Unavailable Missing: block auto harvest; allow explicit manual queue / Retry.
+    if (meta.manual !== true && inventory.isMissingUnavailable(request.modelId)) return ''
     if (request.versionId && inventory.hasVersion(request.versionId)) return ''
     const settings = getSettings()
     if (settings.manualQueueMode && meta.manual !== true) return ''
@@ -566,10 +582,12 @@ export class DownloadQueue {
     if (meta.manual !== true && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
       return ''
     }
-    const hiddenTags = settings.hiddenTags ?? []
+    const pausedTags = settings.hiddenTags ?? []
+    const bannedTags = settings.bannedTags ?? []
     if (
       meta.manual !== true &&
-      modelHasHiddenTag(meta.civitaiTags ?? [], hiddenTags)
+      !inventory.isTagSkipAllowed(request.modelId) &&
+      modelHasPolicyTag(meta.civitaiTags ?? [], pausedTags, bannedTags)
     ) {
       return ''
     }
@@ -642,16 +660,25 @@ export class DownloadQueue {
     return id
   }
 
-  /** Drop queue/deferred rows whose Civitai or routing tags match hidden tag list. */
-  purgeHiddenTags(hiddenTags?: string[]): number {
-    const tags = normalizeHiddenTags(hiddenTags ?? getSettings().hiddenTags)
-    if (!tags.length) return 0
+  /** Drop queue/deferred rows whose Civitai or routing tags match pause/ban tag lists. */
+  purgeHiddenTags(skipTags?: string[]): number {
+    const settings = getSettings()
+    const paused = settings.hiddenTags ?? []
+    const banned = settings.bannedTags ?? []
+    const explicit = skipTags != null ? normalizeHiddenTags(skipTags) : null
+    if (explicit ? !explicit.length : !effectiveSkipTags(paused, banned).length) return 0
+
+    const isBlocked = (item: { civitaiTags?: string[]; routingTag?: string; modelId?: number }) => {
+      if (item.modelId && inventory.isTagSkipAllowed(item.modelId)) return false
+      if (explicit) return queueItemBlockedByPolicyTags(item, explicit, [])
+      return queueItemBlockedByPolicyTags(item, paused, banned)
+    }
 
     let removed = 0
     for (const item of [...this.items]) {
       if (item.status === 'done' || item.status === 'skipped') continue
       if (item.manual) continue
-      if (!queueItemBlockedByHiddenTags(item, tags)) continue
+      if (!isBlocked(item)) continue
       if (item.status === 'downloading') {
         if (item.versionId) this.downloadService.cancel(item.versionId)
         else this.downloadService.cancelByModelId(item.modelId)
@@ -662,7 +689,7 @@ export class DownloadQueue {
     }
 
     for (const d of inventory.getAllDeferredDownloads()) {
-      if (!queueItemBlockedByHiddenTags({ civitaiTags: [], routingTag: d.routingTag }, tags)) continue
+      if (!isBlocked({ civitaiTags: [], routingTag: d.routingTag, modelId: d.modelId })) continue
       inventory.removeDeferredDownload(d.versionId)
       removed++
     }
@@ -1036,11 +1063,21 @@ export class DownloadQueue {
 
   /** Ensure deferred_downloads rows also appear in the download queue as planned items. */
   private mergeDeferredIntoQueue(): void {
-    const hiddenTags = getSettings().hiddenTags ?? []
+    const settings = getSettings()
+    const pausedTags = settings.hiddenTags ?? []
+    const bannedTags = settings.bannedTags ?? []
     for (const d of inventory.getAllDeferredDownloads()) {
       if (inventory.hasVersion(d.versionId)) continue
       if (inventory.isModelBanned(d.modelId)) continue
-      if (queueItemBlockedByHiddenTags({ civitaiTags: [], routingTag: d.routingTag }, hiddenTags)) {
+      if (inventory.isMissingUnavailable(d.modelId)) continue
+      if (
+        !inventory.isTagSkipAllowed(d.modelId) &&
+        queueItemBlockedByPolicyTags(
+          { civitaiTags: [], routingTag: d.routingTag },
+          pausedTags,
+          bannedTags
+        )
+      ) {
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
@@ -1497,6 +1534,7 @@ export class DownloadQueue {
         const deferredEntry = inventory.getDeferredDownload(item.versionId)
         inventory.removeDeferredDownload(item.versionId)
         this.emitDeferred()
+        clearMissingModel(this.getWindow, item.modelId)
         if (deferredEntry?.failureKind === 'early_access' && deferredEntry.deferredAt && item.completedAt) {
           const wait = formatWaitDuration(deferredEntry.deferredAt, item.completedAt)
           logItem(
@@ -1534,6 +1572,12 @@ export class DownloadQueue {
         this.broadcast()
         this.items = this.items.filter((i) => i.id !== item.id)
       } else if (result.status === 'deferred') {
+        const priorDeferred =
+          item.versionId > 0 ? inventory.getDeferredDownload(item.versionId) : null
+        const fromEarlyAccess =
+          result.failureKind === 'early_access' ||
+          item.failureKind === 'early_access' ||
+          priorDeferred?.failureKind === 'early_access'
         item.status = 'deferred'
         item.reason = result.reason
         item.failureKind = result.failureKind
@@ -1551,6 +1595,20 @@ export class DownloadQueue {
           earlyAccessEndsAt: result.earlyAccessEndsAt
         })
         this.emitDeferred()
+        if (result.failureKind === 'not_found') {
+          noteMissingModel404(this.getWindow, {
+            modelId: item.modelId,
+            versionId: item.versionId,
+            modelName: item.modelName,
+            modelType: item.modelType,
+            author: item.author,
+            baseModel: item.baseModel,
+            previewUrl: item.previewUrl,
+            sourceDomain: item.sourceDomain,
+            error: result.reason,
+            fromEarlyAccess
+          })
+        }
         logItem('warn', `${itemLabel()}: ${result.reason ?? 'Awaiting access'} — kept in queue for retry`)
         if (result.failureKind === 'interrupted') this.scheduleQuickRetry()
       } else if (result.status === 'skipped') {
@@ -1572,6 +1630,12 @@ export class DownloadQueue {
         const rawReason = result.reason ?? ''
         const classified = classifyDownloadFailure(rawReason)
         if (classified.defer && classified.kind) {
+          const priorDeferred =
+            item.versionId > 0 ? inventory.getDeferredDownload(item.versionId) : null
+          const fromEarlyAccess =
+            classified.kind === 'early_access' ||
+            item.failureKind === 'early_access' ||
+            priorDeferred?.failureKind === 'early_access'
           item.status = 'deferred'
           item.reason = classified.reason
           item.failureKind = classified.kind
@@ -1588,6 +1652,20 @@ export class DownloadQueue {
             lastAttemptAt: item.completedAt ?? new Date().toISOString()
           })
           this.emitDeferred()
+          if (classified.kind === 'not_found') {
+            noteMissingModel404(this.getWindow, {
+              modelId: item.modelId,
+              versionId: item.versionId,
+              modelName: item.modelName,
+              modelType: item.modelType,
+              author: item.author,
+              baseModel: item.baseModel,
+              previewUrl: item.previewUrl,
+              sourceDomain: item.sourceDomain,
+              error: classified.reason,
+              fromEarlyAccess
+            })
+          }
           logItem('warn', `${itemLabel()}: ${classified.reason} — kept in queue for retry`)
           this.scheduleQuickRetry()
         } else if (isRetryableDownloadError(rawReason)) {
@@ -1639,10 +1717,17 @@ export class DownloadQueue {
       } else if (!aborted) {
         const classified = classifyDownloadFailure(rawMessage)
         if (classified.defer && classified.kind) {
+          const priorDeferred =
+            item.versionId > 0 ? inventory.getDeferredDownload(item.versionId) : null
           const refined = await this.downloadService.refineDeferredFailure(
             item.versionId,
             classified
           )
+          const fromEarlyAccess =
+            refined.kind === 'early_access' ||
+            classified.kind === 'early_access' ||
+            item.failureKind === 'early_access' ||
+            priorDeferred?.failureKind === 'early_access'
           item.status = 'deferred'
           item.reason = refined.reason
           item.failureKind = refined.kind!
@@ -1660,6 +1745,20 @@ export class DownloadQueue {
             earlyAccessEndsAt: refined.earlyAccessEndsAt
           })
           this.emitDeferred()
+          if (refined.kind === 'not_found' || classified.kind === 'not_found') {
+            noteMissingModel404(this.getWindow, {
+              modelId: item.modelId,
+              versionId: item.versionId,
+              modelName: item.modelName,
+              modelType: item.modelType,
+              author: item.author,
+              baseModel: item.baseModel,
+              previewUrl: item.previewUrl,
+              sourceDomain: item.sourceDomain,
+              error: refined.reason,
+              fromEarlyAccess
+            })
+          }
           logItem('warn', `${itemLabel()}: ${refined.reason} — kept in queue for retry`)
           this.scheduleQuickRetry()
         } else if (isRetryableDownloadError(rawMessage)) {

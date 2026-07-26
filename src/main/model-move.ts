@@ -2,7 +2,13 @@ import { existsSync, mkdirSync, renameSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import type { InventoryRecord, TagFolderRule } from '../shared/types'
 import { resolveUniqueSlug } from '../shared/utils'
-import { findRuleForTag, resolveTagRuleFolderPath } from '../shared/tag-routing'
+import { tagsEqual } from '../shared/tag-fuzzy'
+import {
+  findRuleForTag,
+  pickBestMatchingFolderTag,
+  resolveTagRuleFolderPath,
+  shouldSkipTagBulkMove
+} from '../shared/tag-routing'
 import { getSettings } from './settings-store'
 import * as inventory from './inventory'
 
@@ -19,6 +25,13 @@ function inferModelType(
   const ckpt = checkpointFolder.replace(/\\/g, '/').toLowerCase()
   if (ckpt && folder.startsWith(ckpt)) return 'CHECKPOINT'
   return 'LORA'
+}
+
+function foldersEqual(a: string, b: string): boolean {
+  return (
+    a.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
+    b.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  )
 }
 
 export function moveRecordToTagFolder(
@@ -44,8 +57,24 @@ export function moveRecordToTagFolder(
     record.baseModel
   )
   if (!targetFolder) throw new Error(`No folder mapped for tag "${tagName}"`)
-  if (record.outputFolder === targetFolder && record.routingTag === tagName) {
-    return record
+
+  const lockRouting = options.lockRouting === true
+  if (foldersEqual(record.outputFolder, targetFolder) && tagsEqual(record.routingTag, tagName)) {
+    if (record.routingLocked === lockRouting) return record
+    const lockedOnly: InventoryRecord = { ...record, routingLocked: lockRouting }
+    inventory.addVersion(lockedOnly)
+    return lockedOnly
+  }
+
+  // Already on disk in the right place — only fix routing metadata (common for older imports).
+  if (foldersEqual(record.outputFolder, targetFolder)) {
+    const metaOnly: InventoryRecord = {
+      ...record,
+      routingTag: tagName,
+      routingLocked: lockRouting
+    }
+    inventory.addVersion(metaOnly)
+    return metaOnly
   }
 
   const existingSlugs = inventory.getSlugsInFolder(targetFolder).filter((s) => s !== record.slug)
@@ -79,7 +108,7 @@ export function moveRecordToTagFolder(
     ...record,
     slug,
     routingTag: tagName,
-    routingLocked: options.lockRouting === true,
+    routingLocked: lockRouting,
     outputFolder: targetFolder,
     modelPath: newModelPath,
     previewPath: newPreviewPath,
@@ -103,4 +132,52 @@ export function moveRecordsToTagFolder(
     moved.push(moveRecordToTagFolder(record, tagName, tagRules, options))
   }
   return moved
+}
+
+/**
+ * Apply current tag-folder rules to the whole library: pick each model's winning
+ * tag and move / fix routingTag when needed. Skips manual (routingLocked) and
+ * already-correct placements.
+ */
+export function reconcileLibraryTagFolders(tagRules: TagFolderRule[]): {
+  moved: number
+  skipped: number
+  versionIds: number[]
+} {
+  const settings = getSettings()
+  const loraFolder = settings.loraOutputFolder
+  const checkpointFolder = settings.checkpointOutputFolder
+  let moved = 0
+  let skipped = 0
+  const versionIds: number[] = []
+
+  for (const record of inventory.getAllVersions()) {
+    const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules)
+    if (!winner) continue
+    if (shouldSkipTagBulkMove(record, tagRules, loraFolder, checkpointFolder)) {
+      skipped++
+      continue
+    }
+    if (!findRuleForTag(winner, tagRules)) {
+      skipped++
+      continue
+    }
+    try {
+      const updated = moveRecordToTagFolder(record, winner, tagRules, { lockRouting: false })
+      const changed =
+        !foldersEqual(updated.outputFolder, record.outputFolder) ||
+        !tagsEqual(updated.routingTag, record.routingTag) ||
+        updated.slug !== record.slug
+      if (changed) {
+        moved++
+        versionIds.push(record.versionId)
+      } else {
+        skipped++
+      }
+    } catch {
+      skipped++
+    }
+  }
+
+  return { moved, skipped, versionIds }
 }

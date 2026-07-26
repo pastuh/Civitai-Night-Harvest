@@ -113,7 +113,17 @@ export function IncompleteTab({
       tags: item.tags
     })
     try {
-      await window.api.banModel(item.modelId, item.modelName)
+      await window.api.banModel(item.modelId, item.modelName, {
+        modelName: item.modelName,
+        versionId: item.resolvedVersionId,
+        previewUrl: item.previewUrl,
+        pageUrl: item.pageUrl,
+        sourceDomain: item.sourceDomain,
+        author: item.author,
+        baseModel: item.baseModel,
+        modelType: item.modelType,
+        tags: item.tags
+      })
       await onRefresh()
     } catch {
       setHiddenModelIds((prev) => {
@@ -229,7 +239,7 @@ export function IncompleteTab({
               }
               actions={
                 <>
-                  {showPaste && (
+                  {showPaste ? (
                     <div className="incomplete-url-prompt">
                       <input
                         type="text"
@@ -253,31 +263,18 @@ export function IncompleteTab({
                         </button>
                       </div>
                     </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={busyId === item.modelId}
+                      onClick={() => void runDownload(item)}
+                    >
+                      {busyId === item.modelId
+                        ? t('common.loading')
+                        : t('incompleteTab.download')}
+                    </button>
                   )}
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={busyId === item.modelId}
-                    onClick={() => void runDownload(item)}
-                  >
-                    {busyId === item.modelId
-                      ? t('common.loading')
-                      : t('incompleteTab.download')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPasteModelId(item.modelId)
-                      setPastedUrl('')
-                      setCardError((prev) => {
-                        const next = { ...prev }
-                        delete next[item.modelId]
-                        return next
-                      })
-                    }}
-                  >
-                    {t('incompleteTab.pasteLink')}
-                  </button>
                   <button
                     type="button"
                     onClick={() => void window.api.openExternal(item.pageUrl)}

@@ -28,7 +28,8 @@ import {
   subfolderNameForRule,
   isCustomTagFolderRule,
   formatTagRuleLabel,
-  normalizeHiddenTags
+  normalizeHiddenTags,
+  isUnsortedRoutingTag
 } from '../../../shared/tag-routing'
 import {
   buildTagClusters,
@@ -69,6 +70,10 @@ interface Props {
   onFastTagModeChange?: (enabled: boolean) => void
   libraryExcludedTags?: string[]
   onLibraryExcludedTagsChange?: (tags: string[]) => Promise<void>
+  /** Permanent ban-by-tag chips (purple). */
+  blockedTags?: string[]
+  /** Browse pause/exclude chips (amber). */
+  pausedTags?: string[]
   /** Same pool as Tag folders (for Fast tag suggestions). */
   tagSuggestions?: string[]
   /** When false, skip Fast tag / bulk move confirmation. Default true. */
@@ -81,7 +86,10 @@ interface Props {
   focusCivitaiTag?: string | null
   onFocusTagHandled?: () => void
   /** Open Tag folders with this Civitai tag prefilled in search. */
-  onOpenTagFolders?: (tag: string) => void
+  onOpenTagFolders?: (
+    tag: string,
+    returnTo?: { kind: 'gallery'; modelId: number; versionId: number; modelName: string }
+  ) => void
   onRefresh: () => Promise<void>
   onRepairPreviews?: () => Promise<void>
   previewRepairBusy?: boolean
@@ -101,6 +109,9 @@ interface Props {
   resultsDisplayMode?: import('../../../shared/results-display').ResultsDisplayMode
   resultsPageSize?: import('../../../shared/results-display').ResultsPageSize
   onOpenModelDetail?: (target: ModelDetailTarget) => void
+  /** Early-access favorites — pin matching models to the top of Library. */
+  eaFavoriteIds?: number[]
+  onToggleEaFavorite?: (modelId: number) => void
 }
 
 interface ContextMenuState {
@@ -171,6 +182,8 @@ function GalleryTabInner({
   onFastTagModeChange,
   libraryExcludedTags = [],
   onLibraryExcludedTagsChange,
+  blockedTags = [],
+  pausedTags = [],
   tagSuggestions = [],
   confirmTagFolderMoves = true,
   onSaveTagRules,
@@ -196,7 +209,9 @@ function GalleryTabInner({
   isActive = false,
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
   resultsPageSize: resultsPageSizeProp = 100,
-  onOpenModelDetail
+  onOpenModelDetail,
+  eaFavoriteIds = [],
+  onToggleEaFavorite
 }: Props) {
   const t = useT()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
@@ -246,29 +261,30 @@ function GalleryTabInner({
 
   const highlightSet = useMemo(() => new Set(highlightVersionIds), [highlightVersionIds])
   const sessionSet = useMemo(() => new Set(sessionDownloadIds), [sessionDownloadIds])
+  const liveEaFavoriteSet = useMemo(() => new Set(eaFavoriteIds), [eaFavoriteIds])
+  /** Sort pin — only refresh when Library tab is opened (starring must not jump the grid). */
+  const [pinEaFavoriteIds, setPinEaFavoriteIds] = useState<number[]>(eaFavoriteIds)
+  const pinEaFavoriteSet = useMemo(() => new Set(pinEaFavoriteIds), [pinEaFavoriteIds])
   const libraryWasActiveRef = useRef(false)
 
-  // Auto-select session downloads only when opening Library normally — not when
-  // Show List / Open in Library is pinning a specific model.
+  // Auto-select session downloads only when the user opens the Library tab with
+  // an explicit preferSessionFilter (badge click). Do not use highlightVersionIds —
+  // those accumulate while browsing / under model-detail overlay and must not
+  // rewrite the user's filter when returning from details.
   useEffect(() => {
     const justOpened = isActive && !libraryWasActiveRef.current
     libraryWasActiveRef.current = isActive
+    if (justOpened) setPinEaFavoriteIds(eaFavoriteIds)
     if (!justOpened) return
     if (focusModelId != null) {
       if (preferSessionFilter) onPreferSessionHandled?.()
       return
     }
-    if (preferSessionFilter || highlightVersionIds.length > 0) {
+    if (preferSessionFilter) {
       setLibraryFilter({ type: 'session' })
-      if (preferSessionFilter) onPreferSessionHandled?.()
+      onPreferSessionHandled?.()
     }
-  }, [
-    isActive,
-    highlightVersionIds,
-    focusModelId,
-    preferSessionFilter,
-    onPreferSessionHandled
-  ])
+  }, [isActive, eaFavoriteIds, focusModelId, preferSessionFilter, onPreferSessionHandled])
 
   useEffect(() => {
     if (!onViewPrefsChange) return
@@ -592,7 +608,7 @@ function GalleryTabInner({
     let list = inventory
     switch (libraryFilter.type) {
       case 'untagged':
-        list = list.filter((r) => !r.routingTag)
+        list = list.filter((r) => !r.routingTag?.trim() || isUnsortedRoutingTag(r.routingTag))
         break
       case 'unrecognized':
         list = list.filter((r) => isUnrecognizedInventoryRecord(r))
@@ -730,8 +746,11 @@ function GalleryTabInner({
           break
       }
     }
-    if (highlightSet.size > 0) {
+    if (highlightSet.size > 0 || pinEaFavoriteSet.size > 0) {
       list.sort((a, b) => {
+        const af = pinEaFavoriteSet.has(a.modelId) ? 0 : 1
+        const bf = pinEaFavoriteSet.has(b.modelId) ? 0 : 1
+        if (af !== bf) return af - bf
         const ah = highlightSet.has(a.versionId) ? 0 : 1
         const bh = highlightSet.has(b.versionId) ? 0 : 1
         if (ah !== bh) return ah - bh
@@ -739,7 +758,7 @@ function GalleryTabInner({
       })
     }
     return list
-  }, [filteredInventory, librarySort, tagClusters, highlightSet, libraryFilter])
+  }, [filteredInventory, librarySort, tagClusters, highlightSet, pinEaFavoriteSet, libraryFilter])
 
   const libraryDisplayMode =
     resultsDisplayMode === 'autoAdvance' ? 'lazy' : resultsDisplayMode
@@ -942,7 +961,15 @@ function GalleryTabInner({
         if (isLocal && rec) {
           await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
         } else {
-          await window.api.banModel(modelId, modelName)
+          await window.api.banModel(modelId, modelName, {
+            modelName,
+            versionId: rec?.versionId ?? versionId,
+            previewUrl: rec?.previewPath,
+            author: rec?.author,
+            baseModel: rec?.baseModel,
+            sourceDomain: rec?.civitaiDomain,
+            tags: rec?.civitaiTags
+          })
         }
         scheduleLibraryRefresh()
       } catch (err) {
@@ -1159,9 +1186,18 @@ function GalleryTabInner({
   }
 
   const openTagInFolders = useCallback(
-    (civitaiTag: string) => {
+    (civitaiTag: string, record?: InventoryRecord) => {
       if (fastTagMode) {
         setFastTagTarget(civitaiTag)
+        return
+      }
+      if (record && record.modelId > 0) {
+        onOpenTagFolders?.(civitaiTag, {
+          kind: 'gallery',
+          modelId: record.modelId,
+          versionId: record.versionId,
+          modelName: record.modelName
+        })
         return
       }
       onOpenTagFolders?.(civitaiTag)
@@ -1501,6 +1537,10 @@ function GalleryTabInner({
               onOpenContextMenu={openContextMenu}
               onOpenDetails={openLibraryDetails}
               onCivitaiTagClick={openTagInFolders}
+              blockedTags={blockedTags}
+              pausedTags={pausedTags}
+              eaFavoriteSet={liveEaFavoriteSet}
+              onToggleEaFavorite={onToggleEaFavorite}
             />
             <ResultsPager
               mode={libraryDisplayMode}
@@ -2119,6 +2159,8 @@ type LibraryCardGridProps = {
   banFunctionMode: boolean
   hideCardTags?: string[]
   hideAssignedTags?: boolean
+  blockedTags?: string[]
+  pausedTags?: string[]
   versionNameById: Map<number, string>
   onBanModel: (modelId: number, modelName: string, versionId?: number) => void
   onToggleSelect: (versionId: number) => void
@@ -2129,7 +2171,9 @@ type LibraryCardGridProps = {
     versionId?: number
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
-  onCivitaiTagClick: (tag: string) => void
+  onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
+  eaFavoriteSet?: Set<number>
+  onToggleEaFavorite?: (modelId: number) => void
 }
 
 /** Isolates card renders from search-input keystrokes until deferred filter catches up. */
@@ -2148,12 +2192,16 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   banFunctionMode,
   hideCardTags,
   hideAssignedTags = false,
+  blockedTags = [],
+  pausedTags = [],
   versionNameById,
   onBanModel,
   onToggleSelect,
   onOpenContextMenu,
   onOpenDetails,
-  onCivitaiTagClick
+  onCivitaiTagClick,
+  eaFavoriteSet,
+  onToggleEaFavorite
 }: LibraryCardGridProps) {
   return (
     <div className="gallery-grid">
@@ -2175,6 +2223,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
           banFunctionMode={banFunctionMode}
           hideCardTags={hideCardTags}
           hideAssignedTags={hideAssignedTags}
+          blockedTags={blockedTags}
+          pausedTags={pausedTags}
           onBanModel={onBanModel}
           duplicateOfName={
             record.duplicateOfVersionId != null
@@ -2186,6 +2236,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
           onOpenContextMenu={onOpenContextMenu}
           onOpenDetails={onOpenDetails}
           onCivitaiTagClick={onCivitaiTagClick}
+          eaFavorited={eaFavoriteSet?.has(record.modelId) ?? false}
+          onToggleEaFavorite={onToggleEaFavorite}
         />
       ))}
     </div>

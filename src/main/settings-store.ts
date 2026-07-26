@@ -142,6 +142,26 @@ export function getSettings(): AppSettings {
       store.set('settings', { ...storedSettings, hiddenTags: raw.hiddenTags })
     }
   }
+  if (!Array.isArray(raw.bannedTags)) {
+    raw.bannedTags = []
+  } else {
+    raw.bannedTags = normalizeHiddenTags(raw.bannedTags)
+  }
+  // Permanent ban wins: drop pause entries that collide with banned tags.
+  {
+    const banned = normalizeHiddenTags(raw.bannedTags)
+    const paused = normalizeHiddenTags(raw.hiddenTags)
+    const cleanedPause = paused.filter(
+      (h) => !banned.some((b) => b.toLowerCase() === h.toLowerCase())
+    )
+    if (cleanedPause.length !== paused.length || !Array.isArray((raw as AppSettings).bannedTags)) {
+      raw.hiddenTags = cleanedPause
+      raw.bannedTags = banned
+    } else {
+      raw.hiddenTags = paused
+      raw.bannedTags = banned
+    }
+  }
   if (!Array.isArray(raw.libraryExcludedTags)) {
     raw.libraryExcludedTags = []
   } else {
@@ -228,9 +248,17 @@ export function getSettings(): AppSettings {
 
 export function saveSettings(partial: Partial<AppSettings>): AppSettings {
   const next = { ...getSettings(), ...partial, domain: 'red' as const }
+  if (partial.bannedTags !== undefined) {
+    next.bannedTags = normalizeHiddenTags(partial.bannedTags)
+  }
   if (partial.hiddenTags !== undefined) {
     next.hiddenTags = normalizeHiddenTags(partial.hiddenTags)
   }
+  // Ban list wins over pause for the same tag.
+  next.bannedTags = normalizeHiddenTags(next.bannedTags ?? [])
+  next.hiddenTags = normalizeHiddenTags(next.hiddenTags ?? []).filter(
+    (h) => !next.bannedTags.some((b) => b.toLowerCase() === h.toLowerCase())
+  )
   if (partial.libraryExcludedTags !== undefined) {
     next.libraryExcludedTags = normalizeHiddenTags(partial.libraryExcludedTags)
   }
@@ -329,9 +357,16 @@ export function saveSettingsFromUi(partial: AppSettingsSave): AppSettings {
   if (apiKey?.trim()) {
     next.apiKey = apiKey.trim()
   }
+  if (rest.bannedTags !== undefined) {
+    next.bannedTags = normalizeHiddenTags(rest.bannedTags)
+  }
   if (rest.hiddenTags !== undefined) {
     next.hiddenTags = normalizeHiddenTags(rest.hiddenTags)
   }
+  next.bannedTags = normalizeHiddenTags(next.bannedTags ?? [])
+  next.hiddenTags = normalizeHiddenTags(next.hiddenTags ?? []).filter(
+    (h) => !next.bannedTags.some((b) => b.toLowerCase() === h.toLowerCase())
+  )
   if (rest.libraryExcludedTags !== undefined) {
     next.libraryExcludedTags = normalizeHiddenTags(rest.libraryExcludedTags)
   }

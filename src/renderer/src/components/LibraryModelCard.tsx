@@ -13,6 +13,7 @@ import {
   cardTagFolderRoleClass
 } from './gallery-card-utils'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
+import { isPermanentlyBannedModelTag, isPausedOnlyModelTag } from '../../../shared/tag-routing'
 
 export type LibraryModelCardProps = {
   record: InventoryRecord
@@ -32,6 +33,10 @@ export type LibraryModelCardProps = {
   hideCardTags?: string[]
   /** Hide tags that already have a folder assignment (mapped / final). */
   hideAssignedTags?: boolean
+  /** Permanent ban-by-tag — purple chips. */
+  blockedTags?: string[]
+  /** Browse pause exclude — amber chips. */
+  pausedTags?: string[]
   onToggleSelect: (versionId: number) => void
   onOpenContextMenu: (
     e: MouseEvent,
@@ -40,7 +45,10 @@ export type LibraryModelCardProps = {
     versionId?: number
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
-  onCivitaiTagClick: (tag: string) => void
+  onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
+  /** Early-access favorite — pin at top of Library until cleared. */
+  eaFavorited?: boolean
+  onToggleEaFavorite?: (modelId: number) => void
 }
 
 function LibraryModelCardInner({
@@ -59,10 +67,14 @@ function LibraryModelCardInner({
   duplicateOfName = null,
   hideCardTags,
   hideAssignedTags = false,
+  blockedTags = [],
+  pausedTags = [],
   onToggleSelect,
   onOpenContextMenu,
   onOpenDetails,
-  onCivitaiTagClick
+  onCivitaiTagClick,
+  eaFavorited = false,
+  onToggleEaFavorite
 }: LibraryModelCardProps) {
   const t = useT()
   const metaExtra = inventoryMetaExtra(record)
@@ -153,6 +165,20 @@ function LibraryModelCardInner({
       <div className="gallery-card-body">
         <div className="gallery-card-title-row">
           <strong title={record.modelName}>{record.modelName}</strong>
+          {eaFavorited && onToggleEaFavorite ? (
+            <button
+              type="button"
+              className="ea-favorite-btn is-on"
+              title={t('deferredTab.favoriteOnHint')}
+              aria-pressed
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleEaFavorite(record.modelId)
+              }}
+            >
+              ★
+            </button>
+          ) : null}
           <button
             type="button"
             className="gallery-detail-btn"
@@ -255,21 +281,32 @@ function LibraryModelCardInner({
                 folderLabel,
                 tagRules
               })
+              const banned = isPermanentlyBannedModelTag(tag, blockedTags)
+              const paused = isPausedOnlyModelTag(tag, pausedTags, blockedTags)
+              const roleTitle =
+                role === 'final'
+                  ? t('gallery.tagRoleFinalHint', { tag })
+                  : role === 'mapped'
+                    ? record.routingTag?.trim()
+                      ? t('gallery.tagRoleMappedHint', { tag })
+                      : t('gallery.tagRoleMappedPendingHint', { tag })
+                    : t('gallery.tagRoleUnmappedHint', { tag })
+              const policyTitle = banned
+                ? t('gallery.tagBlockedOnCardHint', { tag })
+                : paused
+                  ? t('gallery.tagPausedOnCardHint', { tag })
+                  : null
               return (
                 <button
                   key={tag}
                   type="button"
-                  className={`tag-chip ${cardTagFolderRoleClass(role)}`}
-                  title={
-                    role === 'final'
-                      ? t('gallery.tagRoleFinalHint', { tag })
-                      : role === 'mapped'
-                        ? t('gallery.tagRoleMappedHint', { tag })
-                        : t('gallery.tagRoleUnmappedHint', { tag })
-                  }
+                  className={`tag-chip ${cardTagFolderRoleClass(role)}${
+                    banned ? ' is-blocked-tag' : paused ? ' is-paused-tag' : ''
+                  }`}
+                  title={policyTitle ? `${policyTitle} · ${roleTitle}` : roleTitle}
                   onClick={(e) => {
                     e.stopPropagation()
-                    onCivitaiTagClick(tag)
+                    onCivitaiTagClick(tag, record)
                   }}
                 >
                   {tag}

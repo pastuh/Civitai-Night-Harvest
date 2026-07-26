@@ -1,6 +1,14 @@
 import { fuzzyTagMatch, tagAliasMatch, modelHasExactTag, tagsEqual } from './tag-fuzzy'
-import type { TagFolderRule } from './types'
+import type { TagFolderRule, TagPolicyKind } from './types'
 import { getDefaultFolderForType, joinFolderPath } from './utils'
+
+/** Disk folder under each base model when no Tag Folders rule matches. */
+export const UNSORTED_FOLDER_NAME = 'Unsorted'
+
+export function isUnsortedRoutingTag(tag: string | undefined | null): boolean {
+  return (tag?.trim().toLowerCase() ?? '') === UNSORTED_FOLDER_NAME.toLowerCase()
+}
+
 /** Split tag rule name field — supports "tool, tools" or "tool; tools". */
 export function parseTagRuleNames(tagName: string): string[] {
   return [
@@ -388,6 +396,27 @@ export function countMovableByCivitaiTag(
   ).length
 }
 
+/** Models that have a folder-rule tag but are not yet in the winning folder (or lack routingTag). */
+export function countLibraryTagFolderReconcile(
+  inventory: {
+    routingTag: string
+    outputFolder: string
+    baseModel?: string
+    civitaiTags?: string[]
+    routingLocked?: boolean
+  }[],
+  tagRules: TagFolderRule[],
+  loraFolder: string,
+  checkpointFolder: string
+): number {
+  if (!tagRules.length) return 0
+  return inventory.filter((r) => {
+    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules)
+    if (!winner) return false
+    return !shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder)
+  }).length
+}
+
 export function inventoryVersionIdsWithCivitaiTag(
   inventory: { versionId: number; civitaiTags?: string[] }[],
   civitaiTag: string
@@ -535,7 +564,7 @@ export function isCustomTagFolderRule(
   return isCustomTagFolderPath(fp, loraFolder, checkpointFolder)
 }
 
-/** Resolve on-disk folder for a download (type base + optional routing tag subfolder). */
+/** Resolve on-disk folder for a download (type base + routing / Unsorted subfolder). */
 export function resolveModelOutputFolder(params: {
   loraFolder: string
   checkpointFolder: string
@@ -549,11 +578,10 @@ export function resolveModelOutputFolder(params: {
     params.checkpointFolder,
     params.modelType
   )
-  const tag = params.routingTag?.trim()
-  if (!tag) return typeRoot
+  if (!typeRoot) return ''
+  const tag = params.routingTag?.trim() || UNSORTED_FOLDER_NAME
   const rule = findRuleForTag(tag, params.tagRules)
   if (rule?.folderPath?.trim()) return rule.folderPath.trim()
-  if (!typeRoot) return ''
   return resolveSubfolderUnderTypeRoot(typeRoot, tag, params.baseModel)
 }
 /** Strip trailing punctuation from tag input (autocomplete may append ", "). */
@@ -577,24 +605,30 @@ export function normalizeHiddenTags(tags: string[] | undefined): string[] {
   return out
 }
 
-/** Hidden tags on a model (fuzzy match, case-insensitive). Empty model tags → none. */
+/** One blocked-tag hit: which hidden tag matched which model tag (exact / plural alias). */
+export type HiddenTagMatch = { hiddenTag: string; modelTag: string }
+
+/**
+ * Hidden/block tags on a model — exact or plural/singular of the whole tag only.
+ * Do NOT use fuzzy substring here: "halloween" must not match "all fours" via "all".
+ */
 export function matchingHiddenTags(
   modelTags: string[] | undefined,
   hiddenTags: string[] | undefined
-): string[] {
+): HiddenTagMatch[] {
   const hidden = normalizeHiddenTags(hiddenTags)
   if (!hidden.length) return []
   const modelList = modelTags ?? []
   if (!modelList.length) return []
-  const out: string[] = []
-  const seen = new Set<string>()
+  const out: HiddenTagMatch[] = []
+  const seenModel = new Set<string>()
   for (const t of modelList) {
     const key = t.trim().toLowerCase()
-    if (!key || seen.has(key)) continue
+    if (!key || seenModel.has(key)) continue
     for (const h of hidden) {
-      if (fuzzyTagMatch(h, t)) {
-        seen.add(key)
-        out.push(h)
+      if (tagAliasMatch(h, t)) {
+        seenModel.add(key)
+        out.push({ hiddenTag: h, modelTag: t })
         break
       }
     }
@@ -602,12 +636,99 @@ export function matchingHiddenTags(
   return out
 }
 
-/** True when a model carries any tag the user chose to hide temporarily. */
+/** True when a model carries any tag the user chose to block. */
 export function modelHasHiddenTag(
   modelTags: string[] | undefined,
   hiddenTags: string[] | undefined
 ): boolean {
   return matchingHiddenTags(modelTags, hiddenTags).length > 0
+}
+
+/** True when one model tag matches a blocked/hidden tag (exact/alias). */
+export function isBlockedModelTag(
+  tag: string,
+  hiddenTags: string[] | undefined
+): boolean {
+  const hidden = normalizeHiddenTags(hiddenTags)
+  if (!hidden.length || !tag.trim()) return false
+  return hidden.some((h) => tagAliasMatch(h, tag))
+}
+
+export type PolicyTagMatch = {
+  kind: TagPolicyKind
+  policyTag: string
+  modelTag: string
+}
+
+/** Prefer permanent ban over pause when the same model tag matches both. */
+export function matchingPolicyTags(
+  modelTags: string[] | undefined,
+  pausedTags: string[] | undefined,
+  bannedTags: string[] | undefined
+): PolicyTagMatch[] {
+  const bannedHits = matchingHiddenTags(modelTags, bannedTags)
+  const pausedHits = matchingHiddenTags(modelTags, pausedTags)
+  const out: PolicyTagMatch[] = []
+  const seenModel = new Set<string>()
+  for (const h of bannedHits) {
+    const key = h.modelTag.trim().toLowerCase()
+    if (!key || seenModel.has(key)) continue
+    seenModel.add(key)
+    out.push({ kind: 'banned', policyTag: h.hiddenTag, modelTag: h.modelTag })
+  }
+  for (const h of pausedHits) {
+    const key = h.modelTag.trim().toLowerCase()
+    if (!key || seenModel.has(key)) continue
+    // Pause tag that aliases a banned policy entry → treat as banned already covered.
+    if (bannedHits.some((b) => tagAliasMatch(b.hiddenTag, h.hiddenTag))) continue
+    seenModel.add(key)
+    out.push({ kind: 'paused', policyTag: h.hiddenTag, modelTag: h.modelTag })
+  }
+  return out
+}
+
+export function firstPolicyMatch(
+  modelTags: string[] | undefined,
+  pausedTags: string[] | undefined,
+  bannedTags: string[] | undefined
+): PolicyTagMatch | null {
+  const hits = matchingPolicyTags(modelTags, pausedTags, bannedTags)
+  return hits.find((h) => h.kind === 'banned') ?? hits[0] ?? null
+}
+
+export function modelHasPolicyTag(
+  modelTags: string[] | undefined,
+  pausedTags: string[] | undefined,
+  bannedTags: string[] | undefined
+): boolean {
+  return matchingPolicyTags(modelTags, pausedTags, bannedTags).length > 0
+}
+
+/** Permanent ban-by-tag chip (purple). */
+export function isPermanentlyBannedModelTag(
+  tag: string,
+  bannedTags: string[] | undefined
+): boolean {
+  return isBlockedModelTag(tag, bannedTags)
+}
+
+/** Pause-only chip (amber) — not also permanently banned. */
+export function isPausedOnlyModelTag(
+  tag: string,
+  pausedTags: string[] | undefined,
+  bannedTags: string[] | undefined
+): boolean {
+  if (!isBlockedModelTag(tag, pausedTags)) return false
+  if (isBlockedModelTag(tag, bannedTags)) return false
+  return true
+}
+
+/** Union of pause + permanent ban tags for queue / harvest skip. */
+export function effectiveSkipTags(
+  pausedTags: string[] | undefined,
+  bannedTags: string[] | undefined
+): string[] {
+  return normalizeHiddenTags([...(pausedTags ?? []), ...(bannedTags ?? [])])
 }
 
 /** True when a queue/deferred row should be blocked by hidden tags. */
@@ -620,10 +741,18 @@ export function queueItemBlockedByHiddenTags(
   if (modelHasHiddenTag(item.civitaiTags ?? [], hidden)) return true
   const route = item.routingTag?.trim()
   if (!route) return false
-  return hidden.some((t) => fuzzyTagMatch(t, route))
+  return hidden.some((t) => tagAliasMatch(t, route))
 }
 
-/** Pick routing tag for a model at enqueue time. No folder-rule match → empty (type default folder). */
+export function queueItemBlockedByPolicyTags(
+  item: { civitaiTags?: string[]; routingTag?: string },
+  pausedTags: string[] | undefined,
+  bannedTags: string[] | undefined
+): boolean {
+  return queueItemBlockedByHiddenTags(item, effectiveSkipTags(pausedTags, bannedTags))
+}
+
+/** Pick routing tag for a model at enqueue time. No folder-rule match → Unsorted under base model. */
 export function resolveModelRoutingTag(
   modelTags: string[],
   activeRoutingTag: string,
@@ -638,8 +767,8 @@ export function resolveModelRoutingTag(
   }
 
   if (matching.length === 0) {
-    // Do not invent "Unknown" or base-model as a routing tag — files go to LoRA/Checkpoint root.
-    return { routingTag: '', needsConfirmation: false }
+    // Not base-model root — keep unsorted downloads findable on disk.
+    return { routingTag: UNSORTED_FOLDER_NAME, needsConfirmation: false }
   }
 
   const best = pickBestMatchingFolderTag(modelTags, tagRules) ?? matching[0]

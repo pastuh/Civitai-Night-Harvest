@@ -11,6 +11,7 @@ import type {
 import type { ActivityLogFn } from '../shared/types'
 import {
   resolveVersionPreviewUrl,
+  resolveModelPreviewUrl,
   apiNsfwParam,
   apiEarlyAccessParam,
   apiTagSearchVariants,
@@ -19,14 +20,16 @@ import {
   civitaiSearchParamsFromRule,
   downloadDomainForModel,
   parseRuleFilterTags,
-  modelMatchesRuleKeywords
+  modelMatchesRuleKeywords,
+  getModelPageUrl
 } from '../shared/utils'
 import { isVersionEarlyAccess, formatEarlyAccessReason } from '../shared/early-access'
 import { resolveSearchNextCursor, sanitizeCrawlCursor } from '../shared/civitai-pagination'
 import {
   collectUsedTags,
   findFirstUsedTag,
-  modelHasHiddenTag,
+  firstPolicyMatch,
+  modelHasPolicyTag,
   resolveModelRoutingTag
 } from '../shared/tag-routing'
 import type { DownloadQueue } from './download-queue'
@@ -216,11 +219,16 @@ export function pruneIrrelevantPendingVersions(pending: PendingVersion[]): Pendi
   const snapshot = inventory.buildInventorySnapshot()
   const kept: PendingVersion[] = []
   for (const p of pending) {
-    if (inventory.isModelBanned(p.modelId)) {
+    if (inventory.isModelBanned(p.modelId) || inventory.isMissingUnavailable(p.modelId)) {
       inventory.removePendingVersion(p.versionId)
       continue
     }
     if (snapshot.versionIds.has(p.versionId) || inventory.hasVersion(p.versionId)) {
+      inventory.removePendingVersion(p.versionId)
+      continue
+    }
+    // Already approved → waiting Early access / deferred download — leave Updates.
+    if (inventory.getDeferredDownload(p.versionId)) {
       inventory.removePendingVersion(p.versionId)
       continue
     }
@@ -319,8 +327,32 @@ function processModel(
   const filter = rule.contentFilter ?? ctx.filter
   if (!matchesContentFilter(model.nsfw, filter)) return
 
-  const hiddenTags = getSettings().hiddenTags ?? []
-  if (modelHasHiddenTag(model.tags ?? [], hiddenTags)) return
+  const settings = getSettings()
+  const pausedTags = settings.hiddenTags ?? []
+  const bannedTags = settings.bannedTags ?? []
+  const policyHit =
+    !inventory.isTagSkipAllowed(model.id) &&
+    firstPolicyMatch(model.tags ?? [], pausedTags, bannedTags)
+  if (policyHit) {
+    const version = model.modelVersions?.[0]
+    const domain = downloadDomainForModel(model, client.getDomain())
+    inventory.recordTagSkipReview({
+      modelId: model.id,
+      versionId: version?.id,
+      modelName: model.name,
+      modelType: model.type,
+      author: model.creator?.username || '',
+      baseModel: version?.baseModel || '',
+      previewUrl: resolveModelPreviewUrl(model),
+      pageUrl: getModelPageUrl(domain, model.id, version?.id),
+      sourceDomain: domain,
+      tags: model.tags ?? [],
+      blockedTag: policyHit.policyTag,
+      matchedModelTag: policyHit.modelTag,
+      policy: policyHit.kind
+    })
+    return
+  }
 
   refreshPendingPreviewsFromModel(model, ctx)
 
@@ -334,6 +366,7 @@ function processModel(
     if (!isVersionEarlyAccess(version)) return false
     if (model.id <= 0 || version.id <= 0) return false
     if (inventory.isModelBanned(model.id)) return false
+    if (inventory.isMissingUnavailable(model.id)) return false
     if (inventory.hasVersion(version.id)) return false
     if (inventory.getDeferredDownload(version.id)) {
       result.upToDate++
@@ -376,8 +409,17 @@ function processModel(
   const tryQueue = (version: CivitaiModelVersion, label: string): boolean => {
     if (!options.queueEnabled) return false
     if (model.id <= 0 || version.id <= 0) return false
-    if (modelHasHiddenTag(civitaiTags, getSettings().hiddenTags ?? [])) return false
+    {
+      const s = getSettings()
+      if (
+        !inventory.isTagSkipAllowed(model.id) &&
+        modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags)
+      ) {
+        return false
+      }
+    }
     if (inventory.isModelBanned(model.id)) return false
+    if (inventory.isMissingUnavailable(model.id)) return false
     if (inventory.hasVersion(version.id)) return false
     if (isVersionEarlyAccess(version)) return false
     if (inventory.getDeferredDownload(version.id)) {
@@ -439,8 +481,17 @@ function processModel(
 
       const newModelSkipReason = (): string | null => {
         if (model.id <= 0 || version.id <= 0) return 'invalid id'
-        if (modelHasHiddenTag(civitaiTags, getSettings().hiddenTags ?? [])) return 'blocked tag'
+        {
+          const s = getSettings()
+          if (
+            !inventory.isTagSkipAllowed(model.id) &&
+            modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags)
+          ) {
+            return 'blocked tag'
+          }
+        }
         if (inventory.isModelBanned(model.id)) return 'banned'
+        if (inventory.isMissingUnavailable(model.id)) return 'unavailable (missing)'
         if (inventory.hasVersion(version.id)) return 'already in library'
         if (isVersionEarlyAccess(version)) return 'early access'
         if (inventory.getDeferredDownload(version.id)) return 'awaiting access'
@@ -494,7 +545,11 @@ function processModel(
 
   // Owned model: all missing versions matching owned (+ rule) base models.
   // Live ban check — snapshot can be stale if user bans mid-scan / mid-harvest.
-  if (ctx.snapshot.ignoredModelIds.has(model.id) || inventory.isModelBanned(model.id)) {
+  if (
+    ctx.snapshot.ignoredModelIds.has(model.id) ||
+    inventory.isModelBanned(model.id) ||
+    inventory.isMissingUnavailable(model.id)
+  ) {
     result.upToDate++
     return
   }
@@ -508,7 +563,7 @@ function processModel(
     result.upToDate++
     return
   }
-  if (inventory.isModelBanned(model.id)) {
+  if (inventory.isModelBanned(model.id) || inventory.isMissingUnavailable(model.id)) {
     result.upToDate++
     return
   }
@@ -517,6 +572,15 @@ function processModel(
   for (const version of versions) {
     if (ctx.pendingVersionIds.has(version.id)) continue
     if (inventory.hasVersion(version.id)) continue
+    // User already queued this update (e.g. Updates → Sync/Download) and it sits in Early access.
+    if (inventory.getDeferredDownload(version.id)) {
+      result.upToDate++
+      continue
+    }
+    if (downloadQueue.hasActiveItem(version.id)) {
+      result.upToDate++
+      continue
+    }
     offered++
     result.newVersions++
     if (tryDeferEarlyAccess(version)) continue
@@ -797,7 +861,9 @@ export function queueEligibleTestModels(
 ): number {
   if (!options.queueEnabled) return 0
 
-  const hiddenTags = getSettings().hiddenTags ?? []
+  const settings = getSettings()
+  const pausedTags = settings.hiddenTags ?? []
+  const bannedTags = settings.bannedTags ?? []
   const tagRules = getTagRules()
   const usedTags = collectUsedTags(inventory.getAllVersions(), tagRules)
   let queued = 0
@@ -836,7 +902,7 @@ export function queueEligibleTestModels(
         continue
       }
     }
-    if (m.isBanned || inventory.isModelBanned(m.id)) {
+    if (m.isBanned || inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) {
       skipped.banned++
       continue
     }
@@ -844,7 +910,24 @@ export function queueEligibleTestModels(
       skipped.earlyAccess++
       continue
     }
-    if (modelHasHiddenTag(m.tags ?? [], hiddenTags)) {
+    const policyHit =
+      !inventory.isTagSkipAllowed(m.id) && firstPolicyMatch(m.tags ?? [], pausedTags, bannedTags)
+    if (policyHit) {
+      inventory.recordTagSkipReview({
+        modelId: m.id,
+        versionId: m.versionId,
+        modelName: m.name,
+        modelType: m.type,
+        author: m.creator || '',
+        baseModel: m.baseModel || '',
+        previewUrl: m.previewUrl,
+        pageUrl: m.pageUrl || getModelPageUrl(m.sourceDomain ?? client.getDomain(), m.id, m.versionId),
+        sourceDomain: m.sourceDomain ?? client.getDomain(),
+        tags: m.tags ?? [],
+        blockedTag: policyHit.policyTag,
+        matchedModelTag: policyHit.modelTag,
+        policy: policyHit.kind
+      })
       skipped.hiddenTag++
       continue
     }
@@ -1044,7 +1127,7 @@ export async function scanOwnedModelsForNewVersions(
         .filter((v) => !snapshot.ignoredModelIds.has(v.modelId))
         .map((v) => v.modelId)
     )
-  ].filter((id) => !inventory.isModelBanned(id))
+  ].filter((id) => !inventory.isModelBanned(id) && !inventory.isMissingUnavailable(id))
 
   const allowedBases = allowedBaseModelsFromRules()
   const ruleBaseModelsStr = allowedBases ? [...allowedBases].join(',') : ''
@@ -1108,7 +1191,7 @@ export async function scanOwnedModelsForNewVersions(
 
   for (let i = 0; i < dueModelIds.length; i++) {
     const modelId = dueModelIds[i]
-    if (inventory.isModelBanned(modelId)) {
+    if (inventory.isModelBanned(modelId) || inventory.isMissingUnavailable(modelId)) {
       result.modelsChecked++
       continue
     }

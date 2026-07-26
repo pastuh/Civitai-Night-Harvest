@@ -5,6 +5,7 @@ import {
   displayFolderForTag,
   findRuleForTag,
   isCustomTagFolderRule,
+  isUnsortedRoutingTag,
   subfolderNameForRule
 } from '../../../shared/tag-routing'
 
@@ -78,6 +79,8 @@ export function shortCardFolderLabel(
 ): string | null {
   const rt = routingTag?.trim()
   if (!rt) return null
+  // Default dump folder — not a real tag-folder assignment (do not style as green/assigned).
+  if (isUnsortedRoutingTag(rt)) return null
 
   const base = baseModel?.trim() ?? ''
   const baseLower = base.toLowerCase()
@@ -150,7 +153,7 @@ export function inventoryMetaExtra(record: InventoryRecord): string {
 
 export function routingTagShownSeparately(record: InventoryRecord): string | null {
   const rt = record.routingTag?.trim()
-  if (!rt) return null
+  if (!rt || isUnsortedRoutingTag(rt)) return null
   if (record.civitaiTags?.some((t) => isTagAssignedToRecord(rt, t))) return null
   return rt
 }

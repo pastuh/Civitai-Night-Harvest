@@ -6,7 +6,7 @@ import type {
   WatchRule,
   WatchRuleTestModel
 } from '../../../shared/types'
-import { modelHasHiddenTag } from '../../../shared/tag-routing'
+import { modelHasPolicyTag } from '../../../shared/tag-routing'
 import { modelMatchesAnyEnabledWatchRule } from '../../../shared/utils'
 
 export interface BrowsePlannedCountInput {
@@ -18,6 +18,7 @@ export interface BrowsePlannedCountInput {
   deferred: DeferredDownload[]
   bannedModelIds: Set<number>
   hiddenTags: string[]
+  bannedTags?: string[]
   manualQueueMode: boolean
   nightMode: boolean
   crawlAutoDownload: boolean
@@ -68,7 +69,7 @@ export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): num
     if (m.inInventory || ownedVersionIds.has(m.versionId)) continue
     if (m.isBanned || input.bannedModelIds.has(m.id)) continue
     if (m.isEarlyAccess || deferredIds.has(m.versionId)) continue
-    if (modelHasHiddenTag(m.tags ?? [], input.hiddenTags)) continue
+    if (modelHasPolicyTag(m.tags ?? [], input.hiddenTags, input.bannedTags)) continue
     if (ownedModelIds.has(m.id) || pendingModelIds.has(m.id) || pendingVersionIds.has(m.versionId)) {
       continue
     }

@@ -30,7 +30,7 @@ import {
   type RatingFilter
 } from '../../../shared/rating-filter'
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
-import { displayFolderForTag, findRuleForTag, modelHasHiddenTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
+import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
@@ -123,6 +123,10 @@ interface Props {
   onRefreshInventory?: () => Promise<void>
   hiddenTags?: string[]
   onHiddenTagsChange?: (tags: string[]) => Promise<void>
+  /** Permanent ban-by-tag — purple chips; also skip in gallery when hide blocked. */
+  bannedTags?: string[]
+  /** Forgotten models — always hidden in Browse (even when Show banned). */
+  forgottenModelIds?: Set<number>
   crawlStatus?: RuleCrawlStatus | null
   nightMode?: boolean
   backfillCatalog?: boolean
@@ -198,6 +202,8 @@ export function SearchBrowsePanel({
   onRefreshInventory,
   hiddenTags = [],
   onHiddenTagsChange,
+  bannedTags = [],
+  forgottenModelIds,
   crawlStatus,
   backfillCatalog = true,
   nightMode = false,
@@ -503,11 +509,14 @@ export function SearchBrowsePanel({
   useEffect(() => {
     if (showBlockedModels || !tagFilter) return
     const lower = tagFilter.toLowerCase()
-    if (hiddenTags.some((t) => t.toLowerCase() === lower)) {
+    if (
+      hiddenTags.some((t) => t.toLowerCase() === lower) ||
+      bannedTags.some((t) => t.toLowerCase() === lower)
+    ) {
       setTagFilter(null)
       setMessage(t('browse.tagFilterBlockedCleared', { tag: tagFilter }))
     }
-  }, [showBlockedModels, tagFilter, hiddenTags, t])
+  }, [showBlockedModels, tagFilter, hiddenTags, bannedTags, t])
 
   useEffect(() => {
     if (!tagsOpen) setTagSearch('')
@@ -767,8 +776,9 @@ export function SearchBrowsePanel({
         queueActiveForFilter.byModel.has(m.id)
 
       if (!inActiveQueue) {
+        if (forgottenModelIds?.has(m.id)) continue
         if (hideBanned && m.isBanned) continue
-        if (!showBlockedModels && modelHasHiddenTag(m.tags, hiddenTags)) continue
+        if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) continue
         if (
           hideAwaitingAccess &&
           (m.isEarlyAccess || awaitingAccessVersionIds.has(m.versionId))
@@ -797,6 +807,8 @@ export function SearchBrowsePanel({
     showAwaitingConfirm,
     isAwaitingConfirmModel,
     hiddenTags,
+    bannedTags,
+    forgottenModelIds,
     tagFilter,
     searchQuery,
     queueActiveForFilter,
@@ -1061,9 +1073,14 @@ export function SearchBrowsePanel({
     return { unique: tagCatalog.length, fromCom, fromRed }
   }, [tagCatalog])
 
-  const isTagSkipped = useCallback(
+  const isTagPaused = useCallback(
     (tagName: string) => hiddenTags.some((t) => t.toLowerCase() === tagName.toLowerCase()),
     [hiddenTags]
+  )
+
+  const isTagBanned = useCallback(
+    (tagName: string) => bannedTags.some((t) => t.toLowerCase() === tagName.toLowerCase()),
+    [bannedTags]
   )
 
   const missingCount = ruleScopedModels.filter(
@@ -1087,7 +1104,7 @@ export function SearchBrowsePanel({
         counts.banned++
         continue
       }
-      if (!showBlockedModels && modelHasHiddenTag(m.tags, hiddenTags)) {
+      if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) {
         counts.skipped++
         continue
       }
@@ -1113,6 +1130,7 @@ export function SearchBrowsePanel({
     hideBanned,
     showBlockedModels,
     hiddenTags,
+    bannedTags,
     onlyMissing,
     result.crawlSource,
     tagFilter,
@@ -1203,9 +1221,9 @@ export function SearchBrowsePanel({
           !m.isEarlyAccess &&
           !awaitingAccessVersionIds.has(m.versionId) &&
           !pipelineVersionIds.has(m.versionId) &&
-          modelHasHiddenTag(m.tags, hiddenTags)
+          modelHasPolicyTag(m.tags, hiddenTags, bannedTags)
       ).length,
-    [ruleScopedModels, awaitingAccessVersionIds, pipelineVersionIds, hiddenTags]
+    [ruleScopedModels, awaitingAccessVersionIds, pipelineVersionIds, hiddenTags, bannedTags]
   )
 
   const eligibleNotQueuedCount = Math.max(0, notQueuedMissingCount - blockedBySkipTagCount)
@@ -1257,7 +1275,7 @@ export function SearchBrowsePanel({
         excluded++
         continue
       }
-      if (modelHasHiddenTag(m.tags ?? [], hiddenTags)) {
+      if (modelHasPolicyTag(m.tags ?? [], hiddenTags, bannedTags)) {
         skipTag++
         continue
       }
@@ -1293,6 +1311,7 @@ export function SearchBrowsePanel({
   }, [
     ruleScopedModels,
     hiddenTags,
+    bannedTags,
     awaitingAccessVersionIds,
     localBanned,
     localUnbanned,
@@ -1478,6 +1497,7 @@ export function SearchBrowsePanel({
     async (tagName: string) => {
       if (!onHiddenTagsChange) return
       const lower = tagName.toLowerCase()
+      if (bannedTags.some((t) => t.toLowerCase() === lower)) return
       if (hiddenTags.some((t) => t.toLowerCase() === lower)) return
       await onHiddenTagsChange([...hiddenTags, tagName])
       setShowBlockedModels(false)
@@ -1485,16 +1505,26 @@ export function SearchBrowsePanel({
       setMessage(t('browse.tagBlockedMsg', { tag: tagName }))
       setTagsOpen(false)
     },
-    [hiddenTags, onHiddenTagsChange, tagFilter, t]
+    [bannedTags, hiddenTags, onHiddenTagsChange, tagFilter, t]
   )
 
   const unhideTag = useCallback(
     async (tagName: string) => {
+      const lower = tagName.toLowerCase()
+      if (bannedTags.some((t) => t.toLowerCase() === lower)) {
+        if (onOpenTagFoldersRef.current) {
+          setTagsOpen(false)
+          onOpenTagFoldersRef.current(tagName)
+        } else {
+          setMessage(t('browse.bannedTagsHint'))
+        }
+        return
+      }
       if (!onHiddenTagsChange) return
-      await onHiddenTagsChange(hiddenTags.filter((t) => t.toLowerCase() !== tagName.toLowerCase()))
+      await onHiddenTagsChange(hiddenTags.filter((t) => t.toLowerCase() !== lower))
       setMessage(t('browse.tagUnblockedMsg', { tag: tagName }))
     },
-    [hiddenTags, onHiddenTagsChange, t]
+    [bannedTags, hiddenTags, onHiddenTagsChange, t]
   )
 
   const banModel = async (model: WatchRuleTestModel) => {
@@ -1508,7 +1538,19 @@ export function SearchBrowsePanel({
     setMessage(t('gallery.banned', { name: model.name }))
     setContextMenu(null)
     // Do not await before paint — main may be busy with harvest; UI is already optimistic.
-    void window.api.banModel(model.id, model.name).catch((err) => {
+    void window.api
+      .banModel(model.id, model.name, {
+        modelName: model.name,
+        versionId: model.versionId,
+        previewUrl: model.previewUrl,
+        pageUrl: model.pageUrl,
+        sourceDomain: model.sourceDomain,
+        author: model.creator,
+        baseModel: model.baseModel,
+        modelType: model.type,
+        tags: model.tags
+      })
+      .catch((err) => {
       setLocalBanned((prev) => {
         const next = new Set(prev)
         next.delete(model.id)
@@ -1825,7 +1867,9 @@ export function SearchBrowsePanel({
                     </div>
                     <div className="tags-popover-list">
                       {filteredTagCatalog.map((tag) => {
-                        const skipped = isTagSkipped(tag.name)
+                        const paused = isTagPaused(tag.name)
+                        const banned = isTagBanned(tag.name)
+                        const skipped = paused || banned
                         const isFilterActive = tagFilter === tag.name
                         return (
                           <div
@@ -1838,7 +1882,9 @@ export function SearchBrowsePanel({
                               disabled={skipped && !showBlockedModels}
                               title={
                                 skipped && !showBlockedModels
-                                  ? t('browse.tagUnblockTitle')
+                                  ? banned
+                                    ? t('browse.bannedTagUnbanHint', { tag: tag.name })
+                                    : t('browse.tagUnblockTitle')
                                   : isFilterActive
                                     ? t('browse.tagsClearFilter')
                                     : t('browse.tagNameFilterTitle')
@@ -1855,7 +1901,7 @@ export function SearchBrowsePanel({
                               }}
                             >
                               <span className="tag-name">
-                                {skipped ? '🚫 ' : ''}
+                                {banned ? '⛔ ' : paused ? '⏸ ' : ''}
                                 {tag.name}
                               </span>
                               <span className="tag-counts">
@@ -1916,12 +1962,18 @@ export function SearchBrowsePanel({
                               <button
                                 type="button"
                                 className={`tag-action-btn tag-hide-btn ${skipped ? 'active' : ''}`}
-                                title={skipped ? t('browse.tagUnblockTitle') : t('browse.tagBlockTitle')}
+                                title={
+                                  banned
+                                    ? t('browse.bannedTagsHint')
+                                    : skipped
+                                      ? t('browse.tagUnblockTitle')
+                                      : t('browse.tagBlockTitle')
+                                }
                                 onClick={() =>
                                   void (skipped ? unhideTag(tag.name) : hideTagFromBrowse(tag.name))
                                 }
                               >
-                                {skipped ? '↩' : '🚫'}
+                                {skipped ? '↩' : '⏸'}
                               </button>
                             )}
                           </div>
@@ -2229,6 +2281,7 @@ export function SearchBrowsePanel({
             loraFolder={loraFolder}
             checkpointFolder={checkpointFolder}
             hiddenTags={hiddenTags}
+            bannedTags={bannedTags}
             banFunctionMode={banMode}
             onTagClick={onCardTagClick}
             onEnqueue={onCardEnqueue}
@@ -2563,6 +2616,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   loraFolder,
   checkpointFolder,
   hiddenTags,
+  bannedTags = [],
   banFunctionMode,
   onTagClick,
   onEnqueue,
@@ -2586,6 +2640,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   loraFolder: string
   checkpointFolder: string
   hiddenTags: string[]
+  bannedTags?: string[]
   banFunctionMode: boolean
   onTagClick: (tag: string) => void
   onEnqueue: (model: WatchRuleTestModel) => void
@@ -2622,7 +2677,9 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             tagRules={tagRules}
             loraFolder={loraFolder}
             checkpointFolder={checkpointFolder}
-            tagSkipBlocked={modelHasHiddenTag(m.tags, hiddenTags)}
+            tagSkipBlocked={modelHasPolicyTag(m.tags, hiddenTags, bannedTags)}
+            blockedTags={bannedTags}
+            pausedTags={hiddenTags}
             onTagClick={onTagClick}
             onEnqueue={onEnqueue}
             onJumpToGallery={onJumpToGallery}
@@ -2651,6 +2708,8 @@ const ModelCard = memo(function ModelCard({
   loraFolder = '',
   checkpointFolder = '',
   tagSkipBlocked = false,
+  blockedTags = [],
+  pausedTags = [],
   onTagClick,
   onEnqueue,
   onContextMenu,
@@ -2674,6 +2733,8 @@ const ModelCard = memo(function ModelCard({
   loraFolder?: string
   checkpointFolder?: string
   tagSkipBlocked?: boolean
+  blockedTags?: string[]
+  pausedTags?: string[]
   onTagClick: (tag: string) => void
   onEnqueue: (model: WatchRuleTestModel) => void
   onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
@@ -2999,18 +3060,27 @@ const ModelCard = memo(function ModelCard({
               folderLabel,
               tagRules
             })
+            const banned = isPermanentlyBannedModelTag(tag, blockedTags)
+            const paused = isPausedOnlyModelTag(tag, pausedTags, blockedTags)
+            const roleTitle =
+              role === 'final'
+                ? t('gallery.tagRoleFinalHint', { tag })
+                : role === 'mapped'
+                  ? t('gallery.tagRoleMappedHint', { tag })
+                  : t('browse.tagRoleUnmappedHint', { tag })
+            const policyTitle = banned
+              ? t('browse.tagBlockedOnCardHint', { tag })
+              : paused
+                ? t('browse.tagPausedOnCardHint', { tag })
+                : null
             return (
               <button
                 key={tag}
                 type="button"
-                className={`tag-chip ${cardTagFolderRoleClass(role)}`}
-                title={
-                  role === 'final'
-                    ? t('gallery.tagRoleFinalHint', { tag })
-                    : role === 'mapped'
-                      ? t('gallery.tagRoleMappedHint', { tag })
-                      : t('browse.tagRoleUnmappedHint', { tag })
-                }
+                className={`tag-chip ${cardTagFolderRoleClass(role)}${
+                  banned ? ' is-blocked-tag' : paused ? ' is-paused-tag' : ''
+                }`}
+                title={policyTitle ? `${policyTitle} · ${roleTitle}` : roleTitle}
                 onClick={(e) => {
                   e.stopPropagation()
                   onTagClick(tag)
