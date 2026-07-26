@@ -23,6 +23,7 @@ import {
   modelHasHiddenTag,
   findRuleForTag,
   normalizeHiddenTags,
+  pickBestMatchingFolderTag,
   queueItemBlockedByHiddenTags,
   resolveModelOutputFolder
 } from '../shared/tag-routing'
@@ -763,12 +764,15 @@ export class DownloadQueue {
     for (const item of this.items) {
       if (item.status !== 'queued' && item.status !== 'downloading') continue
       if (!item.civitaiTags?.some((t) => t.toLowerCase() === needle)) continue
-      item.routingTag = routingTag
+      const winner =
+        pickBestMatchingFolderTag(item.civitaiTags ?? [], tagRules) || routingTag.trim()
+      if (!winner) continue
+      item.routingTag = winner
       item.outputFolder = resolveModelOutputFolder({
         loraFolder: settings.loraOutputFolder,
         checkpointFolder: settings.checkpointOutputFolder,
         modelType: item.modelType,
-        routingTag,
+        routingTag: winner,
         baseModel: item.baseModel,
         tagRules
       })

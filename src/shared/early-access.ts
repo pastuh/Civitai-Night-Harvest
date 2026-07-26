@@ -17,12 +17,12 @@ export function isVersionEarlyAccess(version: {
   availability?: string
   earlyAccessEndsAt?: string | null
 }): boolean {
-  const avail = version.availability?.toLowerCase()
-  if (avail === 'earlyaccess') return true
+  // Prefer unlock timestamp: expired endsAt means public, even if availability still says EarlyAccess.
   if (version.earlyAccessEndsAt) {
     return new Date(version.earlyAccessEndsAt).getTime() > Date.now()
   }
-  return false
+  const avail = version.availability?.toLowerCase()
+  return avail === 'earlyaccess'
 }
 
 export function isEarlyAccessActive(endsAt: string | null | undefined): boolean {
@@ -71,21 +71,21 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   endsAt?: string
 } {
   const avail = mini.availability?.toLowerCase()
-  const endsActive =
-    mini.earlyAccessEndsAt && isEarlyAccessActive(mini.earlyAccessEndsAt)
-      ? mini.earlyAccessEndsAt
-      : undefined
+  const endsAt = mini.earlyAccessEndsAt ?? undefined
+  const endsActive = endsAt && isEarlyAccessActive(endsAt) ? endsAt : undefined
 
-  // Prefer explicit unlock window / EarlyAccess availability (even after a raw 403).
+  // Expired unlock window → treat as public even if availability still says EarlyAccess.
+  if (endsAt && !endsActive) {
+    return { isEarlyAccess: false }
+  }
   if (endsActive) {
     return { isEarlyAccess: true, endsAt: endsActive }
   }
   if (avail === 'earlyaccess') {
-    return { isEarlyAccess: true, endsAt: mini.earlyAccessEndsAt ?? undefined }
+    return { isEarlyAccess: true, endsAt: endsAt }
   }
-  // Gated resource with an unlock timestamp (docs: endsAt only when checkPermission).
-  if (mini.checkPermission && mini.earlyAccessEndsAt) {
-    return { isEarlyAccess: true, endsAt: mini.earlyAccessEndsAt }
+  if (mini.checkPermission && endsAt) {
+    return { isEarlyAccess: true, endsAt }
   }
   return { isEarlyAccess: false }
 }

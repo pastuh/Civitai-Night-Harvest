@@ -1,4 +1,4 @@
-import { fuzzyTagMatch, tagAliasMatch, modelHasExactTag } from './tag-fuzzy'
+import { fuzzyTagMatch, tagAliasMatch, modelHasExactTag, tagsEqual } from './tag-fuzzy'
 import type { TagFolderRule } from './types'
 import { getDefaultFolderForType, joinFolderPath } from './utils'
 /** Split tag rule name field — supports "tool, tools" or "tool; tools". */
@@ -339,15 +339,13 @@ export function shouldSkipTagBulkMove(
 ): boolean {
   if (record.routingLocked) return true
 
+  const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules)
+  if (!winner) return false
+
   const rt = record.routingTag.trim()
-  if (!rt) return false
+  if (!rt || !tagsEqual(rt, winner)) return false
 
-  const onCivitaiTag =
-    modelHasExactTag(record.civitaiTags, rt) ||
-    (record.civitaiTags?.some((t) => tagAliasMatch(t, rt)) ?? false)
-  if (!onCivitaiTag) return true
-
-  const rule = findRuleForTag(rt, tagRules)
+  const rule = findRuleForTag(winner, tagRules)
   if (!rule) return false
 
   const modelType = inferModelTypeFromFolders(
@@ -416,6 +414,96 @@ export function getMatchingFolderTags(tags: string[], tagRules: TagFolderRule[])
     }
   }
   return result
+}
+
+/** Default rule priority when unset (first-assigned wins among equals — previous behaviour). */
+export const DEFAULT_TAG_FOLDER_PRIORITY = 1
+
+/** Clamp / coerce tag-folder priority. Empty/invalid → default 1. */
+export function normalizeTagPriority(raw: unknown): number {
+  if (raw == null || raw === '') return DEFAULT_TAG_FOLDER_PRIORITY
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim())
+  if (!Number.isFinite(n)) return DEFAULT_TAG_FOLDER_PRIORITY
+  const rounded = Math.trunc(n)
+  if (rounded > 9999) return 9999
+  if (rounded < -9999) return -9999
+  return rounded
+}
+
+/** Persist only non-default priorities. */
+export function storedTagPriority(raw: unknown): number | undefined {
+  const n = normalizeTagPriority(raw)
+  return n === DEFAULT_TAG_FOLDER_PRIORITY ? undefined : n
+}
+
+export function getRulePriority(rule: Pick<TagFolderRule, 'priority'> | undefined): number {
+  return normalizeTagPriority(rule?.priority)
+}
+
+/**
+ * Sort key for priority: 0 (fixed) always ranks highest; then numeric descending
+ * (2 > 1 > -1 > -9999).
+ */
+export function tagPriorityRank(priority: number): number {
+  const p = normalizeTagPriority(priority)
+  if (p === 0) return 10000
+  return p
+}
+
+export function compareTagPriorities(a: number, b: number): number {
+  return tagPriorityRank(b) - tagPriorityRank(a)
+}
+
+/**
+ * Step priority up/down, skipping 0 (reserved for fixed / manual-style rules).
+ * From 1 down → -1; from -1 up → 1.
+ */
+export function stepTagPriority(current: number, direction: 1 | -1): number {
+  let next = normalizeTagPriority(current) + direction
+  if (next === 0) next += direction
+  if (next > 9999) return 9999
+  if (next < -9999) return -9999
+  return next
+}
+
+/**
+ * Among tags that match folder rules, pick the highest-priority routing tag.
+ * Ties keep the first match order from getMatchingFolderTags (stable — first
+ * matching tag on the model wins; manual routingLocked still overrides moves).
+ */
+export function pickBestMatchingFolderTag(
+  modelTags: string[],
+  tagRules: TagFolderRule[]
+): string | null {
+  const matching = getMatchingFolderTags(modelTags, tagRules)
+  if (!matching.length) return null
+  if (matching.length === 1) return matching[0]
+
+  let best = matching[0]
+  let bestRank = tagPriorityRank(getRulePriority(findRuleForTag(best, tagRules)))
+  for (let i = 1; i < matching.length; i++) {
+    const tag = matching[i]
+    const rank = tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules)))
+    if (rank > bestRank) {
+      best = tag
+      bestRank = rank
+    }
+  }
+  return best
+}
+
+/** True when several matches share the same top priority (ambiguous). */
+export function matchingFolderTagsNeedConfirmation(
+  modelTags: string[],
+  tagRules: TagFolderRule[]
+): boolean {
+  const matching = getMatchingFolderTags(modelTags, tagRules)
+  if (matching.length <= 1) return false
+  const ranks = matching.map((tag) =>
+    tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules)))
+  )
+  const top = Math.max(...ranks)
+  return ranks.filter((r) => r === top).length > 1
 }
 
 export function displayFolderForTag(
@@ -546,17 +634,19 @@ export function resolveModelRoutingTag(
   const matching = getMatchingFolderTags(modelTags, tagRules)
 
   if (active && modelTags.some((t) => tagAliasMatch(active, t))) {
-    return { routingTag: active, needsConfirmation: matching.length > 1 }
+    return { routingTag: active, needsConfirmation: matchingFolderTagsNeedConfirmation(modelTags, tagRules) }
   }
 
   if (matching.length === 0) {
     // Do not invent "Unknown" or base-model as a routing tag — files go to LoRA/Checkpoint root.
     return { routingTag: '', needsConfirmation: false }
   }
-  if (matching.length === 1) {
-    return { routingTag: matching[0], needsConfirmation: false }
+
+  const best = pickBestMatchingFolderTag(modelTags, tagRules) ?? matching[0]
+  return {
+    routingTag: best,
+    needsConfirmation: matchingFolderTagsNeedConfirmation(modelTags, tagRules)
   }
-  return { routingTag: matching[0], needsConfirmation: true }
 }
 
 export function findFirstUsedTag(modelTags: string[], usedTags: Set<string>): string | null {

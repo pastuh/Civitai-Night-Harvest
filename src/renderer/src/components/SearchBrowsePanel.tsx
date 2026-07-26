@@ -939,8 +939,7 @@ export function SearchBrowsePanel({
         ratingFilter,
         browseSort,
         resultsDisplayMode,
-        resultsPageSize,
-        displayModels.length
+        resultsPageSize
       ].join('|'),
     [
       result.crawlSource,
@@ -951,8 +950,7 @@ export function SearchBrowsePanel({
       ratingFilter,
       browseSort,
       resultsDisplayMode,
-      resultsPageSize,
-      displayModels.length
+      resultsPageSize
     ]
   )
 

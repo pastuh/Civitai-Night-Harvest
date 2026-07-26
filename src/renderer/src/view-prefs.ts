@@ -21,6 +21,10 @@ export interface LibraryViewPrefs {
   librarySort: LibrarySort
   nsfwFilter: RatingFilter
   hideFolderAssigned: boolean
+  /** Keep models whose routing tag is in libraryExcludedTags when hide folder-assigned is on. */
+  ignoreExcludedTags: boolean
+  /** Temporarily hide folder-assigned tags (mapped/final) on library cards. */
+  hideAllAssignedTags: boolean
   modelSearch: string
   modelLetter: string | null
 }
@@ -30,6 +34,8 @@ export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
   librarySort: 'tagGroup',
   nsfwFilter: 'all',
   hideFolderAssigned: false,
+  ignoreExcludedTags: false,
+  hideAllAssignedTags: false,
   modelSearch: '',
   modelLetter: null
 }

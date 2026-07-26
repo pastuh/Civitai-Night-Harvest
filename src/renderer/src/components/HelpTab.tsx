@@ -24,6 +24,7 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'blur', fieldKey: 'settings.fields.blurPreviews' },
   { refKey: 'preserveFilters', fieldKey: 'settings.fields.preserveFilters' },
   { refKey: 'banFunctionMode', fieldKey: 'settings.fields.banFunctionMode' },
+  { refKey: 'confirmTagFolderMoves', fieldKey: 'settings.fields.confirmTagFolderMoves' },
   { refKey: 'launchAtLogin', fieldKey: 'settings.fields.launchAtLogin' },
   { refKey: 'galleryGridSize', fieldKey: 'settings.fields.galleryGridSize' },
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
@@ -121,6 +122,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <li>{t('help.libraryFolders')}</li>
+            <li>{t('help.libraryPriority')}</li>
             <li>{t('help.libraryBadge')}</li>
             <li>{t('help.librarySession')}</li>
             <li>{t('help.libraryByDate')}</li>
@@ -128,7 +130,11 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.librarySort')}</li>
             <li>{t('help.libraryContent')}</li>
             <li>{t('help.libraryTags')}</li>
+            <li>{t('help.libraryFastTag')}</li>
+            <li>{t('help.libraryExcluded')}</li>
+            <li>{t('help.libraryManual')}</li>
             <li>{t('help.libraryPreserve')}</li>
+            <li>{t('help.libraryConfirmMoves')}</li>
           </ul>
         </section>
 

@@ -28,6 +28,10 @@ export type LibraryModelCardProps = {
   banFunctionMode?: boolean
   onBanModel?: (modelId: number, modelName: string, versionId?: number) => void
   duplicateOfName?: string | null
+  /** Hide these tags on the card (e.g. excluded while Ignore excluded is on). */
+  hideCardTags?: string[]
+  /** Hide tags that already have a folder assignment (mapped / final). */
+  hideAssignedTags?: boolean
   onToggleSelect: (versionId: number) => void
   onOpenContextMenu: (
     e: MouseEvent,
@@ -53,6 +57,8 @@ function LibraryModelCardInner({
   banFunctionMode = false,
   onBanModel,
   duplicateOfName = null,
+  hideCardTags,
+  hideAssignedTags = false,
   onToggleSelect,
   onOpenContextMenu,
   onOpenDetails,
@@ -68,6 +74,26 @@ function LibraryModelCardInner({
   const folderLine = folderLineIfNotDuplicatingTag(folderLabel, record.civitaiTags)
   const unrecognized = isUnrecognizedInventoryRecord(record)
   const canOpenCivitai = !unrecognized && record.modelId > 0 && record.versionId > 0
+  const hideTagSet =
+    hideCardTags && hideCardTags.length
+      ? new Set(hideCardTags.map((x) => x.toLowerCase()))
+      : null
+  const allTags = record.civitaiTags ?? []
+  const visibleTags = allTags.filter((tag) => {
+    if (hideTagSet?.has(tag.trim().toLowerCase())) return false
+    if (hideAssignedTags) {
+      const role = cardTagFolderRole(tag, {
+        routingTag: record.routingTag,
+        folderLabel,
+        tagRules
+      })
+      if (role !== 'unmapped') return false
+    }
+    return true
+  })
+  const hiddenTagCount = allTags.length - visibleTags.length
+  const showHiddenTagsPlaceholder = hiddenTagCount > 0
+  const shownTags = visibleTags.slice(0, 6)
 
   return (
     <div
@@ -206,14 +232,24 @@ function LibraryModelCardInner({
             {formatWaitDuration(record.awaitingSince, record.downloadedAt)}
           </div>
         )}
-        {folderLine ? (
-          <div className="gallery-folder-line is-assigned" title={folderLine}>
-            {folderLine}
+        {folderLine || record.routingLocked ? (
+          <div
+            className={`gallery-folder-line ${folderLine ? 'is-assigned' : ''} ${record.routingLocked ? 'is-manual' : ''}`}
+            title={
+              record.routingLocked
+                ? t('gallery.manualFolderHint', { folder: folderLine || record.routingTag || '—' })
+                : folderLine || undefined
+            }
+          >
+            {folderLine ? <span className="gallery-folder-path">{folderLine}</span> : null}
+            {record.routingLocked ? (
+              <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
+            ) : null}
           </div>
         ) : null}
-        {(record.civitaiTags?.length ?? 0) > 0 && (
+        {(shownTags.length > 0 || showHiddenTagsPlaceholder) && (
           <div className="tag-row library-card-tags">
-            {record.civitaiTags!.slice(0, 6).map((tag) => {
+            {shownTags.map((tag) => {
               const role = cardTagFolderRole(tag, {
                 routingTag: record.routingTag,
                 folderLabel,
@@ -240,6 +276,17 @@ function LibraryModelCardInner({
                 </button>
               )
             })}
+            {showHiddenTagsPlaceholder ? (
+              <span
+                className="library-hidden-tags-placeholder"
+                title={t('gallery.hiddenAssignedTagsHint', { count: hiddenTagCount })}
+                aria-label={t('gallery.hiddenAssignedTagsHint', { count: hiddenTagCount })}
+              >
+                <span className="library-hidden-tags-dash" aria-hidden />
+                <span className="library-hidden-tags-dash" aria-hidden />
+                <span className="library-hidden-tags-dash" aria-hidden />
+              </span>
+            ) : null}
           </div>
         )}
       </div>

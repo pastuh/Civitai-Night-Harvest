@@ -5,6 +5,7 @@ import type {
   AppSettingsSave,
   ContentFilter,
   DownloadRequest,
+  InventoryRecord,
   TagFolderRule,
   WatchRule,
   WatchRuleSearchOptions,
@@ -13,9 +14,14 @@ import type {
   WatchRuleTestModel
 } from '../shared/types'
 import { buildModelSlug, parseModelId, apiNsfwParam, apiEarlyAccessParam, apiTagSearchVariants, matchesContentFilter, resolveSearchDomains, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, domainLabel, civitaiSearchParamsFromRule, parseRuleFilterTags, getDefaultFolderForType } from '../shared/utils'
-import { modelHasHiddenTag, normalizeHiddenTags } from '../shared/tag-routing'
+import {
+  findRuleForTag,
+  modelHasHiddenTag,
+  normalizeHiddenTags,
+  pickBestMatchingFolderTag,
+  shouldSkipTagBulkMove
+} from '../shared/tag-routing'
 import { modelHasExactTag } from '../shared/tag-fuzzy'
-import { shouldSkipTagBulkMove } from '../shared/tag-routing'
 import { resolveSearchNextCursor, sanitizeCrawlCursor } from '../shared/civitai-pagination'
 import { enrichDeferredDownloads } from '../shared/early-access'
 import { DownloadQueue } from './download-queue'
@@ -27,7 +33,7 @@ import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch } fr
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
-import { moveRecordsToTagFolder } from './model-move'
+import { moveRecordToTagFolder, moveRecordsToTagFolder } from './model-move'
 import { deleteModelFromLibrary, deleteVersionFromLibrary } from './model-delete'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
 import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
@@ -894,30 +900,42 @@ export function initIpc(): void {
       const candidates = inventory
         .getAllVersions()
         .filter((r) => modelHasExactTag(r.civitaiTags, civitaiTag))
-      const skipped = candidates.filter((r) =>
-        shouldSkipTagBulkMove(
-          r,
-          tagRules,
-          settings.loraOutputFolder,
-          settings.checkpointOutputFolder
-        )
-      ).length
-      const versionIds = candidates
-        .filter(
-          (r) =>
-            !shouldSkipTagBulkMove(
-              r,
-              tagRules,
-              settings.loraOutputFolder,
-              settings.checkpointOutputFolder
-            )
-        )
-        .map((r) => r.versionId)
-      const moved = versionIds.length
-        ? moveRecordsToTagFolder(versionIds, routingTag, tagRules, { lockRouting: false })
-        : []
+
+      let skipped = 0
+      const movedRecords: InventoryRecord[] = []
+      const versionIds: number[] = []
+
+      for (const record of candidates) {
+        if (
+          shouldSkipTagBulkMove(
+            record,
+            tagRules,
+            settings.loraOutputFolder,
+            settings.checkpointOutputFolder
+          )
+        ) {
+          skipped++
+          continue
+        }
+        const winner =
+          pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules) || routingTag
+        if (!findRuleForTag(winner, tagRules)) {
+          skipped++
+          continue
+        }
+        try {
+          const updated = moveRecordToTagFolder(record, winner, tagRules, {
+            lockRouting: false
+          })
+          movedRecords.push(updated)
+          versionIds.push(record.versionId)
+        } catch {
+          skipped++
+        }
+      }
+
       const queueUpdated = downloadQueue.reassignRoutingByCivitaiTag(civitaiTag, routingTag)
-      return { moved: moved.length, skipped, queueUpdated, versionIds }
+      return { moved: movedRecords.length, skipped, queueUpdated, versionIds }
     }
   )
 
@@ -1093,7 +1111,7 @@ export function initIpc(): void {
       const existing = inventory.getVersionsForModel(payload.modelId)[0]
       const modelName = pending?.modelName ?? existing?.modelName ?? `Model #${payload.modelId}`
       const versionName = pending?.versionName ?? existing?.versionName ?? 'new version'
-      downloadQueue.enqueue(
+      const id = downloadQueue.enqueue(
         {
           modelId: payload.modelId,
           versionId: payload.versionId,
@@ -1109,13 +1127,24 @@ export function initIpc(): void {
         }
       )
       scheduler.dismissPending(payload.versionId)
+      // Same as manual download:enqueue — otherwise Updates→Queue sits forever while paused.
+      if (id && shouldCrawlAutoDownload()) {
+        downloadQueue.start()
+        scheduler.setStatus('downloading')
+      }
       scheduler.log(
         'info',
-        `Queued new version: ${modelName} → ${versionName}`,
+        id
+          ? `Queued new version: ${modelName} → ${versionName}`
+          : `Could not queue new version (already owned or blocked): ${modelName} → ${versionName}`,
         undefined,
         { modelId: payload.modelId, versionId: payload.versionId }
       )
-      return { status: 'queued' as const, modelId: payload.modelId, versionId: payload.versionId }
+      return {
+        status: id ? ('queued' as const) : ('skipped' as const),
+        modelId: payload.modelId,
+        versionId: payload.versionId
+      }
     }
   )
 

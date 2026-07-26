@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
 
+export type TagSuggestionGroup = {
+  label: string
+  items: string[]
+}
+
 interface Props {
   value: string
   onChange: (value: string) => void
-  suggestions: string[]
+  suggestions?: string[]
+  /** Prefer over flat `suggestions` — renders section headers in the list. */
+  groupedSuggestions?: TagSuggestionGroup[]
   placeholder?: string
   id?: string
   className?: string
@@ -24,6 +31,13 @@ interface Props {
   singleTag?: boolean
   /** `fuzzy` for Civitai tags; `substring` for folder names and literal labels. */
   matchMode?: 'fuzzy' | 'substring'
+  /** Cap on listed matches (default 24 single / 12 multi). */
+  maxSuggestions?: number
+  /**
+   * When the field still equals this value, treat the query as empty so the full
+   * browse list is shown (useful when prefilled with the source tag).
+   */
+  emptyQueryWhenValueEquals?: string
 }
 
 function tokenBeforeCursor(value: string, cursor: number): { prefix: string; token: string; start: number } {
@@ -34,10 +48,40 @@ function tokenBeforeCursor(value: string, cursor: number): { prefix: string; tok
   return { prefix: before.slice(0, start), token, start }
 }
 
+function filterItems(
+  items: string[],
+  queryToken: string,
+  matchMode: 'fuzzy' | 'substring',
+  limit: number
+): string[] {
+  if (!queryToken) return items.slice(0, limit)
+  if (matchMode === 'substring') {
+    const q = queryToken
+    const starts: string[] = []
+    const contains: string[] = []
+    for (const s of items) {
+      const lower = s.toLowerCase()
+      if (lower.startsWith(q)) starts.push(s)
+      else if (lower.includes(q)) contains.push(s)
+    }
+    return [...starts, ...contains].slice(0, limit)
+  }
+  const starts: string[] = []
+  const contains: string[] = []
+  for (const s of items) {
+    if (fuzzyTagMatch(queryToken, s)) {
+      if (s.toLowerCase().startsWith(queryToken)) starts.push(s)
+      else contains.push(s)
+    }
+  }
+  return [...starts, ...contains].slice(0, limit)
+}
+
 export function TagAutocompleteInput({
   value,
   onChange,
-  suggestions,
+  suggestions = [],
+  groupedSuggestions,
   placeholder,
   id,
   className,
@@ -51,7 +95,9 @@ export function TagAutocompleteInput({
   clearable = false,
   clearLabel,
   singleTag = false,
-  matchMode = 'fuzzy'
+  matchMode = 'fuzzy',
+  maxSuggestions,
+  emptyQueryWhenValueEquals
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -60,39 +106,57 @@ export function TagAutocompleteInput({
 
   const { token } = useMemo(() => tokenBeforeCursor(value, cursor), [value, cursor])
 
-  const queryToken = useMemo(
+  const rawQuery = useMemo(
     () => token.trim().replace(/[,;]+$/, '').trim().toLowerCase(),
     [token]
   )
 
-  const matchLimit = singleTag ? 24 : 12
+  const queryToken = useMemo(() => {
+    const ignore = emptyQueryWhenValueEquals?.trim().toLowerCase()
+    if (ignore && rawQuery === ignore) return ''
+    return rawQuery
+  }, [rawQuery, emptyQueryWhenValueEquals])
 
-  const matches = useMemo(() => {
-    if (matchMode === 'substring') {
-      if (!queryToken) return suggestions.slice(0, matchLimit)
-      const q = queryToken
-      const starts: string[] = []
-      const contains: string[] = []
-      for (const s of suggestions) {
-        const lower = s.toLowerCase()
-        if (lower.startsWith(q)) starts.push(s)
-        else if (lower.includes(q)) contains.push(s)
+  const matchLimit = maxSuggestions ?? (singleTag ? 24 : 12)
+
+  const flatPool = useMemo(() => {
+    if (groupedSuggestions?.length) {
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const g of groupedSuggestions) {
+        for (const item of g.items) {
+          const key = item.toLowerCase()
+          if (seen.has(key)) continue
+          seen.add(key)
+          out.push(item)
+        }
       }
-      return [...starts, ...contains].slice(0, matchLimit)
+      return out
     }
-    if (!queryToken) {
-      return suggestions.slice(0, matchLimit)
+    return suggestions
+  }, [groupedSuggestions, suggestions])
+
+  const matchGroups = useMemo(() => {
+    if (!groupedSuggestions?.length) {
+      const items = filterItems(flatPool, queryToken, matchMode, matchLimit)
+      return items.length ? [{ label: '', items }] : []
     }
-    const starts: string[] = []
-    const contains: string[] = []
-    for (const s of suggestions) {
-      if (fuzzyTagMatch(queryToken, s)) {
-        if (s.toLowerCase().startsWith(queryToken)) starts.push(s)
-        else contains.push(s)
-      }
+    const out: TagSuggestionGroup[] = []
+    let remaining = matchLimit
+    for (const g of groupedSuggestions) {
+      if (remaining <= 0) break
+      const items = filterItems(g.items, queryToken, matchMode, remaining)
+      if (!items.length) continue
+      out.push({ label: g.label, items })
+      remaining -= items.length
     }
-    return [...starts, ...contains].slice(0, matchLimit)
-  }, [suggestions, queryToken, matchLimit, matchMode])
+    return out
+  }, [groupedSuggestions, flatPool, queryToken, matchMode, matchLimit])
+
+  const matches = useMemo(
+    () => matchGroups.flatMap((g) => g.items),
+    [matchGroups]
+  )
 
   useEffect(() => {
     setActiveIndex(0)
@@ -165,6 +229,8 @@ export function TagAutocompleteInput({
     })
   }
 
+  let optionIndex = -1
+
   return (
     <div className={className ? `tag-autocomplete ${className}` : 'tag-autocomplete'}>
       <div className={`tag-autocomplete-field${fieldMods ? ` ${fieldMods}` : ''}`}>
@@ -222,18 +288,31 @@ export function TagAutocompleteInput({
       </div>
       {showDropdown && (
         <ul className="tag-autocomplete-list" role="listbox">
-          {matches.map((tag, i) => (
-            <li key={tag}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={i === activeIndex}
-                className={i === activeIndex ? 'active' : undefined}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => applySuggestion(tag)}
-              >
-                {tag}
-              </button>
+          {matchGroups.map((group) => (
+            <li key={group.label || '__flat'} className="tag-autocomplete-group" role="presentation">
+              {group.label ? (
+                <div className="tag-autocomplete-group-label">{group.label}</div>
+              ) : null}
+              <ul className="tag-autocomplete-group-items">
+                {group.items.map((tag) => {
+                  optionIndex += 1
+                  const idx = optionIndex
+                  return (
+                    <li key={`${group.label}:${tag}`}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={idx === activeIndex}
+                        className={idx === activeIndex ? 'active' : undefined}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applySuggestion(tag)}
+                      >
+                        {tag}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
             </li>
           ))}
         </ul>

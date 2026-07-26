@@ -18,16 +18,17 @@ import {
 import { useT } from '../i18n/context'
 import {
   findRuleForTag,
-  formatTagRuleLabel,
   namesForRoutingFilter,
   parseTagRuleNames,
   ruleCoversTag,
-  countInventoryInFolder,
   countInventoryInTagSubfolder,
   collectTagSubfolderRoutes,
   displayFolderForTag,
   recordMatchesTagSubfolder,
-  subfolderNameForRule
+  subfolderNameForRule,
+  isCustomTagFolderRule,
+  formatTagRuleLabel,
+  normalizeHiddenTags
 } from '../../../shared/tag-routing'
 import {
   buildTagClusters,
@@ -39,18 +40,22 @@ import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
+import { TagAutocompleteInput } from './TagAutocompleteInput'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
 import {
   normalizeResultsDisplayMode,
   normalizeResultsPageSize
 } from '../../../shared/results-display'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
+import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
 import {
   DEFAULT_LIBRARY_VIEW_PREFS,
   type LibraryFilter,
   type LibrarySort,
   type LibraryViewPrefs
 } from '../view-prefs'
+import { FastTagAssignModal } from './FastTagAssignModal'
+import { SkippedTagsPanel } from './SkippedTagsPanel'
 
 interface Props {
   inventory: InventoryRecord[]
@@ -60,6 +65,14 @@ interface Props {
   uiExtended?: boolean
   banFunctionMode?: boolean
   onBanFunctionModeChange?: (enabled: boolean) => void
+  fastTagMode?: boolean
+  onFastTagModeChange?: (enabled: boolean) => void
+  libraryExcludedTags?: string[]
+  onLibraryExcludedTagsChange?: (tags: string[]) => Promise<void>
+  /** Same pool as Tag folders (for Fast tag suggestions). */
+  tagSuggestions?: string[]
+  /** When false, skip Fast tag / bulk move confirmation. Default true. */
+  confirmTagFolderMoves?: boolean
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   focusModelId?: number | null
   /** Prefill Library search (Updates → Open in Library). */
@@ -154,6 +167,12 @@ function GalleryTabInner({
   uiExtended = false,
   banFunctionMode = false,
   onBanFunctionModeChange,
+  fastTagMode = false,
+  onFastTagModeChange,
+  libraryExcludedTags = [],
+  onLibraryExcludedTagsChange,
+  tagSuggestions = [],
+  confirmTagFolderMoves = true,
   onSaveTagRules,
   focusModelId,
   focusModelName,
@@ -190,13 +209,23 @@ function GalleryTabInner({
   const [librarySort, setLibrarySort] = useState<LibrarySort>(initial.librarySort)
   const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>(initial.nsfwFilter)
   const [hideFolderAssigned, setHideFolderAssigned] = useState(initial.hideFolderAssigned)
+  const [ignoreExcludedTags, setIgnoreExcludedTags] = useState(initial.ignoreExcludedTags)
+  const [hideAllAssignedTags, setHideAllAssignedTags] = useState(initial.hideAllAssignedTags)
+  const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [tagSearch, setTagSearch] = useState('')
+  const deferredTagSearch = useDeferredValue(tagSearch)
   const [modelSearch, setModelSearch] = useState(initial.modelSearch)
   const deferredModelSearch = useDeferredValue(modelSearch)
   /** Exact-model pin from Updates → Open in Library (skips full-grid search/scroll). */
   const [pinModelId, setPinModelId] = useState<number | null>(null)
   const [modelLetter, setModelLetter] = useState<string | null>(initial.modelLetter)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [sectionOpen, setSectionOpen] = useState({
+    baseModels: false,
+    folders: true,
+    tagGroups: true
+  })
   const [moving, setMoving] = useState(false)
   const [message, setMessage] = useState('')
   const [bannedList, setBannedList] = useState<BannedModel[]>([])
@@ -208,6 +237,8 @@ function GalleryTabInner({
   )
   const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [assignFolderOpen, setAssignFolderOpen] = useState(false)
+  const [assignTagQuery, setAssignTagQuery] = useState('')
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [highlightVersionId, setHighlightVersionId] = useState<number | null>(null)
   /** Flash all owned versions of a model (Open in Library from New Versions). */
@@ -246,6 +277,8 @@ function GalleryTabInner({
       librarySort,
       nsfwFilter,
       hideFolderAssigned,
+      ignoreExcludedTags,
+      hideAllAssignedTags,
       modelSearch,
       modelLetter
     })
@@ -254,6 +287,8 @@ function GalleryTabInner({
     librarySort,
     nsfwFilter,
     hideFolderAssigned,
+    ignoreExcludedTags,
+    hideAllAssignedTags,
     modelSearch,
     modelLetter,
     onViewPrefsChange
@@ -352,26 +387,37 @@ function GalleryTabInner({
   }, [])
 
   const filteredBaseModelOptions = useMemo(() => {
-    const q = tagSearch.trim().toLowerCase()
+    const q = deferredTagSearch.trim().toLowerCase()
     if (!q) return baseModelOptions
     return baseModelOptions.filter(({ name }) => name.toLowerCase().includes(q))
-  }, [baseModelOptions, tagSearch])
+  }, [baseModelOptions, deferredTagSearch])
+
+  const TAG_SIDEBAR_IDLE_LIMIT = 50
 
   const filteredTagClusters = useMemo(() => {
-    const q = tagSearch.trim().toLowerCase()
-    if (!q) return tagClusters
-    return tagClusters
-      .map((cluster) => ({
-        ...cluster,
-        variants: cluster.variants.filter(
-          (v) => v.name.toLowerCase().includes(q) || cluster.key.includes(q)
-        )
-      }))
-      .filter((c) => c.variants.length > 0)
-  }, [tagClusters, tagSearch])
+    const q = deferredTagSearch.trim().toLowerCase()
+    if (q) {
+      // Search: show every match (this is how you find tags beyond the idle list).
+      return tagClusters
+        .map((cluster) => ({
+          ...cluster,
+          variants: cluster.variants.filter(
+            (v) => v.name.toLowerCase().includes(q) || cluster.key.includes(q)
+          )
+        }))
+        .filter((c) => c.variants.length > 0)
+    }
+    // Idle: top groups only — type in Search tags to reach the rest.
+    return tagClusters.slice(0, TAG_SIDEBAR_IDLE_LIMIT)
+  }, [tagClusters, deferredTagSearch])
+
+  const tagClustersTruncated =
+    !deferredTagSearch.trim() && tagClusters.length > TAG_SIDEBAR_IDLE_LIMIT
+      ? tagClusters.length
+      : 0
 
   const filteredFolderRules = useMemo(() => {
-    const q = tagSearch.trim().toLowerCase()
+    const q = deferredTagSearch.trim().toLowerCase()
     if (!q) return tagRules
     return tagRules.filter((r) => {
       const names = parseTagRuleNames(r.tagName)
@@ -382,23 +428,73 @@ function GalleryTabInner({
         subfolder.includes(q)
       )
     })
-  }, [tagRules, tagSearch])
+  }, [tagRules, deferredTagSearch])
+
+  /** Tags that route into each auto Tag-folders subfolder (aliases under one folder). */
+  const aliasesBySubfolder = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const rule of tagRules) {
+      if (isCustomTagFolderRule(rule, loraFolder, checkpointFolder)) continue
+      const sub = subfolderNameForRule(rule)
+      if (!sub) continue
+      const key = sub.toLowerCase()
+      const list = map.get(key) ?? []
+      for (const raw of parseTagRuleNames(rule.tagName)) {
+        const tag = raw.trim()
+        if (!tag) continue
+        if (!list.some((t) => t.toLowerCase() === tag.toLowerCase())) list.push(tag)
+      }
+      map.set(key, list)
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    }
+    return map
+  }, [tagRules, loraFolder, checkpointFolder])
+
+  const customFolderRules = useMemo(
+    () =>
+      filteredFolderRules.filter((r) =>
+        isCustomTagFolderRule(r, loraFolder, checkpointFolder)
+      ),
+    [filteredFolderRules, loraFolder, checkpointFolder]
+  )
+
+  const routingTagCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const r of inventory) {
+      const tag = r.routingTag?.trim()
+      if (!tag) continue
+      const key = tag.toLowerCase()
+      map.set(key, (map.get(key) ?? 0) + 1)
+    }
+    return map
+  }, [inventory])
+
+  const allTagSubfolderRoutes = useMemo(
+    () => collectTagSubfolderRoutes(tagRules, loraFolder, checkpointFolder),
+    [tagRules, loraFolder, checkpointFolder]
+  )
 
   const filteredTagSubfolders = useMemo(() => {
-    const routes = collectTagSubfolderRoutes(tagRules, loraFolder, checkpointFolder)
-    const q = tagSearch.trim().toLowerCase()
-    if (!q) return routes
-    return routes.filter(
-      (route) =>
+    const q = deferredTagSearch.trim().toLowerCase()
+    if (!q) return allTagSubfolderRoutes
+    return allTagSubfolderRoutes.filter((route) => {
+      if (
         route.name.toLowerCase().includes(q) ||
         route.display.toLowerCase().includes(q)
-    )
-  }, [tagRules, tagSearch, loraFolder, checkpointFolder])
+      ) {
+        return true
+      }
+      const aliases = aliasesBySubfolder.get(route.name.toLowerCase()) ?? []
+      return aliases.some((a) => a.toLowerCase().includes(q))
+    })
+  }, [allTagSubfolderRoutes, deferredTagSearch, aliasesBySubfolder])
 
-  /** One pass — never re-scan inventory×rules on every parent re-render. */
+  /** Counts for all routes — independent of sidebar search (search must stay cheap). */
   const tagSubfolderCounts = useMemo(() => {
     const map = new Map<string, number>()
-    for (const route of filteredTagSubfolders) {
+    for (const route of allTagSubfolderRoutes) {
       map.set(
         route.name,
         countInventoryInTagSubfolder(
@@ -411,18 +507,7 @@ function GalleryTabInner({
       )
     }
     return map
-  }, [filteredTagSubfolders, inventory, tagRules, loraFolder, checkpointFolder])
-
-  const folderRuleCounts = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const rule of filteredFolderRules) {
-      map.set(
-        rule.id,
-        countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)
-      )
-    }
-    return map
-  }, [filteredFolderRules, inventory, loraFolder, checkpointFolder])
+  }, [allTagSubfolderRoutes, inventory, tagRules, loraFolder, checkpointFolder])
 
   const modelSearchLetters = useMemo(() => {
     const set = new Set<string>()
@@ -563,7 +648,18 @@ function GalleryTabInner({
       )
     }
     if (hideFolderAssigned) {
-      list = list.filter((r) => !r.routingTag?.trim())
+      const excluded = normalizeHiddenTags(libraryExcludedTags)
+      list = list.filter((r) => {
+        const route = r.routingTag?.trim()
+        if (!route) return true
+        if (
+          ignoreExcludedTags &&
+          excluded.some((ex) => fuzzyTagMatch(ex, route))
+        ) {
+          return true
+        }
+        return false
+      })
     }
     if (pinModelId != null) {
       list = list.filter((r) => r.modelId === pinModelId)
@@ -581,6 +677,8 @@ function GalleryTabInner({
     matchesModelSearch,
     nsfwFilter,
     hideFolderAssigned,
+    ignoreExcludedTags,
+    libraryExcludedTags,
     sessionSet,
     pinModelId,
     loraFolder,
@@ -655,13 +753,23 @@ function GalleryTabInner({
         libraryFilter.type === 'tagSubfolder'
           ? libraryFilter.name
           : '',
+        libraryFilter.type === 'byDate'
+          ? libraryFilter.day
+          : libraryFilter.type === 'byDateRange'
+            ? `${libraryFilter.from}:${libraryFilter.to}`
+            : libraryFilter.type === 'baseModel' || libraryFilter.type === 'subfolder'
+              ? libraryFilter.name
+              : libraryFilter.type === 'cluster'
+                ? libraryFilter.key
+                : '',
         deferredModelSearch,
         modelLetter ?? '',
         pinModelId ?? '',
         nsfwFilter,
         librarySort,
         hideFolderAssigned ? 1 : 0,
-        sortedInventory.length,
+        ignoreExcludedTags ? 1 : 0,
+        libraryExcludedTags.join(',').toLowerCase(),
         libraryDisplayMode,
         resultsPageSize
       ].join('|'),
@@ -673,7 +781,8 @@ function GalleryTabInner({
       nsfwFilter,
       librarySort,
       hideFolderAssigned,
-      sortedInventory.length,
+      ignoreExcludedTags,
+      libraryExcludedTags,
       libraryDisplayMode,
       resultsPageSize
     ]
@@ -959,10 +1068,28 @@ function GalleryTabInner({
   const openContextMenu = useCallback(
     (e: MouseEvent, modelId: number, modelName: string, versionId?: number) => {
       e.preventDefault()
+      setAssignFolderOpen(false)
+      setAssignTagQuery('')
       setContextMenu({ x: e.clientX, y: e.clientY, modelId, modelName, versionId })
     },
     []
   )
+
+  const folderTagSuggestions = useMemo(() => {
+    const names = new Set<string>()
+    for (const rule of tagRules) {
+      for (const n of parseTagRuleNames(rule.tagName)) {
+        const t = n.trim()
+        if (t) names.add(t)
+      }
+      const sub = rule.subfolderName?.trim()
+      if (sub) names.add(sub)
+    }
+    for (const tag of modelTags) {
+      if (tag.name.trim()) names.add(tag.name.trim())
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [tagRules, modelTags])
 
   const moveSelectedToTag = async (tagName: string) => {
     if (!selected.size) return
@@ -982,8 +1109,16 @@ function GalleryTabInner({
     }
   }
 
-  const ensureTagFolder = async (tagName: string): Promise<boolean> => {
+  const ensureTagFolder = async (
+    tagName: string,
+    mode: 'auto' | 'pick' = 'pick'
+  ): Promise<boolean> => {
     if (findRuleForTag(tagName, tagRules)) return true
+    if (mode === 'auto') {
+      // Same as Tag Folders: empty path → type / baseModel / subfolder on disk.
+      await onSaveTagRules([...tagRules, { id: newId(), tagName, folderPath: '' }])
+      return true
+    }
     const path = await window.api.pickFolder()
     if (!path) return false
     const existing = tagRules.filter((r) => !ruleCoversTag(r, tagName))
@@ -991,21 +1126,66 @@ function GalleryTabInner({
     return true
   }
 
+  const assignFolderByTag = async (rawTag: string, versionId: number | undefined) => {
+    const tagName = rawTag.trim()
+    if (!tagName || versionId == null) return
+    const ids =
+      selected.has(versionId) && selected.size > 0 ? [...selected] : [versionId]
+    setMoving(true)
+    setMessage('')
+    setContextMenu(null)
+    setAssignFolderOpen(false)
+    setAssignTagQuery('')
+    try {
+      if (!(await ensureTagFolder(tagName, 'auto'))) return
+      await window.api.assignTag(ids, tagName)
+      setSelected(new Set())
+      setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
+      await onRefresh()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMoving(false)
+    }
+  }
+
   const routeTagAndMove = async (tagName: string) => {
     if (!selected.size) {
       setMessage(t('gallery.selectThenMove', { tag: tagName }))
       return
     }
-    if (!(await ensureTagFolder(tagName))) return
+    if (!(await ensureTagFolder(tagName, 'pick'))) return
     await moveSelectedToTag(tagName)
   }
 
   const openTagInFolders = useCallback(
     (civitaiTag: string) => {
+      if (fastTagMode) {
+        setFastTagTarget(civitaiTag)
+        return
+      }
       onOpenTagFolders?.(civitaiTag)
     },
-    [onOpenTagFolders]
+    [fastTagMode, onOpenTagFolders]
   )
+
+  const hideCardTags = useMemo(
+    () => (ignoreExcludedTags ? normalizeHiddenTags(libraryExcludedTags) : []),
+    [ignoreExcludedTags, libraryExcludedTags]
+  )
+
+  const excludedTagSuggestions = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of inventory) {
+      for (const tag of r.civitaiTags ?? []) {
+        const n = tag.trim()
+        if (n) set.add(n)
+      }
+      const route = r.routingTag?.trim()
+      if (route) set.add(route)
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [inventory])
 
   const filterActive = (f: LibraryFilter): boolean => {
     if (libraryFilter.type !== f.type) return false
@@ -1038,9 +1218,30 @@ function GalleryTabInner({
     })
   }
 
+  const toggleFolderExpand = (name: string) => {
+    const key = name.toLowerCase()
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const folderExpanded = (name: string): boolean => {
+    const key = name.toLowerCase()
+    if (expandedFolders.has(key)) return true
+    const q = deferredTagSearch.trim().toLowerCase()
+    if (!q) return false
+    if (name.toLowerCase().includes(q)) return true
+    const aliases = aliasesBySubfolder.get(key) ?? []
+    return aliases.some((a) => a.toLowerCase().includes(q))
+  }
+
   const clusterExpanded = (cluster: TagCluster): boolean => {
     if (expandedClusters.has(cluster.key)) return true
-    if (tagSearch.trim() && cluster.variants.length > 1) return true
+    // While searching, show only the matching variants for this cluster (already filtered).
+    if (deferredTagSearch.trim() && cluster.variants.length > 1) return true
     return false
   }
 
@@ -1105,6 +1306,17 @@ function GalleryTabInner({
                   />
                   {t('gallery.hideFolderAssigned')}
                 </label>
+                <label
+                  className="checkbox-field"
+                  title={t('gallery.ignoreExcludedTitle')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={ignoreExcludedTags}
+                    onChange={(e) => setIgnoreExcludedTags(e.target.checked)}
+                  />
+                  {t('gallery.ignoreExcluded')}
+                </label>
                 {onBanFunctionModeChange && (
                   <button
                     type="button"
@@ -1114,6 +1326,17 @@ function GalleryTabInner({
                     aria-pressed={banFunctionMode}
                   >
                     {banFunctionMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                  </button>
+                )}
+                {onFastTagModeChange && (
+                  <button
+                    type="button"
+                    className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                    onClick={() => onFastTagModeChange(!fastTagMode)}
+                    title={t('gallery.fastTagModeTitle')}
+                    aria-pressed={fastTagMode}
+                  >
+                    {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
                   </button>
                 )}
                 {onRepairPreviews && inventory.length > 0 && (
@@ -1176,6 +1399,34 @@ function GalleryTabInner({
               )}
             </div>
           </div>
+          {onLibraryExcludedTagsChange ? (
+            <div className="library-excluded-row">
+              <SkippedTagsPanel
+                compact
+                hiddenTags={libraryExcludedTags}
+                tagSuggestions={excludedTagSuggestions}
+                onChange={onLibraryExcludedTagsChange}
+                labels={{
+                  compactLabel: t('gallery.excludedTagsLabel'),
+                  compactEmpty: t('gallery.excludedTagsEmpty'),
+                  compactHint: t('gallery.excludedTagsHint'),
+                  blockPlaceholderShort: t('gallery.excludedTagsPlaceholder'),
+                  blockBtn: t('gallery.excludedTagsAdd')
+                }}
+              />
+              <label
+                className={`checkbox-field library-hide-assigned-tags${hideAllAssignedTags ? ' library-hide-assigned-tags-on' : ''}`}
+                title={t('gallery.hideAllAssignedTagsTitle')}
+              >
+                <input
+                  type="checkbox"
+                  checked={hideAllAssignedTags}
+                  onChange={(e) => setHideAllAssignedTags(e.target.checked)}
+                />
+                {t('gallery.hideAllAssignedTags')}
+              </label>
+            </div>
+          ) : null}
           <div className="library-letter-row" role="toolbar" aria-label={t('gallery.filterByLetter')}>
             <button
               type="button"
@@ -1242,6 +1493,8 @@ function GalleryTabInner({
               loraFolder={loraFolder}
               checkpointFolder={checkpointFolder}
               banFunctionMode={banFunctionMode}
+              hideCardTags={hideCardTags}
+              hideAssignedTags={hideAllAssignedTags}
               versionNameById={versionNameById}
               onBanModel={banModel}
               onToggleSelect={toggleSelect}
@@ -1384,95 +1637,201 @@ function GalleryTabInner({
           )}
 
           {filteredBaseModelOptions.length > 0 && (
-            <>
-              <h4 className="sidebar-section-title">{t('gallery.baseModels')}</h4>
-              {filteredBaseModelOptions.map(({ name, count }) => (
-                <button
-                  key={name}
-                  type="button"
-                  className={`sidebar-tag ${filterActive({ type: 'baseModel', name }) ? 'active' : ''}`}
-                  onClick={() => setLibraryFilter({ type: 'baseModel', name })}
-                >
-                  <span className="tag-name">{name}</span>
-                  <span className="muted tag-count-inline">{count}</span>
-                </button>
-              ))}
-            </>
-          )}
-
-          {filteredTagSubfolders.length > 0 && (
-            <>
-              <h4 className="sidebar-section-title">{t('gallery.tagFolders')}</h4>
-              {filteredTagSubfolders.map((route) => (
-                <button
-                  key={route.name}
-                  type="button"
-                  className={`sidebar-tag ${filterActive({ type: 'subfolder', name: route.name }) ? 'active' : ''}`}
-                  onClick={() => setLibraryFilter({ type: 'subfolder', name: route.name })}
-                  title={route.display}
-                >
-                  <span className="tag-name">{route.name}</span>
-                  <span className="muted tag-count-inline">
-                    {tagSubfolderCounts.get(route.name) ?? 0}
-                  </span>
-                </button>
-              ))}
-            </>
-          )}
-
-          {filteredFolderRules.length > 0 && (
-          <>
-            <h4 className="sidebar-section-title">{t('gallery.folderRoutes')}</h4>
-            {filteredFolderRules.map((rule) => (
-              <div key={rule.id} className="sidebar-tag-row">
-                <button
-                  type="button"
-                  className={`sidebar-tag ${filterActive({ type: 'routing', name: parseTagRuleNames(rule.tagName)[0] ?? rule.tagName }) ? 'active' : ''}`}
-                  onClick={() =>
-                    setLibraryFilter({
-                      type: 'routing',
-                      name: parseTagRuleNames(rule.tagName)[0] ?? rule.tagName
-                    })
-                  }
-                  title={displayFolderForTag(
-                    parseTagRuleNames(rule.tagName)[0] ?? rule.tagName,
-                    tagRules,
-                    loraFolder,
-                    checkpointFolder
-                  ) ?? rule.folderPath}
-                >
-                  {formatTagRuleLabel(rule)}
-                  <span className="muted tag-count-inline">
-                    {folderRuleCounts.get(rule.id) ?? 0}
-                  </span>
-                </button>
-                {selected.size > 0 && (
+            <div className="sidebar-collapsible">
+              <button
+                type="button"
+                className="sidebar-section-toggle"
+                aria-expanded={sectionOpen.baseModels}
+                onClick={() =>
+                  setSectionOpen((s) => ({ ...s, baseModels: !s.baseModels }))
+                }
+              >
+                <span className="sidebar-section-chevron" aria-hidden>
+                  {sectionOpen.baseModels ? '▼' : '▶'}
+                </span>
+                <span className="sidebar-section-toggle-label">{t('gallery.baseModels')}</span>
+                <span className="muted tag-count-inline">{filteredBaseModelOptions.length}</span>
+              </button>
+              {sectionOpen.baseModels &&
+                filteredBaseModelOptions.map(({ name, count }) => (
                   <button
+                    key={name}
                     type="button"
-                    className="sidebar-move"
-                    disabled={moving}
-                    onClick={() => void moveSelectedToTag(parseTagRuleNames(rule.tagName)[0] ?? rule.tagName)}
-                    title={
-                      displayFolderForTag(
-                        parseTagRuleNames(rule.tagName)[0] ?? rule.tagName,
-                        tagRules,
-                        loraFolder,
-                        checkpointFolder
-                      ) ?? rule.folderPath
-                    }
+                    className={`sidebar-tag ${filterActive({ type: 'baseModel', name }) ? 'active' : ''}`}
+                    onClick={() => setLibraryFilter({ type: 'baseModel', name })}
                   >
-                    {t('gallery.move')}
+                    <span className="tag-name">{name}</span>
+                    <span className="muted tag-count-inline">{count}</span>
                   </button>
-                )}
-              </div>
-            ))}
-          </>
-        )}
+                ))}
+            </div>
+          )}
+
+          {(filteredTagSubfolders.length > 0 || customFolderRules.length > 0) && (
+            <div className="sidebar-collapsible">
+              <button
+                type="button"
+                className="sidebar-section-toggle"
+                aria-expanded={sectionOpen.folders}
+                onClick={() => setSectionOpen((s) => ({ ...s, folders: !s.folders }))}
+              >
+                <span className="sidebar-section-chevron" aria-hidden>
+                  {sectionOpen.folders ? '▼' : '▶'}
+                </span>
+                <span className="sidebar-section-toggle-label">{t('gallery.tagFolders')}</span>
+                <span className="muted tag-count-inline">
+                  {filteredTagSubfolders.length + customFolderRules.length}
+                </span>
+              </button>
+              {sectionOpen.folders && (
+                <>
+                  <p className="muted sidebar-hint sidebar-hint-compact">
+                    {t('gallery.tagFoldersSidebarHint')}
+                  </p>
+                  {filteredTagSubfolders.map((route) => {
+                    const aliases = aliasesBySubfolder.get(route.name.toLowerCase()) ?? []
+                    const multi = aliases.length > 1
+                    const expanded = folderExpanded(route.name)
+                    const primaryTag = aliases[0] ?? route.name
+                    return (
+                      <div key={route.name} className="tag-cluster-block">
+                        <div className="sidebar-tag-row tag-cluster-header">
+                          {multi ? (
+                            <button
+                              type="button"
+                              className="tag-cluster-toggle"
+                              aria-expanded={expanded}
+                              onClick={() => toggleFolderExpand(route.name)}
+                              title={
+                                expanded ? t('gallery.collapse') : t('gallery.expandVariants')
+                              }
+                            >
+                              {expanded ? '▼' : '▶'}
+                            </button>
+                          ) : (
+                            <span className="tag-cluster-toggle-spacer" aria-hidden />
+                          )}
+                          <button
+                            type="button"
+                            className={`sidebar-tag ${filterActive({ type: 'subfolder', name: route.name }) ? 'active' : ''}`}
+                            onClick={() =>
+                              setLibraryFilter({ type: 'subfolder', name: route.name })
+                            }
+                            title={route.display}
+                          >
+                            <span className="tag-name">{route.name}</span>
+                            <span className="muted tag-count-inline">
+                              {tagSubfolderCounts.get(route.name) ?? 0}
+                            </span>
+                          </button>
+                          {selected.size > 0 && (
+                            <button
+                              type="button"
+                              className="sidebar-move"
+                              disabled={moving}
+                              onClick={() => void moveSelectedToTag(primaryTag)}
+                              title={t('gallery.moveTo', { folder: route.name })}
+                            >
+                              {t('gallery.move')}
+                            </button>
+                          )}
+                        </div>
+                        {multi && expanded && (
+                          <div className="tag-cluster-variants">
+                            {aliases.map((tag) => (
+                              <div key={tag} className="sidebar-tag-row tag-cluster-variant">
+                                <button
+                                  type="button"
+                                  className={`sidebar-tag ${filterActive({ type: 'routing', name: tag }) ? 'active' : ''}`}
+                                  onClick={() =>
+                                    setLibraryFilter({ type: 'routing', name: tag })
+                                  }
+                                  title={
+                                    displayFolderForTag(
+                                      tag,
+                                      tagRules,
+                                      loraFolder,
+                                      checkpointFolder
+                                    ) ?? tag
+                                  }
+                                >
+                                  <span className="tag-name">{tag}</span>
+                                  <span className="muted tag-count-inline">
+                                    {routingTagCounts.get(tag.toLowerCase()) ?? 0}
+                                  </span>
+                                </button>
+                                {selected.size > 0 && (
+                                  <button
+                                    type="button"
+                                    className="sidebar-move"
+                                    disabled={moving}
+                                    onClick={() => void moveSelectedToTag(tag)}
+                                    title={t('gallery.moveTo', { folder: tag })}
+                                  >
+                                    {t('gallery.move')}
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {customFolderRules.map((rule) => {
+                    const tag = parseTagRuleNames(rule.tagName)[0] ?? rule.tagName
+                    return (
+                      <div key={rule.id} className="sidebar-tag-row">
+                        <button
+                          type="button"
+                          className={`sidebar-tag ${filterActive({ type: 'routing', name: tag }) ? 'active' : ''}`}
+                          onClick={() => setLibraryFilter({ type: 'routing', name: tag })}
+                          title={rule.folderPath || formatTagRuleLabel(rule)}
+                        >
+                          <span className="tag-name">{formatTagRuleLabel(rule)}</span>
+                          <span className="muted tag-count-inline">
+                            {routingTagCounts.get(tag.toLowerCase()) ?? 0}
+                          </span>
+                        </button>
+                        {selected.size > 0 && (
+                          <button
+                            type="button"
+                            className="sidebar-move"
+                            disabled={moving}
+                            onClick={() => void moveSelectedToTag(tag)}
+                            title={rule.folderPath || t('gallery.moveTo', { folder: tag })}
+                          >
+                            {t('gallery.move')}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          )}
 
         {filteredTagClusters.length > 0 ? (
-          <>
-            <h4 className="sidebar-section-title">{t('gallery.tagGroups')}</h4>
-            {filteredTagClusters.map((cluster) => {
+          <div className="sidebar-collapsible">
+            <button
+              type="button"
+              className="sidebar-section-toggle"
+              aria-expanded={sectionOpen.tagGroups}
+              onClick={() => setSectionOpen((s) => ({ ...s, tagGroups: !s.tagGroups }))}
+            >
+              <span className="sidebar-section-chevron" aria-hidden>
+                {sectionOpen.tagGroups ? '▼' : '▶'}
+              </span>
+              <span className="sidebar-section-toggle-label">{t('gallery.tagGroups')}</span>
+              <span className="muted tag-count-inline">{filteredTagClusters.length}</span>
+            </button>
+            {sectionOpen.tagGroups && (
+              <>
+                <p className="muted sidebar-hint sidebar-hint-compact">
+                  {t('gallery.tagGroupsSidebarHint')}
+                </p>
+                {filteredTagClusters.map((cluster) => {
               const multi = cluster.variants.length > 1
               const expanded = clusterExpanded(cluster)
               if (!multi) {
@@ -1512,7 +1871,17 @@ function GalleryTabInner({
                 </div>
               )
             })}
-          </>
+            {tagClustersTruncated > 0 && (
+              <p className="muted sidebar-hint sidebar-hint-compact">
+                {t('gallery.tagGroupsTruncated', {
+                  shown: filteredTagClusters.length,
+                  total: tagClustersTruncated
+                })}
+              </p>
+            )}
+              </>
+            )}
+          </div>
         ) : (
           <p className="muted sidebar-hint">
             {t('gallery.noTagsYet')}
@@ -1555,14 +1924,52 @@ function GalleryTabInner({
                 {t('gallery.openOnCivitaiMenu')}
               </button>
             )}
-            {!menuLocal && inventory.some((r) => r.modelId === contextMenu.modelId) && (
-              <button
-                {...contextMenuButtonProps(() =>
-                  scrollToModel(contextMenu.modelId, contextMenu.modelName)
+            {contextMenu.versionId != null && (
+              <>
+                {!assignFolderOpen ? (
+                  <button
+                    type="button"
+                    disabled={moving}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setAssignFolderOpen(true)
+                    }}
+                  >
+                    {t('gallery.assignFolderByTag')}
+                  </button>
+                ) : (
+                  <div
+                    className="context-menu-assign-folder"
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="context-menu-subtitle">{t('gallery.assignFolderByTag')}</div>
+                    <TagAutocompleteInput
+                      value={assignTagQuery}
+                      onChange={setAssignTagQuery}
+                      suggestions={folderTagSuggestions}
+                      singleTag
+                      autoFocus
+                      matchMode="fuzzy"
+                      placeholder={t('gallery.assignFolderPlaceholder')}
+                      confirmLabel={t('gallery.assignFolderConfirm')}
+                      confirmText="→"
+                      clearable
+                      clearLabel={t('gallery.clearSearch')}
+                      disabled={moving}
+                      onConfirm={() =>
+                        void assignFolderByTag(assignTagQuery, contextMenu.versionId)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
+                          e.preventDefault()
+                          void assignFolderByTag(assignTagQuery, contextMenu.versionId)
+                        }
+                      }}
+                    />
+                  </div>
                 )}
-              >
-                {t('gallery.goToInGallery')}
-              </button>
+              </>
             )}
             {contextMenu.versionId != null && !menuLocal && (
               <>
@@ -1678,6 +2085,21 @@ function GalleryTabInner({
             )}
         </ContextMenuPortal>
       )}
+      {fastTagTarget != null && (
+        <FastTagAssignModal
+          tag={fastTagTarget}
+          tagRules={tagRules}
+          inventory={inventory}
+          tagSuggestions={tagSuggestions}
+          confirmTagFolderMoves={confirmTagFolderMoves}
+          loraFolder={loraFolder}
+          checkpointFolder={checkpointFolder}
+          onClose={() => setFastTagTarget(null)}
+          onSaveTagRules={onSaveTagRules}
+          onRefresh={onRefresh}
+          onDone={(msg) => setMessage(msg)}
+        />
+      )}
     </div>
   )
 }
@@ -1695,6 +2117,8 @@ type LibraryCardGridProps = {
   loraFolder: string
   checkpointFolder: string
   banFunctionMode: boolean
+  hideCardTags?: string[]
+  hideAssignedTags?: boolean
   versionNameById: Map<number, string>
   onBanModel: (modelId: number, modelName: string, versionId?: number) => void
   onToggleSelect: (versionId: number) => void
@@ -1722,6 +2146,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   loraFolder,
   checkpointFolder,
   banFunctionMode,
+  hideCardTags,
+  hideAssignedTags = false,
   versionNameById,
   onBanModel,
   onToggleSelect,
@@ -1747,6 +2173,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
           loraFolder={loraFolder}
           checkpointFolder={checkpointFolder}
           banFunctionMode={banFunctionMode}
+          hideCardTags={hideCardTags}
+          hideAssignedTags={hideAssignedTags}
           onBanModel={onBanModel}
           duplicateOfName={
             record.duplicateOfVersionId != null

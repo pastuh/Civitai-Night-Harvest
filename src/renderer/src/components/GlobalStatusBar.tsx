@@ -431,9 +431,7 @@ function pipelineSummary(
 
       unlockToday.sfw > 0 ? t('globalStatus.ratingSfw', { count: unlockToday.sfw }) : '',
 
-      unlockToday.nsfw > 0 ? t('globalStatus.ratingNsfw', { count: unlockToday.nsfw }) : '',
-
-      unlockToday.unknown > 0 ? t('globalStatus.ratingUnknown', { count: unlockToday.unknown }) : ''
+      unlockToday.nsfw > 0 ? t('globalStatus.ratingNsfw', { count: unlockToday.nsfw }) : ''
 
     ]
 

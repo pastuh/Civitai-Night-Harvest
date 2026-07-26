@@ -149,12 +149,18 @@ export function ModelDetailPage({
     for (const item of queue.items) {
       if (
         item.versionId > 0 &&
-        (item.status === 'queued' ||
-          item.status === 'downloading' ||
-          item.status === 'deferred')
+        (item.status === 'queued' || item.status === 'downloading')
       ) {
         ids.add(item.versionId)
       }
+    }
+    return ids
+  }, [queue.items])
+
+  const deferredVersionIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const item of queue.items) {
+      if (item.versionId > 0 && item.status === 'deferred') ids.add(item.versionId)
     }
     return ids
   }, [queue.items])
@@ -387,7 +393,15 @@ export function ModelDetailPage({
   }
 
   const downloadVersion = async (v: CivitaiModelDetailVersion) => {
-    if (ownedSet.has(v.id) || downloadBusyIds.has(v.id) || queuedVersionIds.has(v.id)) return
+    if (
+      ownedSet.has(v.id) ||
+      downloadBusyIds.has(v.id) ||
+      queuedVersionIds.has(v.id) ||
+      deferredVersionIds.has(v.id) ||
+      isVersionEarlyAccess(v)
+    ) {
+      return
+    }
     markDownloadBusy(v.id, true)
     try {
       await window.api.enqueueDownload(
@@ -727,6 +741,16 @@ export function ModelDetailPage({
                   ) : (
                     <span className="muted">{t('gallery.defaultFolder')}</span>
                   )}
+                  {libraryRecord.routingLocked ? (
+                    <span
+                      className="gallery-manual-folder-badge model-detail-manual-badge"
+                      title={t('gallery.manualFolderHint', {
+                        folder: libraryRecord.routingTag || '—'
+                      })}
+                    >
+                      {t('gallery.manualFolder')}
+                    </span>
+                  ) : null}
                   <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
                     {t('modelDetail.downloadedAt', {
                       when: new Date(libraryRecord.downloadedAt).toLocaleString()
@@ -769,6 +793,7 @@ export function ModelDetailPage({
                   const active = v.id === activeVersionId
                   const ea = isVersionEarlyAccess(v)
                   const inQueue = queuedVersionIds.has(v.id)
+                  const awaiting = deferredVersionIds.has(v.id) || ea
                   const busy = downloadBusyIds.has(v.id)
                   const created = formatVersionDate(v.createdAt)
                   const showBaseOnRow =
@@ -822,9 +847,9 @@ export function ModelDetailPage({
                           <button
                             type="button"
                             className="btn-sm primary"
-                            disabled={busy || inQueue || banned}
+                            disabled={busy || inQueue || awaiting || banned}
                             title={
-                              ea
+                              awaiting
                                 ? t('modelDetail.downloadEarlyHint')
                                 : t('modelDetail.downloadHint')
                             }
@@ -832,8 +857,8 @@ export function ModelDetailPage({
                           >
                             {inQueue
                               ? t('modelDetail.inQueue')
-                              : ea
-                                ? t('modelDetail.queueEarlyAccess')
+                              : awaiting
+                                ? t('modelDetail.awaitingAccess')
                                 : t('modelDetail.download')}
                           </button>
                         </div>

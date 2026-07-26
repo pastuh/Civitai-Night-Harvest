@@ -142,6 +142,14 @@ export function getSettings(): AppSettings {
       store.set('settings', { ...storedSettings, hiddenTags: raw.hiddenTags })
     }
   }
+  if (!Array.isArray(raw.libraryExcludedTags)) {
+    raw.libraryExcludedTags = []
+  } else {
+    raw.libraryExcludedTags = normalizeHiddenTags(raw.libraryExcludedTags)
+  }
+  if (raw.fastTagMode === undefined) {
+    raw.fastTagMode = false
+  }
   if (raw.launchAtLogin === undefined) {
     raw.launchAtLogin = false
   }
@@ -195,6 +203,9 @@ export function getSettings(): AppSettings {
   if (raw.banFunctionMode === undefined) {
     raw.banFunctionMode = false
   }
+  if (raw.confirmTagFolderMoves === undefined) {
+    raw.confirmTagFolderMoves = true
+  }
   if (raw.slugFormat !== 'compact' && raw.slugFormat !== 'versionName' && raw.slugFormat !== 'modelTitle') {
     raw.slugFormat = 'compact'
   }
@@ -219,6 +230,9 @@ export function saveSettings(partial: Partial<AppSettings>): AppSettings {
   const next = { ...getSettings(), ...partial, domain: 'red' as const }
   if (partial.hiddenTags !== undefined) {
     next.hiddenTags = normalizeHiddenTags(partial.hiddenTags)
+  }
+  if (partial.libraryExcludedTags !== undefined) {
+    next.libraryExcludedTags = normalizeHiddenTags(partial.libraryExcludedTags)
   }
   store.set('settings', next)
   return next
@@ -317,6 +331,9 @@ export function saveSettingsFromUi(partial: AppSettingsSave): AppSettings {
   }
   if (rest.hiddenTags !== undefined) {
     next.hiddenTags = normalizeHiddenTags(rest.hiddenTags)
+  }
+  if (rest.libraryExcludedTags !== undefined) {
+    next.libraryExcludedTags = normalizeHiddenTags(rest.libraryExcludedTags)
   }
   store.set('settings', next)
   applyLaunchAtLogin(next.launchAtLogin)

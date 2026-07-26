@@ -17,12 +17,13 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Browse results** — search, filters, sort, tags; progress stats: Loaded, Owned, Yield, Updates, Awaiting, Banned
 - **Model details** — full page with versions, download, and preview save
 - **Auto / Manual / Pause** — auto-queue from harvest, click-to-queue, or pause downloads
-- **Library** — local inventory, tag folders, session and date filters; tab **+N** for new downloads
+- **Library** — local inventory; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
+- **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; custom paths
 - **Updates** — newer versions of models you already own (Queue / Ban / Dismiss)
 - **Download strip** — progress, priority, retries; Early access when a model is gated
 - **Activity** — crawl and download history
 - **Status bar** — fetch, wait, and queue summary at the bottom
-- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters
+- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters, confirm tag moves
 
 Open the in-app **Help** tab for a short UI guide.
 
@@ -66,8 +67,21 @@ Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that mod
 - **+N** — new downloads since you last opened Library (opens **Session downloads**)
 - **Session downloads** — everything added this app run
 - **Downloaded by date** — Today / Yesterday / 7 days, or a calendar (one day, or click two days for a range); shows download count for the selection
+- **Excluded** — tags ignored when **Hide folder-assigned** + **Ignore excluded** are on (e.g. keep `concept` models visible)
+- **All assigned** — temporarily hide folder-mapped tags on cards (dashed placeholder shows tags were hidden)
+- **Fast tag** — click a card tag to assign a folder (`\*\name`) without leaving Library; optional confirm dialog
+- **Manual** badge — models assigned by hand are not re-routed by auto tag moves / priority
 - Sort, filters, tag sidebar, folder assignment
 - **ℹ** — Model details
+
+---
+
+## Tag Folders
+
+- Map Civitai tags to disk under each base model: `\*\folder` (or a custom absolute path)
+- **Mass** — select many tags and assign one folder name
+- **Priority** — when a model matches several tags, higher wins (▲/▼; skips `0`). Equal priorities: first matching tag. Manual Library assigns always win
+- Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog
 
 ---
 
@@ -107,7 +121,7 @@ Card size is adjustable for Row and Grid.
 4. **Auto** for hands-off queueing, or **Manual** and click cards; turn **Pause** off to download.
 5. Optional: **👁** for a quieter harvest UI; snapshot or turn 👁 off to see cards again.
 
-**Tag Folders** maps Civitai tags to subfolders on disk.
+Use **Tag Folders** (and Library **Fast tag**) to map Civitai tags to subfolders on disk.
 
 ---
 

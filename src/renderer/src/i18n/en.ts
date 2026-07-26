@@ -118,6 +118,7 @@ export const en = {
       preserveFilters: 'Preserve filters',
       showBannedInGallery: 'Show banned in gallery',
       banFunctionMode: 'Ban function (× next to card title)',
+      confirmTagFolderMoves: 'Confirm before bulk tag-folder moves',
       browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
       browseSettledDimPercent: 'Dim settled Browse cards',
       resultsDisplayMode: 'Results display (Browse & Library)',
@@ -231,6 +232,8 @@ export const en = {
         'Keep Browse and Library filters, sort, and show/hide checkboxes when you switch tabs — until you change them yourself.',
       banFunctionMode:
         'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
+      confirmTagFolderMoves:
+        'When assigning a tag folder (Tag folders or Library Fast tag), ask how many models will move. Turn off to move immediately.',
       blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
       downloadStripVisibility:
         'Default Hidden: no top queue strip — Clear queue sits on the right of the tab bar. Enable Browse / Browse+Library / All tabs to show the full download strip (Clear queue moves into the strip).',
@@ -338,7 +341,10 @@ export const en = {
     browseBan: 'Ban On — red × on cards excludes a model from future auto-queue',
     browseContextSkipTag:
       'Right-click a model → Skip tag — block a tag from auto-queue (click a tag chip; already-blocked tags are dimmed)',
-    libraryFolders: 'Tag Folders tab — map Civitai tags to disk subfolders under your LoRA/Checkpoint paths',
+    libraryFolders:
+      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). **Mass** assigns many tags to one folder name.',
+    libraryPriority:
+      'Tag Folders **Priority** — when a model matches several tags, higher number wins (▲/▼ skip 0). Equal priorities: first matching tag. Priority 0 = fixed auto-route. Manual Library assigns always win.',
     libraryBadge:
       'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Show List** from Updates still opens All models pinned to that model',
     librarySession:
@@ -350,9 +356,18 @@ export const en = {
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
-    libraryTags: 'Click a tag on a card to open Tag folders with that tag in search',
+    libraryTags:
+      'Right-click a card → **Assign folder by tag**. Click a card tag opens Tag folders (or Fast tag popup when enabled). Green / mapped chips = folder rules.',
+    libraryFastTag:
+      '**Fast tag** — assign a folder for the clicked tag without leaving Library (Path `\\*\\name`; change the name e.g. glass plug → plug). Suggestions group Folders / Assigned / Library tags.',
+    libraryExcluded:
+      '**Excluded** + **Ignore excluded** with **Hide folder-assigned** — keep models whose routing tag is in Excluded (e.g. concept). **All assigned** hides mapped tags on cards (dashed placeholder remains).',
+    libraryManual:
+      '**Manual** badge — folder was set by hand; auto tag moves and priority will not re-route that model until you clear the manual assign.',
     libraryPreserve:
       'Settings → **Preserve filters** — keep Browse/Library filters, sort, and show/hide checkboxes when switching tabs',
+    libraryConfirmMoves:
+      'Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog (Tag folders / Fast tag)',
     edgeOwned: 'Green top border — already in your library',
     edgeQueued: 'Queue accent top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',
@@ -406,6 +421,8 @@ export const en = {
         'Keep Browse and Library filters, sort, and show/hide checkboxes when you switch tabs — until you change them yourself.',
       showBanned: 'Show banned models with red highlight so you can unban.',
       banFunctionMode: 'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
+      confirmTagFolderMoves:
+        'When assigning a tag folder (Tag folders or Library Fast tag), ask how many models will move. Turn off to move immediately.',
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
       hashVerify: 'Compares SHA256 on disk with Civitai /model-versions/by-hash. Use after moving files manually or if a model seems corrupted.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
@@ -804,6 +821,7 @@ export const en = {
     earlyAccess: 'Early access',
     download: 'Download',
     queueEarlyAccess: 'Queue (Early access)',
+    awaitingAccess: 'Awaiting access',
     inQueue: 'In queue',
     downloadHint: 'Download this version',
     downloadEarlyHint: 'Queue this early-access version (Awaiting access until unlock)',
@@ -922,6 +940,38 @@ export const en = {
     },
     hideFolderAssigned: 'Hide folder-assigned',
     hideFolderAssignedTitle: 'Hide models already moved to a tag folder',
+    manualFolder: 'Manual',
+    manualFolderHint:
+      'Manual folder assign — auto tag moves / priority will not re-route this model. Folder: {folder}',
+    ignoreExcluded: 'Ignore excluded',
+    ignoreExcludedTitle:
+      'With Hide folder-assigned: keep models whose folder tag is in Excluded (e.g. concept). Also hides those tags on cards.',
+    excludedTagsLabel: 'Excluded',
+    excludedTagsEmpty: 'None — add tags to keep visible when Ignore excluded is on',
+    excludedTagsHint:
+      'Excluded folder tags stay visible under Hide folder-assigned when Ignore excluded is on. Remove with ×.',
+    excludedTagsPlaceholder: 'Tag…',
+    excludedTagsAdd: 'Add',
+    hideAllAssignedTags: 'All assigned',
+    hideAllAssignedTagsTitle:
+      'Temporarily hide tags that already have a folder assignment (green/mapped) on cards',
+    hiddenAssignedTagsHint: '{count} assigned tag(s) hidden — turn off “All assigned” to show',
+    fastTagModeOff: 'Fast tag',
+    fastTagModeOn: 'Fast tag on',
+    fastTagModeTitle:
+      'When on, clicking a card tag opens a folder-assign popup instead of Tag folders',
+    fastTagTitlePrefix: 'Assign folder for tag:',
+    fastTagHint:
+      'Edit the name to set the folder under each base model. Models are still matched by the tag you clicked.',
+    fastTagTagLabel: 'Tag (match)',
+    fastTagTagPlaceholder: 'Folder / tag name…',
+    fastTagTagNote: 'Clicked “{tag}” — change to e.g. plug for \\*\\plug (does not rename the Civitai tag)',
+    fastTagGroupFolders: 'Folders (assigned)',
+    fastTagGroupAssigned: 'Assigned tags',
+    fastTagGroupLibrary: 'Library tags',
+    fastTagPreview: 'Path',
+    fastTagPreviewHint: 'LoRA/Checkpoint → base model → this name',
+    fastTagApply: 'Assign & move',
     setRating: 'Set content rating',
     clearRating: 'Clear rating',
     ratingUpdated: 'Content rating updated',
@@ -934,7 +984,7 @@ export const en = {
     filterByLetter: 'Filter by first letter',
     allLetters: 'All',
     helpText:
-      'Click preview for details. Click a Civitai tag to open Tag folders. Green tag + Folder line = assigned. Select cards → sidebar Move. Right-click to ban / unban / delete.',
+      'Click preview for details. Click a Civitai tag to open Tag folders (or Fast tag popup when enabled). Green tag + Folder line = assigned. Select cards → sidebar Move. Right-click to ban / unban / delete.',
     selectedHint: '{count} selected — pick a tag on the right → Move',
     emptyFiltered: 'No models match your search or filter.',
     emptyNone: 'No models here yet. Queue downloads from Browse or run a watch scan.',
@@ -1005,14 +1055,21 @@ export const en = {
     baseModels: 'Base models',
     folderRoutes: 'Folder routes',
     tagFolders: 'Tag folders',
+    tagFoldersSidebarHint:
+      'Disk folders from Tag Folders. Expand a folder to see tags that route there — filter or Move.',
     tagGroups: 'Tag groups',
+    tagGroupsSidebarHint:
+      'Civitai tags on your models (similar names grouped). Not the same as folder rules — use Move to assign a folder.',
+    tagGroupsTruncated: 'Top {shown} of {total} — type in Search tags to find any tag',
     collapse: 'Collapse',
     expandVariants: 'Expand variants',
     relatedTags: '{count} related tags',
     noTagsYet: 'No Civitai tags in library yet — they are saved when you download models.',
     selectedCount: '{count} selected',
     openOnCivitaiMenu: 'Open on Civitai ↗',
-    goToInGallery: 'Go to in gallery →',
+    assignFolderByTag: 'Assign folder by tag',
+    assignFolderPlaceholder: 'Tag or folder name…',
+    assignFolderConfirm: 'Assign to folder',
     markSfw: 'Mark as SFW',
     markNsfw: 'Mark as NSFW',
     unbanAllow: 'Unban — allow downloads',
@@ -1070,6 +1127,13 @@ export const en = {
     colTag: 'Tag',
     colCount: 'Count',
     colFolder: 'Folder',
+    colPriority: 'Priority',
+    priorityHint:
+      'Folder priority when a model matches several tags. Default 1. ▲/▼ skip 0 (−1 ↔ 1 ↔ 2). Higher wins. Negatives lose. 0 = fixed (always wins auto-routing). Equal priorities: first matching tag wins; manual Library assign still wins over every priority.',
+    priorityUp: 'Increase priority (skips 0)',
+    priorityDown: 'Decrease priority (skips 0)',
+    priorityUpdated:
+      '“{tag}” priority {priority}: moved {moved}, skipped {skipped}',
     showInLibrary: 'Show models with this tag in Library',
     noMatch: 'No matching tags',
     noMatchFolder: 'No tags assigned to this folder',

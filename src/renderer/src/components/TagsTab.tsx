@@ -13,7 +13,12 @@ import {
   countInventoryInFolder,
   countMovableByCivitaiTag,
   expandCivitaiTagNames,
-  tagFolderFilterMatch
+  tagFolderFilterMatch,
+  getRulePriority,
+  storedTagPriority,
+  normalizeTagPriority,
+  stepTagPriority,
+  DEFAULT_TAG_FOLDER_PRIORITY
 } from '../../../shared/tag-routing'
 import { TagAutocompleteInput } from './TagAutocompleteInput'
 import { ConfirmModal } from './ConfirmModal'
@@ -25,6 +30,8 @@ interface Props {
   inventory?: InventoryRecord[]
   loraFolder: string
   checkpointFolder: string
+  /** When false, skip the bulk-move confirmation dialog. Default true. */
+  confirmTagFolderMoves?: boolean
   onSave: (rules: TagFolderRule[]) => Promise<void>
   onFilterLibrary?: (tag: string) => void
   onRefresh?: () => Promise<void>
@@ -78,7 +85,8 @@ function normalizeRules(
       ...r,
       tagName: parseTagRuleNames(r.tagName).join(', '),
       folderPath: r.folderPath.trim(),
-      subfolderName: r.subfolderName?.trim() || undefined
+      subfolderName: r.subfolderName?.trim() || undefined,
+      priority: storedTagPriority(r.priority)
     }))
 }
 
@@ -88,6 +96,7 @@ export function TagsTab({
   inventory = [],
   loraFolder,
   checkpointFolder,
+  confirmTagFolderMoves = true,
   onSave,
   onFilterLibrary,
   onRefresh,
@@ -706,6 +715,56 @@ export function TagsTab({
     }
   }
 
+  const commitPriority = async (tag: string, raw: string | number) => {
+    const rule = findRuleForTag(tag, draft)
+    if (!rule || movingTag) return
+    const next = storedTagPriority(
+      typeof raw === 'number'
+        ? raw
+        : raw.trim() === ''
+          ? DEFAULT_TAG_FOLDER_PRIORITY
+          : raw
+    )
+    const prev = storedTagPriority(rule.priority)
+    if (next === prev) return
+
+    const updated = draft.map((r) =>
+      r.id === rule.id ? { ...r, priority: next } : r
+    )
+    const tagsInRule = parseTagRuleNames(rule.tagName)
+    const routingTag = tagsInRule[0] ?? tag
+
+    prepareAssignDraft(tagsInRule, updated)
+    setMovingTag(tag)
+    setStatusMessage(t('tagsTab.transferring'))
+    try {
+      await persistRules(updated)
+      const { moved, skipped } = await moveTagsAfterRuleChange(tagsInRule, routingTag)
+      setStatusMessage(
+        t('tagsTab.priorityUpdated', {
+          tag,
+          priority: normalizeTagPriority(next),
+          moved,
+          skipped
+        }),
+        8000
+      )
+      await onRefresh?.()
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
+    } finally {
+      setMovingTag(null)
+      pinAssignLabels([tag])
+    }
+  }
+
+  const nudgePriority = (tag: string, direction: 1 | -1) => {
+    const rule = findRuleForTag(tag, draft)
+    if (!rule || movingTag) return
+    const next = stepTagPriority(getRulePriority(rule), direction)
+    void commitPriority(tag, next)
+  }
+
   const movableCountForTag = useCallback(
     (tag: string) =>
       countMovableByCivitaiTag(inventory, tag, draft, loraFolder, checkpointFolder),
@@ -733,6 +792,7 @@ export function TagsTab({
     const libCount = movableCountForTag(tag)
     if (libCount === 0) return null
     if (
+      confirmTagFolderMoves &&
       libCount > 1 &&
       !(await askConfirm(t('tagsTab.assignConfirm', { tag, count: libCount })))
     ) {
@@ -1100,6 +1160,9 @@ export function TagsTab({
                   </button>
                 </th>
                 <th>{t('tagsTab.colFolder')}</th>
+                <th className="tags-col-priority" title={t('tagsTab.priorityHint')}>
+                  {t('tagsTab.colPriority')}
+                </th>
                 <th className="tags-col-actions" />
               </tr>
             </thead>
@@ -1109,6 +1172,8 @@ export function TagsTab({
                 const pinned = isPinnedAssignLabel(tag)
                 const folderLabel = folderDisplayForTag(tag)
                 const massOn = massAssign && massSelected.has(tag)
+                const rule = findRuleForTag(tag, draft)
+                const priority = getRulePriority(rule)
                 const rowClass = [
                   assigned ? 'tags-row-assigned' : '',
                   pinned ? 'tags-row-pinned' : ''
@@ -1204,6 +1269,78 @@ export function TagsTab({
                         <span className="muted">—</span>
                       )}
                     </td>
+                    <td className="tags-col-priority">
+                      {assigned ? (
+                        <div
+                          className={[
+                            'tags-priority-control',
+                            priority > 0
+                              ? 'tags-priority-pos'
+                              : priority < 0
+                                ? 'tags-priority-neg'
+                                : 'tags-priority-fixed'
+                          ].join(' ')}
+                        >
+                          <button
+                            type="button"
+                            className="tags-priority-nudge"
+                            title={t('tagsTab.priorityUp')}
+                            disabled={
+                              !!movingTag ||
+                              saveState === 'saving' ||
+                              massAssign ||
+                              priority >= 9999
+                            }
+                            onClick={() => nudgePriority(tag, 1)}
+                          >
+                            ▲
+                          </button>
+                          <input
+                            type="number"
+                            className="tags-priority-input"
+                            min={-9999}
+                            max={9999}
+                            step={1}
+                            defaultValue={priority}
+                            key={`${tag}:${priority}`}
+                            disabled={!!movingTag || saveState === 'saving' || massAssign}
+                            title={t('tagsTab.priorityHint')}
+                            aria-label={t('tagsTab.colPriority')}
+                            onBlur={(e) => void commitPriority(tag, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                ;(e.target as HTMLInputElement).blur()
+                              }
+                              if (e.key === 'ArrowUp') {
+                                e.preventDefault()
+                                nudgePriority(tag, 1)
+                              }
+                              if (e.key === 'ArrowDown') {
+                                e.preventDefault()
+                                nudgePriority(tag, -1)
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="tags-priority-nudge"
+                            title={t('tagsTab.priorityDown')}
+                            disabled={
+                              !!movingTag ||
+                              saveState === 'saving' ||
+                              massAssign ||
+                              priority <= -9999
+                            }
+                            onClick={() => nudgePriority(tag, -1)}
+                          >
+                            ▼
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td className="tags-col-actions">
                       {onFilterLibrary && count > 0 && (
                         <button
@@ -1232,7 +1369,7 @@ export function TagsTab({
               })}
               {!libraryTags.length && (
                 <tr>
-                  <td colSpan={5} className="muted tag-library-empty">
+                  <td colSpan={6} className="muted tag-library-empty">
                     {librarySearch || letterFilter
                       ? t('tagsTab.noMatch')
                       : folderFilterActive

@@ -120,6 +120,7 @@ export const lt: Messages = {
       preserveFilters: 'Išsaugoti filtrus',
       showBannedInGallery: 'Rodyti banned galerijoje',
       banFunctionMode: 'Ban function (× šalia kortelės pavadinimo)',
+      confirmTagFolderMoves: 'Patvirtinti prieš masinį tag-folder perkėlimą',
       browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
       browseSettledDimPercent: 'Pritemdyti settled Browse korteles',
       resultsDisplayMode: 'Rezultatų rodymas (Browse ir Library)',
@@ -233,6 +234,8 @@ export const lt: Messages = {
         'Browse ir Library filtrai, rikiavimas ir show/hide checkbox lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
       banFunctionMode:
         'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
+      confirmTagFolderMoves:
+        'Priskiriant tag aplanką (Tag folders ar Library Fast tag), klausti kiek modelių bus perkelta. Išjunkite — perkelti iškart be dialogo.',
       blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
       downloadStripVisibility:
         'Pagal nutylėjimą juostos nėra — Clear queue dešinėje prie tabų. Įjunkite Browse / Browse+Library / Visus tabus, kad matytumėte pilną download juostą (Clear queue tada bus juostoje).',
@@ -341,7 +344,10 @@ export const lt: Messages = {
     browseBan: 'Ban On — raudonas × ant kortelės nebeįtraukia modelio į auto-queue',
     browseContextSkipTag:
       'Dešinis pelės mygtukas ant modelio → Skip tag — blokuoti tag nuo auto-queue (spauskite tag chip; jau blokuoti — pritemę)',
-    libraryFolders: 'Tag Folders — Civitai tag → poaplankis po LoRA/Checkpoint keliais',
+    libraryFolders:
+      'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias). **Mass** priskiria daug tagų vienam aplanko vardui.',
+    libraryPriority:
+      'Tag Folders **Priority** — kai modelis atitinka kelis tagus, laimi didesnis skaičius (▲/▼ praleidžia 0). Vienodos priority: pirmas atitinkantis tag. Priority 0 = fiksuotas auto-route. Rankiniai Library priskyrimai visada laimi.',
     libraryBadge:
       'Library skilties **+N** — nauji atsisiuntimai nuo paskutinio apsilankymo; atidarius Library su ženkliuku įsijungia **Session downloads**. **Show List** iš Updates vis tiek atidaro All models su pin’intu modeliu',
     librarySession:
@@ -353,9 +359,18 @@ export const lt: Messages = {
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group arba download order. Tas pats Settings rezultatų rodymas (lazy / puslapiai) kaip Browse.',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
-    libraryTags: 'Spustelėkite tag ant kortelės — atidaromi Tag folders su ta paieška',
+    libraryTags:
+      'Dešinis spustelėjimas → **Priskirti aplanką pagal tag**. Spustelėkite tag ant kortelės — atidaromi Tag folders (arba Fast tag popup, jei įjungta). Žali / mapped chip’ai = aplanko taisyklės.',
+    libraryFastTag:
+      '**Fast tag** — priskirkite aplanką paspaustam tagui neišeidami iš Library (kelias `\\*\\name`; pakeiskite vardą pvz. glass plug → plug). Pasiūlymai grupuoti: Folders / Assigned / Library tagai.',
+    libraryExcluded:
+      '**Excluded** + **Ignore excluded** su **Hide folder-assigned** — palieka modelius, kurių routing tag yra Excluded (pvz. concept). **All assigned** slepia mapped tagus ant kortelių (lieka brūkšninis placeholder).',
+    libraryManual:
+      '**Manual** / **Rankinis** ženklas — aplankas nustatytas rankiniu būdu; auto tag moves ir priority neperrašys, kol neišvalysite rankinio priskyrimo.',
     libraryPreserve:
       'Nustatymai → **Išsaugoti filtrus** — Browse/Library filtrai, rikiavimas ir show/hide checkbox lieka keičiant tabus',
+    libraryConfirmMoves:
+      'Nustatymai → **Patvirtinti prieš masinius tag-folder perkėlimus** — išjunkite, kad praleistumėte „kiek modelių?“ dialogą (Tag folders / Fast tag)',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
     edgeQueued: 'Eilės accentas viršuje — siuntimo eilėje',
     edgeDownloading: 'Žalia juosta ant miniatiūros — aktyviai siunčiama',
@@ -411,6 +426,8 @@ export const lt: Messages = {
         'Browse ir Library filtrai, rikiavimas ir show/hide checkbox lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
       showBanned: 'Rodo banned modelius raudonai, kad galėtumėte unban.',
       banFunctionMode: 'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
+      confirmTagFolderMoves:
+        'Priskiriant tag aplanką (Tag folders ar Library Fast tag), klausti kiek modelių bus perkelta. Išjunkite — perkelti iškart be dialogo.',
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
       hashVerify: 'Lyginama SHA256 diske su Civitai /model-versions/by-hash.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
@@ -813,6 +830,7 @@ export const lt: Messages = {
     earlyAccess: 'Early access',
     download: 'Download',
     queueEarlyAccess: 'Į eilę (Early access)',
+    awaitingAccess: 'Laukia prieigos',
     inQueue: 'Eilėje',
     downloadHint: 'Atsisiųsti šią versiją',
     downloadEarlyHint: 'Įdėti early-access versiją į eilę (lauks Early access, kol atrakins)',
@@ -931,6 +949,39 @@ export const lt: Messages = {
     },
     hideFolderAssigned: 'Slėpti su aplanku',
     hideFolderAssignedTitle: 'Slėpti modelius, jau perkeltus į tag aplanką',
+    manualFolder: 'Rankinis',
+    manualFolderHint:
+      'Rankinis aplanko priskyrimas — auto tag perkėlimai / prioritetas šio modelio neperadresuos. Aplankas: {folder}',
+    ignoreExcluded: 'Ignoruoti excluded',
+    ignoreExcludedTitle:
+      'Su „Slėpti su aplanku“: palikti modelius, kurių aplanko tagas yra Excluded (pvz. concept). Taip pat slepia tuos tagus ant kortelių.',
+    excludedTagsLabel: 'Excluded',
+    excludedTagsEmpty: 'Nėra — pridėkite tagus, kurie liks matomi su Ignore excluded',
+    excludedTagsHint:
+      'Excluded aplanko tagai lieka matomi su „Slėpti su aplanku“, kai įjungta Ignore excluded. Pašalinkite ×.',
+    excludedTagsPlaceholder: 'Tagas…',
+    excludedTagsAdd: 'Pridėti',
+    hideAllAssignedTags: 'All assigned',
+    hideAllAssignedTagsTitle:
+      'Laikinai slėpti tagus, kurie jau turi aplanko priskyrimą (žali / mapped) ant kortelių',
+    hiddenAssignedTagsHint: '{count} priskirti tagai paslėpti — išjunkite „All assigned“, kad pamatytumėte',
+    fastTagModeOff: 'Fast tag',
+    fastTagModeOn: 'Fast tag įjungta',
+    fastTagModeTitle:
+      'Įjungus, paspaudus tagą ant kortelės atsidaro aplanko priskyrimo popup (ne Tag folders)',
+    fastTagTitlePrefix: 'Priskirti aplanką tagui:',
+    fastTagHint:
+      'Pakeiskite vardą — taip nustatote aplanką po kiekvienu base modeliu. Modeliai vis tiek atrenkami pagal paspaustą tagą.',
+    fastTagTagLabel: 'Tag (match)',
+    fastTagTagPlaceholder: 'Aplanko / tago vardas…',
+    fastTagTagNote:
+      'Paspausta „{tag}“ — pakeiskite pvz. į plug → \\*\\plug (Civitai tago nepervadina)',
+    fastTagGroupFolders: 'Aplankai (priskirti)',
+    fastTagGroupAssigned: 'Priskirti tagai',
+    fastTagGroupLibrary: 'Library tagai',
+    fastTagPreview: 'Path',
+    fastTagPreviewHint: 'LoRA/Checkpoint → base model → šis vardas',
+    fastTagApply: 'Priskirti ir perkelti',
     setRating: 'Nustatyti turinio reitingą',
     clearRating: 'Nuimti reitingą',
     ratingUpdated: 'Turinio reitingas atnaujintas',
@@ -943,7 +994,7 @@ export const lt: Messages = {
     filterByLetter: 'Filtruoti pagal pirmą raidę',
     allLetters: 'Visi',
     helpText:
-      'Spauskite preview detalėms. Spauskite Civitai tag — Tag folders su paieška. Žalias tagas / „Aplankas:“ eilutė = priskyrimas. Pažymėkite → Move. Dešinis — ban / unban / delete.',
+      'Spauskite preview detalėms. Spauskite Civitai tag — Tag folders (arba Fast tag popup, jei įjungta). Žalias tagas / „Aplankas:“ eilutė = priskyrimas. Pažymėkite → Move. Dešinis — ban / unban / delete.',
     selectedHint: 'Pažymėta {count} — pasirinkite tag dešinėje → Move',
     emptyFiltered: 'Pagal paiešką ar filtrą modelių nėra.',
     emptyNone: 'Modelių dar nėra. Įtraukite į eilę per Browse arba paleiskite watch scan.',
@@ -1014,14 +1065,21 @@ export const lt: Messages = {
     baseModels: 'Base modeliai',
     folderRoutes: 'Aplankų maršrutai',
     tagFolders: 'Tag aplankai',
+    tagFoldersSidebarHint:
+      'Disko aplankai iš Tag Folders. Išskleiskite — tagai, kurie ten nukreipia; filtruokite arba Move.',
     tagGroups: 'Tag grupės',
+    tagGroupsSidebarHint:
+      'Civitai tagai ant modelių (panašūs sugrupuoti). Ne tas pats kaip folder taisyklės — Move priskiria aplanką.',
+    tagGroupsTruncated: 'Top {shown} iš {total} — rašykite Search tags, kad rastumėte bet kurį',
     collapse: 'Suskleisti',
     expandVariants: 'Išskleisti variantus',
     relatedTags: '{count} susiję tagai',
     noTagsYet: 'Civitai tagų bibliotekoje dar nėra — jie išsaugomi atsisiunčiant modelius.',
     selectedCount: 'Pažymėta {count}',
     openOnCivitaiMenu: 'Atidaryti Civitai ↗',
-    goToInGallery: 'Eiti į bibliotekoje →',
+    assignFolderByTag: 'Priskirti aplanką pagal tag',
+    assignFolderPlaceholder: 'Tag arba aplanko pavadinimas…',
+    assignFolderConfirm: 'Priskirti aplankui',
     markSfw: 'Pažymėti kaip SFW',
     markNsfw: 'Pažymėti kaip NSFW',
     unbanAllow: 'Unban — leisti atsisiuntimus',
@@ -1082,6 +1140,13 @@ export const lt: Messages = {
     colTag: 'Tagas',
     colCount: 'Kiekis',
     colFolder: 'Aplankas',
+    colPriority: 'Priority',
+    priorityHint:
+      'Aplanko prioritetas, kai modelis atitinka kelis tagus. Numatytasis 1. ▲/▼ praleidžia 0 (−1 ↔ 1 ↔ 2). Didesnis laimi. Neigiami pralaimi. 0 = fiksuotas (visada laimi auto-routing). Vienodi prioritetai: laimi pirmas atitinkantis tagas; rankinis Library priskyrimas visada laimi.',
+    priorityUp: 'Didinti prioritetą (praleidžia 0)',
+    priorityDown: 'Mažinti prioritetą (praleidžia 0)',
+    priorityUpdated:
+      '„{tag}“ prioritetas {priority}: perkelta {moved}, praleista {skipped}',
     showInLibrary: 'Rodyti modelius su šiuo tagu Bibliotekoje',
     noMatch: 'Nėra atitinkančių tagų',
     noMatchFolder: 'Nėra tagų priskirtų šiam aplankui',

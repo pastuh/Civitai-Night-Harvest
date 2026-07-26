@@ -767,6 +767,21 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
+              checked={draft.confirmTagFolderMoves !== false}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                update('confirmTagFolderMoves', enabled)
+                void onSave({ confirmTagFolderMoves: enabled })
+              }}
+            />
+            {t('settings.fields.confirmTagFolderMoves')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.confirmTagFolderMoves')}</p>
+        </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
               checked={draft.browseSettledToEnd ?? false}
               onChange={(e) => update('browseSettledToEnd', e.target.checked)}
             />

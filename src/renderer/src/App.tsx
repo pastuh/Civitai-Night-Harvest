@@ -130,6 +130,8 @@ export default function App() {
       prev.librarySort === prefs.librarySort &&
       prev.nsfwFilter === prefs.nsfwFilter &&
       prev.hideFolderAssigned === prefs.hideFolderAssigned &&
+      prev.ignoreExcludedTags === prefs.ignoreExcludedTags &&
+      prev.hideAllAssignedTags === prefs.hideAllAssignedTags &&
       prev.modelSearch === prefs.modelSearch &&
       prev.modelLetter === prefs.modelLetter
         ? prev
@@ -1713,7 +1715,7 @@ export default function App() {
           />
         ) : null}
         {!modelDetailTarget && tab === 'gallery' ? (
-          <div>
+          <div className="gallery-layout-host">
             <GalleryTab
               inventory={inventory}
               tagRules={tagRules}
@@ -1722,6 +1724,14 @@ export default function App() {
               uiExtended={uiExtended}
               banFunctionMode={settings.banFunctionMode ?? false}
               onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+              fastTagMode={settings.fastTagMode ?? false}
+              onFastTagModeChange={(enabled) => void saveSettings({ fastTagMode: enabled })}
+              libraryExcludedTags={settings.libraryExcludedTags ?? []}
+              onLibraryExcludedTagsChange={async (tags) => {
+                await saveSettings({ libraryExcludedTags: tags })
+              }}
+              tagSuggestions={tagSuggestions}
+              confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
               onSaveTagRules={saveTagRules}
               focusModelId={galleryFocusModelId}
               focusModelName={galleryFocusModelName}
@@ -1790,6 +1800,7 @@ export default function App() {
             inventory={inventory}
             loraFolder={settings?.loraOutputFolder ?? ''}
             checkpointFolder={settings?.checkpointOutputFolder ?? ''}
+            confirmTagFolderMoves={settings?.confirmTagFolderMoves !== false}
             onSave={saveTagRules}
             onRefresh={refresh}
             onMoveStatus={setBackgroundStatus}

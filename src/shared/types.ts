@@ -69,8 +69,20 @@ export interface AppSettings {
   preserveFilters: boolean
   /** Hover × on gallery/download cards to exclude models */
   banFunctionMode: boolean
+  /**
+   * Ask before bulk library moves when assigning a tag folder (Tag folders / Fast tag).
+   * Off = move immediately without the count confirmation dialog.
+   */
+  confirmTagFolderMoves: boolean
+  /** Library: click a card tag → assign folder popup (default off). */
+  fastTagMode: boolean
   /** Civitai tags to skip in auto-download and hide from Browse gallery */
   hiddenTags: string[]
+  /**
+   * Library: folder-assigned tags to ignore when “Ignore excluded” is on
+   * (e.g. concept) so Hide folder-assigned still shows those models.
+   */
+  libraryExcludedTags: string[]
   /** Start minimized to tray when Windows logs in */
   launchAtLogin: boolean
   /** Min minutes between newest-page peeks during fast night crawl (scan always peeks) */
@@ -160,7 +172,11 @@ export interface AppSettingsPublic {
   blurPreviews: boolean
   preserveFilters: boolean
   banFunctionMode: boolean
+  confirmTagFolderMoves: boolean
+  /** Library: click a card tag → assign folder popup (default off). */
+  fastTagMode: boolean
   hiddenTags: string[]
+  libraryExcludedTags: string[]
   launchAtLogin: boolean
   newestPeekIntervalMinutes: number
   backfillCatalog: boolean
@@ -208,7 +224,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   blurPreviews: false,
   preserveFilters: false,
   banFunctionMode: false,
+  confirmTagFolderMoves: true,
+  fastTagMode: false,
   hiddenTags: [],
+  libraryExcludedTags: [],
   launchAtLogin: false,
   newestPeekIntervalMinutes: 15,
   backfillCatalog: true,
@@ -243,6 +262,12 @@ export interface TagFolderRule {
   folderPath: string
   /** Disk subfolder under each base model (e.g. "style"). Defaults to tag name when empty. */
   subfolderName?: string
+  /**
+   * Folder-match priority when a model has several assigned tags.
+   * Default 1 (omit). 0 = fixed (always wins auto-routing). Higher beats lower; negatives lose to 1+.
+   * Manually locked library rows (`routingLocked`) still beat every rule priority.
+   */
+  priority?: number
 }
 
 export interface WatchRule {
