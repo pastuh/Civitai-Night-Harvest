@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BannedModel,
   CivitaiDomain,
@@ -203,6 +203,42 @@ export function ModelDetailPage({
     }
     return ids
   }, [queue.items])
+
+  /** Once per model detail load — promote deferred versions that Civitai already opened. */
+  const unlockedPromoteKeyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    unlockedPromoteKeyRef.current = null
+  }, [modelId])
+
+  useEffect(() => {
+    if (!detail || banned || !allowRemote || loading) return
+    const key = `${detail.modelId}:${detail.versions.map((v) => `${v.id}:${v.availability ?? ''}:${v.earlyAccessEndsAt ?? ''}`).join('|')}`
+    if (unlockedPromoteKeyRef.current === key) return
+
+    const candidates = detail.versions.filter(
+      (v) => !ownedSet.has(v.id) && !isVersionEarlyAccess(v)
+    )
+    if (!candidates.length) {
+      unlockedPromoteKeyRef.current = key
+      return
+    }
+
+    unlockedPromoteKeyRef.current = key
+    let cancelled = false
+    void (async () => {
+      let any = false
+      for (const v of candidates) {
+        // No-op when not deferred; promotes when Waiting row is stale vs live Public.
+        const { ok } = await window.api.retryDeferred(v.id)
+        if (ok) any = true
+      }
+      if (!cancelled && any) await onQueueRefresh?.()
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [detail, banned, allowRemote, loading, ownedSet, onQueueRefresh])
 
   useEffect(() => {
     setActiveVersionId(target.kind === 'library' ? target.record.versionId : target.versionId)
@@ -564,17 +600,22 @@ export function ModelDetailPage({
   }
 
   const downloadVersion = async (v: CivitaiModelDetailVersion) => {
-    if (
-      ownedSet.has(v.id) ||
-      downloadBusyIds.has(v.id) ||
-      queuedVersionIds.has(v.id) ||
-      deferredVersionIds.has(v.id) ||
-      isVersionEarlyAccess(v)
-    ) {
+    if (ownedSet.has(v.id) || downloadBusyIds.has(v.id) || queuedVersionIds.has(v.id) || banned) {
       return
     }
+    // Live API still gated — leave on Awaiting access.
+    if (isVersionEarlyAccess(v)) return
+
     markDownloadBusy(v.id, true)
     try {
+      // Stale deferred row (creator ended EA early) — promote to real queue.
+      if (deferredVersionIds.has(v.id)) {
+        const { ok } = await window.api.retryDeferred(v.id)
+        if (ok) {
+          await onQueueRefresh?.()
+          return
+        }
+      }
       await window.api.enqueueDownload(
         {
           modelId,
@@ -1071,7 +1112,8 @@ export function ModelDetailPage({
                   const active = v.id === activeVersionId
                   const ea = isVersionEarlyAccess(v)
                   const inQueue = queuedVersionIds.has(v.id)
-                  const awaiting = deferredVersionIds.has(v.id) || ea
+                  // Trust live Civitai fields from model detail — not a stale deferred queue flag.
+                  const awaiting = ea
                   const busy = downloadBusyIds.has(v.id)
                   const created = formatVersionDate(v.createdAt)
                   const showBaseOnRow =

@@ -132,7 +132,9 @@ export async function enrichDeferredDownloads(
   client: CivitaiClient,
   items: DeferredDownload[],
   persist: (item: DeferredDownload) => void,
-  maxChecks = 80
+  maxChecks = 80,
+  /** Called when live API says early access / auth gate is gone (creator ended EA early). */
+  onUnlocked?: (versionId: number) => void
 ): Promise<DeferredDownload[]> {
   // Prefer rows missing unlock time — browse/search often omits earlyAccessEndsAt.
   const ordered = [...items].sort((a, b) => {
@@ -167,27 +169,27 @@ export async function enrichDeferredDownloads(
           additionalResourceCharge: mini.additionalResourceCharge,
           freeTrialLimit: mini.freeTrialLimit ?? undefined
         }
-        let next = item
         if (ea.isEarlyAccess) {
-          next = {
+          const next = {
             ...item,
             ...patch,
-            failureKind: 'early_access',
+            failureKind: 'early_access' as const,
             reason: formatEarlyAccessReason(ea.endsAt),
             earlyAccessEndsAt: ea.endsAt ?? item.earlyAccessEndsAt
           }
           persist(next)
-        } else if (patch.additionalResourceCharge != null || patch.freeTrialLimit != null) {
-          next = { ...item, ...patch }
-          persist(next)
+          byVersion.set(item.versionId, next)
+        } else {
+          // Public again (or never gated) — drop stale Waiting row; caller may re-queue.
+          byVersion.delete(item.versionId)
+          onUnlocked?.(item.versionId)
         }
-        byVersion.set(item.versionId, next)
       } catch {
         /* skip */
       }
     }
   }
-  return items.map((i) => byVersion.get(i.versionId) ?? i)
+  return items.map((i) => byVersion.get(i.versionId)).filter((i): i is DeferredDownload => Boolean(i))
 }
 
 /** Same local calendar day (user timezone). */

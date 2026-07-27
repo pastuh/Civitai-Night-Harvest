@@ -1484,22 +1484,34 @@ export function initIpc(): void {
 
   ipcMain.handle('deferred:enrich', async () => {
     const items = inventory.getAllDeferredDownloads()
-    return enrichDeferredDownloads(clientPool.primary(), items, (item) => {
-      inventory.upsertDeferredDownload({
-        modelId: item.modelId,
-        versionId: item.versionId,
-        modelName: item.modelName,
-        modelType: item.modelType,
-        routingTag: item.routingTag,
-        previewUrl: item.previewUrl,
-        outputFolder: item.outputFolder,
-        reason: item.reason,
-        failureKind: item.failureKind,
-        lastAttemptAt: item.lastAttemptAt,
-        earlyAccessEndsAt: item.earlyAccessEndsAt,
-        bumpAttempt: false
-      })
-    })
+    const unlocked: number[] = []
+    await enrichDeferredDownloads(
+      clientPool.primary(),
+      items,
+      (item) => {
+        inventory.upsertDeferredDownload({
+          modelId: item.modelId,
+          versionId: item.versionId,
+          modelName: item.modelName,
+          modelType: item.modelType,
+          routingTag: item.routingTag,
+          previewUrl: item.previewUrl,
+          outputFolder: item.outputFolder,
+          reason: item.reason,
+          failureKind: item.failureKind,
+          lastAttemptAt: item.lastAttemptAt,
+          earlyAccessEndsAt: item.earlyAccessEndsAt,
+          bumpAttempt: false
+        })
+      },
+      80,
+      (versionId) => unlocked.push(versionId)
+    )
+    // Creator ended EA early — re-queue instead of waiting on a stale unlock clock.
+    for (const versionId of unlocked) {
+      downloadQueue.requeueDeferredVersion(versionId)
+    }
+    return inventory.getAllDeferredDownloads()
   })
 
   ipcMain.handle('crawl:getStatus', () => getCrawlStatus())
