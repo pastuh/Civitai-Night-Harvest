@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ActivityEntry,
   AppSettingsPublic,
@@ -166,6 +166,8 @@ interface Props {
   onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
   /** Session Yield — models that entered the download pipeline (only grows). */
   sessionYieldCount?: number
+  /** False while keep-alive offscreen — pause Browse scroll observers. */
+  isActive?: boolean
 }
 
 function newId(): string {
@@ -227,7 +229,8 @@ export function WatchRulesTab({
   onBrowseSnapshot,
   browseViewPrefs,
   onBrowseViewPrefsChange,
-  sessionYieldCount = 0
+  sessionYieldCount = 0,
+  isActive = true
 }: Props) {
   const { paused: queuePaused } = useQueuedMembership()
   const t = useT()
@@ -258,11 +261,20 @@ export function WatchRulesTab({
   // Quiet (👁): hide all cards unless Show Browse snapshot explicitly allowed them.
   const quietHideGallery =
     settings.updateBrowseOnCrawl === false && !allowQuietBrowseCards
+  // Defer heavy gallery merges so status-bar / chrome stay responsive on each page.
+  // First non-null paint uses live data; later page merges keep showing the previous gallery
+  // until React catches up (avoids a blank flash on the first page).
+  const deferredLiveCrawlBrowse = useDeferredValue(liveCrawlBrowse)
+  const effectiveLiveCrawlBrowse = !liveCrawlBrowse
+    ? deferredLiveCrawlBrowse
+    : !deferredLiveCrawlBrowse
+      ? liveCrawlBrowse
+      : deferredLiveCrawlBrowse
   const browseResult = quietHideGallery
     ? null
     : settings.updateBrowseOnCrawl === false
-      ? liveCrawlBrowse
-      : liveCrawlBrowse ?? testResult
+      ? effectiveLiveCrawlBrowse
+      : effectiveLiveCrawlBrowse ?? testResult
   const browseResultRef = useRef(browseResult)
   browseResultRef.current = browseResult
 
@@ -967,6 +979,7 @@ export function WatchRulesTab({
           viewPrefs={browseViewPrefs}
           onViewPrefsChange={onBrowseViewPrefsChange}
           sessionYieldCount={sessionYieldCount}
+          isActive={isActive}
         />
       ) : settings.nightMode && !showQuietActions ? (
         <NightCrawlQuietPanel

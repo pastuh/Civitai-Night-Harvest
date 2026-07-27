@@ -13,7 +13,8 @@ export const lt: Messages = {
     confirmTitle: 'Patvirtinimas',
     help: 'Pagalba',
     openSettings: 'Atidaryti nustatymus',
-    openHelp: 'Pagalbos vadovas'
+    openHelp: 'Pagalbos vadovas',
+    scrollToTop: 'Į viršų'
   },
   tabs: {
     browse: 'Naršymas',
@@ -232,7 +233,7 @@ export const lt: Messages = {
       domain:
         'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.',
       preserveFilters:
-        'Browse ir Library filtrai, rikiavimas ir show/hide checkbox lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
+        'Browse, Library ir Missing filtrai, rikiavimas, show/hide checkbox ir filtrų juostos išskleidimas lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
       banFunctionMode:
         'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
       confirmTagFolderMoves:
@@ -349,7 +350,7 @@ export const lt: Messages = {
     browseContextSkipTag:
       'Dešinis pelės mygtukas ant modelio → pause tag (laikinas). Permanent ban-by-tag: Tag Folders **Ban** stulpelis',
     libraryFolders:
-      'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias). **Mass** priskiria daug tagų vienam aplanko vardui. Be taisyklės → `\\*\\Unsorted`.',
+      'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias). Pažymėk tagus download routing ir unsorted bibliotekos perkėlimui. **Apply to library** — perrikiuoti po priority pakeitimų; rankiniu būdu Library perkelti modeliai praleidžiami. **Mass** priskiria daug tagų vienam aplanko vardui. Be taisyklės → `\\*\\Unsorted`.',
     libraryPriority:
       'Tag Folders **Priority** — kai modelis atitinka kelis tagus, laimi didesnis skaičius (▲/▼ praleidžia 0). Vienodos priority: pirmas atitinkantis tag. Priority 0 = fiksuotas auto-route. Rankiniai Library priskyrimai visada laimi.',
     libraryTagBan:
@@ -439,7 +440,7 @@ export const lt: Messages = {
       autoRetryDeferred: 'Po kiekvieno scan bando pakartoti Early access modelius (403 laukia ~4h).',
       blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
       preserveFilters:
-        'Browse ir Library filtrai, rikiavimas ir show/hide checkbox lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
+        'Browse, Library ir Missing filtrai, rikiavimas, show/hide checkbox ir filtrų juostos išskleidimas lieka, kai pereinate į kitą tabą — kol patys jų nepakeičiate.',
       showBanned: 'Rodo banned modelius raudonai, kad galėtumėte unban.',
       banFunctionMode: 'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
       confirmTagFolderMoves:
@@ -1106,6 +1107,8 @@ export const lt: Messages = {
     folderAssignedTitle: 'Priskirtas aplankas: {folder}',
     earlyAccessWait: 'Early:',
     sidebarTitle: 'Filtras ir perkėlimas',
+    collapseSidebar: 'Suskleisti filtrų juostą',
+    expandSidebar: 'Išskleisti filtrų juostą',
     sidebarSearchPlaceholder: 'Ieškoti tagų…',
     sidebarHint:
       'Tag remeliai: vientisas accent = galutinis kelias · vientisas = taisyklė yra (gali būti dar neperkeltas) · brūkšninis = nėra taisyklės. Spauskite → Tag folders.',
@@ -1188,6 +1191,7 @@ export const lt: Messages = {
       'Pridėti tagą(-us) į lentelę — kableliais; sujungia su jau esamais (be dublikatų)',
     folderFilterPlaceholder: 'Filtruoti pagal aplanką (pvz. checkpoint)…',
     clearFolderFilter: 'Išvalyti aplanko filtrą',
+    resizeTable: 'Tempkite, kad keistumėte tag lentelės aukštį',
     searchPlaceholderMass: 'Ieškoti tagų priskyrimui…',
     hideAssigned: 'Slėpti anksčiau priskirtus',
     hideSingles: 'Slėpti tagus su 1 modeliu',
@@ -1354,6 +1358,8 @@ export const lt: Messages = {
     showForgotten: 'Rodyti forgotten',
     showBanned: 'Rodyti banned / paused',
     sidebarTitle: 'Filtras',
+    collapseSidebar: 'Suskleisti filtrų juostą',
+    expandSidebar: 'Išskleisti filtrų juostą',
     sidebarHint: 'Visi · sesija · tagai → Tag folders · kalendorius',
     sidebarAll: 'Visi',
     sessionBans: 'Sesijos banai',

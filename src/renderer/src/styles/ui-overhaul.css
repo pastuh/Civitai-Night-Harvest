@@ -2210,24 +2210,25 @@ label.field-label {
 }
 
 .missing-tab-panel {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   margin-bottom: 0;
 }
 
 .missing-gallery-layout {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
+  width: 100%;
 }
 
 .missing-main-scroll {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .missing-side-filter-chip {
@@ -3316,6 +3317,7 @@ button.missing-tag-chip.is-clickable:hover {
   align-items: center;
   gap: var(--space-sm);
   margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
 }
 
 .tag-input-clear-btn,
@@ -3655,11 +3657,48 @@ button.missing-tag-chip.is-clickable:hover {
 }
 
 .tags-table-wrap {
-  max-height: min(420px, 50vh);
+  max-height: none;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: var(--surface);
+}
+
+.tags-table-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tags-table-resize {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: var(--surface2);
+  cursor: ns-resize;
+  position: relative;
+}
+
+.tags-table-resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 2px;
+  margin: -1px 0 0 -18px;
+  border-radius: 1px;
+  background: var(--muted);
+  opacity: 0.55;
+}
+
+.tags-table-resize:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
 }
 
 .tags-table {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { flushSync } from 'react-dom'
 
 import type { HiddenTagApplyProgress, InventoryRecord, TagFolderRule } from '../../../shared/types'
@@ -114,6 +114,42 @@ export function TagsTab({
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [librarySearch, setLibrarySearch] = useState('')
+  const [tableHeight, setTableHeight] = useState(() => {
+    try {
+      const raw = localStorage.getItem('csd:tags-table-height')
+      const n = raw ? Number(raw) : NaN
+      return Number.isFinite(n) ? Math.min(900, Math.max(200, n)) : 420
+    } catch {
+      return 420
+    }
+  })
+  const tableResizeRef = useRef<{ startY: number; startH: number } | null>(null)
+
+  const onTableResizeStart = useCallback((e: ReactMouseEvent) => {
+    e.preventDefault()
+    tableResizeRef.current = { startY: e.clientY, startH: tableHeight }
+    const onMove = (ev: MouseEvent) => {
+      const start = tableResizeRef.current
+      if (!start) return
+      const next = Math.min(900, Math.max(200, start.startH + (ev.clientY - start.startY)))
+      setTableHeight(next)
+    }
+    const onUp = () => {
+      tableResizeRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setTableHeight((h) => {
+        try {
+          localStorage.setItem('csd:tags-table-height', String(h))
+        } catch {
+          /* ignore */
+        }
+        return h
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [tableHeight])
   const [folderFilter, setFolderFilter] = useState('')
   const [letterFilter, setLetterFilter] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -1096,24 +1132,17 @@ export function TagsTab({
 
   return (
     <div className="panel tags-tab">
-      <div className="tags-tab-head">
-        <div>
-          <h2>{t('tagsTab.title')}</h2>
-          <p className="muted tags-tab-lead">{t('tagsTab.lead')}</p>
-        </div>
-        <span
-          className={`tags-save-status ${saveState} ${dirty && saveState === 'idle' ? 'unsaved' : ''}`}
-        >
-          {saveState === 'saving' && t('tagsTab.saving')}
-          {saveState === 'saved' && t('tagsTab.saved')}
-          {saveState === 'error' && t('tagsTab.saveFailed')}
-          {saveState === 'idle' && dirty && t('tagsTab.unsaved')}
-          {saveState === 'idle' && !dirty && t('tagsTab.upToDate')}
-        </span>
-      </div>
-
       <div className="tag-library-browser">
         <div className="tag-library-toolbar">
+          <span
+            className={`tags-save-status ${saveState} ${dirty && saveState === 'idle' ? 'unsaved' : ''}`}
+          >
+            {saveState === 'saving' && t('tagsTab.saving')}
+            {saveState === 'saved' && t('tagsTab.saved')}
+            {saveState === 'error' && t('tagsTab.saveFailed')}
+            {saveState === 'idle' && dirty && t('tagsTab.unsaved')}
+            {saveState === 'idle' && !dirty && t('tagsTab.upToDate')}
+          </span>
           <TagAutocompleteInput
             className="tag-library-search"
             value={librarySearch}
@@ -1238,7 +1267,11 @@ export function TagsTab({
           </span>
         </div>
 
-        <div className="tags-table-wrap">
+        <div className="tags-table-shell">
+        <div
+          className="tags-table-wrap"
+          style={{ height: tableHeight, maxHeight: tableHeight }}
+        >
           <table className="tags-table">
             <thead>
               <tr>
@@ -1510,6 +1543,14 @@ export function TagsTab({
               )}
             </tbody>
           </table>
+        </div>
+        <button
+          type="button"
+          className="tags-table-resize"
+          aria-label={t('tagsTab.resizeTable')}
+          title={t('tagsTab.resizeTable')}
+          onMouseDown={onTableResizeStart}
+        />
         </div>
       </div>
 

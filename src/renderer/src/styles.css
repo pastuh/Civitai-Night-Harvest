@@ -104,6 +104,55 @@ label {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  position: relative;
+}
+
+/* Scroll-to-top floating control */
+.scroll-to-top {
+  position: fixed;
+  left: 2px;
+  bottom: 52px;
+  z-index: 9100;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.app.has-global-status .scroll-to-top {
+  bottom: 56px;
+}
+
+.scroll-to-top.is-visible {
+  opacity: 0.85;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.scroll-to-top:hover {
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.scroll-to-top-arrow {
+  display: block;
+  font-weight: 700;
 }
 
 .header {
@@ -267,6 +316,9 @@ label {
   overflow: auto;
   padding: 20px;
   -webkit-app-region: no-drag;
+  /* Tab swaps change in-flow keep-alive panels — disable anchoring so the browser
+     does not keep a mid-grid card glued to the viewport. */
+  overflow-anchor: none;
 }
 
 .panel {
@@ -548,12 +600,26 @@ th {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  /* Scroll at the content edge (same as Early Access / Tag folders) — not on an inset child. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
 }
 
 .content.content-stack > :not(.tab-keepalive-offscreen):not(.model-detail-overlay):not(.tab-panel-under-overlay) {
-  flex: 1;
+  /* Natural document height; page scroll lives on .content */
+  flex: 0 0 auto;
   min-height: 0;
+  overflow: visible;
+}
+
+/* Library & Missing hosts under overlay stay laid out but do not become a second scroller */
+.content.content-stack > .gallery-layout-host:not(.tab-keepalive-offscreen) {
+  overflow: visible;
+}
+
+.content.content-stack > .gallery-layout-host.tab-panel-under-overlay {
+  overflow: hidden;
 }
 
 .model-detail-overlay {
@@ -591,42 +657,58 @@ th {
 }
 
 .content-gallery {
-  padding: 12px 12px 12px 20px;
+  /* Match normal .content padding so the scrollbar sits on the app edge */
+  padding: var(--content-pad, 20px);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
+}
+
+.content-gallery.content-with-overlay {
   overflow: hidden;
 }
 
 /* Host wrapper (or legacy .tab-hidden sibling layout) fills the main area. */
 .content-gallery > :not(.tab-hidden) {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
 .content-gallery > .gallery-layout-host {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: visible;
+}
+
+.content-gallery > .gallery-layout-host.tab-panel-under-overlay {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
 .content-gallery > .gallery-layout-host > .gallery-layout,
 .content-gallery > .gallery-layout {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: row;
+  align-items: flex-start;
 }
 
 .gallery-layout {
   display: flex;
   gap: 16px;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
+  align-items: flex-start;
+  width: 100%;
 }
 
 .gallery-main {
@@ -635,16 +717,16 @@ th {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .gallery-panel {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   margin-bottom: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .gallery-panel-head {
@@ -659,17 +741,20 @@ th {
 }
 
 .gallery-main-scroll {
-  flex: 1;
+  /* Cards scroll with the page (like Early Access) — not a nested pane */
+  flex: 0 0 auto;
   min-height: 0;
-  overflow-y: auto;
-  margin: 0 -4px;
-  padding: 0 4px 4px;
+  overflow: visible;
+  margin: 0;
+  padding: 0 0 4px;
 }
 
 .tag-sidebar {
   width: 240px;
   flex-shrink: 0;
-  position: relative;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
   z-index: 2;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -678,8 +763,11 @@ th {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* Stay usable while the page scrolls; internal list scrolls if tall */
+  max-height: calc(100vh - 96px);
   min-height: 0;
-  max-height: 100%;
+  /* Sticky + large card grids: isolate sidebar paint from card scroll. */
+  contain: layout style;
 }
 
 .tag-sidebar-head {
@@ -691,8 +779,63 @@ th {
   -webkit-app-region: no-drag;
 }
 
+.tag-sidebar-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tag-sidebar-head-row h3 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-sidebar-toggle {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tag-sidebar-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Collapsed: compact control in the results header (not a full-height rail). */
+.tag-sidebar-rail-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface2));
+  color: var(--accent-contrast, var(--bg));
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tag-sidebar-rail-btn:hover {
+  background: color-mix(in srgb, var(--accent) 38%, var(--surface2));
+  border-color: var(--accent-hover, var(--accent));
+  color: var(--accent-contrast, var(--bg));
+}
+
 .tag-sidebar-head h3 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 14px;
 }
 
@@ -1705,7 +1848,8 @@ th {
 .search-browse.browse-results-panel {
   position: relative;
   margin-top: 8px;
-  padding: 8px 12px 12px;
+  /* No horizontal inset — match Paused/Banned bars full content width */
+  padding: 8px 0 12px;
 }
 
 .search-browse.browse-results-panel.is-loading-empty {

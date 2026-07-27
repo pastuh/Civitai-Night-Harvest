@@ -39,7 +39,7 @@ import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu
 import { useT } from '../i18n/context'
 import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole, cardTagFolderRoleClass } from './gallery-card-utils'
 import { useResultsWindow } from '../hooks/useResultsWindow'
-import { useDownloadQueue } from '../hooks/useDownloadQueue'
+import { useDownloadQueue, useQueuedMembership } from '../hooks/useDownloadQueue'
 import { ResultsPager } from './ResultsPager'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
 import {
@@ -169,6 +169,8 @@ interface Props {
   onViewPrefsChange?: (prefs: BrowseViewPrefs) => void
   /** Session Yield — models that entered download pipeline (only grows). */
   sessionYieldCount?: number
+  /** False while keep-alive offscreen — pause scroll observers so inactive tabs do not expand mid-scroll. */
+  isActive?: boolean
 }
 
 interface ContextMenuState {
@@ -230,12 +232,14 @@ export function SearchBrowsePanel({
   resultsPageSize: resultsPageSizeProp = 100,
   viewPrefs,
   onViewPrefsChange,
-  sessionYieldCount = 0
+  sessionYieldCount = 0,
+  isActive = true
 }: Props) {
   const t = useT()
-  const liveQueue = useDownloadQueue()
-  const queue = queueProp ?? liveQueue.items
-  const queuePaused = queuePausedProp ?? liveQueue.paused
+  // Structure-only: byte progress must not re-render the whole gallery while scrolling.
+  const liveMembership = useQueuedMembership()
+  const queue = queueProp ?? liveMembership.items
+  const queuePaused = queuePausedProp ?? liveMembership.paused
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
   const browseInitial = viewPrefs ?? DEFAULT_BROWSE_VIEW_PREFS
@@ -526,15 +530,31 @@ export function SearchBrowsePanel({
     let changed = false
     for (const m of result.sampleModels) {
       const prev = tagCatalogRef.current.get(m.versionId)
-      tagCatalogRef.current.set(m.versionId, prev ? preferBrowseModel(prev, m) : m)
+      if (!prev) {
+        tagCatalogRef.current.set(m.versionId, m)
+        changed = true
+        continue
+      }
+      const next = preferBrowseModel(prev, m)
+      // preferBrowseModel always allocates — only bump the catalog when tags/flags actually move.
+      if (
+        next.tags.length === prev.tags.length &&
+        next.inInventory === prev.inInventory &&
+        next.isBanned === prev.isBanned &&
+        next.nsfw === prev.nsfw &&
+        next.nsfwLevel === prev.nsfwLevel
+      ) {
+        continue
+      }
+      tagCatalogRef.current.set(m.versionId, next)
       changed = true
     }
-    if (changed) setTagCatalogTick((n) => n + 1)
+    if (changed) startTransition(() => setTagCatalogTick((n) => n + 1))
   }, [result.sampleModels])
 
   useEffect(() => {
     const el = loadMoreSentinelRef.current
-    if (!el || !canLoadMorePages) return
+    if (!el || !canLoadMorePages || !isActive) return
 
     const tryLoad = () => {
       if (!hasMoreRef.current || loadingMoreRef.current) return
@@ -544,9 +564,22 @@ export function SearchBrowsePanel({
       }
     }
 
+    // Scroll may be on .content or on a content-stack child (overflow moved off .content).
+    const scrollRoots = new Set<EventTarget>()
+    scrollRoots.add(window)
     const content = document.querySelector('.content')
-    content?.addEventListener('scroll', tryLoad, { passive: true })
-    window.addEventListener('scroll', tryLoad, { passive: true })
+    if (content) scrollRoots.add(content)
+    let node: HTMLElement | null = el.parentElement
+    while (node && node !== document.body) {
+      const style = window.getComputedStyle(node)
+      if (/(auto|scroll|overlay)/.test(style.overflowY) || /(auto|scroll|overlay)/.test(style.overflow)) {
+        scrollRoots.add(node)
+      }
+      node = node.parentElement
+    }
+    for (const root of scrollRoots) {
+      root.addEventListener('scroll', tryLoad, { passive: true })
+    }
 
     const obs = new IntersectionObserver(
       (entries) => {
@@ -560,11 +593,12 @@ export function SearchBrowsePanel({
     tryLoad()
 
     return () => {
-      content?.removeEventListener('scroll', tryLoad)
-      window.removeEventListener('scroll', tryLoad)
+      for (const root of scrollRoots) {
+        root.removeEventListener('scroll', tryLoad)
+      }
       obs.disconnect()
     }
-  }, [canLoadMorePages, result.sampleModels.length, onLoadMore])
+  }, [canLoadMorePages, result.sampleModels.length, onLoadMore, isActive])
 
   const openDetail = (model: WatchRuleTestModel) => {
     if (!model.versionId) return
@@ -981,10 +1015,13 @@ export function SearchBrowsePanel({
     }
     if (!pageScrollReadyRef.current) {
       pageScrollReadyRef.current = true
+      resultsWindow.consumeUserPageNavigation()
       return
     }
+    // Only when the user clicked the pager — not filter resets / tab keep-alive.
+    if (!resultsWindow.consumeUserPageNavigation()) return
     scrollResultsAnchorIntoView(resultsTopRef.current)
-  }, [resultsWindow.page, resultsDisplayMode])
+  }, [resultsWindow.page, resultsDisplayMode, resultsWindow.consumeUserPageNavigation])
 
   useEffect(() => {
     if (resultsDisplayMode !== 'autoAdvance') {
@@ -1021,14 +1058,16 @@ export function SearchBrowsePanel({
   ])
 
   useEffect(() => {
-    if (resultsDisplayMode === 'pages') return
+    if (resultsDisplayMode === 'pages' || !isActive) return
     const el = gridSentinelRef.current
     if (!el || !resultsWindow.hasMoreLazy) return
 
     // Only expand the local lazy window. On-demand API fetch is explicit (pager button) —
     // otherwise a short Hide-owned grid keeps the sentinel on-screen and drains the catalog.
     const obs = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) resultsWindow.expandLazy()
+      if (entries[0]?.isIntersecting) {
+        startTransition(() => resultsWindow.expandLazy())
+      }
     })
     obs.observe(el)
     return () => obs.disconnect()
@@ -1036,7 +1075,8 @@ export function SearchBrowsePanel({
     resultsDisplayMode,
     resultsWindow.hasMoreLazy,
     resultsWindow.expandLazy,
-    gridModels.length
+    gridModels.length,
+    isActive
   ])
 
   const tagCatalog = useMemo((): TagCount[] => {
@@ -2601,6 +2641,39 @@ function downloadProgressFoot(item: DownloadQueueItem): string {
   return parts.join(' · ')
 }
 
+/** Subscribes to byte progress alone so the gallery grid does not re-render on every tick. */
+const LiveCardDownloadProgress = memo(function LiveCardDownloadProgress({
+  versionId,
+  modelId
+}: {
+  versionId: number
+  modelId: number
+}) {
+  const { items } = useDownloadQueue()
+  const item = useMemo(() => {
+    const active = items.filter((i) => i.status === 'downloading')
+    if (versionId > 0) {
+      const byVersion = active.find((i) => i.versionId === versionId)
+      if (byVersion) return byVersion
+    }
+    return active.find((i) => i.modelId === modelId)
+  }, [items, versionId, modelId])
+  if (!item) return null
+  return (
+    <>
+      <div className="card-thumb-progress">
+        <div className="progress-bar">
+          <div
+            className="progress-fill"
+            style={{ width: `${item.totalBytes > 0 ? pct(item) : 0}%` }}
+          />
+        </div>
+      </div>
+      <div className="card-status-foot">{downloadProgressFoot(item)}</div>
+    </>
+  )
+})
+
 /** Isolated from SearchBrowsePanel context-menu state — opening a menu must not remap the gallery. */
 const BrowseModelGrid = memo(function BrowseModelGrid({
   models,
@@ -2831,9 +2904,8 @@ const ModelCard = memo(function ModelCard({
     badgeClass = badgeClass || (accessGate === 'paid' ? 'badge-paid' : 'badge-early')
   }
 
-  const statusFoot = isDownloading && queueItem
-    ? downloadProgressFoot(queueItem)
-    : queueStatusFoot
+  // Live bytes render in LiveCardDownloadProgress — keep structure-only foot here.
+  const statusFoot = isDownloading ? null : queueStatusFoot
 
   const badgePersistent =
     Boolean(badge) &&
@@ -2947,13 +3019,9 @@ const ModelCard = memo(function ModelCard({
       )}
       <div className="gallery-thumb-wrap">
         <PreviewThumb urls={previewUrlsFor(model)} />
-        {isDownloading && queueItem && (
-          <div className="card-thumb-progress">
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${queueItem.totalBytes > 0 ? pct(queueItem) : 0}%` }} />
-            </div>
-          </div>
-        )}
+        {isDownloading ? (
+          <LiveCardDownloadProgress versionId={model.versionId} modelId={model.id} />
+        ) : null}
         {badge && isInventoryFootBadge && (
           <span
             className={`model-badge badge-card-foot ${badgeClass}`}

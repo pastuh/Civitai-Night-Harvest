@@ -27,6 +27,8 @@ export interface LibraryViewPrefs {
   hideAllAssignedTags: boolean
   modelSearch: string
   modelLetter: string | null
+  /** Filter sidebar expanded (default true). */
+  sidebarExpanded: boolean
 }
 
 export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
@@ -37,7 +39,8 @@ export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
   ignoreExcludedTags: false,
   hideAllAssignedTags: false,
   modelSearch: '',
-  modelLetter: null
+  modelLetter: null,
+  sidebarExpanded: true
 }
 
 export type BrowseSort = 'default' | 'folder' | 'downloads'
@@ -65,4 +68,23 @@ export const DEFAULT_BROWSE_VIEW_PREFS: BrowseViewPrefs = {
   ratingFilter: 'all',
   searchQuery: '',
   tagFilter: null
+}
+
+/** Missing sidebar / toolbar (preserve-filters snapshot). */
+export interface MissingViewPrefs {
+  hideBanned: boolean
+  hidePaused: boolean
+  showForgotten: boolean
+  sortMode: 'recent' | 'hits' | 'name'
+  search: string
+  sidebarExpanded: boolean
+}
+
+export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
+  hideBanned: true,
+  hidePaused: true,
+  showForgotten: false,
+  sortMode: 'recent',
+  search: '',
+  sidebarExpanded: true
 }

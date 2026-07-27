@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react'
 import type {
   ExclusionKind,
   ExclusionReviewItem,
@@ -14,6 +14,10 @@ import {
 import { useT } from '../i18n/context'
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
+import {
+  DEFAULT_MISSING_VIEW_PREFS,
+  type MissingViewPrefs
+} from '../view-prefs'
 import { StatusModelCard } from './StatusModelCard'
 import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
@@ -43,6 +47,8 @@ interface Props {
   sessionBanModelIds?: number[]
   resultsDisplayMode?: ResultsDisplayMode
   resultsPageSize?: ResultsPageSize
+  viewPrefs?: MissingViewPrefs
+  onViewPrefsChange?: (prefs: MissingViewPrefs) => void
   onRefresh: () => Promise<void>
   isActive?: boolean
   onOpenModelDetail?: (target: ModelDetailTarget) => void
@@ -108,7 +114,7 @@ function isManualOrTagBanKind(kind: ExclusionKind): boolean {
   return kind === 'bannedManual' || kind === 'bannedByTag'
 }
 
-export function MissingTab({
+export const MissingTab = memo(function MissingTab({
   items,
   inventory = [],
   hiddenTags = [],
@@ -117,6 +123,8 @@ export function MissingTab({
   sessionBanModelIds = [],
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
   resultsPageSize: resultsPageSizeProp = 100,
+  viewPrefs,
+  onViewPrefsChange,
   onRefresh,
   isActive = false,
   onOpenModelDetail,
@@ -126,28 +134,56 @@ export function MissingTab({
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
   const normalizedDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const displayMode = normalizedDisplayMode === 'autoAdvance' ? 'lazy' : normalizedDisplayMode
+  const initial = viewPrefs ?? DEFAULT_MISSING_VIEW_PREFS
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
-  const [hideBanned, setHideBanned] = useState(true)
-  const [hidePaused, setHidePaused] = useState(true)
-  const [showForgotten, setShowForgotten] = useState(false)
+  const [hideBanned, setHideBanned] = useState(initial.hideBanned)
+  const [hidePaused, setHidePaused] = useState(initial.hidePaused)
+  const [showForgotten, setShowForgotten] = useState(initial.showForgotten)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
   const [sideFilter, setSideFilter] = useState<SideFilter>({ type: 'all' })
   const [dateAnchor, setDateAnchor] = useState<string | null>(null)
   const [tagSearch, setTagSearch] = useState('')
-  const [sortMode, setSortMode] = useState<SortMode>('recent')
-  const [search, setSearch] = useState('')
+  const [sortMode, setSortMode] = useState<SortMode>(initial.sortMode)
+  const [search, setSearch] = useState(initial.search)
+  const [sidebarExpanded, setSidebarExpanded] = useState(initial.sidebarExpanded !== false)
   const [recheckBusy, setRecheckBusy] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
-  const mainScrollRef = useRef<HTMLDivElement>(null)
   const gridSentinelRef = useRef<HTMLDivElement>(null)
   const pageScrollReadyRef = useRef(false)
+  const wasActiveRef = useRef(false)
+  const onRefreshRef = useRef(onRefresh)
+  onRefreshRef.current = onRefresh
+
+  // Refresh only when the tab becomes active — not whenever onRefresh identity changes
+  // (inline App callbacks would otherwise cause a fetch→setState→re-render loop).
+  useEffect(() => {
+    const justOpened = isActive && !wasActiveRef.current
+    wasActiveRef.current = isActive
+    if (!justOpened) return
+    void onRefreshRef.current()
+  }, [isActive])
 
   useEffect(() => {
-    if (!isActive) return
-    void onRefresh()
-  }, [isActive, onRefresh])
+    if (!onViewPrefsChange) return
+    onViewPrefsChange({
+      hideBanned,
+      hidePaused,
+      showForgotten,
+      sortMode,
+      search,
+      sidebarExpanded
+    })
+  }, [
+    hideBanned,
+    hidePaused,
+    showForgotten,
+    sortMode,
+    search,
+    sidebarExpanded,
+    onViewPrefsChange
+  ])
 
   const sessionBanSet = useMemo(() => new Set(sessionBanModelIds), [sessionBanModelIds])
 
@@ -500,31 +536,44 @@ export function MissingTab({
     }
     if (!pageScrollReadyRef.current) {
       pageScrollReadyRef.current = true
+      resultsWindow.consumeUserPageNavigation()
       return
     }
+    // Only when the user clicked the pager — not filter resets / tab keep-alive.
+    if (!resultsWindow.consumeUserPageNavigation()) return
     scrollResultsAnchorIntoView(resultsTopRef.current)
-  }, [resultsWindow.page, displayMode])
+  }, [resultsWindow.page, displayMode, resultsWindow.consumeUserPageNavigation])
 
   useEffect(() => {
-    if (displayMode === 'pages') return
-    const root = mainScrollRef.current
+    if (displayMode === 'pages' || !isActive) return
     const el = gridSentinelRef.current
     if (!el || !resultsWindow.hasMoreLazy) return
     let scheduled = false
+    const scrollRoot = document.querySelector('.content')
     const obs = new IntersectionObserver(
       (entries) => {
         if (!entries[0]?.isIntersecting || scheduled) return
         scheduled = true
         requestAnimationFrame(() => {
           scheduled = false
-          resultsWindow.expandLazy()
+          startTransition(() => resultsWindow.expandLazy())
         })
       },
-      { root: root ?? null, rootMargin: '120px', threshold: 0 }
+      {
+        root: scrollRoot instanceof Element ? scrollRoot : null,
+        rootMargin: '120px',
+        threshold: 0
+      }
     )
     obs.observe(el)
     return () => obs.disconnect()
-  }, [displayMode, resultsWindow.hasMoreLazy, resultsWindow.expandLazy, visibleItems.length])
+  }, [
+    displayMode,
+    resultsWindow.hasMoreLazy,
+    resultsWindow.expandLazy,
+    visibleItems.length,
+    isActive
+  ])
 
   const missingOnlyCount = counts.missing
 
@@ -780,6 +829,17 @@ export function MissingTab({
             >
               {recheckBusy ? t('common.loading') : t('missingTab.recheckAll')}
             </button>
+            {!sidebarExpanded ? (
+              <button
+                type="button"
+                className="tag-sidebar-rail-btn"
+                aria-expanded={false}
+                title={t('missingTab.expandSidebar')}
+                onClick={() => setSidebarExpanded(true)}
+              >
+                «
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1038,15 +1098,27 @@ export function MissingTab({
         <div className="gallery-main">
           <div className="gallery-panel">
             {toolbar}
-            <div ref={mainScrollRef} className="gallery-main-scroll missing-main-scroll">
+            <div className="gallery-main-scroll missing-main-scroll">
               {cardGrid}
             </div>
           </div>
         </div>
 
+        {sidebarExpanded ? (
         <aside className="tag-sidebar">
           <div className="tag-sidebar-head">
-            <h3>{t('missingTab.sidebarTitle')}</h3>
+            <div className="tag-sidebar-head-row">
+              <h3>{t('missingTab.sidebarTitle')}</h3>
+              <button
+                type="button"
+                className="tag-sidebar-toggle"
+                aria-expanded
+                title={t('missingTab.collapseSidebar')}
+                onClick={() => setSidebarExpanded(false)}
+              >
+                »
+              </button>
+            </div>
             <p className="muted sidebar-hint sidebar-hint-compact">{t('missingTab.sidebarHint')}</p>
           </div>
 
@@ -1229,7 +1301,8 @@ export function MissingTab({
             ) : null}
           </div>
         </aside>
+        ) : null}
       </div>
     </div>
   )
-}
+})

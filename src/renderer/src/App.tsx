@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
 import { shouldShowDeferredInDownloadStrip } from '../../shared/early-access'
 import type {
   ActivityEntry,
@@ -43,11 +43,14 @@ import { ActiveDownloadsStrip, StripClearQueueButton } from './components/Active
 import { AppBusyOverlay } from './components/AppBusyOverlay'
 import { ConfirmModal } from './components/ConfirmModal'
 import { ModelDetailPage, type ModelDetailTarget } from './components/ModelDetailPage'
+import { ScrollToTopButton } from './components/ScrollToTopButton'
 import {
   DEFAULT_BROWSE_VIEW_PREFS,
   DEFAULT_LIBRARY_VIEW_PREFS,
+  DEFAULT_MISSING_VIEW_PREFS,
   type BrowseViewPrefs,
-  type LibraryViewPrefs
+  type LibraryViewPrefs,
+  type MissingViewPrefs
 } from './view-prefs'
 import { I18nProvider, getMessages, translate } from './i18n/context'
 import { hasAllOutputFolders } from '../../shared/utils'
@@ -83,6 +86,8 @@ function collectSessionBanIds(
 
 type Tab = 'gallery' | 'watch' | 'tags' | 'pending' | 'awaiting' | 'incomplete' | 'missing' | 'activity' | 'help' | 'settings'
 
+const EMPTY_STRING_LIST: string[] = []
+
 function shouldShowDownloadStrip(visibility: DownloadStripVisibility, tab: Tab): boolean {
   switch (visibility) {
     case 'browse':
@@ -113,6 +118,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('watch')
   const tabRef = useRef<Tab>('watch')
   tabRef.current = tab
+  const contentRef = useRef<HTMLElement | null>(null)
+  const scrollTabPrevRef = useRef<Tab>(tab)
   const [settings, setSettings] = useState<AppSettingsPublic | null>(null)
   const [tagRules, setTagRules] = useState<TagFolderRule[]>([])
   const [watchRules, setWatchRules] = useState<WatchRule[]>([])
@@ -155,6 +162,7 @@ export default function App() {
   }, [])
   const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
   const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
+  const [missingViewPrefs, setMissingViewPrefs] = useState<MissingViewPrefs>(DEFAULT_MISSING_VIEW_PREFS)
   const onLibraryViewPrefsChange = useCallback((prefs: LibraryViewPrefs) => {
     setLibraryViewPrefs((prev) =>
       prev.libraryFilter === prefs.libraryFilter &&
@@ -164,7 +172,20 @@ export default function App() {
       prev.ignoreExcludedTags === prefs.ignoreExcludedTags &&
       prev.hideAllAssignedTags === prefs.hideAllAssignedTags &&
       prev.modelSearch === prefs.modelSearch &&
-      prev.modelLetter === prefs.modelLetter
+      prev.modelLetter === prefs.modelLetter &&
+      prev.sidebarExpanded === prefs.sidebarExpanded
+        ? prev
+        : prefs
+    )
+  }, [])
+  const onMissingViewPrefsChange = useCallback((prefs: MissingViewPrefs) => {
+    setMissingViewPrefs((prev) =>
+      prev.hideBanned === prefs.hideBanned &&
+      prev.hidePaused === prefs.hidePaused &&
+      prev.showForgotten === prefs.showForgotten &&
+      prev.sortMode === prefs.sortMode &&
+      prev.search === prefs.search &&
+      prev.sidebarExpanded === prefs.sidebarExpanded
         ? prev
         : prefs
     )
@@ -912,7 +933,7 @@ export default function App() {
     [watchRules]
   )
 
-  const saveSettings = async (partial: AppSettingsSave) => {
+  const saveSettings = useCallback(async (partial: AppSettingsSave) => {
     const turningQuiet =
       partial.updateBrowseOnCrawl === false && (settings?.updateBrowseOnCrawl ?? false) === true
     const next = await window.api.saveSettings(partial)
@@ -932,7 +953,28 @@ export default function App() {
       setStorageOffline(false)
       setActionError(null)
     }
-  }
+  }, [settings?.updateBrowseOnCrawl])
+
+  const onBanFunctionModeChange = useCallback(
+    (enabled: boolean) => {
+      void saveSettings({ banFunctionMode: enabled })
+    },
+    [saveSettings]
+  )
+
+  const onFastTagModeChange = useCallback(
+    (enabled: boolean) => {
+      void saveSettings({ fastTagMode: enabled })
+    },
+    [saveSettings]
+  )
+
+  const onLibraryExcludedTagsChange = useCallback(
+    async (tags: string[]) => {
+      await saveSettings({ libraryExcludedTags: tags })
+    },
+    [saveSettings]
+  )
 
   const foldersConfigured = settings
     ? hasAllOutputFolders(settings.loraOutputFolder, settings.checkpointOutputFolder)
@@ -1056,12 +1098,12 @@ export default function App() {
     }
   }
 
-  const saveTagRules = async (rules: TagFolderRule[]) => {
+  const saveTagRules = useCallback(async (rules: TagFolderRule[]) => {
     const next = await window.api.saveTagRules(rules)
     setTagRules(next)
-  }
+  }, [])
 
-  const saveWatchRules = async (rules: WatchRule[]) => {
+  const saveWatchRules = useCallback(async (rules: WatchRule[]) => {
     const next = await window.api.saveWatchRules(rules)
     setWatchRules(next)
     const anyEnabled = next.some((r) => r.enabled)
@@ -1071,7 +1113,7 @@ export default function App() {
     } else if (settings?.nightMode) {
       setBrowseGalleryAwaiting(true)
     }
-  }
+  }, [settings?.nightMode])
 
   const markBrowseModelBan = useCallback(
     (
@@ -1181,6 +1223,11 @@ export default function App() {
       setTab('tags')
     },
     [modelDetailTarget, tab]
+  )
+
+  const openMissingTagFolders = useCallback(
+    (tag: string) => openTagFolders(tag, { kind: 'missing' }),
+    [openTagFolders]
   )
 
   const returnFromTagFolders = useCallback(() => {
@@ -1350,6 +1397,25 @@ export default function App() {
     }
   }, [])
 
+  const refreshIncomplete = useCallback(async () => {
+    setIncomplete(await window.api.getIncomplete())
+  }, [])
+
+  const refreshMissingExclusions = useCallback(async () => {
+    const [missingItems, exclusionItems, banned] = await Promise.all([
+      window.api.getMissing(),
+      window.api.getExclusions(),
+      window.api.getBannedModels()
+    ])
+    setMissing(missingItems)
+    setExclusions(exclusionItems)
+    setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+    setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
+    setForgottenModelIds(
+      new Set(banned.filter((b) => b.forgotten).map((b) => b.modelId).filter((id) => id > 0))
+    )
+  }, [])
+
   const removePendingVersionLocal = useCallback((versionId: number) => {
     setPending((prev) => prev.filter((p) => p.versionId !== versionId))
   }, [])
@@ -1487,6 +1553,34 @@ export default function App() {
   const galleryInteractive = galleryOnTab && !modelDetailTarget
   const watchInteractive = watchOnTab && !modelDetailTarget
   const missingInteractive = missingOnTab && !modelDetailTarget && !tagsCoveringMissing
+
+  // Shared `.content` scroller across keep-alive tabs. Always open a tab at the top —
+  // restoring mid-scroll (or scrollIntoView on the grid anchor) landed on model cards.
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const prev = scrollTabPrevRef.current
+    if (prev === tab) return
+    scrollTabPrevRef.current = tab
+    el.scrollTop = 0
+  }, [tab])
+
+  // Win over late scroll-anchoring / child effects after the tab panel swaps in.
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    el.scrollTop = 0
+    const a = window.requestAnimationFrame(() => {
+      el.scrollTop = 0
+    })
+    const b = window.setTimeout(() => {
+      el.scrollTop = 0
+    }, 50)
+    return () => {
+      window.cancelAnimationFrame(a)
+      window.clearTimeout(b)
+    }
+  }, [tab])
 
   const tagsTab = (
     <TagsTab
@@ -1780,6 +1874,7 @@ export default function App() {
         )}
 
       <main
+        ref={contentRef}
         className={`content${
           galleryOnTab ||
           tagsCoveringLibrary ||
@@ -1811,15 +1906,13 @@ export default function App() {
               defaultLinkDomain="red"
               uiExtended={uiExtended}
               banFunctionMode={settings.banFunctionMode ?? false}
-              onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+              onBanFunctionModeChange={onBanFunctionModeChange}
               fastTagMode={settings.fastTagMode ?? false}
-              onFastTagModeChange={(enabled) => void saveSettings({ fastTagMode: enabled })}
-              libraryExcludedTags={settings.libraryExcludedTags ?? []}
-              onLibraryExcludedTagsChange={async (tags) => {
-                await saveSettings({ libraryExcludedTags: tags })
-              }}
-              blockedTags={settings.bannedTags ?? []}
-              pausedTags={settings.hiddenTags ?? []}
+              onFastTagModeChange={onFastTagModeChange}
+              libraryExcludedTags={settings.libraryExcludedTags ?? EMPTY_STRING_LIST}
+              onLibraryExcludedTagsChange={onLibraryExcludedTagsChange}
+              blockedTags={settings.bannedTags ?? EMPTY_STRING_LIST}
+              pausedTags={settings.hiddenTags ?? EMPTY_STRING_LIST}
               tagSuggestions={tagSuggestions}
               confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
               onSaveTagRules={saveTagRules}
@@ -1894,6 +1987,7 @@ export default function App() {
               browseViewPrefs={settings.preserveFilters ? browseViewPrefs : undefined}
               onBrowseViewPrefsChange={settings.preserveFilters ? setBrowseViewPrefs : undefined}
               sessionYieldCount={sessionYieldCount}
+              isActive={watchInteractive}
             />
           </div>
         ) : null}
@@ -2011,7 +2105,7 @@ export default function App() {
               markBrowseModelBan(modelId, true, stub)
             }}
             banFunctionMode={settings.banFunctionMode ?? false}
-            onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+            onBanFunctionModeChange={onBanFunctionModeChange}
             onShowInLibrary={jumpToGallery}
             onOpenModelDetail={openModelDetail}
             eaFavoriteIds={eaFavoriteIds}
@@ -2022,9 +2116,7 @@ export default function App() {
         {!modelDetailTarget && tab === 'incomplete' ? (
           <IncompleteTab
             items={incomplete}
-            onRefresh={async () => {
-              setIncomplete(await window.api.getIncomplete())
-            }}
+            onRefresh={refreshIncomplete}
             onQueueRefresh={refreshQueueOnly}
             onBrowseModelBanned={(modelId, stub) => {
               markBrowseModelBan(modelId, true, stub)
@@ -2047,30 +2139,17 @@ export default function App() {
             <MissingTab
               items={exclusions}
               inventory={inventory}
-              hiddenTags={settings?.hiddenTags ?? []}
-              bannedTags={settings?.bannedTags ?? []}
+              hiddenTags={settings?.hiddenTags ?? EMPTY_STRING_LIST}
+              bannedTags={settings?.bannedTags ?? EMPTY_STRING_LIST}
               sessionStartedAt={APP_SESSION_STARTED_AT}
               sessionBanModelIds={sessionBanModelIds}
               resultsDisplayMode={settings?.resultsDisplayMode ?? 'autoAdvance'}
               resultsPageSize={settings?.resultsPageSize ?? 100}
-              onRefresh={async () => {
-                const [missingItems, exclusionItems, banned] = await Promise.all([
-                  window.api.getMissing(),
-                  window.api.getExclusions(),
-                  window.api.getBannedModels()
-                ])
-                setMissing(missingItems)
-                setExclusions(exclusionItems)
-                setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
-                setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
-                setForgottenModelIds(
-                  new Set(
-                    banned.filter((b) => b.forgotten).map((b) => b.modelId).filter((id) => id > 0)
-                  )
-                )
-              }}
+              viewPrefs={settings.preserveFilters ? missingViewPrefs : undefined}
+              onViewPrefsChange={settings.preserveFilters ? onMissingViewPrefsChange : undefined}
+              onRefresh={refreshMissingExclusions}
               onOpenModelDetail={openModelDetail}
-              onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'missing' })}
+              onOpenTagFolders={openMissingTagFolders}
               isActive={missingInteractive}
             />
           </div>
@@ -2188,6 +2267,7 @@ export default function App() {
           onCancel={() => setStorageErrorModal(null)}
         />
       )}
+      <ScrollToTopButton />
     </div>
       )}
     </I18nProvider>

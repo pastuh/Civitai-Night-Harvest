@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, type MouseEvent } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent } from 'react'
 import type {
   BannedModel,
   InventoryRecord,
@@ -234,6 +234,7 @@ function GalleryTabInner({
   /** Exact-model pin from Updates → Open in Library (skips full-grid search/scroll). */
   const [pinModelId, setPinModelId] = useState<number | null>(null)
   const [modelLetter, setModelLetter] = useState<string | null>(initial.modelLetter)
+  const [sidebarExpanded, setSidebarExpanded] = useState(initial.sidebarExpanded !== false)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [sectionOpen, setSectionOpen] = useState({
@@ -296,7 +297,8 @@ function GalleryTabInner({
       ignoreExcludedTags,
       hideAllAssignedTags,
       modelSearch,
-      modelLetter
+      modelLetter,
+      sidebarExpanded
     })
   }, [
     libraryFilter,
@@ -307,6 +309,7 @@ function GalleryTabInner({
     hideAllAssignedTags,
     modelSearch,
     modelLetter,
+    sidebarExpanded,
     onViewPrefsChange
   ])
 
@@ -814,7 +817,6 @@ function GalleryTabInner({
   )
   const gridRecords = resultsWindow.visible
   const gridSentinelRef = useRef<HTMLDivElement>(null)
-  const galleryMainScrollRef = useRef<HTMLDivElement>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
   const pageScrollReadyRef = useRef(false)
 
@@ -825,31 +827,45 @@ function GalleryTabInner({
     }
     if (!pageScrollReadyRef.current) {
       pageScrollReadyRef.current = true
+      resultsWindow.consumeUserPageNavigation()
       return
     }
+    // Only when the user clicked the pager — not filter resets / tab keep-alive.
+    if (!resultsWindow.consumeUserPageNavigation()) return
     scrollResultsAnchorIntoView(resultsTopRef.current)
-  }, [resultsWindow.page, libraryDisplayMode])
+  }, [resultsWindow.page, libraryDisplayMode, resultsWindow.consumeUserPageNavigation])
 
   useEffect(() => {
-    if (libraryDisplayMode === 'pages') return
-    const root = galleryMainScrollRef.current
+    if (libraryDisplayMode === 'pages' || !isActive) return
     const el = gridSentinelRef.current
     if (!el || !resultsWindow.hasMoreLazy) return
     let scheduled = false
+    // Page scroll lives on .content / viewport (same as Early Access / Browse).
+    const scrollRoot = document.querySelector('.content')
     const obs = new IntersectionObserver(
       (entries) => {
         if (!entries[0]?.isIntersecting || scheduled) return
         scheduled = true
         requestAnimationFrame(() => {
           scheduled = false
-          resultsWindow.expandLazy()
+          startTransition(() => resultsWindow.expandLazy())
         })
       },
-      { root: root ?? null, rootMargin: '120px', threshold: 0 }
+      {
+        root: scrollRoot instanceof Element ? scrollRoot : null,
+        rootMargin: '120px',
+        threshold: 0
+      }
     )
     obs.observe(el)
     return () => obs.disconnect()
-  }, [libraryDisplayMode, resultsWindow.hasMoreLazy, resultsWindow.expandLazy, gridRecords.length])
+  }, [
+    libraryDisplayMode,
+    resultsWindow.hasMoreLazy,
+    resultsWindow.expandLazy,
+    gridRecords.length,
+    isActive
+  ])
 
   const scrollToModel = useCallback(
     (modelId: number, preferredName?: string | null) => {
@@ -1433,6 +1449,17 @@ function GalleryTabInner({
                   {t('gallery.clear')}
                 </button>
               )}
+              {!sidebarExpanded ? (
+                <button
+                  type="button"
+                  className="tag-sidebar-rail-btn"
+                  aria-expanded={false}
+                  title={t('gallery.expandSidebar')}
+                  onClick={() => setSidebarExpanded(true)}
+                >
+                  «
+                </button>
+              ) : null}
             </div>
           </div>
           {onLibraryExcludedTagsChange ? (
@@ -1502,7 +1529,7 @@ function GalleryTabInner({
           {uiExtended && syncMessage && <p className="muted">{syncMessage}</p>}
           {message && <p>{message}</p>}
           </div>
-          <div ref={galleryMainScrollRef} className="gallery-main-scroll">
+          <div className="gallery-main-scroll">
           {!sortedInventory.length ? (
             <p className="muted">
               {inventory.length > 0 &&
@@ -1563,9 +1590,21 @@ function GalleryTabInner({
         </section>
       </div>
 
+      {sidebarExpanded ? (
       <aside className="tag-sidebar">
         <div className="tag-sidebar-head">
-          <h3>{t('gallery.sidebarTitle')}</h3>
+          <div className="tag-sidebar-head-row">
+            <h3>{t('gallery.sidebarTitle')}</h3>
+            <button
+              type="button"
+              className="tag-sidebar-toggle"
+              aria-expanded
+              title={t('gallery.collapseSidebar')}
+              onClick={() => setSidebarExpanded(false)}
+            >
+              »
+            </button>
+          </div>
           <input
             type="search"
             className="sidebar-tag-search"
@@ -1935,6 +1974,7 @@ function GalleryTabInner({
           )}
         </div>
       </aside>
+      ) : null}
 
       {contextMenu && (
         <ContextMenuPortal

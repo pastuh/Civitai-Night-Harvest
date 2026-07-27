@@ -11,7 +11,8 @@ export const en = {
     confirmTitle: 'Confirm',
     help: 'Help',
     openSettings: 'Open Settings',
-    openHelp: 'Help guide'
+    openHelp: 'Help guide',
+    scrollToTop: 'Scroll to top'
   },
   tabs: {
     browse: 'Browse',
@@ -230,7 +231,7 @@ export const en = {
       domain:
         'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.',
       preserveFilters:
-        'Keep Browse and Library filters, sort, and show/hide checkboxes when you switch tabs — until you change them yourself.',
+        'Keep Browse, Library, and Missing filters, sort, show/hide checkboxes, and filter-sidebar expand/collapse when you switch tabs — until you change them yourself.',
       banFunctionMode:
         'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
       confirmTagFolderMoves:
@@ -346,7 +347,7 @@ export const en = {
     browseContextSkipTag:
       'Right-click a model → pause a tag (temporary). Permanent ban-by-tag: Tag Folders **Ban** column',
     libraryFolders:
-      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted`.',
+      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). Check tags to route downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted`.',
     libraryPriority:
       'Tag Folders **Priority** — when a model matches several tags, higher number wins (▲/▼ skip 0). Equal priorities: first matching tag. Priority 0 = fixed auto-route. Manual Library assigns always win.',
     libraryTagBan:
@@ -434,7 +435,7 @@ export const en = {
       autoRetryDeferred: 'After each scan, retry Early access models (403 waits ~4h).',
       blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
       preserveFilters:
-        'Keep Browse and Library filters, sort, and show/hide checkboxes when you switch tabs — until you change them yourself.',
+        'Keep Browse, Library, and Missing filters, sort, show/hide checkboxes, and filter-sidebar expand/collapse when you switch tabs — until you change them yourself.',
       showBanned: 'Show banned models with red highlight so you can unban.',
       banFunctionMode: 'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
       confirmTagFolderMoves:
@@ -1096,6 +1097,8 @@ export const en = {
     folderAssignedTitle: 'Assigned folder: {folder}',
     earlyAccessWait: 'Early:',
     sidebarTitle: 'Filter & move',
+    collapseSidebar: 'Collapse filter sidebar',
+    expandSidebar: 'Expand filter sidebar',
     sidebarSearchPlaceholder: 'Search tags…',
     sidebarHint:
       'Tag borders: solid accent = final route · solid = rule exists (may not be moved yet) · dashed = no rule. Click → Tag folders.',
@@ -1177,6 +1180,7 @@ export const en = {
     addTagHint: 'Add tag(s) to the table — comma-separated; merges with existing spellings',
     folderFilterPlaceholder: 'Filter by folder (e.g. checkpoint)…',
     clearFolderFilter: 'Clear folder filter',
+    resizeTable: 'Drag to resize tag table height',
     searchPlaceholderMass: 'Search tags to assign…',
     hideAssigned: 'Hide previously assigned',
     hideSingles: 'Hide tags with only 1 model',
@@ -1340,6 +1344,8 @@ export const en = {
     showForgotten: 'Show forgotten',
     showBanned: 'Show banned / paused',
     sidebarTitle: 'Filter',
+    collapseSidebar: 'Collapse filter sidebar',
+    expandSidebar: 'Expand filter sidebar',
     sidebarHint: 'All · session · tags → Tag folders · calendar',
     sidebarAll: 'All',
     sessionBans: 'Session bans',

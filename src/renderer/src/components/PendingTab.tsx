@@ -95,6 +95,7 @@ export const PendingTab = memo(function PendingTab({
     [pending, hiddenModelIds, ownedByModel]
   )
 
+
   useEffect(() => {
     const stale = pending.filter((p) =>
       ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)

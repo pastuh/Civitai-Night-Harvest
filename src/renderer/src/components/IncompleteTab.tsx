@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { IncompleteModel } from '../../../shared/types'
 import { formatWaitDuration } from '../../../shared/utils'
 import { useT } from '../i18n/context'
@@ -43,12 +43,18 @@ export function IncompleteTab({
   const [recheckBusy, setRecheckBusy] = useState(false)
   const [banTarget, setBanTarget] = useState<IncompleteModel | null>(null)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
+  const wasActiveRef = useRef(false)
+  const onRefreshRef = useRef(onRefresh)
+  onRefreshRef.current = onRefresh
 
   // Refresh list from DB when opening the tab — do NOT hit Civitai API automatically.
+  // Only on activate; unstable onRefresh must not re-trigger a fetch loop.
   useEffect(() => {
-    if (!isActive) return
-    void onRefresh()
-  }, [isActive, onRefresh])
+    const justOpened = isActive && !wasActiveRef.current
+    wasActiveRef.current = isActive
+    if (!justOpened) return
+    void onRefreshRef.current()
+  }, [isActive])
 
   const sorted = useMemo(
     () =>
@@ -57,6 +63,7 @@ export function IncompleteTab({
         .sort((a, b) => new Date(a.detectedAt).getTime() - new Date(b.detectedAt).getTime()),
     [items, hiddenModelIds]
   )
+
 
   const clearPaste = () => {
     setPasteModelId(null)

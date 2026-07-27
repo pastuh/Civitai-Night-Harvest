@@ -118,13 +118,16 @@ export function DeferredTab({
     onBanFunctionModeChange?.(next)
   }, [banMode, onBanFunctionModeChange])
 
+  const onRefreshRef = useRef(onRefresh)
+  onRefreshRef.current = onRefresh
+
   useEffect(() => {
     if (!isActive) return
     void window.api
       .enrichDeferred()
-      .then(() => onRefresh())
+      .then(() => onRefreshRef.current())
       .catch(() => {})
-  }, [isActive, onRefresh])
+  }, [isActive])
 
   useEffect(() => {
     if (!isActive) return
@@ -158,6 +161,7 @@ export function DeferredTab({
     if (q) list = list.filter((d) => matchesSearch(d, q))
     return list
   }, [baseSorted, accessFilter, search])
+
 
   const openContextMenu = useCallback((e: MouseEvent, item: DeferredDownload) => {
     e.preventDefault()

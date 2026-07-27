@@ -17,6 +17,11 @@ export interface ResultsWindowState<T> {
   /** Jump to the page / expand lazy so index (0-based) is in the visible window. */
   ensureIndexVisible: (index: number) => void
   resetWindow: () => void
+  /**
+   * True only for the next read after the user clicked pager next/prev/setPage.
+   * Filter resets and totalPages clamps do not set this — avoids scroll-to-grid on tab open.
+   */
+  consumeUserPageNavigation: () => boolean
 }
 
 /**
@@ -33,6 +38,7 @@ export function useResultsWindow<T>(
   const [page, setPageState] = useState(1)
   const [lazyCount, setLazyCount] = useState(pageSize)
   const resetKeyRef = useRef(resetKey)
+  const userPageNavRef = useRef(false)
 
   const resetWindow = useCallback(() => {
     setPageState(1)
@@ -57,6 +63,7 @@ export function useResultsWindow<T>(
 
   const setPage = useCallback(
     (next: number) => {
+      userPageNavRef.current = true
       setPageState(Math.min(Math.max(1, next), totalPages))
     },
     [totalPages]
@@ -81,6 +88,12 @@ export function useResultsWindow<T>(
     [items.length, mode, pageSize]
   )
 
+  const consumeUserPageNavigation = useCallback(() => {
+    const flagged = userPageNavRef.current
+    userPageNavRef.current = false
+    return flagged
+  }, [])
+
   const visible = useMemo(() => {
     if (mode === 'pages') {
       const start = (page - 1) * pageSize
@@ -102,6 +115,7 @@ export function useResultsWindow<T>(
     prevPage,
     expandLazy,
     ensureIndexVisible,
-    resetWindow
+    resetWindow,
+    consumeUserPageNavigation
   }
 }
