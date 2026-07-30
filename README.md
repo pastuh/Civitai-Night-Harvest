@@ -19,7 +19,8 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Auto / Manual / Pause** — auto-queue from harvest, click-to-queue, or pause downloads
 - **Library** — local inventory; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
 - **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; unmatched downloads go to `\*\Unsorted`
-- **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; per-model **Allow**; **Forget** (hide everywhere); click a tag → Tag Folders
+- **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; per-model **Allow**; **Forget** (hide everywhere); click a policy tag to filter that skip list
+- **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL
 - **Updates** — newer versions of models you already own (Queue / Ban / Dismiss)
 - **Download strip** — progress, priority, retries; Early access when a model is gated
 - **Activity** — crawl and download history
@@ -95,7 +96,14 @@ Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that mod
 - **Paused by tag** — temporary Browse exclude; **Banned by tag** — permanent Tag Folders ban
 - **Banned manual** — model ban from Library/Browse
 - Per model: **Allow** (exception vs pause/ban tags + queue) or **Forget On** → × (hide everywhere; **Show forgotten** to review)
-- Click a tag chip → Tag Folders (manage ban/unban there). Opening Model details keeps Missing filters and scroll
+- Click a policy tag (sidebar or card) → filter models skipped for that tag. Opening Model details keeps Missing filters and scroll
+
+---
+
+## Incomplete
+
+- Models Civitai lists without usable `modelVersions` data
+- **Recheck API** or paste a download URL to resolve; Ban excludes from harvest
 
 ---
 

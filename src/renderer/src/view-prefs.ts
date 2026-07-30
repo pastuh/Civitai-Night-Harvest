@@ -1,4 +1,23 @@
 import type { RatingFilter } from '../../shared/rating-filter'
+import type { BrowseSort, DeferredSort, LibrarySort, MissingSort } from './list-sort'
+import {
+  normalizeBrowseSort,
+  normalizeDeferredSort,
+  normalizeLibrarySort,
+  normalizeMissingSort
+} from './list-sort'
+
+export type { BrowseSort, DeferredSort, LibrarySort, MissingSort } from './list-sort'
+export {
+  BROWSE_SORT_OPTIONS,
+  DEFERRED_SORT_OPTIONS,
+  LIBRARY_SORT_OPTIONS,
+  MISSING_SORT_OPTIONS,
+  normalizeBrowseSort,
+  normalizeDeferredSort,
+  normalizeLibrarySort,
+  normalizeMissingSort
+} from './list-sort'
 
 /** Library sidebar / toolbar filter (preserve-filters snapshot). */
 export type LibraryFilter =
@@ -13,8 +32,6 @@ export type LibraryFilter =
   | { type: 'session' }
   | { type: 'byDate'; day: string }
   | { type: 'byDateRange'; from: string; to: string }
-
-export type LibrarySort = 'default' | 'folder' | 'tagGroup' | 'downloads'
 
 export interface LibraryViewPrefs {
   libraryFilter: LibraryFilter
@@ -43,8 +60,6 @@ export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
   sidebarExpanded: true
 }
 
-export type BrowseSort = 'default' | 'folder' | 'downloads'
-
 /** Browse show/hide checkboxes + sort (preserve-filters snapshot). */
 export interface BrowseViewPrefs {
   onlyMissing: boolean
@@ -64,7 +79,7 @@ export const DEFAULT_BROWSE_VIEW_PREFS: BrowseViewPrefs = {
   hideAwaitingAccess: false,
   showAwaitingConfirm: false,
   showBlockedModels: false,
-  browseSort: 'default',
+  browseSort: 'recent',
   ratingFilter: 'all',
   searchQuery: '',
   tagFilter: null
@@ -74,8 +89,11 @@ export const DEFAULT_BROWSE_VIEW_PREFS: BrowseViewPrefs = {
 export interface MissingViewPrefs {
   hideBanned: boolean
   hidePaused: boolean
+  hideSeen: boolean
+  /** When true, hovering a full ban card marks it seen. Default off — browse without marking. */
+  markSeenMode: boolean
   showForgotten: boolean
-  sortMode: 'recent' | 'hits' | 'name'
+  sortMode: MissingSort
   search: string
   sidebarExpanded: boolean
 }
@@ -83,8 +101,35 @@ export interface MissingViewPrefs {
 export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
   hideBanned: true,
   hidePaused: true,
+  hideSeen: false,
+  markSeenMode: false,
   showForgotten: false,
   sortMode: 'recent',
   search: '',
   sidebarExpanded: true
+}
+
+/** Early access toolbar (in-session; optional preserve later). */
+export interface DeferredViewPrefs {
+  deferredSort: DeferredSort
+}
+
+export const DEFAULT_DEFERRED_VIEW_PREFS: DeferredViewPrefs = {
+  deferredSort: 'unlock'
+}
+
+/** Coerce persisted / partial prefs (legacy `default` sort → `recent`). */
+export function coerceLibraryViewPrefs(raw: Partial<LibraryViewPrefs> | null | undefined): LibraryViewPrefs {
+  const base = { ...DEFAULT_LIBRARY_VIEW_PREFS, ...(raw ?? {}) }
+  return { ...base, librarySort: normalizeLibrarySort(base.librarySort) }
+}
+
+export function coerceBrowseViewPrefs(raw: Partial<BrowseViewPrefs> | null | undefined): BrowseViewPrefs {
+  const base = { ...DEFAULT_BROWSE_VIEW_PREFS, ...(raw ?? {}) }
+  return { ...base, browseSort: normalizeBrowseSort(base.browseSort) }
+}
+
+export function coerceMissingViewPrefs(raw: Partial<MissingViewPrefs> | null | undefined): MissingViewPrefs {
+  const base = { ...DEFAULT_MISSING_VIEW_PREFS, ...(raw ?? {}) }
+  return { ...base, sortMode: normalizeMissingSort(base.sortMode) }
 }

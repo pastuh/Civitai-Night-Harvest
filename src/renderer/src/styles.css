@@ -498,27 +498,33 @@ button.tag-chip,
   color: var(--accent);
 }
 
-/* Minimal folder-role marks — same weight, no loud fill (must not overpower the card) */
+/* Folder-role marks on Civitai tags (subtle):
+ * final  — 1px solid soft accent = primary folder route
+ * mapped — 1px dashed soft accent = Tag folders rule exists (not active route)
+ * unmapped — 1px dotted muted = no rule yet
+ */
 .gallery-card .tag-chip.tag-role-final,
 .tag-chip.tag-role-final {
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
   color: inherit;
   background: transparent;
+  opacity: 1;
 }
 
 .gallery-card .tag-chip.tag-role-mapped,
 .tag-chip.tag-role-mapped {
-  border: 1px solid var(--border);
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
   color: inherit;
   background: transparent;
+  opacity: 1;
 }
 
 .gallery-card .tag-chip.tag-role-unmapped,
 .tag-chip.tag-role-unmapped {
-  border: 1px dashed color-mix(in srgb, var(--border) 75%, var(--muted));
+  border: 1px dotted color-mix(in srgb, var(--muted) 55%, transparent);
   color: var(--muted);
   background: transparent;
-  opacity: 0.85;
+  opacity: 0.92;
 }
 
 /* Blocked / permanent ban-by-tag — purple */
@@ -527,8 +533,8 @@ button.tag-chip,
 .gallery-card .tag-chip.is-blocked-tag.tag-role-mapped,
 .gallery-card .tag-chip.is-blocked-tag.tag-role-unmapped,
 .tag-chip.is-blocked-tag {
-  background: color-mix(in srgb, #a855f7 28%, transparent);
-  outline: 1px solid color-mix(in srgb, #a855f7 55%, transparent);
+  background: color-mix(in srgb, #a855f7 18%, transparent);
+  outline: 1px solid color-mix(in srgb, #a855f7 40%, transparent);
   border-color: transparent;
   color: inherit;
   opacity: 1;
@@ -540,17 +546,30 @@ button.tag-chip,
 .gallery-card .tag-chip.is-paused-tag.tag-role-mapped,
 .gallery-card .tag-chip.is-paused-tag.tag-role-unmapped,
 .tag-chip.is-paused-tag {
-  background: color-mix(in srgb, #d97706 26%, transparent);
-  outline: 1px solid color-mix(in srgb, #d97706 50%, transparent);
+  background: color-mix(in srgb, #d97706 16%, transparent);
+  outline: 1px solid color-mix(in srgb, #d97706 38%, transparent);
   border-color: transparent;
   color: inherit;
   opacity: 1;
 }
 
 .gallery-card .tag-chip.tag-role-final:hover,
+.tag-chip.tag-role-final:hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-style: solid;
+}
+
 .gallery-card .tag-chip.tag-role-mapped:hover,
-.gallery-card .tag-chip.tag-role-unmapped:hover {
-  border-color: color-mix(in srgb, var(--border) 60%, var(--accent) 25%);
+.tag-chip.tag-role-mapped:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  border-style: dashed;
+}
+
+.gallery-card .tag-chip.tag-role-unmapped:hover,
+.tag-chip.tag-role-unmapped:hover {
+  border-color: color-mix(in srgb, var(--muted) 70%, var(--text) 12%);
+  border-style: dotted;
+  color: var(--text);
   opacity: 1;
 }
 
@@ -1571,16 +1590,42 @@ th {
 }
 
 .sidebar-cal-dot {
-  position: absolute;
-  bottom: 2px;
   width: 3px;
   height: 3px;
   border-radius: 50%;
   background: var(--accent);
+  flex: none;
+}
+
+.sidebar-cal-dots {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-cal-dot-primary {
+  background: var(--accent);
+}
+
+.sidebar-cal-dot-secondary {
+  background: color-mix(in srgb, var(--success) 72%, transparent);
 }
 
 .sidebar-cal-cell.endpoint .sidebar-cal-dot {
   background: var(--accent-contrast);
+}
+
+.sidebar-cal-cell.endpoint .sidebar-cal-dot-secondary {
+  background: color-mix(in srgb, var(--success) 85%, white);
+}
+
+.status-gallery-card.is-ban-seen .status-model-card-title-row {
+  /* Left edge only on the title bar — theme success, muted. */
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--success) 58%, transparent);
 }
 
 .sidebar-cal-hint {

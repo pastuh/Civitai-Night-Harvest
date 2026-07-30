@@ -102,7 +102,6 @@ export function DownloadTab({ settings, tagRules, onRefresh, onOpenTagSettings }
 
   return (
     <div className="panel">
-      <h2>{t('downloadTab.title')}</h2>
       <p className="muted">
         {t('downloadTab.lead', {
           lora: settings.loraFolder || '…/lora',

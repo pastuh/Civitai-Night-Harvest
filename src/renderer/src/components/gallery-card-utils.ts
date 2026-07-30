@@ -41,7 +41,7 @@ export function cardTagFolderRoleClass(role: CardTagFolderRole): string {
   return 'tag-role-unmapped'
 }
 
-/** True when this tag chip is the card's primary folder (same name — green border). */
+/** True when this tag chip is the card's primary folder (solid colored border). */
 export function isPrimaryFolderTag(folderLabel: string | null | undefined, tagName: string): boolean {
   if (!folderLabel?.trim()) return false
   return tagsEqual(folderLabel, tagName)

@@ -301,6 +301,23 @@
   color: #fff;
 }
 
+/* Aroma: soft pink assigned borders (accent mixed — not full neon). */
+.theme-aroma .gallery-card .tag-chip.tag-role-final,
+.theme-aroma .tag-chip.tag-role-final {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--muted));
+}
+
+.theme-aroma .gallery-card .tag-chip.tag-role-mapped,
+.theme-aroma .tag-chip.tag-role-mapped {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--muted));
+}
+
+.theme-aroma .gallery-card .tag-chip.tag-role-unmapped,
+.theme-aroma .tag-chip.tag-role-unmapped {
+  border-color: color-mix(in srgb, #9aa3ba 55%, transparent);
+  color: color-mix(in srgb, #9aa3ba 85%, var(--muted));
+}
+
 /* ── Layout density ── */
 .ui-minimal .content {
   --content-pad: var(--space-md);
@@ -1468,7 +1485,7 @@ label.field-label {
 .settings-panel-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-md);
   flex-wrap: wrap;
   margin: calc(-1 * var(--panel-pad)) calc(-1 * var(--panel-pad)) var(--space-md);
@@ -2010,7 +2027,7 @@ label.field-label {
 .pending-tab-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 8px;
@@ -2232,10 +2249,25 @@ label.field-label {
 }
 
 .missing-side-filter-chip {
-  max-width: 14rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(18rem, 46vw);
+  min-width: 5.5rem;
+  overflow: hidden;
+}
+
+.missing-side-filter-chip-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.missing-side-filter-chip-x {
+  flex: none;
+  font-weight: 700;
 }
 
 .missing-card-tags {

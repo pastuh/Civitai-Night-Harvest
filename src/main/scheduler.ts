@@ -30,6 +30,7 @@ import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
+import { isNetworkOfflineCircuitOpen } from '../shared/network-retry'
 import { firstPolicyMatch, modelHasPolicyTag } from '../shared/tag-routing'
 import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { sendToRenderer } from './window-notify'
@@ -37,6 +38,7 @@ import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedu
 import { watchRuleCrawlSignature, watchRulesCrawlChanged } from '../shared/watch-rule-crawl'
 import { recheckIncompleteModels, emitIncompleteList } from './incomplete-resolve'
 import { emitMissingList, recheckMissingModels } from './missing-models'
+import { enrichDeferredDownloads } from '../shared/early-access'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -423,7 +425,9 @@ export class ScanScheduler {
             tags: m.tags ?? [],
             blockedTag: hit.policyTag,
             matchedModelTag: hit.modelTag,
-            policy: hit.kind
+            policy: hit.kind,
+            downloadCount: m.downloadCount,
+            thumbsUpCount: m.thumbsUpCount
           })
           matched++
         }
@@ -1126,13 +1130,78 @@ export class ScanScheduler {
       if (getSettings().autoRetryDeferred === false) return
       // Peek loop already requeues deferred after each maintenance pass — skip while Harvest crawl runs.
       if (shouldRunContinuousCrawl()) return
-      const count = this.downloadQueue.requeueDeferred()
-      if (count > 0) {
-        this.log('info', `Early access ready — re-queued ${count} model(s) for download`)
-        this.maybeStartAutoDownloads()
-      }
+      void this.tickEarlyAccessRetry()
       void this.runIncompleteRecheckIfDue()
     }, intervalMs)
+  }
+
+  private earlyAccessEnrichBusy = false
+
+  /**
+   * Keep Early access rows across restarts, but still poll Civitai: unlock clock may fire early
+   * (creator ends EA), or earlyAccessEndsAt may arrive late from getVersionMini.
+   */
+  private async tickEarlyAccessRetry(): Promise<void> {
+    if (this.earlyAccessEnrichBusy) return
+    this.earlyAccessEnrichBusy = true
+    try {
+      const items = inventory.getAllDeferredDownloads()
+      const unlocked: number[] = []
+      const needsLiveCheck = items.some(
+        (d) =>
+          d.failureKind === 'early_access' ||
+          d.failureKind === 'auth' ||
+          d.failureKind === 'forbidden'
+      )
+      if (needsLiveCheck) {
+        await enrichDeferredDownloads(
+          this.pool.primary(),
+          items,
+          (item) => {
+            inventory.upsertDeferredDownload({
+              modelId: item.modelId,
+              versionId: item.versionId,
+              modelName: item.modelName,
+              versionName: item.versionName,
+              modelType: item.modelType,
+              routingTag: item.routingTag,
+              previewUrl: item.previewUrl,
+              outputFolder: item.outputFolder,
+              reason: item.reason,
+              failureKind: item.failureKind,
+              lastAttemptAt: item.lastAttemptAt,
+              earlyAccessEndsAt: item.earlyAccessEndsAt,
+              civitaiTags: item.civitaiTags,
+              downloadCount: item.downloadCount,
+              thumbsUpCount: item.thumbsUpCount,
+              bumpAttempt: false
+            })
+          },
+          40,
+          (versionId) => unlocked.push(versionId)
+        )
+        for (const versionId of unlocked) {
+          this.downloadQueue.requeueDeferredVersion(versionId)
+        }
+      }
+
+      const count = this.downloadQueue.requeueDeferred()
+      const total = unlocked.length + count
+      if (total > 0) {
+        this.log(
+          'info',
+          `Early access ready — re-queued ${total} model(s) for download${
+            unlocked.length ? ` (${unlocked.length} unlocked early via API)` : ''
+          }`
+        )
+        this.maybeStartAutoDownloads()
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.log('warn', `Early access check failed: ${msg}`, undefined, { source: 'system' })
+    } finally {
+      this.earlyAccessEnrichBusy = false
+    }
   }
 
   private incompleteRecheckBusy = false
@@ -2675,6 +2744,9 @@ export class ScanScheduler {
 
   /** Resume downloads and night crawl after a transient network crash. */
   recoverAfterNetworkError(): void {
+    // Offline / DNS outages must not restart crawl — that floods retries.
+    if (isNetworkOfflineCircuitOpen()) return
+
     const requeued = this.downloadQueue.requeueDeferred()
     if (requeued > 0) {
       this.log('info', `Network recovery: re-queued ${requeued} interrupted download(s)`)

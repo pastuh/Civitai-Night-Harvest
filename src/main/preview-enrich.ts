@@ -127,6 +127,22 @@ export async function resolvePreviewsForModelWithFallback(
     )
     if (last.previewUrls.length) return last
   }
+
+  // EA / gated versions often ship with empty images[] — use another version's cover for display.
+  if (strictVersion) {
+    for (const domain of domains) {
+      const client = pool.forDomain(domain)
+      last = await resolvePreviewsForModel(
+        client,
+        modelId,
+        versionId,
+        seed,
+        contentFilter,
+        false
+      )
+      if (last.previewUrls.length) return last
+    }
+  }
   return last
 }
 
@@ -274,5 +290,46 @@ export function previewsFromModel(
   versionId: number,
   contentFilter: ContentFilter
 ): ResolvedPreview {
-  return toResolved(model.id, versionId, model, contentFilter, true)
+  const strict = toResolved(model.id, versionId, model, contentFilter, true)
+  if (strict.previewUrls.length) return strict
+  // Search/EA payloads often omit images on the latest version — fall back to sibling covers.
+  return toResolved(model.id, versionId, model, contentFilter, false)
+}
+
+/**
+ * Fill missing previewUrl on deferred / early-access rows (and matching queue items).
+ * EA versions frequently have empty images[] while older versions still have covers.
+ */
+export async function enrichDeferredPreviews(
+  pool: CivitaiClientPool,
+  items: {
+    modelId: number
+    versionId: number
+    previewUrl?: string
+    sourceDomain?: CivitaiDomain
+  }[],
+  contentFilter: ContentFilter,
+  onResolved: (versionId: number, previewUrl: string, previewUrls: string[]) => void
+): Promise<number> {
+  const missing = items.filter((i) => i.versionId > 0 && i.modelId > 0 && !i.previewUrl?.trim())
+  if (!missing.length) return 0
+
+  let filled = 0
+  await mapWithConcurrency(missing, 6, async (item) => {
+    const resolved = await resolvePreviewsForModelWithFallback(
+      pool,
+      item.modelId,
+      item.versionId,
+      item.sourceDomain,
+      undefined,
+      contentFilter,
+      undefined,
+      true
+    )
+    const url = resolved.previewUrl ?? resolved.previewUrls[0]
+    if (!url) return
+    onResolved(item.versionId, url, resolved.previewUrls)
+    filled++
+  })
+  return filled
 }

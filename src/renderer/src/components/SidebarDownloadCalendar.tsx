@@ -6,9 +6,13 @@ type Props = {
   from: string | null
   /** Inclusive range end; same as from for a single day. */
   to: string | null
-  /** Days that have downloads — shown with a marker. */
+  /** Primary marker days (e.g. bans by bannedAt) — default dot. */
   daysWithCounts: Map<string, number>
+  /** Secondary marker days (e.g. ban cards marked seen) — second dot. */
+  daysWithSecondaryCounts?: Map<string, number>
   onPickDay: (day: string) => void
+  /** Optional override for the footer hint. */
+  rangeHintKey?: 'gallery.calendarRangeHint' | 'missingTab.calendarRangeHint'
 }
 
 function parseDay(day: string): { y: number; m: number; d: number } | null {
@@ -19,6 +23,10 @@ function parseDay(day: string): { y: number; m: number; d: number } | null {
 
 function dayKey(y: number, m: number, d: number): string {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+function dayKeyFromDate(d: Date): string {
+  return dayKey(d.getFullYear(), d.getMonth() + 1, d.getDate())
 }
 
 function addMonths(y: number, m: number, delta: number): { y: number; m: number } {
@@ -40,7 +48,14 @@ function monthGrid(y: number, m: number): Array<string | null> {
   return cells
 }
 
-export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }: Props) {
+export function SidebarDownloadCalendar({
+  from,
+  to,
+  daysWithCounts,
+  daysWithSecondaryCounts,
+  onPickDay,
+  rangeHintKey = 'gallery.calendarRangeHint'
+}: Props) {
   const { locale, t } = useI18n()
   const initial = parseDay(to ?? from ?? '') ?? (() => {
     const n = new Date()
@@ -83,11 +98,11 @@ export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }:
       : null
 
   return (
-    <div className="sidebar-cal" aria-label={t('gallery.downloadedByDate')}>
+    <div className="sidebar-cal">
       <div className="sidebar-cal-nav">
         <button
           type="button"
-          className="btn-sm sidebar-cal-nav-btn"
+          className="btn-sm btn-ghost"
           aria-label={t('gallery.calendarPrevMonth')}
           onClick={() => setView((v) => addMonths(v.y, v.m, -1))}
         >
@@ -96,7 +111,7 @@ export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }:
         <span className="sidebar-cal-month">{monthLabel}</span>
         <button
           type="button"
-          className="btn-sm sidebar-cal-nav-btn"
+          className="btn-sm btn-ghost"
           aria-label={t('gallery.calendarNextMonth')}
           onClick={() => setView((v) => addMonths(v.y, v.m, 1))}
         >
@@ -105,7 +120,9 @@ export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }:
       </div>
       <div className="sidebar-cal-weekdays" aria-hidden>
         {weekdayLabels.map((label, i) => (
-          <span key={i}>{label}</span>
+          <span key={i} className="sidebar-cal-weekday">
+            {label}
+          </span>
         ))}
       </div>
       <div className="sidebar-cal-grid" role="grid">
@@ -113,12 +130,16 @@ export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }:
           if (!day) {
             return <span key={`e-${i}`} className="sidebar-cal-cell empty" />
           }
-          const count = daysWithCounts.get(day) ?? 0
+          const banCount = daysWithCounts.get(day) ?? 0
+          const seenCount = daysWithSecondaryCounts?.get(day) ?? 0
           const inRange =
             rangeFrom != null && rangeTo != null && day >= rangeFrom && day <= rangeTo
           const isStart = rangeFrom === day
           const isEnd = rangeTo === day
           const isToday = day === dayKeyFromDate(new Date())
+          const titleParts = [day]
+          if (banCount > 0) titleParts.push(`bans ${banCount}`)
+          if (seenCount > 0) titleParts.push(`seen ${seenCount}`)
           return (
             <button
               key={day}
@@ -129,20 +150,28 @@ export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }:
                 inRange ? 'in-range' : '',
                 isStart || isEnd ? 'endpoint' : '',
                 isToday ? 'today' : '',
-                count > 0 ? 'has-downloads' : ''
+                banCount > 0 ? 'has-downloads' : '',
+                seenCount > 0 ? 'has-secondary' : ''
               ]
                 .filter(Boolean)
                 .join(' ')}
-              title={count > 0 ? `${day} · ${count}` : day}
+              title={titleParts.join(' · ')}
               onClick={() => onPickDay(day)}
             >
               <span className="sidebar-cal-daynum">{Number(day.slice(8))}</span>
-              {count > 0 ? <span className="sidebar-cal-dot" aria-hidden /> : null}
+              {(banCount > 0 || seenCount > 0) && (
+                <span className="sidebar-cal-dots" aria-hidden>
+                  {banCount > 0 ? <span className="sidebar-cal-dot sidebar-cal-dot-primary" /> : null}
+                  {seenCount > 0 ? (
+                    <span className="sidebar-cal-dot sidebar-cal-dot-secondary" />
+                  ) : null}
+                </span>
+              )}
             </button>
           )
         })}
       </div>
-      <p className="sidebar-cal-hint muted">{t('gallery.calendarRangeHint')}</p>
+      <p className="sidebar-cal-hint muted">{t(rangeHintKey)}</p>
       {selectionLabel ? (
         <p className="sidebar-cal-selection" aria-live="polite">
           {selectionLabel}
@@ -150,8 +179,4 @@ export function SidebarDownloadCalendar({ from, to, daysWithCounts, onPickDay }:
       ) : null}
     </div>
   )
-}
-
-function dayKeyFromDate(d: Date): string {
-  return dayKey(d.getFullYear(), d.getMonth() + 1, d.getDate())
 }

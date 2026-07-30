@@ -511,6 +511,10 @@ export interface DeferredDownload {
   attemptCount: number
   /** When set, auto-retry waits until this ISO timestamp (early access window). */
   earlyAccessEndsAt?: string
+  /** Civitai tags at defer time — plan Tag folders before download. */
+  civitaiTags?: string[]
+  downloadCount?: number
+  thumbsUpCount?: number
   /** From Civitai mini API — extra Buzz beyond base workflow cost */
   additionalResourceCharge?: boolean
   freeTrialLimit?: number | null
@@ -582,6 +586,8 @@ export interface MissingModel {
    * for tab badge / sort priority.
    */
   acknowledged?: boolean
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 export type IncompleteDownloadResult =
@@ -718,6 +724,8 @@ export interface BannedModel {
   reason?: 'manual'
   /** Hidden everywhere unless Show forgotten (Missing). */
   forgotten?: boolean
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 /** Optional metadata when banning — stored for Missing review (no swarm.json). */
@@ -731,6 +739,8 @@ export type BanModelStub = {
   baseModel?: string
   modelType?: string
   tags?: string[]
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 /** Pause (Browse exclude) vs permanent ban-by-tag (Missing). */
@@ -757,6 +767,8 @@ export interface TagSkipReview {
   firstSeenAt: string
   lastSeenAt: string
   acknowledged?: boolean
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 /** Cap stored tag-skip review stubs (oldest pruned). */
@@ -791,6 +803,8 @@ export interface ExclusionReviewItem {
   status?: MissingModelStatus
   acknowledged?: boolean
   fromEarlyAccess?: boolean
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 /** Progress while applying a Tag Folders / Browse block. */

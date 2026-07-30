@@ -4,6 +4,13 @@ import { isRetryableNetworkError, isRetryableDownloadError, isRetryableFileError
 export type { DeferredFailureKind }
 export { isRetryableNetworkError, isRetryableDownloadError }
 
+/** Early access / Buzz / login gate — keep across restarts; do not re-queue as fresh downloads. */
+export function isAwaitingAccessFailureKind(
+  kind: DeferredFailureKind | string | null | undefined
+): boolean {
+  return kind === 'early_access' || kind === 'auth' || kind === 'forbidden'
+}
+
 /** Stop automatic re-queue after this many failed attempts (manual retry still allowed). */
 export const MAX_AUTO_DEFERRED_ATTEMPTS = 10
 
@@ -53,6 +60,31 @@ export function classifyDownloadFailure(rawMessage: string): ClassifiedDownloadF
       defer: true,
       kind: 'rate_limit',
       reason: 'Rate limited (429) — too many requests; will retry later'
+    }
+  }
+
+  // Domain probe miss (no HTTP status in message) — track under Missing, not as strip-stuck failed.
+  if (/not found on Civitai/i.test(rawMessage)) {
+    return {
+      defer: true,
+      kind: 'not_found',
+      reason:
+        'Not found on Civitai — version may be deleted or not public yet; tracked under Missing'
+    }
+  }
+
+  // HTML login / missing-key paths — may really be early access (refineDeferredFailure upgrades).
+  if (
+    /Civitai login required/i.test(rawMessage) ||
+    /Civitai auth failed/i.test(rawMessage) ||
+    /Civitai API key required/i.test(rawMessage)
+  ) {
+    return {
+      defer: true,
+      kind: 'auth',
+      reason: /API key required/i.test(rawMessage)
+        ? 'Civitai API key required in Settings to download models'
+        : 'Civitai login / access gate — check API key, or this may be early access'
     }
   }
 

@@ -260,6 +260,24 @@ const api = {
     ipcRenderer.invoke('exclusions:allowTagSkip', modelId),
   acknowledgeTagSkip: (modelId: number): Promise<ExclusionReviewItem[]> =>
     ipcRenderer.invoke('exclusions:acknowledgeTagSkip', modelId),
+  getMissingBanSeen: (): Promise<{
+    byModelId: Record<number, string>
+    countByDay: Record<string, number>
+  }> => ipcRenderer.invoke('exclusions:getBanSeen'),
+  markMissingBanSeen: (
+    modelIds: number[],
+    seenDay: string
+  ): Promise<{
+    marked: number[]
+    byModelId: Record<number, string>
+    countByDay: Record<string, number>
+  }> => ipcRenderer.invoke('exclusions:markBanSeen', { modelIds, seenDay }),
+  clearMissingBanSeen: (
+    day?: string
+  ): Promise<{
+    byModelId: Record<number, string>
+    countByDay: Record<string, number>
+  }> => ipcRenderer.invoke('exclusions:clearBanSeen', day ? { day } : {}),
   setModelAutoUpdate: (modelId: number, enabled: boolean, modelName?: string) =>
     ipcRenderer.invoke('model:setAutoUpdate', { modelId, enabled, modelName }),
   getAutoUpdateModels: () => ipcRenderer.invoke('model:getAutoUpdate'),

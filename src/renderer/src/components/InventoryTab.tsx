@@ -8,7 +8,6 @@ export function InventoryTab({ records }: Props) {
   if (!records.length) {
     return (
       <div className="panel">
-        <h2>Inventory</h2>
         <p className="muted">No downloads yet.</p>
       </div>
     )
@@ -16,7 +15,6 @@ export function InventoryTab({ records }: Props) {
 
   return (
     <div className="panel">
-      <h2>Downloaded models ({records.length})</h2>
       <table>
         <thead>
           <tr>

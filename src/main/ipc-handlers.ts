@@ -31,7 +31,7 @@ import { DownloadService } from './download-service'
 import * as inventory from './inventory'
 import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync, findSuspiciousModelFiles } from './library-sync'
 import { setLibraryPreviewFromUrl } from './library-preview'
-import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch } from './preview-enrich'
+import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, enrichDeferredPreviews } from './preview-enrich'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
@@ -873,7 +873,9 @@ export function initIpc(): void {
         ? payload.tags
         : incomplete?.tags?.length
           ? incomplete.tags
-          : deleted[0]?.civitaiTags
+          : deleted[0]?.civitaiTags,
+      downloadCount: payload.downloadCount ?? deleted[0]?.downloadCount,
+      thumbsUpCount: payload.thumbsUpCount ?? deleted[0]?.thumbsUpCount
     }
     inventory.banModel(payload.modelId, modelName, stub)
     inventory.removePendingForModel(payload.modelId)
@@ -982,7 +984,17 @@ export function initIpc(): void {
             ? incomplete.tags
             : tagSkip?.tags?.length
               ? tagSkip.tags
-              : deleted[0]?.civitaiTags
+              : deleted[0]?.civitaiTags,
+        downloadCount:
+          payload.downloadCount ??
+          tagSkip?.downloadCount ??
+          missing?.downloadCount ??
+          deleted[0]?.downloadCount,
+        thumbsUpCount:
+          payload.thumbsUpCount ??
+          tagSkip?.thumbsUpCount ??
+          missing?.thumbsUpCount ??
+          deleted[0]?.thumbsUpCount
       }
       inventory.forgetModel(payload.modelId, modelName, stub)
       inventory.removePendingForModel(payload.modelId)
@@ -1086,6 +1098,30 @@ export function initIpc(): void {
     inventory.acknowledgeTagSkipReview(modelId)
     emitMissingList(() => mainWindow)
     return inventory.getExclusionReviewItems()
+  })
+
+  ipcMain.handle('exclusions:getBanSeen', () => ({
+    byModelId: inventory.getMissingBanSeenMap(),
+    countByDay: inventory.getMissingBanSeenCountByDay()
+  }))
+
+  ipcMain.handle('exclusions:markBanSeen', (_e, payload: { modelIds: number[]; seenDay: string }) => {
+    const ids = Array.isArray(payload?.modelIds) ? payload.modelIds : []
+    const marked = inventory.markMissingBanSeen(ids, payload?.seenDay ?? '')
+    return {
+      marked,
+      byModelId: inventory.getMissingBanSeenMap(),
+      countByDay: inventory.getMissingBanSeenCountByDay()
+    }
+  })
+
+  ipcMain.handle('exclusions:clearBanSeen', (_e, payload?: { day?: string }) => {
+    if (payload?.day) inventory.clearMissingBanSeenDay(payload.day)
+    else inventory.clearAllMissingBanSeen()
+    return {
+      byModelId: inventory.getMissingBanSeenMap(),
+      countByDay: inventory.getMissingBanSeenCountByDay()
+    }
   })
 
   ipcMain.handle(
@@ -1501,6 +1537,9 @@ export function initIpc(): void {
           failureKind: item.failureKind,
           lastAttemptAt: item.lastAttemptAt,
           earlyAccessEndsAt: item.earlyAccessEndsAt,
+          civitaiTags: item.civitaiTags,
+          downloadCount: item.downloadCount,
+          thumbsUpCount: item.thumbsUpCount,
           bumpAttempt: false
         })
       },
@@ -1511,6 +1550,36 @@ export function initIpc(): void {
     for (const versionId of unlocked) {
       downloadQueue.requeueDeferredVersion(versionId)
     }
+
+    // EA versions often lack images[] — fill covers from sibling versions / gallery.
+    const afterUnlock = inventory.getAllDeferredDownloads()
+    await enrichDeferredPreviews(
+      clientPool,
+      afterUnlock,
+      getSettings().contentFilter,
+      (versionId, previewUrl) => {
+        const row = inventory.getDeferredDownload(versionId)
+        if (!row) return
+        inventory.upsertDeferredDownload({
+          modelId: row.modelId,
+          versionId: row.versionId,
+          modelName: row.modelName,
+          versionName: row.versionName,
+          modelType: row.modelType,
+          routingTag: row.routingTag,
+          previewUrl,
+          outputFolder: row.outputFolder,
+          reason: row.reason,
+          failureKind: row.failureKind,
+          lastAttemptAt: row.lastAttemptAt,
+          earlyAccessEndsAt: row.earlyAccessEndsAt,
+          civitaiTags: row.civitaiTags,
+          bumpAttempt: false
+        })
+        downloadQueue.patchItemPreviewUrl(versionId, previewUrl)
+      }
+    )
+
     return inventory.getAllDeferredDownloads()
   })
 

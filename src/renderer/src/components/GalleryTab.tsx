@@ -51,10 +51,13 @@ import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
 import {
   DEFAULT_LIBRARY_VIEW_PREFS,
+  LIBRARY_SORT_OPTIONS,
+  normalizeLibrarySort,
   type LibraryFilter,
   type LibrarySort,
   type LibraryViewPrefs
 } from '../view-prefs'
+import { compareOptionalCount } from '../list-sort'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import { SkippedTagsPanel } from './SkippedTagsPanel'
 
@@ -221,7 +224,9 @@ function GalleryTabInner({
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>(initial.libraryFilter)
   /** First click in calendar; second click completes a range. */
   const [dateRangeAnchor, setDateRangeAnchor] = useState<string | null>(null)
-  const [librarySort, setLibrarySort] = useState<LibrarySort>(initial.librarySort)
+  const [librarySort, setLibrarySort] = useState<LibrarySort>(() =>
+    normalizeLibrarySort(initial.librarySort)
+  )
   const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>(initial.nsfwFilter)
   const [hideFolderAssigned, setHideFolderAssigned] = useState(initial.hideFolderAssigned)
   const [ignoreExcludedTags, setIgnoreExcludedTags] = useState(initial.ignoreExcludedTags)
@@ -741,15 +746,32 @@ function GalleryTabInner({
         case 'downloads':
           list.sort(
             (a, b) =>
-              (b.downloadCount ?? 0) - (a.downloadCount ?? 0) ||
+              compareOptionalCount(a.downloadCount, b.downloadCount) ||
               a.modelName.localeCompare(b.modelName)
           )
           break
+        case 'likes':
+          list.sort(
+            (a, b) =>
+              compareOptionalCount(a.thumbsUpCount, b.thumbsUpCount) ||
+              a.modelName.localeCompare(b.modelName)
+          )
+          break
+        case 'name':
+          list.sort((a, b) => a.modelName.localeCompare(b.modelName))
+          break
+        case 'recent':
         default:
+          list.sort(
+            (a, b) =>
+              b.downloadedAt.localeCompare(a.downloadedAt) ||
+              a.modelName.localeCompare(b.modelName)
+          )
           break
       }
     }
     if (highlightSet.size > 0 || pinEaFavoriteSet.size > 0) {
+      // Pin favorites / session highlights first — keep primary librarySort within each group.
       list.sort((a, b) => {
         const af = pinEaFavoriteSet.has(a.modelId) ? 0 : 1
         const bf = pinEaFavoriteSet.has(b.modelId) ? 0 : 1
@@ -757,7 +779,7 @@ function GalleryTabInner({
         const ah = highlightSet.has(a.versionId) ? 0 : 1
         const bh = highlightSet.has(b.versionId) ? 0 : 1
         if (ah !== bh) return ah - bh
-        return b.downloadedAt.localeCompare(a.downloadedAt)
+        return 0
       })
     }
     return list
@@ -984,7 +1006,9 @@ function GalleryTabInner({
             author: rec?.author,
             baseModel: rec?.baseModel,
             sourceDomain: rec?.civitaiDomain,
-            tags: rec?.civitaiTags
+            tags: rec?.civitaiTags,
+            downloadCount: rec?.downloadCount,
+            thumbsUpCount: rec?.thumbsUpCount
           })
         }
         scheduleLibraryRefresh()
@@ -1336,7 +1360,6 @@ function GalleryTabInner({
         <section className="panel gallery-panel">
           <div className="gallery-panel-head library-panel-head">
           <div className="browse-results-title-row library-results-title-row">
-            <h2>{t('gallery.titleHeading')}</h2>
             <input
               type="search"
               className="browse-results-search library-model-search"
@@ -1425,15 +1448,22 @@ function GalleryTabInner({
             </div>
             <div className="browse-results-controls-box">
               <label className="library-sort browse-results-sort">
-                {t('gallery.sortLabel')}
+                {t('listSort.label')}
                 <select
                   value={librarySort}
-                  onChange={(e) => setLibrarySort(e.target.value as LibrarySort)}
+                  onChange={(e) => setLibrarySort(normalizeLibrarySort(e.target.value))}
                 >
-                  <option value="tagGroup">{t('gallery.sortTagGroup')}</option>
-                  <option value="folder">{t('gallery.sortFolder')}</option>
-                  <option value="downloads">{t('gallery.sortDownloads')}</option>
-                  <option value="default">{t('gallery.sortDefault')}</option>
+                  {LIBRARY_SORT_OPTIONS.map((key) => (
+                    <option key={key} value={key}>
+                      {key === 'recent'
+                        ? t('listSort.recentLibrary')
+                        : key === 'tagGroup'
+                          ? t('listSort.tagGroup')
+                          : key === 'folder'
+                            ? t('listSort.folder')
+                            : t(`listSort.${key}`)}
+                    </option>
+                  ))}
                 </select>
               </label>
               {(modelSearch || modelLetter || pinModelId != null) && (

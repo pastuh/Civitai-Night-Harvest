@@ -47,9 +47,13 @@ import {
   normalizeResultsPageSize
 } from '../../../shared/results-display'
 import {
+  BROWSE_SORT_OPTIONS,
   DEFAULT_BROWSE_VIEW_PREFS,
+  normalizeBrowseSort,
+  type BrowseSort,
   type BrowseViewPrefs
 } from '../view-prefs'
+import { compareOptionalCount } from '../list-sort'
 
 function previewUrlsFor(model: WatchRuleTestModel): string[] {
   if (model.previewUrls?.length) return model.previewUrls
@@ -307,8 +311,8 @@ export function SearchBrowsePanel({
   loadingMoreRef.current = loadingMore
   const [tagsOpen, setTagsOpen] = useState(false)
   const [tagSearch, setTagSearch] = useState('')
-  const [browseSort, setBrowseSort] = useState<'default' | 'folder' | 'downloads'>(
-    browseInitial.browseSort
+  const [browseSort, setBrowseSort] = useState<BrowseSort>(() =>
+    normalizeBrowseSort(browseInitial.browseSort)
   )
   const tagsPopoverRef = useRef<HTMLDivElement>(null)
   const tagCatalogRef = useRef<Map<number, WatchRuleTestModel>>(new Map())
@@ -905,9 +909,19 @@ export function SearchBrowsePanel({
       case 'downloads':
         sorted.sort(
           (a, b) =>
-            (b.downloadCount ?? 0) - (a.downloadCount ?? 0) || a.name.localeCompare(b.name)
+            compareOptionalCount(a.downloadCount, b.downloadCount) || a.name.localeCompare(b.name)
         )
         break
+      case 'likes':
+        sorted.sort(
+          (a, b) =>
+            compareOptionalCount(a.thumbsUpCount, b.thumbsUpCount) || a.name.localeCompare(b.name)
+        )
+        break
+      case 'name':
+        sorted.sort((a, b) => a.name.localeCompare(b.name))
+        break
+      case 'recent':
       default:
         sorted.sort((a, b) => {
           const ka = browseModelDedupeKey(a)
@@ -1588,7 +1602,9 @@ export function SearchBrowsePanel({
         author: model.creator,
         baseModel: model.baseModel,
         modelType: model.type,
-        tags: model.tags
+        tags: model.tags,
+        downloadCount: model.downloadCount,
+        thumbsUpCount: model.thumbsUpCount
       })
       .catch((err) => {
       setLocalBanned((prev) => {
@@ -1724,7 +1740,6 @@ export function SearchBrowsePanel({
         <div className="search-browse-header-main">
         <div className="search-browse-title">
           <div className="browse-results-title-row">
-            <h2>{t('browse.results')}</h2>
             <input
               type="search"
               className="browse-results-search"
@@ -1812,14 +1827,20 @@ export function SearchBrowsePanel({
             </div>
             <div className="browse-results-controls-box">
               <label className="library-sort browse-results-sort">
-                {t('gallery.sortLabel')}
+                {t('listSort.label')}
                 <select
                   value={browseSort}
-                  onChange={(e) => setBrowseSort(e.target.value as 'default' | 'folder' | 'downloads')}
+                  onChange={(e) => setBrowseSort(normalizeBrowseSort(e.target.value))}
                 >
-                  <option value="folder">{t('gallery.sortFolder')}</option>
-                  <option value="downloads">{t('gallery.sortDownloads')}</option>
-                  <option value="default">{t('gallery.sortDefault')}</option>
+                  {BROWSE_SORT_OPTIONS.map((key) => (
+                    <option key={key} value={key}>
+                      {key === 'recent'
+                        ? t('listSort.recentBrowse')
+                        : key === 'folder'
+                          ? t('listSort.folder')
+                          : t(`listSort.${key}`)}
+                    </option>
+                  ))}
                 </select>
               </label>
               <div className="tags-popover-wrap" ref={tagsPopoverRef}>
@@ -2823,15 +2844,19 @@ const ModelCard = memo(function ModelCard({
     waitVersionIds: waitAccessVersionIds
   })
   const statusClass = model.isBanned ? 'banned' : model.inInventory ? 'owned' : 'missing'
-  const isQueued = queueItem?.status === 'queued' && !model.inInventory
+  const isEarlyAccessCard =
+    !model.inInventory && (Boolean(model.isEarlyAccess) || awaitingAccess)
+  const isQueued = queueItem?.status === 'queued' && !model.inInventory && !isEarlyAccessCard
   const showQueuedStyle = isQueued && queueItem?.manual === true
   const isAutoQueued = isQueued && queueItem?.manual !== true
-  const isDownloading = queueItem?.status === 'downloading' && !model.inInventory
+  const isDownloading =
+    queueItem?.status === 'downloading' && !model.inInventory && !isEarlyAccessCard
   const isQueuedPaused = showQueuedStyle && queuePaused
   const inQueueActive = isDownloading || isQueued
   const isFailed = queueItem?.status === 'failed' && !model.inInventory
   const isSkipped = queueItem?.status === 'skipped' && !model.inInventory
-  const isDeferred = queueItem?.status === 'deferred' && !model.inInventory
+  const isDeferred =
+    (queueItem?.status === 'deferred' && !model.inInventory) || isEarlyAccessCard
   const canQueue =
     !model.inInventory &&
     !model.isBanned &&
@@ -2840,7 +2865,8 @@ const ModelCard = memo(function ModelCard({
     !isDownloading &&
     !isFailed &&
     !isSkipped &&
-    !isDeferred
+    !isDeferred &&
+    !isEarlyAccessCard
 
   const resolvedRoute = resolveModelRoutingTag(
     model.tags,
@@ -2873,7 +2899,7 @@ const ModelCard = memo(function ModelCard({
     queueStatusFoot = 'skipped'
   } else if (
     !model.isBanned &&
-    (isDeferred || awaitingAccess || model.isEarlyAccess)
+    (isDeferred || isEarlyAccessCard)
   ) {
     queueStatusFoot = 'early access'
   } else if (tagSkipBlocked && !model.inInventory && !inQueueActive) {
@@ -2889,8 +2915,8 @@ const ModelCard = memo(function ModelCard({
     badge = t('browse.badgeQueuedShort')
     badgeClass = 'badge-queued-pending'
   } else if (!model.isBanned) {
-    badge = model.isEarlyAccess || awaitingAccess ? 'Soon' : 'New'
-    badgeClass = model.isEarlyAccess || awaitingAccess ? 'badge-soon' : 'badge-new'
+    badge = isEarlyAccessCard ? 'Soon' : 'New'
+    badgeClass = isEarlyAccessCard ? 'badge-soon' : 'badge-new'
   }
   if (
     accessGate &&
@@ -2929,10 +2955,10 @@ const ModelCard = memo(function ModelCard({
 
   let cardState = 'new'
   if (model.inInventory) cardState = 'owned'
+  else if (isEarlyAccessCard || isDeferred) cardState = 'deferred'
   else if (isDownloading) cardState = 'downloading'
   else if (isQueued) cardState = 'queued-auto'
   else if (isFailed) cardState = 'failed'
-  else if (isDeferred || awaitingAccess || model.isEarlyAccess) cardState = 'deferred'
   else if (isSkipped || (tagSkipBlocked && !inQueueActive)) cardState = 'skipped'
 
   const cardClass = [
@@ -2943,7 +2969,7 @@ const ModelCard = memo(function ModelCard({
     model.isBanned && model.inInventory && onJumpToGallery ? 'has-goto' : '',
     isFailed ? 'download-failed' : '',
     isDownloading ? 'is-downloading' : '',
-    !inQueueActive && (isDeferred || awaitingAccess || model.isEarlyAccess) ? 'download-deferred' : '',
+    isEarlyAccessCard || isDeferred ? 'download-deferred' : '',
     isSkipped ? 'download-skipped' : '',
     inQueueActive ? 'in-queue' : '',
     canQueue ? 'can-queue-hint' : '',

@@ -18,6 +18,8 @@ export type MissingHitHint = {
   sourceDomain?: CivitaiDomain
   error?: string
   fromEarlyAccess?: boolean
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 export function emitMissingList(getWindow: () => BrowserWindow | null): void {

@@ -40,8 +40,6 @@ export function HelpTab({ onOpenSettings }: Props) {
 
   return (
     <div className="panel help-panel help-panel-sectioned">
-      <h2>{t('help.title')}</h2>
-
       <section className="help-section help-callout help-callout-warn">
         <h3>
           <span className="help-section-icon" aria-hidden>
@@ -200,6 +198,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.dlStripPriority')}</li>
             <li>{t('help.dlStatusBar')}</li>
             <li>{t('help.dlAwaiting')}</li>
+            <li>{t('help.dlIncomplete')}</li>
             <li>{t('help.dlNewVersions')}</li>
             <li>{t('help.dlTabBadges')}</li>
             <li>{t('help.dlActivity')}</li>

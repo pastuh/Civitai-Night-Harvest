@@ -211,11 +211,6 @@ export const PendingTab = memo(function PendingTab({
   return (
     <div className="panel status-tab-panel pending-tab">
       <div className="pending-tab-head">
-        <h2>
-          {visiblePending.length > 0
-            ? t('pending.listTitle', { count: visiblePending.length })
-            : t('tabs.newVersions')}
-        </h2>
         <div className="pending-tab-head-actions">
           {versionScanning && (
             <span className="muted pending-scan-inline">

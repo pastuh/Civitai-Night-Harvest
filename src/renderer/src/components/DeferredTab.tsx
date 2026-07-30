@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import type { DeferredDownload } from '../../../shared/types'
+import type { DeferredDownload, InventoryRecord, TagFolderRule } from '../../../shared/types'
 import {
   DEFERRED_KIND_LABELS,
   MAX_AUTO_DEFERRED_ATTEMPTS,
@@ -7,11 +7,24 @@ import {
 } from '../../../shared/download-errors'
 import { canWaitForDeferredUnlock } from '../../../shared/early-access'
 import { formatCountdownTo, formatWaitDuration } from '../../../shared/utils'
+import { isPermanentlyBannedModelTag, isPausedOnlyModelTag } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
 import { ConfirmModal } from './ConfirmModal'
+import { FastTagAssignModal } from './FastTagAssignModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import type { ModelDetailTarget } from './ModelDetailModal'
+import {
+  cardTagFolderRole,
+  cardTagFolderRoleClass,
+  folderLineIfNotDuplicatingTag,
+  shortCardFolderLabel
+} from './gallery-card-utils'
+import {
+  DEFERRED_SORT_OPTIONS,
+  normalizeDeferredSort,
+  type DeferredSort
+} from '../view-prefs'
 
 type AccessFilter = 'all' | 'wait' | 'buy'
 
@@ -36,6 +49,17 @@ interface Props {
   onOpenModelDetail?: (target: ModelDetailTarget) => void
   eaFavoriteIds?: number[]
   onToggleEaFavorite?: (modelId: number) => void
+  tagRules?: TagFolderRule[]
+  tagSuggestions?: string[]
+  inventory?: InventoryRecord[]
+  loraFolder?: string
+  checkpointFolder?: string
+  hiddenTags?: string[]
+  bannedTags?: string[]
+  fastTagMode?: boolean
+  confirmTagFolderMoves?: boolean
+  onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
+  onOpenTagFolders?: (tag: string) => void
 }
 
 function modelPageUrl(domain: 'com' | 'red' | 'both', modelId: number, versionId: number): string {
@@ -45,17 +69,44 @@ function modelPageUrl(domain: 'com' | 'red' | 'both', modelId: number, versionId
 
 function sortDeferred(
   items: DeferredDownload[],
-  favoriteIds: Set<number>
+  favoriteIds: Set<number>,
+  mode: DeferredSort
 ): DeferredDownload[] {
-  return [...items].sort((a, b) => {
+  const list = [...items]
+  const byMode = (a: DeferredDownload, b: DeferredDownload): number => {
+    switch (mode) {
+      case 'name':
+        return a.modelName.localeCompare(b.modelName)
+      case 'folder':
+        return (
+          (a.routingTag || '\uffff').localeCompare(b.routingTag || '\uffff') ||
+          a.modelName.localeCompare(b.modelName)
+        )
+      case 'recent':
+        return (
+          new Date(b.deferredAt).getTime() - new Date(a.deferredAt).getTime() ||
+          a.modelName.localeCompare(b.modelName)
+        )
+      case 'unlock':
+      default: {
+        const aEnd = a.earlyAccessEndsAt
+          ? new Date(a.earlyAccessEndsAt).getTime()
+          : Number.MAX_SAFE_INTEGER
+        const bEnd = b.earlyAccessEndsAt
+          ? new Date(b.earlyAccessEndsAt).getTime()
+          : Number.MAX_SAFE_INTEGER
+        if (aEnd !== bEnd) return aEnd - bEnd
+        return new Date(b.deferredAt).getTime() - new Date(a.deferredAt).getTime()
+      }
+    }
+  }
+  list.sort((a, b) => {
     const af = favoriteIds.has(a.modelId) ? 0 : 1
     const bf = favoriteIds.has(b.modelId) ? 0 : 1
     if (af !== bf) return af - bf
-    const aEnd = a.earlyAccessEndsAt ? new Date(a.earlyAccessEndsAt).getTime() : Number.MAX_SAFE_INTEGER
-    const bEnd = b.earlyAccessEndsAt ? new Date(b.earlyAccessEndsAt).getTime() : Number.MAX_SAFE_INTEGER
-    if (aEnd !== bEnd) return aEnd - bEnd
-    return new Date(b.deferredAt).getTime() - new Date(a.deferredAt).getTime()
+    return byMode(a, b)
   })
+  return list
 }
 
 function matchesSearch(item: DeferredDownload, q: string): boolean {
@@ -65,6 +116,7 @@ function matchesSearch(item: DeferredDownload, q: string): boolean {
     (item.versionName?.toLowerCase().includes(q) ?? false) ||
     item.modelType.toLowerCase().includes(q) ||
     (item.routingTag?.toLowerCase().includes(q) ?? false) ||
+    (item.civitaiTags ?? []).some((tag) => tag.toLowerCase().includes(q)) ||
     String(item.modelId).includes(q) ||
     String(item.versionId).includes(q)
   )
@@ -82,7 +134,18 @@ export function DeferredTab({
   onShowInLibrary: _onShowInLibrary,
   onOpenModelDetail,
   eaFavoriteIds = [],
-  onToggleEaFavorite
+  onToggleEaFavorite,
+  tagRules = [],
+  tagSuggestions = [],
+  inventory = [],
+  loraFolder = '',
+  checkpointFolder = '',
+  hiddenTags = [],
+  bannedTags = [],
+  fastTagMode = false,
+  confirmTagFolderMoves = true,
+  onSaveTagRules,
+  onOpenTagFolders
 }: Props) {
   const t = useT()
   const [, setTick] = useState(0)
@@ -91,7 +154,10 @@ export function DeferredTab({
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
   const [accessFilter, setAccessFilter] = useState<AccessFilter>('all')
+  const [deferredSort, setDeferredSort] = useState<DeferredSort>('unlock')
   const [search, setSearch] = useState('')
+  const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
+  const [tagMessage, setTagMessage] = useState('')
   /** Favorites used for sort — refreshed only when entering the tab (no jump while starring). */
   const [pinFavoriteIds, setPinFavoriteIds] = useState<number[]>(eaFavoriteIds)
   const [contextMenu, setContextMenu] = useState<{
@@ -142,9 +208,10 @@ export function DeferredTab({
     () =>
       sortDeferred(
         deferred.filter((d) => !hiddenModelIds.has(d.modelId)),
-        pinFavoriteSet
+        pinFavoriteSet,
+        deferredSort
       ),
-    [deferred, hiddenModelIds, pinFavoriteSet]
+    [deferred, hiddenModelIds, pinFavoriteSet, deferredSort]
   )
 
   const waitCount = useMemo(
@@ -169,6 +236,19 @@ export function DeferredTab({
     setContextMenu({ x: e.clientX, y: e.clientY, item })
   }, [])
 
+  const openTagInFolders = useCallback(
+    (civitaiTag: string) => {
+      const trimmed = civitaiTag.trim()
+      if (!trimmed) return
+      if (fastTagMode) {
+        setFastTagTarget(trimmed)
+        return
+      }
+      onOpenTagFolders?.(trimmed)
+    },
+    [fastTagMode, onOpenTagFolders]
+  )
+
   const confirmBan = useCallback(async () => {
     const item = banTarget
     setBanTarget(null)
@@ -187,8 +267,7 @@ export function DeferredTab({
         modelName: item.modelName,
         versionId: item.versionId,
         previewUrl: item.previewUrl,
-        modelType: item.modelType,
-        baseModel: item.baseModel
+        modelType: item.modelType
       })
       await onRefresh()
     } catch {
@@ -205,7 +284,6 @@ export function DeferredTab({
   if (!deferred.length && !hiddenModelIds.size) {
     return (
       <div className="panel status-tab-panel">
-        <h2>{t('deferredTab.title')}</h2>
         <p className="muted">
           {t('deferredTab.emptyLead', { max: MAX_AUTO_DEFERRED_ATTEMPTS })}
         </p>
@@ -216,7 +294,6 @@ export function DeferredTab({
   if (!baseSorted.length) {
     return (
       <div className="panel status-tab-panel">
-        <h2>{t('deferredTab.title')}</h2>
         <p className="muted">{t('deferredTab.emptyAfterBan')}</p>
       </div>
     )
@@ -226,7 +303,6 @@ export function DeferredTab({
     <div className="panel status-tab-panel">
       <div className="gallery-panel-head library-panel-head">
         <div className="browse-results-title-row library-results-title-row">
-          <h2>{t('deferredTab.title')}</h2>
           <input
             type="search"
             className="browse-results-search library-model-search"
@@ -266,6 +342,27 @@ export function DeferredTab({
               )}
             </div>
           </div>
+          <div className="browse-results-controls-box">
+            <label className="library-sort browse-results-sort">
+              {t('listSort.label')}
+              <select
+                value={deferredSort}
+                onChange={(e) => setDeferredSort(normalizeDeferredSort(e.target.value))}
+              >
+                {DEFERRED_SORT_OPTIONS.map((key) => (
+                  <option key={key} value={key}>
+                    {key === 'recent'
+                      ? t('listSort.recentDeferred')
+                      : key === 'unlock'
+                        ? t('listSort.unlock')
+                        : key === 'folder'
+                          ? t('listSort.folder')
+                          : t(`listSort.${key}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -283,6 +380,16 @@ export function DeferredTab({
                 : null
             const waitingSoFar = formatWaitDuration(item.deferredAt, new Date().toISOString())
             const favorited = liveFavoriteSet.has(item.modelId)
+            const folderLabel = shortCardFolderLabel(
+              item.routingTag,
+              null,
+              tagRules,
+              loraFolder,
+              checkpointFolder
+            )
+            const folderLine = folderLineIfNotDuplicatingTag(folderLabel, item.civitaiTags)
+            const shownTags = (item.civitaiTags ?? []).slice(0, 6)
+            const extraTagCount = (item.civitaiTags?.length ?? 0) - shownTags.length
             return (
               <StatusModelCard
                 key={item.versionId}
@@ -305,6 +412,46 @@ export function DeferredTab({
                       {item.modelType} · v{item.versionId}
                       {item.routingTag ? ` · ${item.routingTag}` : ''}
                     </div>
+                    {folderLine ? (
+                      <div className="gallery-folder-line is-assigned" title={folderLine}>
+                        <span className="gallery-folder-path">{folderLine}</span>
+                      </div>
+                    ) : null}
+                    {shownTags.length > 0 ? (
+                      <div
+                        className="tag-row library-card-tags"
+                        title={(item.civitaiTags ?? []).join(', ')}
+                      >
+                        {shownTags.map((tag) => {
+                          const role = cardTagFolderRole(tag, {
+                            routingTag: item.routingTag,
+                            folderLabel,
+                            tagRules
+                          })
+                          const banned = isPermanentlyBannedModelTag(tag, bannedTags)
+                          const paused = isPausedOnlyModelTag(tag, hiddenTags, bannedTags)
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              className={`tag-chip ${cardTagFolderRoleClass(role)}${
+                                banned ? ' is-blocked-tag' : paused ? ' is-paused-tag' : ''
+                              }`}
+                              title={t('deferredTab.openTagFoldersHint', { tag })}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openTagInFolders(tag)
+                              }}
+                            >
+                              {tag}
+                            </button>
+                          )
+                        })}
+                        {extraTagCount > 0 ? (
+                          <span className="tag-chip muted">+{extraTagCount}</span>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </>
                 }
                 badges={
@@ -411,6 +558,8 @@ export function DeferredTab({
         </div>
       )}
 
+      {tagMessage ? <p className="muted status-inline-msg">{tagMessage}</p> : null}
+
       {contextMenu && (
         <ContextMenuPortal
           open
@@ -476,6 +625,25 @@ export function DeferredTab({
           danger
           onConfirm={() => void confirmBan()}
           onCancel={() => setBanTarget(null)}
+        />
+      )}
+
+      {fastTagTarget && onSaveTagRules && (
+        <FastTagAssignModal
+          tag={fastTagTarget}
+          tagRules={tagRules}
+          inventory={inventory}
+          tagSuggestions={tagSuggestions}
+          confirmTagFolderMoves={confirmTagFolderMoves}
+          loraFolder={loraFolder}
+          checkpointFolder={checkpointFolder}
+          onClose={() => setFastTagTarget(null)}
+          onSaveTagRules={onSaveTagRules}
+          onRefresh={onRefresh}
+          onDone={(message) => {
+            setTagMessage(message)
+            setFastTagTarget(null)
+          }}
         />
       )}
     </div>

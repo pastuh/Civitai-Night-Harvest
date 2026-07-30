@@ -91,7 +91,10 @@ function getDb(): Database.Database {
         failure_kind TEXT NOT NULL,
         deferred_at TEXT NOT NULL,
         last_attempt_at TEXT NOT NULL,
-        attempt_count INTEGER NOT NULL DEFAULT 1
+        attempt_count INTEGER NOT NULL DEFAULT 1,
+        civitai_tags TEXT NOT NULL DEFAULT '[]',
+        download_count INTEGER,
+        thumbs_up_count INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_deferred_model ON deferred_downloads(model_id);
 
@@ -160,6 +163,15 @@ function migrateInventorySchema(database: Database.Database): void {
   }
   if (!deferredCols.some((c) => c.name === 'version_name')) {
     database.exec(`ALTER TABLE deferred_downloads ADD COLUMN version_name TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!deferredCols.some((c) => c.name === 'civitai_tags')) {
+    database.exec(`ALTER TABLE deferred_downloads ADD COLUMN civitai_tags TEXT NOT NULL DEFAULT '[]'`)
+  }
+  if (!deferredCols.some((c) => c.name === 'download_count')) {
+    database.exec(`ALTER TABLE deferred_downloads ADD COLUMN download_count INTEGER`)
+  }
+  if (!deferredCols.some((c) => c.name === 'thumbs_up_count')) {
+    database.exec(`ALTER TABLE deferred_downloads ADD COLUMN thumbs_up_count INTEGER`)
   }
   const activityCols = database.pragma('table_info(activity_log)') as { name: string }[]
   if (!activityCols.some((c) => c.name === 'source')) {
@@ -268,6 +280,12 @@ function migrateInventorySchema(database: Database.Database): void {
         `ALTER TABLE missing_models ADD COLUMN acknowledged INTEGER NOT NULL DEFAULT 0`
       )
     }
+    if (!missingCols.some((c) => c.name === 'download_count')) {
+      database.exec(`ALTER TABLE missing_models ADD COLUMN download_count INTEGER`)
+    }
+    if (!missingCols.some((c) => c.name === 'thumbs_up_count')) {
+      database.exec(`ALTER TABLE missing_models ADD COLUMN thumbs_up_count INTEGER`)
+    }
   }
 
   {
@@ -286,6 +304,8 @@ function migrateInventorySchema(database: Database.Database): void {
     addBanned('model_type', "model_type TEXT NOT NULL DEFAULT ''")
     addBanned('tags_json', "tags_json TEXT NOT NULL DEFAULT '[]'")
     addBanned('forgotten', 'forgotten INTEGER NOT NULL DEFAULT 0')
+    addBanned('download_count', 'download_count INTEGER')
+    addBanned('thumbs_up_count', 'thumbs_up_count INTEGER')
   }
 
   database.exec(`
@@ -319,6 +339,14 @@ function migrateInventorySchema(database: Database.Database): void {
       database.exec(
         `ALTER TABLE tag_skip_reviews ADD COLUMN policy TEXT NOT NULL DEFAULT 'paused'`
       )
+      skipCols = database.prepare('PRAGMA table_info(tag_skip_reviews)').all() as Array<{ name: string }>
+    }
+    if (skipCols.length && !skipCols.some((c) => c.name === 'download_count')) {
+      database.exec(`ALTER TABLE tag_skip_reviews ADD COLUMN download_count INTEGER`)
+      skipCols = database.prepare('PRAGMA table_info(tag_skip_reviews)').all() as Array<{ name: string }>
+    }
+    if (skipCols.length && !skipCols.some((c) => c.name === 'thumbs_up_count')) {
+      database.exec(`ALTER TABLE tag_skip_reviews ADD COLUMN thumbs_up_count INTEGER`)
     }
   }
 
@@ -328,6 +356,17 @@ function migrateInventorySchema(database: Database.Database): void {
       created_at TEXT NOT NULL
     );
   `)
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS missing_ban_seen (
+      model_id INTEGER NOT NULL PRIMARY KEY,
+      seen_day TEXT NOT NULL,
+      seen_at TEXT NOT NULL
+    );
+  `)
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_missing_ban_seen_day ON missing_ban_seen(seen_day)`
+  )
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -448,17 +487,26 @@ export function isMissingUnavailable(modelId: number): boolean {
   return Boolean(row)
 }
 
+function optStatCount(v: unknown): number | undefined {
+  if (v == null || v === '') return undefined
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
 export function banModel(modelId: number, modelName = '', stub?: BanModelStub): void {
   if (!modelId || modelId <= 0) return
   const name = stub?.modelName?.trim() || modelName.trim() || `Model #${modelId}`
   const now = new Date().toISOString()
   const tagsJson = JSON.stringify(stub?.tags ?? [])
+  const downloadCount = optStatCount(stub?.downloadCount)
+  const thumbsUpCount = optStatCount(stub?.thumbsUpCount)
   getDb()
     .prepare(
       `INSERT INTO banned_models (
         model_id, model_name, banned_at, version_id, preview_url, page_url,
-        source_domain, author, base_model, model_type, tags_json, forgotten
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        source_domain, author, base_model, model_type, tags_json, forgotten,
+        download_count, thumbs_up_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
       ON CONFLICT(model_id) DO UPDATE SET
         model_name = excluded.model_name,
         banned_at = excluded.banned_at,
@@ -470,6 +518,8 @@ export function banModel(modelId: number, modelName = '', stub?: BanModelStub): 
         base_model = CASE WHEN excluded.base_model != '' THEN excluded.base_model ELSE banned_models.base_model END,
         model_type = CASE WHEN excluded.model_type != '' THEN excluded.model_type ELSE banned_models.model_type END,
         tags_json = CASE WHEN excluded.tags_json != '[]' THEN excluded.tags_json ELSE banned_models.tags_json END,
+        download_count = COALESCE(excluded.download_count, banned_models.download_count),
+        thumbs_up_count = COALESCE(excluded.thumbs_up_count, banned_models.thumbs_up_count),
         forgotten = 0`
     )
     .run(
@@ -483,7 +533,9 @@ export function banModel(modelId: number, modelName = '', stub?: BanModelStub): 
       stub?.author || '',
       stub?.baseModel || '',
       stub?.modelType || '',
-      tagsJson
+      tagsJson,
+      downloadCount ?? null,
+      thumbsUpCount ?? null
     )
   setModelIgnored(modelId, true)
   clearModelAutoUpdate(modelId)
@@ -548,7 +600,9 @@ export function getBannedModels(): BannedModel[] {
       modelType: (row.model_type as string) || undefined,
       tags: parseTagsJson(row.tags_json),
       reason: 'manual' as const,
-      forgotten: Boolean(row.forgotten)
+      forgotten: Boolean(row.forgotten),
+      downloadCount: optStatCount(row.download_count),
+      thumbsUpCount: optStatCount(row.thumbs_up_count)
     }
   })
 }
@@ -580,7 +634,9 @@ function rowToTagSkip(row: Record<string, unknown>): TagSkipReview {
     hitCount: Math.max(1, Number(row.hit_count) || 1),
     firstSeenAt: row.first_seen_at as string,
     lastSeenAt: row.last_seen_at as string,
-    acknowledged: Number(row.acknowledged) === 1
+    acknowledged: Number(row.acknowledged) === 1,
+    downloadCount: optStatCount(row.download_count),
+    thumbsUpCount: optStatCount(row.thumbs_up_count)
   }
 }
 
@@ -598,6 +654,8 @@ export type TagSkipInput = {
   blockedTag: string
   matchedModelTag?: string
   policy?: TagPolicyKind
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 export function isTagSkipAllowed(modelId: number): boolean {
@@ -666,7 +724,9 @@ export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
           matched_model_tag = CASE WHEN ? != '' THEN ? ELSE matched_model_tag END,
           policy = ?,
           hit_count = hit_count + 1,
-          last_seen_at = ?
+          last_seen_at = ?,
+          download_count = COALESCE(?, download_count),
+          thumbs_up_count = COALESCE(?, thumbs_up_count)
         WHERE model_id = ?`
       )
       .run(
@@ -690,6 +750,8 @@ export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
         input.matchedModelTag?.trim() || '',
         nextPolicy,
         now,
+        optStatCount(input.downloadCount) ?? null,
+        optStatCount(input.thumbsUpCount) ?? null,
         input.modelId
       )
     return getTagSkipReview(input.modelId)
@@ -701,8 +763,9 @@ export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
       `INSERT INTO tag_skip_reviews (
         model_id, version_id, model_name, model_type, author, base_model,
         preview_url, page_url, source_domain, tags_json, blocked_tag, matched_model_tag,
-        policy, hit_count, first_seen_at, last_seen_at, acknowledged
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0)`
+        policy, hit_count, first_seen_at, last_seen_at, acknowledged,
+        download_count, thumbs_up_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)`
     )
     .run(
       input.modelId,
@@ -719,7 +782,9 @@ export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
       input.matchedModelTag?.trim() || '',
       policy,
       now,
-      now
+      now,
+      optStatCount(input.downloadCount) ?? null,
+      optStatCount(input.thumbsUpCount) ?? null
     )
   pruneTagSkipReviews()
   return getTagSkipReview(input.modelId)
@@ -841,7 +906,9 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
       hitCount: m.hitCount,
       status: m.status,
       acknowledged: m.acknowledged,
-      fromEarlyAccess: m.fromEarlyAccess
+      fromEarlyAccess: m.fromEarlyAccess,
+      downloadCount: m.downloadCount,
+      thumbsUpCount: m.thumbsUpCount
     })
   )
 
@@ -860,7 +927,9 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
       pageUrl: b.pageUrl,
       sourceDomain: b.sourceDomain,
       tags: b.tags,
-      at: b.bannedAt
+      at: b.bannedAt,
+      downloadCount: b.downloadCount,
+      thumbsUpCount: b.thumbsUpCount
     }
   })
 
@@ -883,16 +952,64 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
         blockedTag: s.blockedTag,
         matchedModelTag: s.matchedModelTag,
         hitCount: s.hitCount,
-        acknowledged: s.acknowledged
+        acknowledged: s.acknowledged,
+        downloadCount: s.downloadCount,
+        thumbsUpCount: s.thumbsUpCount
       })
     )
 
-  return [...missing, ...banned, ...tagSkips].sort(
-    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
-  )
+  const items = [...missing, ...banned, ...tagSkips]
+  fillExclusionStatsFromVersions(items)
+  return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 }
 
-/** Fill missing preview/tags on ban + tag-skip stubs from in-memory Browse gallery cards. */
+/** Fill blank like/download stats from library versions (same model id). */
+function fillExclusionStatsFromVersions(items: ExclusionReviewItem[]): void {
+  const needIds = [
+    ...new Set(
+      items
+        .filter((i) => i.downloadCount == null || i.thumbsUpCount == null)
+        .map((i) => i.modelId)
+        .filter((id) => id > 0)
+    )
+  ]
+  if (!needIds.length) return
+  const stats = new Map<number, { downloadCount?: number; thumbsUpCount?: number }>()
+  const db = getDb()
+  const chunkSize = 400
+  for (let i = 0; i < needIds.length; i += chunkSize) {
+    const chunk = needIds.slice(i, i + chunkSize)
+    const placeholders = chunk.map(() => '?').join(',')
+    const rows = db
+      .prepare(
+        `SELECT model_id AS modelId,
+                MAX(download_count) AS downloadCount,
+                MAX(thumbs_up_count) AS thumbsUpCount
+         FROM versions
+         WHERE model_id IN (${placeholders})
+         GROUP BY model_id`
+      )
+      .all(...chunk) as Array<{
+      modelId: number
+      downloadCount: number | null
+      thumbsUpCount: number | null
+    }>
+    for (const row of rows) {
+      stats.set(row.modelId, {
+        downloadCount: optStatCount(row.downloadCount),
+        thumbsUpCount: optStatCount(row.thumbsUpCount)
+      })
+    }
+  }
+  for (const item of items) {
+    const s = stats.get(item.modelId)
+    if (!s) continue
+    if (item.downloadCount == null && s.downloadCount != null) item.downloadCount = s.downloadCount
+    if (item.thumbsUpCount == null && s.thumbsUpCount != null) item.thumbsUpCount = s.thumbsUpCount
+  }
+}
+
+/** Fill missing preview/tags/stats on ban + tag-skip + missing stubs from Browse gallery cards. */
 export function enrichExclusionStubsFromBrowse(
   models: Array<{
     id: number
@@ -905,6 +1022,8 @@ export function enrichExclusionStubsFromBrowse(
     sourceDomain?: CivitaiDomain
     tags?: string[]
     versionId?: number
+    downloadCount?: number
+    thumbsUpCount?: number
   }>
 ): number {
   if (!models.length) return 0
@@ -920,13 +1039,20 @@ export function enrichExclusionStubsFromBrowse(
   for (const row of getAllTagSkipReviews()) {
     const m = byId.get(row.modelId)
     if (!m) continue
+    const browseDl = optStatCount(m.downloadCount)
+    const browseUp = optStatCount(m.thumbsUpCount)
     const needPreview = !row.previewUrl && Boolean(m.previewUrl)
     const needTags = (!row.tags || row.tags.length === 0) && (m.tags?.length ?? 0) > 0
     const needMeta =
       (!row.author && m.creator) ||
       (!row.baseModel && m.baseModel) ||
       (!row.pageUrl && m.pageUrl)
-    if (!needPreview && !needTags && !needMeta) continue
+    const needStats =
+      (browseDl != null && row.downloadCount == null) ||
+      (browseUp != null && row.thumbsUpCount == null) ||
+      (browseDl != null && row.downloadCount !== browseDl) ||
+      (browseUp != null && row.thumbsUpCount !== browseUp)
+    if (!needPreview && !needTags && !needMeta && !needStats) continue
     db.prepare(
       `UPDATE tag_skip_reviews SET
         preview_url = COALESCE(preview_url, ?),
@@ -937,7 +1063,9 @@ export function enrichExclusionStubsFromBrowse(
         model_name = CASE WHEN model_name = '' OR model_name LIKE 'Model #%' THEN ? ELSE model_name END,
         model_type = CASE WHEN model_type = '' OR model_type = 'LORA' THEN COALESCE(NULLIF(?, ''), model_type) ELSE model_type END,
         version_id = COALESCE(version_id, ?),
-        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END
+        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END,
+        download_count = COALESCE(?, download_count),
+        thumbs_up_count = COALESCE(?, thumbs_up_count)
       WHERE model_id = ?`
     ).run(
       m.previewUrl || null,
@@ -949,6 +1077,8 @@ export function enrichExclusionStubsFromBrowse(
       m.type || '',
       m.versionId && m.versionId > 0 ? m.versionId : null,
       m.sourceDomain === 'red' ? 'red' : m.sourceDomain === 'com' ? 'com' : '',
+      browseDl ?? null,
+      browseUp ?? null,
       row.modelId
     )
     updated++
@@ -957,13 +1087,20 @@ export function enrichExclusionStubsFromBrowse(
   for (const row of getBannedModels()) {
     const m = byId.get(row.modelId)
     if (!m) continue
+    const browseDl = optStatCount(m.downloadCount)
+    const browseUp = optStatCount(m.thumbsUpCount)
     const needPreview = !row.previewUrl && Boolean(m.previewUrl)
     const needTags = (!row.tags || row.tags.length === 0) && (m.tags?.length ?? 0) > 0
     const needMeta =
       (!row.author && m.creator) ||
       (!row.baseModel && m.baseModel) ||
       (!row.pageUrl && m.pageUrl)
-    if (!needPreview && !needTags && !needMeta) continue
+    const needStats =
+      (browseDl != null && row.downloadCount == null) ||
+      (browseUp != null && row.thumbsUpCount == null) ||
+      (browseDl != null && row.downloadCount !== browseDl) ||
+      (browseUp != null && row.thumbsUpCount !== browseUp)
+    if (!needPreview && !needTags && !needMeta && !needStats) continue
     db.prepare(
       `UPDATE banned_models SET
         preview_url = COALESCE(preview_url, ?),
@@ -974,7 +1111,9 @@ export function enrichExclusionStubsFromBrowse(
         model_name = CASE WHEN model_name = '' OR model_name LIKE 'Model #%' THEN ? ELSE model_name END,
         model_type = CASE WHEN model_type = '' THEN ? ELSE model_type END,
         version_id = COALESCE(version_id, ?),
-        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END
+        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END,
+        download_count = COALESCE(?, download_count),
+        thumbs_up_count = COALESCE(?, thumbs_up_count)
       WHERE model_id = ?`
     ).run(
       m.previewUrl || null,
@@ -986,6 +1125,53 @@ export function enrichExclusionStubsFromBrowse(
       m.type || '',
       m.versionId && m.versionId > 0 ? m.versionId : null,
       m.sourceDomain === 'red' ? 'red' : m.sourceDomain === 'com' ? 'com' : '',
+      browseDl ?? null,
+      browseUp ?? null,
+      row.modelId
+    )
+    updated++
+  }
+
+  for (const row of getAllMissingModels()) {
+    const m = byId.get(row.modelId)
+    if (!m) continue
+    const browseDl = optStatCount(m.downloadCount)
+    const browseUp = optStatCount(m.thumbsUpCount)
+    const needPreview = !row.previewUrl && Boolean(m.previewUrl)
+    const needMeta =
+      (!row.author && m.creator) ||
+      (!row.baseModel && m.baseModel) ||
+      (!row.pageUrl && m.pageUrl)
+    const needStats =
+      (browseDl != null && row.downloadCount == null) ||
+      (browseUp != null && row.thumbsUpCount == null) ||
+      (browseDl != null && row.downloadCount !== browseDl) ||
+      (browseUp != null && row.thumbsUpCount !== browseUp)
+    if (!needPreview && !needMeta && !needStats) continue
+    db.prepare(
+      `UPDATE missing_models SET
+        preview_url = COALESCE(preview_url, ?),
+        author = CASE WHEN author = '' THEN ? ELSE author END,
+        base_model = CASE WHEN base_model = '' THEN ? ELSE base_model END,
+        page_url = CASE WHEN page_url = '' THEN ? ELSE page_url END,
+        model_name = CASE WHEN model_name = '' OR model_name LIKE 'Model #%' THEN ? ELSE model_name END,
+        model_type = CASE WHEN model_type = '' OR model_type = 'LORA' THEN COALESCE(NULLIF(?, ''), model_type) ELSE model_type END,
+        version_id = COALESCE(version_id, ?),
+        source_domain = CASE WHEN source_domain = '' THEN ? ELSE source_domain END,
+        download_count = COALESCE(?, download_count),
+        thumbs_up_count = COALESCE(?, thumbs_up_count)
+      WHERE model_id = ?`
+    ).run(
+      m.previewUrl || null,
+      m.creator || '',
+      m.baseModel || '',
+      m.pageUrl || '',
+      m.name || row.modelName,
+      m.type || '',
+      m.versionId && m.versionId > 0 ? m.versionId : null,
+      m.sourceDomain === 'red' ? 'red' : m.sourceDomain === 'com' ? 'com' : '',
+      browseDl ?? null,
+      browseUp ?? null,
       row.modelId
     )
     updated++
@@ -1374,7 +1560,10 @@ function rowToDeferred(row: Record<string, unknown>): DeferredDownload {
     deferredAt: row.deferred_at as string,
     lastAttemptAt: row.last_attempt_at as string,
     attemptCount: row.attempt_count as number,
-    earlyAccessEndsAt: endsAt || undefined
+    earlyAccessEndsAt: endsAt || undefined,
+    civitaiTags: parseCivitaiTags(row.civitai_tags),
+    downloadCount: optStatCount(row.download_count),
+    thumbsUpCount: optStatCount(row.thumbs_up_count)
   }
 }
 
@@ -1393,8 +1582,18 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
   bumpAttempt?: boolean
 }): void {
   const existing = getDb()
-    .prepare('SELECT attempt_count, deferred_at FROM deferred_downloads WHERE version_id = ?')
-    .get(entry.versionId) as { attempt_count: number; deferred_at: string } | undefined
+    .prepare(
+      'SELECT attempt_count, deferred_at, civitai_tags, download_count, thumbs_up_count FROM deferred_downloads WHERE version_id = ?'
+    )
+    .get(entry.versionId) as
+    | {
+        attempt_count: number
+        deferred_at: string
+        civitai_tags: string
+        download_count: number | null
+        thumbs_up_count: number | null
+      }
+    | undefined
 
   const now = new Date().toISOString()
   // Early access is calendar-wait, not retry-storm — don't inflate attempts on metadata refresh.
@@ -1410,13 +1609,26 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       : existing.attempt_count ?? 1
     : (entry.attemptCount ?? 1)
 
+  const incomingTags = entry.civitaiTags
+  const tagsJson =
+    incomingTags && incomingTags.length > 0
+      ? JSON.stringify(incomingTags)
+      : existing?.civitai_tags && existing.civitai_tags !== '[]'
+        ? existing.civitai_tags
+        : JSON.stringify(incomingTags ?? [])
+
+  const downloadCount =
+    entry.downloadCount != null ? entry.downloadCount : (existing?.download_count ?? null)
+  const thumbsUpCount =
+    entry.thumbsUpCount != null ? entry.thumbsUpCount : (existing?.thumbs_up_count ?? null)
+
   getDb()
     .prepare(
       `INSERT INTO deferred_downloads (
         version_id, model_id, model_name, version_name, model_type, routing_tag, preview_url,
         output_folder, reason, failure_kind, deferred_at, last_attempt_at, attempt_count,
-        early_access_ends_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        early_access_ends_at, civitai_tags, download_count, thumbs_up_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(version_id) DO UPDATE SET
         model_name = excluded.model_name,
         version_name = CASE
@@ -1431,7 +1643,13 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
         failure_kind = excluded.failure_kind,
         last_attempt_at = excluded.last_attempt_at,
         attempt_count = excluded.attempt_count,
-        early_access_ends_at = COALESCE(excluded.early_access_ends_at, deferred_downloads.early_access_ends_at)`
+        early_access_ends_at = COALESCE(excluded.early_access_ends_at, deferred_downloads.early_access_ends_at),
+        civitai_tags = CASE
+          WHEN excluded.civitai_tags != '[]' THEN excluded.civitai_tags
+          ELSE deferred_downloads.civitai_tags
+        END,
+        download_count = COALESCE(excluded.download_count, deferred_downloads.download_count),
+        thumbs_up_count = COALESCE(excluded.thumbs_up_count, deferred_downloads.thumbs_up_count)`
     )
     .run(
       entry.versionId,
@@ -1447,7 +1665,10 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       existing?.deferred_at ?? entry.deferredAt ?? now,
       entry.lastAttemptAt ?? now,
       nextAttempts,
-      entry.earlyAccessEndsAt ?? null
+      entry.earlyAccessEndsAt ?? null,
+      tagsJson,
+      downloadCount,
+      thumbsUpCount
     )
 }
 
@@ -1593,7 +1814,9 @@ function rowToMissing(row: Record<string, unknown>): MissingModel {
     lastHitAt: row.last_hit_at as string,
     lastError: (row.last_error as string) || undefined,
     fromEarlyAccess: Number(row.from_early_access) === 1,
-    acknowledged: Number(row.acknowledged) === 1
+    acknowledged: Number(row.acknowledged) === 1,
+    downloadCount: optStatCount(row.download_count),
+    thumbsUpCount: optStatCount(row.thumbs_up_count)
   }
 }
 
@@ -1633,6 +1856,8 @@ export type MissingHitInput = {
   sourceDomain?: CivitaiDomain
   error?: string
   fromEarlyAccess?: boolean
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 /**
@@ -1656,8 +1881,9 @@ export function recordMissingModelHit(input: MissingHitInput): MissingModel | nu
         `INSERT INTO missing_models (
           model_id, version_id, model_name, model_type, author, base_model,
           preview_url, page_url, source_domain, hit_count, status,
-          first_seen_at, last_hit_at, last_hit_day, last_error, from_early_access
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'suspect', ?, ?, ?, ?, ?)`
+          first_seen_at, last_hit_at, last_hit_day, last_error, from_early_access,
+          download_count, thumbs_up_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'suspect', ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         input.modelId,
@@ -1673,7 +1899,9 @@ export function recordMissingModelHit(input: MissingHitInput): MissingModel | nu
         nowIso,
         today,
         input.error || null,
-        input.fromEarlyAccess ? 1 : 0
+        input.fromEarlyAccess ? 1 : 0,
+        optStatCount(input.downloadCount) ?? null,
+        optStatCount(input.thumbsUpCount) ?? null
       )
     return getMissingModel(input.modelId)
   }
@@ -1711,7 +1939,9 @@ export function recordMissingModelHit(input: MissingHitInput): MissingModel | nu
         last_hit_at = ?,
         last_hit_day = CASE WHEN ? THEN ? ELSE last_hit_day END,
         last_error = COALESCE(?, last_error),
-        from_early_access = ?
+        from_early_access = ?,
+        download_count = COALESCE(?, download_count),
+        thumbs_up_count = COALESCE(?, thumbs_up_count)
       WHERE model_id = ?`
     )
     .run(
@@ -1735,6 +1965,8 @@ export function recordMissingModelHit(input: MissingHitInput): MissingModel | nu
       today,
       input.error || null,
       fromEarlyAccess ? 1 : 0,
+      optStatCount(input.downloadCount) ?? null,
+      optStatCount(input.thumbsUpCount) ?? null,
       input.modelId
     )
   return getMissingModel(input.modelId)
@@ -1855,4 +2087,65 @@ export function loadDownloadQueueState(): PersistedDownloadQueueState | null {
 export function closeInventory(): void {
   db?.close()
   db = null
+}
+
+/** modelId → local calendar day (YYYY-MM-DD) when the ban card was fully scrolled into view. */
+export function getMissingBanSeenMap(): Record<number, string> {
+  const rows = getDb()
+    .prepare('SELECT model_id, seen_day FROM missing_ban_seen')
+    .all() as Array<{ model_id: number; seen_day: string }>
+  const out: Record<number, string> = {}
+  for (const r of rows) out[r.model_id] = r.seen_day
+  return out
+}
+
+/** Counts of ban cards marked seen per calendar day. */
+export function getMissingBanSeenCountByDay(): Record<string, number> {
+  const rows = getDb()
+    .prepare(
+      `SELECT seen_day, COUNT(*) AS n FROM missing_ban_seen GROUP BY seen_day`
+    )
+    .all() as Array<{ seen_day: string; n: number }>
+  const out: Record<string, number> = {}
+  for (const r of rows) out[r.seen_day] = r.n
+  return out
+}
+
+/**
+ * First full-card view wins — later days do not overwrite.
+ * Returns newly marked model ids.
+ */
+export function markMissingBanSeen(modelIds: number[], seenDay: string): number[] {
+  if (!modelIds.length) return []
+  const day = seenDay.trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return []
+  const now = new Date().toISOString()
+  const insert = getDb().prepare(
+    `INSERT OR IGNORE INTO missing_ban_seen (model_id, seen_day, seen_at) VALUES (?, ?, ?)`
+  )
+  const marked: number[] = []
+  const tx = getDb().transaction((ids: number[]) => {
+    for (const id of ids) {
+      if (!Number.isFinite(id) || id <= 0) continue
+      const info = insert.run(id, day, now)
+      if (info.changes > 0) marked.push(id)
+    }
+  })
+  tx(modelIds)
+  return marked
+}
+
+export function clearMissingBanSeen(modelId: number): void {
+  getDb().prepare('DELETE FROM missing_ban_seen WHERE model_id = ?').run(modelId)
+}
+
+/** Wipe all seen marks (e.g. after a bad auto-mark run). */
+export function clearAllMissingBanSeen(): void {
+  getDb().prepare('DELETE FROM missing_ban_seen').run()
+}
+
+export function clearMissingBanSeenDay(seenDay: string): void {
+  const day = seenDay.trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return
+  getDb().prepare('DELETE FROM missing_ban_seen WHERE seen_day = ?').run(day)
 }

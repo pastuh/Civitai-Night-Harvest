@@ -1,7 +1,7 @@
 import './bootstrap-user-data'
 import { app, BrowserWindow, Menu, Tray, shell, protocol, session } from 'electron'
 import { join } from 'path'
-import { isRetryableNetworkError } from '../shared/network-retry'
+import { isOfflineNetworkError, isRetryableNetworkError } from '../shared/network-retry'
 import { initIpc, registerMediaProtocol, recoverFromNetworkError, setMainWindow, ensureSchedulerStarted, onRendererUnload, stopScheduler, flushDownloadQueuePersist } from './ipc-handlers'
 import { closeInventory } from './inventory'
 import { applyLaunchAtLogin, shouldStartHidden } from './launch-at-login'
@@ -72,6 +72,8 @@ function registerProcessRecovery(): void {
   const onNetFault = (label: string, err: unknown): void => {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[${label}]`, err)
+    // Offline / DNS — do not kick crawl recovery (causes request storms).
+    if (isOfflineNetworkError(err)) return
     if (isRetryableNetworkError(msg)) {
       recoverFromNetworkError()
     }

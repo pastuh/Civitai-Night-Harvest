@@ -238,7 +238,6 @@ export function ActivityTab({
 
   return (
     <div className="panel activity-tab-panel">
-      <h2>{t('activity.title')}</h2>
       <p className="muted activity-tab-lead">
         {t(`status.${status}`)} · {t('activity.lead')}
       </p>

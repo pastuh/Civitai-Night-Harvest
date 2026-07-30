@@ -156,7 +156,6 @@ export function IncompleteTab({
   if (!items.length && !hiddenModelIds.size) {
     return (
       <div className="panel status-tab-panel">
-        <h2>{t('incompleteTab.title')}</h2>
         <p className="muted">{t('incompleteTab.emptyLead')}</p>
       </div>
     )
@@ -165,7 +164,6 @@ export function IncompleteTab({
   if (!sorted.length) {
     return (
       <div className="panel status-tab-panel">
-        <h2>{t('incompleteTab.title')}</h2>
         <p className="muted">{t('incompleteTab.emptyAfterBan')}</p>
       </div>
     )
@@ -174,9 +172,6 @@ export function IncompleteTab({
   return (
     <div className="panel status-tab-panel">
       <div className="status-tab-header">
-        <div>
-          <h2>{t('incompleteTab.titleCount', { count: sorted.length })}</h2>
-        </div>
         <button type="button" disabled={recheckBusy} onClick={() => void recheckAll()}>
           {recheckBusy ? t('common.loading') : t('incompleteTab.recheck')}
         </button>

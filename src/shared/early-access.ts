@@ -87,6 +87,10 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   if (mini.checkPermission && endsAt) {
     return { isEarlyAccess: true, endsAt }
   }
+  // Buzz / paid resource gate — still awaiting access even when availability is not "EarlyAccess".
+  if (mini.additionalResourceCharge) {
+    return { isEarlyAccess: true, endsAt: endsAt }
+  }
   return { isEarlyAccess: false }
 }
 
@@ -117,15 +121,22 @@ export async function refineDeferredFailure(
   if (!classified.defer || !classified.kind) return classified
   if (classified.kind !== 'auth' && classified.kind !== 'forbidden') return classified
 
-  const ea = await checkVersionEarlyAccess(client, versionId)
-  if (!ea.isEarlyAccess) return classified
-
-  return {
-    defer: true,
-    kind: 'early_access',
-    reason: formatEarlyAccessReason(ea.endsAt),
-    earlyAccessEndsAt: ea.endsAt
+  try {
+    const mini = await client.getVersionMini(versionId)
+    const ea = earlyAccessFromMini(mini)
+    if (ea.isEarlyAccess || mini.additionalResourceCharge) {
+      return {
+        defer: true,
+        kind: 'early_access',
+        reason: formatEarlyAccessReason(ea.endsAt ?? mini.earlyAccessEndsAt),
+        earlyAccessEndsAt: ea.endsAt ?? mini.earlyAccessEndsAt ?? undefined
+      }
+    }
+  } catch {
+    /* keep original auth/forbidden classification */
   }
+
+  return classified
 }
 
 export async function enrichDeferredDownloads(
@@ -189,6 +200,27 @@ export async function enrichDeferredDownloads(
       }
     }
   }
+
+  // Backfill Civitai tags for older deferred rows (plan Tag folders before download).
+  let tagFetches = 0
+  const maxTagFetches = 24
+  for (const item of byVersion.values()) {
+    if (tagFetches >= maxTagFetches) break
+    if (item.civitaiTags && item.civitaiTags.length > 0) continue
+    if (item.modelId <= 0) continue
+    tagFetches++
+    try {
+      const model = await client.getModel(item.modelId)
+      const tags = model.tags ?? []
+      if (!tags.length) continue
+      const next = { ...item, civitaiTags: tags, modelName: model.name || item.modelName }
+      persist(next)
+      byVersion.set(item.versionId, next)
+    } catch {
+      /* skip */
+    }
+  }
+
   return items.map((i) => byVersion.get(i.versionId)).filter((i): i is DeferredDownload => Boolean(i))
 }
 

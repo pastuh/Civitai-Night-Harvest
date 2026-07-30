@@ -16,6 +16,20 @@ export const lt: Messages = {
     openHelp: 'Pagalbos vadovas',
     scrollToTop: 'Į viršų'
   },
+  listSort: {
+    label: 'Rikiuoti',
+    recent: 'Naujausi',
+    recentLibrary: 'Atsisiuntimo eilė',
+    recentBrowse: 'Crawl eilė',
+    recentDeferred: 'Pridėta',
+    name: 'Pavadinimas',
+    downloads: 'Atsisiuntimai',
+    likes: 'Like’ai',
+    folder: 'Pagal folder tag',
+    tagGroup: 'Pagal tag grupę',
+    hits: 'Hit skaičius',
+    unlock: 'Unlock laikas'
+  },
   tabs: {
     browse: 'Naršymas',
     browseBadgeTitle:
@@ -385,7 +399,7 @@ export const lt: Messages = {
     missingFilters:
       'Hide banned / Hide paused (pagal nutylėjimą ON), Show forgotten, Session bans / Session pause sidebar filtrai',
     missingAllow:
-      'Vienam modeliui — **Allow** (išimtis vs pause/ban tagai + eilė). Tag ban/unban tik Tag Folders — spauskite tag chip',
+      'Vienam modeliui — **Allow** (išimtis vs pause/ban tagai + eilė). Spauskite policy tagą (sidebar ar kortelė) — filtruojami modeliai, praleisti dėl to tago',
     missingForget:
       '**Forget On** — × ant kortelių slepia modelį visur ir nebesiūlo; **Show forgotten** peržiūrai; × vėl = Unforget',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
@@ -406,10 +420,12 @@ export const lt: Messages = {
       'Dešinis pelės mygtukas ant juostos kortelės → Prioritetinis atsisiuntimas — perkelia į eilės priekį (arba iškart po aktyvių siuntimų)',
     dlStatusBar: 'Status juosta — apačioje rodo eilę, greitį ir dabartinį siuntimą',
     dlAwaiting: 'Early access — gated download arba trūksta API rakto',
+    dlIncomplete:
+      'Incomplete — Civitai rodo modelį be versijos duomenų; recheck arba įklijuokite download URL',
     dlNewVersions:
       'Atnaujinimai — **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio. Jei Early access — eina į Awaiting ir neturi likti Updates. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę.',
     dlTabBadges:
-      'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access: laukiantys',
+      'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
       'Activity — kompaktiška filtrų juosta (paieška ir laikas kairėje, lygių/šaltinių/temų checkboxai dešinėje); spustelėkite modelio vardą → Library',
     domainsBody:
@@ -627,7 +643,8 @@ export const lt: Messages = {
     hideOwnedTitle: 'Slėpti modelius, kurie jau bibliotekoje',
     badgeOwnedTitle: 'Jau bibliotekoje',
     openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti aplanką',
-    tagRoleUnmappedHint: 'Nepriskirta — „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
+    tagRoleUnmappedHint:
+      'Nepriskirta — 1px dotted pilkas remelis. „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
     tagBlockedOnCardHint: 'Blokuotas tagas — „{tag}" yra permanent ban-by-tag sąraše',
     tagPausedOnCardHint: 'Paused tagas — „{tag}" yra Browse exclude (laikinas)',
     badgeNewTitle: 'Dar neturite',
@@ -834,11 +851,14 @@ export const lt: Messages = {
     offlineLocal:
       'Civitai neatsakė — rodomi lokalūs bibliotekos duomenys. Bandykite dar kartą, kai bus tinklas.',
     offlineLocalShort: 'Lokalūs bibliotekos duomenys',
-    missingLocalHits: 'Missing {count}/{max} · lokalūs duomenys',
+    missingLocalHits: 'Neatsisiųsta · Missing {count}/{max} · lokalus stub',
     missingHitsOnly: '{count}/{max}',
     loadFailedShort: 'Civitai nepasiekiamas',
     unavailable: 'Unavailable',
     unavailableHint: 'Patvirtinta, kad Civitai neranda (kartotiniai 404)',
+    onMissingList: 'Missing',
+    onMissingListHint:
+      'Modelis yra Missing sąraše (Civitai 404). Spauskite Retry viršuje — Download neveiks, kol Civitai vėl ras modelį.',
     license: 'Licencija',
     commercialUse: 'Komercinis naudojimas',
     derivatives: 'Derivatives',
@@ -880,6 +900,8 @@ export const lt: Messages = {
     notOwned: 'Neturima',
     earlyAccess: 'Early access',
     download: 'Download',
+    retryDownload: 'Bandyti dar kartą',
+    retryDownloadHint: 'Įdėti failed atsisiuntimą atgal į eilę',
     queueEarlyAccess: 'Į eilę (Early access)',
     awaitingAccess: 'Laukia prieigos',
     inQueue: 'Eilėje',
@@ -1095,12 +1117,14 @@ export const lt: Messages = {
     assignFolderHint: 'Priskirti aplanką — spustelėkite: visi su „{tag}" ar tik ši kortelė',
     openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti dinaminiam aplankui',
     openTagFoldersAssigned: 'Priskirta — atidaryti Tag folders valdyti „{tag}"',
-    tagRoleFinalHint: 'Galutinis aplanko kelias — „{tag}" nukreipė šį modelį (spauskite → Tag folders)',
+    tagRoleFinalHint:
+      'Pagrindinis aplankas — 1px solid accent remelis. „{tag}" nukreipė šį modelį (spauskite → Tag folders)',
     tagRoleMappedHint:
-      'Taisyklė yra — „{tag}" turi folder taisyklę, bet šiam modeliui aktyvus kitas tagas',
+      'Priskirta taisyklė — 1px dashed accent remelis. „{tag}" turi folder taisyklę, bet aktyvus kitas tagas',
     tagRoleMappedPendingHint:
-      'Taisyklė yra — „{tag}" turi folder taisyklę, bet šis modelis dar neperkeltas (vis dar default / unsorted)',
-    tagRoleUnmappedHint: 'Nepriskirta — „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
+      'Priskirta taisyklė — 1px dashed accent remelis. „{tag}" turi folder taisyklę, bet modelis dar neperkeltas',
+    tagRoleUnmappedHint:
+      'Nepriskirta — 1px dotted pilkas remelis. „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
     tagBlockedOnCardHint: 'Blokuotas tagas — „{tag}" yra permanent ban-by-tag sąraše',
     tagPausedOnCardHint: 'Paused tagas — „{tag}" yra Browse exclude (laikinas)',
     folderLabel: 'Aplankas: {folder}',
@@ -1111,7 +1135,7 @@ export const lt: Messages = {
     expandSidebar: 'Išskleisti filtrų juostą',
     sidebarSearchPlaceholder: 'Ieškoti tagų…',
     sidebarHint:
-      'Tag remeliai: vientisas accent = galutinis kelias · vientisas = taisyklė yra (gali būti dar neperkeltas) · brūkšninis = nėra taisyklės. Spauskite → Tag folders.',
+      'Tag remeliai: solid accent = pagrindinis folder · dashed accent = taisyklė yra · dotted pilka = nepriskirta. Spauskite → Tag folders.',
     allModels: 'Visi modeliai',
     untaggedFolder: 'Be aplanko tag',
     unrecognized: 'Neatpažinti',
@@ -1316,7 +1340,8 @@ export const lt: Messages = {
     favoriteOffHint: 'Įtraukti į favorites — po atsisiuntimo pin’inti Library viršuje (kitą kartą atidarius)',
     favoriteOnHint: 'Nuimti favorite — nebekelti į Library viršų',
     favoriteAdd: 'Įtraukti į favorites ★',
-    favoriteRemove: 'Nuimti favorite ☆'
+    favoriteRemove: 'Nuimti favorite ☆',
+    openTagFoldersHint: 'Atidaryti Tag folders — priskirti aplanką „{tag}“ prieš atsisiuntimą'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1355,23 +1380,34 @@ export const lt: Messages = {
     filterUnavailable: 'Unavailable',
     hideBanned: 'Slėpti banned',
     hidePaused: 'Slėpti paused',
+    hideSeen: 'Slėpti seen',
+    hideSeenHint: 'Slepia jau pažymėtus seen banus (žalias title ženklas)',
+    markSeenModeOn: 'Mark seen įj.',
+    markSeenModeOff: 'Mark seen išj.',
+    markSeenModeTitle:
+      'Įjungus: patrauk pele į kairę/dešinę nuo ban/pause kortelės — pažymi seen (aukštyn/žemyn — nieko). Išjungus — be žymėjimo.',
     showForgotten: 'Rodyti forgotten',
     showBanned: 'Rodyti banned / paused',
     sidebarTitle: 'Filtras',
     collapseSidebar: 'Suskleisti filtrų juostą',
     expandSidebar: 'Išskleisti filtrų juostą',
-    sidebarHint: 'Visi · sesija · tagai → Tag folders · kalendorius',
     sidebarAll: 'Visi',
     sessionBans: 'Sesijos banai',
     sessionPause: 'Sesijos pause',
     blockedTagsSection: 'Policy tagai',
     policyTagsSection: 'Policy tagai',
-    policyTagsHint: 'Spausk tagą — atidaromas Tag folders (ban / unban ten).',
+    policyTagsHint: 'Spausk tagą — rodo modelius, praleistus dėl to policy tago (tas pats skaičius). Hide seen vis dar veikia.',
     blockedTagsSearch: 'Filtruoti tagus…',
     blockedTagsEmpty: 'Pause / ban tagų dar nėra',
-    blockedTagFilter: 'Tagas: {tag}',
-    openTagFoldersHint: 'Atidaryti Tag folders „{tag}“',
+    blockedTagFilter: 'Policy tagas: {tag}',
+    openTagFoldersHint: 'Filtruoti modelius su „{tag}“',
     clearSideFilter: 'Išvalyti sidebar filtrą',
+    unseenBans: 'Neperžiūrėti banai',
+    seenToday: 'Šiandienos seen',
+    seenByDay: 'Seen {day}',
+    seenTotal: 'Seen: {count}',
+    seenInSelection: 'Seen: {count}',
+    calendarRangeHint: 'Spausk dieną (ar dvi intervalui) — tos dienos banai · accent = ban',
     bannedByDate: 'Banned pagal datą',
     bannedToday: 'Šiandien',
     bannedYesterday: 'Vakar',
@@ -1402,6 +1438,8 @@ export const lt: Messages = {
     sortLabel: 'Rikiuoti',
     sortRecent: 'Naujausi',
     sortHits: 'Hit skaičius',
+    sortDownloads: 'Atsisiuntimai',
+    sortLikes: 'Like’ai',
     sortName: 'Pavadinimas',
     recheckSuspect: 'Tikrinti Suspect',
     recheckAll: 'Tikrinti visus',

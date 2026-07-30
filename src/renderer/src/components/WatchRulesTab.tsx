@@ -996,7 +996,6 @@ export function WatchRulesTab({
         />
       ) : !settings.nightMode ? (
         <section className="browse-results-empty">
-          <h2>{t('browse.results')}</h2>
           <p className="muted">{t('browse.emptyNoResults')}</p>
         </section>
       ) : null}

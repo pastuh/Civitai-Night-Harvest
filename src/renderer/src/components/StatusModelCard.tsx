@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from 'react'
+import type { MouseEvent, PointerEvent, ReactNode } from 'react'
 
 interface Props {
   title: string
@@ -13,6 +13,10 @@ interface Props {
   /** Action buttons under the card body. Omit when title actions cover everything. */
   actions?: ReactNode
   className?: string
+  /** When set, Missing tab may mark this ban as seen (full card + pointer). */
+  dataBanSeenPending?: number
+  onPointerEnter?: (e: PointerEvent<HTMLDivElement>) => void
+  onPointerLeave?: (e: PointerEvent<HTMLDivElement>) => void
 }
 
 export function StatusModelCard({
@@ -25,13 +29,23 @@ export function StatusModelCard({
   titleActions,
   onOpen,
   onContextMenu,
-  className
+  className,
+  dataBanSeenPending,
+  onPointerEnter,
+  onPointerLeave
 }: Props) {
   return (
     <div
       className={`gallery-card status-gallery-card${onOpen ? ' status-model-card-clickable' : ''}${className ? ` ${className}` : ''}`}
+      data-ban-seen-pending={
+        dataBanSeenPending != null && dataBanSeenPending > 0
+          ? String(dataBanSeenPending)
+          : undefined
+      }
       onClick={onOpen}
       onContextMenu={onContextMenu}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
       onKeyDown={
         onOpen
           ? (e) => {

@@ -113,6 +113,7 @@ type TagFoldersReturnTo =
   | { kind: 'modelDetail'; target: ModelDetailTarget; previousTab: Tab }
   | { kind: 'gallery'; modelId: number; versionId: number; modelName: string }
   | { kind: 'missing' }
+  | { kind: 'awaiting' }
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('watch')
@@ -182,6 +183,8 @@ export default function App() {
     setMissingViewPrefs((prev) =>
       prev.hideBanned === prefs.hideBanned &&
       prev.hidePaused === prefs.hidePaused &&
+      prev.hideSeen === prefs.hideSeen &&
+      prev.markSeenMode === prefs.markSeenMode &&
       prev.showForgotten === prefs.showForgotten &&
       prev.sortMode === prefs.sortMode &&
       prev.search === prefs.search &&
@@ -1225,11 +1228,6 @@ export default function App() {
     [modelDetailTarget, tab]
   )
 
-  const openMissingTagFolders = useCallback(
-    (tag: string) => openTagFolders(tag, { kind: 'missing' }),
-    [openTagFolders]
-  )
-
   const returnFromTagFolders = useCallback(() => {
     const ret = tagFoldersReturnTo
     setTagFoldersReturnTo(null)
@@ -1253,6 +1251,10 @@ export default function App() {
     }
     if (ret.kind === 'missing') {
       setTab('missing')
+      return
+    }
+    if (ret.kind === 'awaiting') {
+      setTab('awaiting')
       return
     }
     // Library stayed laid out under Tag folders overlay — restore tab only (no search/pin).
@@ -1521,8 +1523,8 @@ export default function App() {
     { id: 'gallery', label: m.tabs.library, badge: newLibraryCount || undefined, badgePrefix: '+' },
     { id: 'pending', label: m.tabs.newVersions, badge: pendingBadgeCount },
     { id: 'awaiting', label: m.tabs.awaitingAccess, badge: deferred.length || undefined },
-    { id: 'incomplete', label: m.tabs.incomplete, badge: incomplete.length || undefined },
     { id: 'missing', label: m.tabs.missing, badge: missing.filter((x) => !x.acknowledged).length || undefined },
+    { id: 'incomplete', label: m.tabs.incomplete, badge: incomplete.length || undefined },
     { id: 'tags', label: m.tabs.tagFolders }
   ]
   const endTabs: { id: Tab; label: string }[] = [
@@ -2110,6 +2112,17 @@ export default function App() {
             onOpenModelDetail={openModelDetail}
             eaFavoriteIds={eaFavoriteIds}
             onToggleEaFavorite={toggleEaFavorite}
+            tagRules={tagRules}
+            tagSuggestions={tagSuggestions}
+            inventory={inventory}
+            loraFolder={settings.loraOutputFolder}
+            checkpointFolder={settings.checkpointOutputFolder}
+            hiddenTags={settings.hiddenTags ?? EMPTY_STRING_LIST}
+            bannedTags={settings.bannedTags ?? EMPTY_STRING_LIST}
+            fastTagMode={settings.fastTagMode ?? false}
+            confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
+            onSaveTagRules={saveTagRules}
+            onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'awaiting' })}
             isActive
           />
         ) : null}
@@ -2149,7 +2162,6 @@ export default function App() {
               onViewPrefsChange={settings.preserveFilters ? onMissingViewPrefsChange : undefined}
               onRefresh={refreshMissingExclusions}
               onOpenModelDetail={openModelDetail}
-              onOpenTagFolders={openMissingTagFolders}
               isActive={missingInteractive}
             />
           </div>

@@ -14,6 +14,20 @@ export const en = {
     openHelp: 'Help guide',
     scrollToTop: 'Scroll to top'
   },
+  listSort: {
+    label: 'Sort',
+    recent: 'Recent',
+    recentLibrary: 'Download order',
+    recentBrowse: 'Crawl order',
+    recentDeferred: 'Added',
+    name: 'Name',
+    downloads: 'Downloads',
+    likes: 'Likes',
+    folder: 'By folder tag',
+    tagGroup: 'By tag group',
+    hits: 'Hit count',
+    unlock: 'Unlock time'
+  },
   tabs: {
     browse: 'Browse',
     browseBadgeTitle:
@@ -382,7 +396,7 @@ export const en = {
     missingFilters:
       'Hide banned / Hide paused (on by default), Show forgotten, Session bans / Session pause sidebar filters',
     missingAllow:
-      'Per model — **Allow** (exception vs pause/ban tags + queue). Tag ban/unban is only in Tag Folders — click a tag chip to jump there',
+      'Per model — **Allow** (exception vs pause/ban tags + queue). Click a policy tag (sidebar or card) to filter models skipped for that tag',
     missingForget:
       '**Forget On** — × on cards hides the model everywhere and stops suggestions; **Show forgotten** to review; × again = Unforget',
     edgeOwned: 'Green top border — already in your library',
@@ -403,10 +417,12 @@ export const en = {
       'Right-click a strip card → Priority download — moves it to the front of the queue (or right after active downloads)',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Early access tab — gated download, or missing API key',
+    dlIncomplete:
+      'Incomplete tab — Civitai lists the model but version data is empty; recheck or paste a download URL',
     dlNewVersions:
       'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model. If the version is Early access, it moves to Awaiting and should leave Updates. Filled during Harvest and by a background library check (one API GET per owned model). Settings → Auto-download new versions: ON queues them globally.',
     dlTabBadges:
-      'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access: items waiting',
+      'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
       'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
     domainsBody:
@@ -621,7 +637,8 @@ export const en = {
     hideOwnedTitle: 'Hide models already in your library',
     badgeOwnedTitle: 'Already in library',
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a folder',
-    tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
+    tagRoleUnmappedHint:
+      'Not assigned — 1px dotted gray border. “{tag}” has no Tag folders rule yet (click to assign)',
     tagBlockedOnCardHint: 'Blocked tag — “{tag}” is on the permanent ban-by-tag list',
     tagPausedOnCardHint: 'Paused tag — “{tag}” is on Browse exclude (temporary)',
     badgeNewTitle: 'Not in library yet',
@@ -825,11 +842,14 @@ export const en = {
     offlineLocal:
       'Civitai did not respond — showing local library data. Retry when the network is available.',
     offlineLocalShort: 'Local library data',
-    missingLocalHits: 'Missing {count}/{max} · local data',
+    missingLocalHits: 'Not downloaded · Missing {count}/{max} · local stub',
     missingHitsOnly: '{count}/{max}',
     loadFailedShort: 'Civitai unavailable',
     unavailable: 'Unavailable',
     unavailableHint: 'Confirmed missing on Civitai after repeated 404 checks',
+    onMissingList: 'Missing',
+    onMissingListHint:
+      'This model is on the Missing list (Civitai 404). Use Retry above to recheck — Download will not work until it is found again.',
     license: 'License',
     commercialUse: 'Commercial use',
     derivatives: 'Derivatives',
@@ -871,6 +891,8 @@ export const en = {
     notOwned: 'Not owned',
     earlyAccess: 'Early access',
     download: 'Download',
+    retryDownload: 'Retry download',
+    retryDownloadHint: 'Re-queue this failed download',
     queueEarlyAccess: 'Queue (Early access)',
     awaitingAccess: 'Awaiting access',
     inQueue: 'In queue',
@@ -1085,12 +1107,14 @@ export const en = {
     assignFolderHint: 'Assign folder — click: choose all with "{tag}" or this card only',
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a dynamic folder',
     openTagFoldersAssigned: 'Assigned — open Tag folders to manage “{tag}”',
-    tagRoleFinalHint: 'Final folder route — “{tag}” is why this model is in its folder (click → Tag folders)',
+    tagRoleFinalHint:
+      'Primary folder — 1px solid accent border. “{tag}” is why this model is in its folder (click → Tag folders)',
     tagRoleMappedHint:
-      'Mapped tag — “{tag}” has a folder rule, but another tag is the active route for this model',
+      'Assigned rule — 1px dashed accent border. “{tag}” has a folder rule, but another tag is the active route',
     tagRoleMappedPendingHint:
-      'Folder rule exists for “{tag}”, but this model was never moved — still in the default / unsorted folder',
-    tagRoleUnmappedHint: 'Unmapped — “{tag}” has no Tag folders rule yet (click to assign)',
+      'Assigned rule — 1px dashed accent border. “{tag}” has a folder rule, but this model was never moved',
+    tagRoleUnmappedHint:
+      'Not assigned — 1px dotted gray border. “{tag}” has no Tag folders rule yet (click to assign)',
     tagBlockedOnCardHint: 'Blocked tag — “{tag}” is on the permanent ban-by-tag list',
     tagPausedOnCardHint: 'Paused tag — “{tag}” is on Browse exclude (temporary)',
     folderLabel: 'Folder: {folder}',
@@ -1101,7 +1125,7 @@ export const en = {
     expandSidebar: 'Expand filter sidebar',
     sidebarSearchPlaceholder: 'Search tags…',
     sidebarHint:
-      'Tag borders: solid accent = final route · solid = rule exists (may not be moved yet) · dashed = no rule. Click → Tag folders.',
+      'Tag borders: solid accent = primary folder · dashed accent = rule exists · dotted gray = not assigned. Click → Tag folders.',
     allModels: 'All models',
     untaggedFolder: 'Untagged folder',
     unrecognized: 'Unrecognized',
@@ -1302,7 +1326,8 @@ export const en = {
     favoriteOffHint: 'Add to favorites — pin at top of Library after download (on next visit)',
     favoriteOnHint: 'Remove favorite — stop pinning at top of Library',
     favoriteAdd: 'Add favorite ★',
-    favoriteRemove: 'Remove favorite ☆'
+    favoriteRemove: 'Remove favorite ☆',
+    openTagFoldersHint: 'Open Tag folders — assign folder for “{tag}” before download'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1341,23 +1366,34 @@ export const en = {
     filterUnavailable: 'Unavailable',
     hideBanned: 'Hide banned',
     hidePaused: 'Hide paused',
+    hideSeen: 'Hide seen',
+    hideSeenHint: 'Hide bans you already marked seen (green title mark)',
+    markSeenModeOn: 'Mark seen on',
+    markSeenModeOff: 'Mark seen off',
+    markSeenModeTitle:
+      'When on: move left/right off a ban/pause card to mark seen (up/down does nothing). Off = browse without marking.',
     showForgotten: 'Show forgotten',
     showBanned: 'Show banned / paused',
     sidebarTitle: 'Filter',
     collapseSidebar: 'Collapse filter sidebar',
     expandSidebar: 'Expand filter sidebar',
-    sidebarHint: 'All · session · tags → Tag folders · calendar',
     sidebarAll: 'All',
     sessionBans: 'Session bans',
     sessionPause: 'Session pause',
     blockedTagsSection: 'Policy tags',
     policyTagsSection: 'Policy tags',
-    policyTagsHint: 'Click a tag to open Tag folders (ban / unban there).',
+    policyTagsHint: 'Click a tag to list models skipped because of that policy tag (same count). Hide seen still applies.',
     blockedTagsSearch: 'Filter tags…',
     blockedTagsEmpty: 'No pause / ban tags yet',
-    blockedTagFilter: 'Tag: {tag}',
-    openTagFoldersHint: 'Open Tag folders for “{tag}”',
+    blockedTagFilter: 'Policy tag: {tag}',
+    openTagFoldersHint: 'Filter models with “{tag}”',
     clearSideFilter: 'Clear sidebar filter',
+    unseenBans: 'Unseen bans',
+    seenToday: 'Seen today',
+    seenByDay: 'Seen {day}',
+    seenTotal: 'Seen: {count}',
+    seenInSelection: 'Seen: {count}',
+    calendarRangeHint: 'Click a day (or two for a range) — bans from that day · accent = banned',
     bannedByDate: 'Banned by date',
     bannedToday: 'Today',
     bannedYesterday: 'Yesterday',
@@ -1388,6 +1424,8 @@ export const en = {
     sortLabel: 'Sort',
     sortRecent: 'Recent',
     sortHits: 'Hit count',
+    sortDownloads: 'Downloads',
+    sortLikes: 'Likes',
     sortName: 'Name',
     recheckSuspect: 'Recheck Suspect',
     recheckAll: 'Recheck all',

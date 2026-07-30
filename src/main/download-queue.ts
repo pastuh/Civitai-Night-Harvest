@@ -15,6 +15,7 @@ import {
   humanizeDownloadError,
   isInterruptedDownload,
   isRetryableDownloadError,
+  isAwaitingAccessFailureKind,
   shouldAutoRetryDeferred
 } from '../shared/download-errors'
 import { formatWaitDuration } from '../shared/utils'
@@ -225,6 +226,7 @@ export class DownloadQueue {
 
     this.reconcileOwnedInQueue()
     this.pruneFailedNowOwned()
+    const reclassified = this.reclassifyStuckFailures()
     this.mergeDeferredIntoQueue()
 
     const purged = this.purgeHiddenTags()
@@ -257,6 +259,13 @@ export class DownloadQueue {
       )
       this.flushPersist()
     }
+    if (reclassified > 0) {
+      this.log?.(
+        'info',
+        `Moved ${reclassified} stuck failed download(s) to awaiting / Missing (auth, not-found, …)`
+      )
+      this.flushPersist()
+    }
 
     if (saved || this.items.length > 0) {
       this.broadcast()
@@ -279,6 +288,7 @@ export class DownloadQueue {
     repairBrokenInventoryPaths()
     let changed = this.reconcileOwnedInQueue()
     if (this.pruneFailedNowOwned()) changed = true
+    if (this.reclassifyStuckFailures() > 0) changed = true
     if (changed) {
       this.pruneQueue()
       this.schedulePersist()
@@ -299,7 +309,15 @@ export class DownloadQueue {
     this.storageBlockedLogged = false
     const wasPaused = this.paused
     this.paused = false
-    if (wasPaused) this.broadcast()
+    const reclassified = this.reclassifyStuckFailures()
+    if (reclassified > 0) {
+      this.log?.(
+        'info',
+        `Moved ${reclassified} stuck failed download(s) to awaiting / Missing (auth, not-found, …)`
+      )
+      this.schedulePersist()
+    }
+    if (wasPaused || reclassified > 0) this.broadcast()
     void this.pump()
   }
 
@@ -381,7 +399,11 @@ export class DownloadQueue {
     for (const d of inventory.getAllDeferredDownloads()) {
       if (
         !inventory.isTagSkipAllowed(d.modelId) &&
-        queueItemBlockedByPolicyTags({ civitaiTags: [], routingTag: d.routingTag }, pausedTags, bannedTags)
+        queueItemBlockedByPolicyTags(
+          { civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag },
+          pausedTags,
+          bannedTags
+        )
       ) {
         inventory.removeDeferredDownload(d.versionId)
         continue
@@ -600,6 +622,11 @@ export class DownloadQueue {
             i.status === 'deferred' ||
             i.status === 'failed')
       )
+      // Manual Download on a failed row must re-queue — returning the id alone did nothing.
+      if (existing && meta.manual === true && existing.status === 'failed') {
+        this.retryFailed(existing.id)
+        return existing.id
+      }
       return existing?.id ?? ''
     }
 
@@ -620,8 +647,9 @@ export class DownloadQueue {
     })
 
     const deferred = request.versionId ? inventory.getDeferredDownload(request.versionId) : undefined
-    const useEarlyAccessDeferred = deferred?.failureKind === 'early_access'
-    if (deferred && !useEarlyAccessDeferred && request.versionId) {
+    const useAwaitingAccessDeferred = isAwaitingAccessFailureKind(deferred?.failureKind)
+    // Manual retry may clear a stale gate; auto harvest must not wipe Buzz/EA deferred.
+    if (deferred && !useAwaitingAccessDeferred && request.versionId) {
       inventory.removeDeferredDownload(request.versionId)
     }
     const id = randomUUID()
@@ -636,22 +664,22 @@ export class DownloadQueue {
       modelType: meta.modelType ?? deferred?.modelType ?? modelType,
       baseModel: meta.baseModel,
       author: meta.author,
-      civitaiTags: meta.civitaiTags,
+      civitaiTags: meta.civitaiTags ?? deferred?.civitaiTags,
       fileSizeBytes: meta.fileSizeBytes,
       nsfw: meta.nsfw,
       nsfwLevel: meta.nsfwLevel,
       confirmTagsAfter: meta.confirmTagsAfter,
       manual: meta.manual === true,
       sourceDomain: request.sourceDomain,
-      status: useEarlyAccessDeferred ? 'deferred' : 'queued',
+      status: useAwaitingAccessDeferred ? 'deferred' : 'queued',
       bytesReceived: 0,
       totalBytes: 0,
       phase: 'model',
       speedBps: 0,
       queuedAt: new Date().toISOString(),
       outputFolder: deferred?.outputFolder || outputFolder,
-      reason: useEarlyAccessDeferred ? deferred?.reason : undefined,
-      failureKind: useEarlyAccessDeferred ? deferred?.failureKind : undefined
+      reason: useAwaitingAccessDeferred ? deferred?.reason : undefined,
+      failureKind: useAwaitingAccessDeferred ? deferred?.failureKind : undefined
     }
 
     this.items.push(item)
@@ -689,7 +717,7 @@ export class DownloadQueue {
     }
 
     for (const d of inventory.getAllDeferredDownloads()) {
-      if (!isBlocked({ civitaiTags: [], routingTag: d.routingTag, modelId: d.modelId })) continue
+      if (!isBlocked({ civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag, modelId: d.modelId })) continue
       inventory.removeDeferredDownload(d.versionId)
       removed++
     }
@@ -704,7 +732,8 @@ export class DownloadQueue {
 
   /**
    * Drop browse/crawl pipeline rows on cold start — queue stays empty until Scan/Crawl in this session.
-   * Manual queue actions are kept.
+   * Manual queue actions are kept. Awaiting-access deferred (early access / Buzz 403 / auth gate)
+   * are kept so Browse does not re-queue them every launch; unlock is still polled by the watcher.
    */
   purgeBrowseSessionOnStartup(): number {
     let removed = 0
@@ -716,6 +745,9 @@ export class DownloadQueue {
         item.status !== 'failed' &&
         item.status !== 'deferred'
       ) {
+        continue
+      }
+      if (item.status === 'deferred' && isAwaitingAccessFailureKind(item.failureKind)) {
         continue
       }
       if (item.status === 'downloading') {
@@ -781,54 +813,140 @@ export class DownloadQueue {
     return removed
   }
 
-  /** Update routing for queued items that carry a Civitai tag (before download completes). */
+  /** Update routing for queued / deferred items that carry a Civitai tag (before download completes). */
   reassignRoutingByCivitaiTag(civitaiTag: string, routingTag: string): number {
     const needle = civitaiTag.trim().toLowerCase()
     if (!needle) return 0
     const settings = getSettings()
     const tagRules = getTagRules()
     let updated = 0
-    for (const item of this.items) {
-      if (item.status !== 'queued' && item.status !== 'downloading') continue
-      if (!item.civitaiTags?.some((t) => t.toLowerCase() === needle)) continue
+
+    const applyFolder = (
+      modelType: string,
+      tags: string[] | undefined,
+      baseModel?: string
+    ): { winner: string; outputFolder: string } | null => {
       const winner =
-        pickBestMatchingFolderTag(item.civitaiTags ?? [], tagRules) || routingTag.trim()
-      if (!winner) continue
-      item.routingTag = winner
-      item.outputFolder = resolveModelOutputFolder({
-        loraFolder: settings.loraOutputFolder,
-        checkpointFolder: settings.checkpointOutputFolder,
-        modelType: item.modelType,
-        routingTag: winner,
-        baseModel: item.baseModel,
-        tagRules
+        pickBestMatchingFolderTag(tags ?? [], tagRules) || routingTag.trim()
+      if (!winner) return null
+      return {
+        winner,
+        outputFolder: resolveModelOutputFolder({
+          loraFolder: settings.loraOutputFolder,
+          checkpointFolder: settings.checkpointOutputFolder,
+          modelType,
+          routingTag: winner,
+          baseModel,
+          tagRules
+        })
+      }
+    }
+
+    for (const item of this.items) {
+      if (
+        item.status !== 'queued' &&
+        item.status !== 'downloading' &&
+        item.status !== 'deferred'
+      ) {
+        continue
+      }
+      const tags =
+        item.civitaiTags?.length
+          ? item.civitaiTags
+          : inventory.getDeferredDownload(item.versionId)?.civitaiTags
+      if (!tags?.some((t) => t.toLowerCase() === needle)) continue
+      if (!item.civitaiTags?.length) item.civitaiTags = tags
+      const next = applyFolder(item.modelType, tags, item.baseModel)
+      if (!next) continue
+      item.routingTag = next.winner
+      item.outputFolder = next.outputFolder
+      updated++
+    }
+
+    for (const d of inventory.getAllDeferredDownloads()) {
+      if (!d.civitaiTags?.some((t) => t.toLowerCase() === needle)) continue
+      const next = applyFolder(d.modelType, d.civitaiTags)
+      if (!next) continue
+      if (d.routingTag === next.winner && d.outputFolder === next.outputFolder) continue
+      inventory.upsertDeferredDownload({
+        modelId: d.modelId,
+        versionId: d.versionId,
+        modelName: d.modelName,
+        versionName: d.versionName,
+        modelType: d.modelType,
+        routingTag: next.winner,
+        previewUrl: d.previewUrl,
+        outputFolder: next.outputFolder,
+        reason: d.reason,
+        failureKind: d.failureKind,
+        lastAttemptAt: d.lastAttemptAt,
+        earlyAccessEndsAt: d.earlyAccessEndsAt,
+        civitaiTags: d.civitaiTags,
+        bumpAttempt: false
       })
       updated++
     }
-    if (updated > 0) this.broadcast()
+
+    if (updated > 0) {
+      this.broadcast()
+      this.emitDeferred()
+    }
     return updated
   }
 
   updateRoutingForVersion(versionId: number, routingTag: string): boolean {
     const settings = getSettings()
     const tagRules = getTagRules()
+    let changed = false
     const item = this.items.find(
       (i) =>
         i.versionId === versionId &&
-        (i.status === 'queued' || i.status === 'downloading')
+        (i.status === 'queued' || i.status === 'downloading' || i.status === 'deferred')
     )
-    if (!item) return false
-    item.routingTag = routingTag
-    item.outputFolder = resolveModelOutputFolder({
-      loraFolder: settings.loraOutputFolder,
-      checkpointFolder: settings.checkpointOutputFolder,
-      modelType: item.modelType,
-      routingTag,
-      baseModel: item.baseModel,
-      tagRules
-    })
-    this.broadcast()
-    return true
+    if (item) {
+      item.routingTag = routingTag
+      item.outputFolder = resolveModelOutputFolder({
+        loraFolder: settings.loraOutputFolder,
+        checkpointFolder: settings.checkpointOutputFolder,
+        modelType: item.modelType,
+        routingTag,
+        baseModel: item.baseModel,
+        tagRules
+      })
+      changed = true
+    }
+
+    const deferred = inventory.getDeferredDownload(versionId)
+    if (deferred) {
+      const outputFolder = resolveModelOutputFolder({
+        loraFolder: settings.loraOutputFolder,
+        checkpointFolder: settings.checkpointOutputFolder,
+        modelType: deferred.modelType,
+        routingTag,
+        tagRules
+      })
+      inventory.upsertDeferredDownload({
+        modelId: deferred.modelId,
+        versionId: deferred.versionId,
+        modelName: deferred.modelName,
+        versionName: deferred.versionName,
+        modelType: deferred.modelType,
+        routingTag,
+        previewUrl: deferred.previewUrl,
+        outputFolder,
+        reason: deferred.reason,
+        failureKind: deferred.failureKind,
+        lastAttemptAt: deferred.lastAttemptAt,
+        earlyAccessEndsAt: deferred.earlyAccessEndsAt,
+        civitaiTags: deferred.civitaiTags,
+        bumpAttempt: false
+      })
+      changed = true
+      this.emitDeferred()
+    }
+
+    if (changed && item) this.broadcast()
+    return changed
   }
 
   cancel(versionId: number): void {
@@ -1043,7 +1161,7 @@ export class DownloadQueue {
       if (!item.versionId) continue
       const deferred = inventory.getDeferredDownload(item.versionId)
       if (!deferred) continue
-      if (deferred.failureKind !== 'early_access') {
+      if (!isAwaitingAccessFailureKind(deferred.failureKind)) {
         inventory.removeDeferredDownload(item.versionId)
         item.failureKind = undefined
         continue
@@ -1073,7 +1191,7 @@ export class DownloadQueue {
       if (
         !inventory.isTagSkipAllowed(d.modelId) &&
         queueItemBlockedByPolicyTags(
-          { civitaiTags: [], routingTag: d.routingTag },
+          { civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag },
           pausedTags,
           bannedTags
         )
@@ -1161,6 +1279,63 @@ export class DownloadQueue {
     return this.items.length !== before
   }
 
+  /**
+   * Convert strip-stuck `failed` rows that should have been deferred (login HTML,
+   * version not found on Civitai, …) so they leave Active downloads and enter
+   * awaiting-access / Missing like normal classified failures.
+   */
+  private reclassifyStuckFailures(): number {
+    let count = 0
+    for (const item of this.items) {
+      if (item.status !== 'failed') continue
+      const raw = item.reason ?? ''
+      if (!raw) continue
+      const classified = classifyDownloadFailure(raw)
+      if (!classified.defer || !classified.kind) continue
+
+      const priorDeferred =
+        item.versionId > 0 ? inventory.getDeferredDownload(item.versionId) : null
+      const fromEarlyAccess =
+        classified.kind === 'early_access' ||
+        item.failureKind === 'early_access' ||
+        priorDeferred?.failureKind === 'early_access'
+
+      item.status = 'deferred'
+      item.reason = classified.reason
+      item.failureKind = classified.kind
+      inventory.upsertDeferredDownload({
+        modelId: item.modelId,
+        versionId: item.versionId,
+        modelName: item.modelName,
+        modelType: item.modelType,
+        routingTag: item.routingTag,
+        previewUrl: item.previewUrl,
+        outputFolder: item.outputFolder,
+        reason: classified.reason,
+        failureKind: classified.kind,
+        lastAttemptAt: item.completedAt ?? new Date().toISOString(),
+        civitaiTags: item.civitaiTags ?? priorDeferred?.civitaiTags
+      })
+      if (classified.kind === 'not_found') {
+        noteMissingModel404(this.getWindow, {
+          modelId: item.modelId,
+          versionId: item.versionId,
+          modelName: item.modelName,
+          modelType: item.modelType,
+          author: item.author,
+          baseModel: item.baseModel,
+          previewUrl: item.previewUrl,
+          sourceDomain: item.sourceDomain,
+          error: classified.reason,
+          fromEarlyAccess
+        })
+      }
+      count++
+    }
+    if (count > 0) this.emitDeferred()
+    return count
+  }
+
   /** Remove queue rows for versions already in library — avoids stuck "downloading" UI. */
   private reconcileOwnedInQueue(): boolean {
     const removeIds = new Set<string>()
@@ -1194,6 +1369,23 @@ export class DownloadQueue {
     })
   }
 
+  /** Update preview on deferred / queued rows after async enrich (EA often has no images). */
+  patchItemPreviewUrl(versionId: number, previewUrl: string): boolean {
+    if (!versionId || !previewUrl.trim()) return false
+    let changed = false
+    for (const item of this.items) {
+      if (item.versionId !== versionId) continue
+      if (item.previewUrl === previewUrl) continue
+      item.previewUrl = previewUrl
+      changed = true
+    }
+    if (changed) {
+      this.schedulePersist()
+      this.broadcast()
+    }
+    return changed
+  }
+
   /** Save early-access model — stays in queue as planned download until access is available. */
   deferEarlyAccess(params: {
     modelId: number
@@ -1205,6 +1397,9 @@ export class DownloadQueue {
     previewUrl?: string
     reason: string
     earlyAccessEndsAt?: string
+    civitaiTags?: string[]
+    downloadCount?: number
+    thumbsUpCount?: number
   }): boolean {
     if (inventory.hasVersion(params.versionId)) return false
     if (this.hasActiveItem(params.versionId)) return false
@@ -1232,7 +1427,10 @@ export class DownloadQueue {
       reason: params.reason,
       failureKind: 'early_access',
       lastAttemptAt: now,
-      earlyAccessEndsAt: params.earlyAccessEndsAt
+      earlyAccessEndsAt: params.earlyAccessEndsAt,
+      civitaiTags: params.civitaiTags,
+      downloadCount: params.downloadCount,
+      thumbsUpCount: params.thumbsUpCount
     })
 
     this.items.push({
@@ -1244,6 +1442,7 @@ export class DownloadQueue {
       previewUrl: params.previewUrl,
       routingTag: params.routingTag,
       modelType: params.modelType,
+      civitaiTags: params.civitaiTags,
       status: 'deferred',
       bytesReceived: 0,
       totalBytes: 0,
@@ -1281,7 +1480,8 @@ export class DownloadQueue {
       outputFolder: item.outputFolder,
       reason: message,
       failureKind: 'interrupted',
-      lastAttemptAt: now
+      lastAttemptAt: now,
+      civitaiTags: item.civitaiTags
     })
     this.emitDeferred()
     this.log?.('warn', `${item.modelName}: ${message} — will retry automatically`)
@@ -1305,6 +1505,16 @@ export class DownloadQueue {
   }
 
   private tickAutoRetries(): void {
+    // Recover misclassified failed rows (login HTML / not-found) without waiting for restart.
+    const reclassified = this.reclassifyStuckFailures()
+    if (reclassified > 0) {
+      this.log?.(
+        'info',
+        `Moved ${reclassified} stuck failed download(s) to awaiting / Missing (auth, not-found, …)`
+      )
+      this.schedulePersist()
+      this.broadcast({ forceMaintain: true })
+    }
     // Deferred/early-access is owned by peek loop + early-access watcher (peek interval).
     // This tick only recovers retryable failed rows so we do not double-scan deferred every few seconds.
     if (this.paused) return
@@ -1592,7 +1802,8 @@ export class DownloadQueue {
           reason: result.reason ?? 'Awaiting access',
           failureKind: result.failureKind ?? 'auth',
           lastAttemptAt: item.completedAt,
-          earlyAccessEndsAt: result.earlyAccessEndsAt
+          earlyAccessEndsAt: result.earlyAccessEndsAt,
+          civitaiTags: item.civitaiTags ?? priorDeferred?.civitaiTags
         })
         this.emitDeferred()
         if (result.failureKind === 'not_found') {
@@ -1632,13 +1843,18 @@ export class DownloadQueue {
         if (classified.defer && classified.kind) {
           const priorDeferred =
             item.versionId > 0 ? inventory.getDeferredDownload(item.versionId) : null
+          const refined = await this.downloadService.refineDeferredFailure(
+            item.versionId,
+            classified
+          )
           const fromEarlyAccess =
+            refined.kind === 'early_access' ||
             classified.kind === 'early_access' ||
             item.failureKind === 'early_access' ||
             priorDeferred?.failureKind === 'early_access'
           item.status = 'deferred'
-          item.reason = classified.reason
-          item.failureKind = classified.kind
+          item.reason = refined.reason
+          item.failureKind = refined.kind!
           inventory.upsertDeferredDownload({
             modelId: item.modelId,
             versionId: item.versionId,
@@ -1647,12 +1863,14 @@ export class DownloadQueue {
             routingTag: item.routingTag,
             previewUrl: item.previewUrl,
             outputFolder: item.outputFolder,
-            reason: classified.reason,
-            failureKind: classified.kind,
-            lastAttemptAt: item.completedAt ?? new Date().toISOString()
+            reason: refined.reason,
+            failureKind: refined.kind!,
+            lastAttemptAt: item.completedAt ?? new Date().toISOString(),
+            earlyAccessEndsAt: refined.earlyAccessEndsAt,
+            civitaiTags: item.civitaiTags ?? priorDeferred?.civitaiTags
           })
           this.emitDeferred()
-          if (classified.kind === 'not_found') {
+          if (refined.kind === 'not_found' || classified.kind === 'not_found') {
             noteMissingModel404(this.getWindow, {
               modelId: item.modelId,
               versionId: item.versionId,
@@ -1662,11 +1880,11 @@ export class DownloadQueue {
               baseModel: item.baseModel,
               previewUrl: item.previewUrl,
               sourceDomain: item.sourceDomain,
-              error: classified.reason,
+              error: refined.reason,
               fromEarlyAccess
             })
           }
-          logItem('warn', `${itemLabel()}: ${classified.reason} — kept in queue for retry`)
+          logItem('warn', `${itemLabel()}: ${refined.reason} — kept in queue for retry`)
           this.scheduleQuickRetry()
         } else if (isRetryableDownloadError(rawReason)) {
           this.markDeferredForRetry(item, humanizeDownloadError(rawReason))
@@ -1709,7 +1927,8 @@ export class DownloadQueue {
           outputFolder: item.outputFolder,
           reason: message,
           failureKind: 'interrupted',
-          lastAttemptAt: item.completedAt
+          lastAttemptAt: item.completedAt,
+          civitaiTags: item.civitaiTags
         })
         this.emitDeferred()
         logItem('warn', `${itemLabel()}: ${message} — kept in queue for retry`)
@@ -1742,7 +1961,8 @@ export class DownloadQueue {
             reason: refined.reason,
             failureKind: refined.kind!,
             lastAttemptAt: item.completedAt,
-            earlyAccessEndsAt: refined.earlyAccessEndsAt
+            earlyAccessEndsAt: refined.earlyAccessEndsAt,
+            civitaiTags: item.civitaiTags ?? priorDeferred?.civitaiTags
           })
           this.emitDeferred()
           if (refined.kind === 'not_found' || classified.kind === 'not_found') {

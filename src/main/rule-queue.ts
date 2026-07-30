@@ -349,7 +349,9 @@ function processModel(
       tags: model.tags ?? [],
       blockedTag: policyHit.policyTag,
       matchedModelTag: policyHit.modelTag,
-      policy: policyHit.kind
+      policy: policyHit.kind,
+      downloadCount: model.stats?.downloadCount,
+      thumbsUpCount: model.stats?.thumbsUpCount
     })
     return
   }
@@ -388,9 +390,13 @@ function processModel(
       versionName: version.name,
       modelType: model.type,
       routingTag,
-      previewUrl: resolveVersionPreviewUrl(model, version.id),
+      previewUrl:
+        resolveVersionPreviewUrl(model, version.id) ?? resolveModelPreviewUrl(model),
       reason: formatEarlyAccessReason(version.earlyAccessEndsAt),
-      earlyAccessEndsAt: version.earlyAccessEndsAt ?? undefined
+      earlyAccessEndsAt: version.earlyAccessEndsAt ?? undefined,
+      civitaiTags,
+      downloadCount: model.stats?.downloadCount,
+      thumbsUpCount: model.stats?.thumbsUpCount
     })
     if (deferred) {
       result.deferredEarlyAccess++
@@ -446,7 +452,8 @@ function processModel(
       },
       {
         modelName: model.name,
-        previewUrl: resolveVersionPreviewUrl(model, version.id),
+        previewUrl:
+          resolveVersionPreviewUrl(model, version.id) ?? resolveModelPreviewUrl(model),
         routingTag,
         modelType: model.type,
         baseModel: version.baseModel,
@@ -603,7 +610,8 @@ function processModel(
       versionName: version.name,
       baseModel: version.baseModel,
       author: model.creator?.username ?? '',
-      previewUrl: resolveVersionPreviewUrl(model, version.id),
+      previewUrl:
+        resolveVersionPreviewUrl(model, version.id) ?? resolveModelPreviewUrl(model),
       existingFolder: existing.outputFolder,
       totalVersions: model.modelVersions?.length ?? undefined
     }
@@ -908,6 +916,35 @@ export function queueEligibleTestModels(
     }
     if (m.isEarlyAccess) {
       skipped.earlyAccess++
+      // Route straight to Early access — never flash as queued (white border) first.
+      if (
+        !inventory.getDeferredDownload(m.versionId) &&
+        !downloadQueue.hasActiveItem(m.versionId)
+      ) {
+        const matchedUsedTag = findFirstUsedTag(m.tags ?? [], usedTags)
+        if (!options.requireTagMatch || matchedUsedTag) {
+          const activeTag = options.requireTagMatch ? (matchedUsedTag ?? '') : ''
+          const { routingTag } = resolveModelRoutingTag(
+            m.tags ?? [],
+            activeTag,
+            tagRules,
+            m.baseModel
+          )
+          downloadQueue.deferEarlyAccess({
+            modelId: m.id,
+            versionId: m.versionId,
+            modelName: m.name,
+            modelType: m.type,
+            routingTag,
+            previewUrl: m.previewUrl,
+            reason: formatEarlyAccessReason(m.earlyAccessEndsAt),
+            earlyAccessEndsAt: m.earlyAccessEndsAt,
+            civitaiTags: m.tags,
+            downloadCount: m.downloadCount,
+            thumbsUpCount: m.thumbsUpCount
+          })
+        }
+      }
       continue
     }
     const policyHit =
@@ -926,7 +963,9 @@ export function queueEligibleTestModels(
         tags: m.tags ?? [],
         blockedTag: policyHit.policyTag,
         matchedModelTag: policyHit.modelTag,
-        policy: policyHit.kind
+        policy: policyHit.kind,
+        downloadCount: m.downloadCount,
+        thumbsUpCount: m.thumbsUpCount
       })
       skipped.hiddenTag++
       continue

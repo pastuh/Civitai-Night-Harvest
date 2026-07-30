@@ -196,6 +196,16 @@ export function ModelDetailPage({
     return ids
   }, [queue.items])
 
+  const failedQueueByVersionId = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const item of queue.items) {
+      if (item.versionId > 0 && item.status === 'failed') {
+        map.set(item.versionId, item.id)
+      }
+    }
+    return map
+  }, [queue.items])
+
   const deferredVersionIds = useMemo(() => {
     const ids = new Set<number>()
     for (const item of queue.items) {
@@ -603,8 +613,22 @@ export function ModelDetailPage({
     if (ownedSet.has(v.id) || downloadBusyIds.has(v.id) || queuedVersionIds.has(v.id) || banned) {
       return
     }
+    // On Missing list (404) — Download only loops; Retry above rechecks Civitai first.
+    if (unavailableConfirmed || missingHitCount != null) return
     // Live API still gated — leave on Awaiting access.
     if (isVersionEarlyAccess(v)) return
+
+    const failedId = failedQueueByVersionId.get(v.id)
+    if (failedId) {
+      markDownloadBusy(v.id, true)
+      try {
+        await window.api.retryFailedDownload(failedId)
+        await onQueueRefresh?.()
+      } finally {
+        markDownloadBusy(v.id, false)
+      }
+      return
+    }
 
     markDownloadBusy(v.id, true)
     try {
@@ -654,7 +678,9 @@ export function ModelDetailPage({
         baseModel: baseModelLabel,
         modelType: detail?.type,
         sourceDomain: domain,
-        tags: detail?.tags
+        tags: detail?.tags,
+        downloadCount: detail?.downloadCount ?? libraryRecord?.downloadCount,
+        thumbsUpCount: detail?.thumbsUpCount ?? libraryRecord?.thumbsUpCount
       })
       setBanned(true)
       onBannedChange?.(modelId, true)
@@ -704,14 +730,21 @@ export function ModelDetailPage({
           <div className="model-detail-page-toolbar-title">
             <h2 title={title}>{title}</h2>
             {banned && <span className="model-detail-banned-badge">{t('modelDetail.banned')}</span>}
-            {unavailableConfirmed && (
+            {unavailableConfirmed ? (
               <span
                 className="model-detail-unavailable-badge"
                 title={t('modelDetail.unavailableHint')}
               >
                 {t('modelDetail.unavailable')}
               </span>
-            )}
+            ) : missingHitCount != null ? (
+              <span
+                className="model-detail-unavailable-badge"
+                title={t('modelDetail.onMissingListHint')}
+              >
+                {t('modelDetail.onMissingList')}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="model-detail-page-toolbar-actions">
@@ -1111,7 +1144,9 @@ export function ModelDetailPage({
                   const owned = ownedSet.has(v.id)
                   const active = v.id === activeVersionId
                   const ea = isVersionEarlyAccess(v)
+                  const onMissingList = missingHitCount != null
                   const inQueue = queuedVersionIds.has(v.id)
+                  const isFailed = failedQueueByVersionId.has(v.id)
                   // Trust live Civitai fields from model detail — not a stale deferred queue flag.
                   const awaiting = ea
                   const busy = downloadBusyIds.has(v.id)
@@ -1167,19 +1202,38 @@ export function ModelDetailPage({
                           <button
                             type="button"
                             className="btn-sm primary"
-                            disabled={busy || inQueue || awaiting || banned}
+                            disabled={
+                              busy ||
+                              inQueue ||
+                              awaiting ||
+                              banned ||
+                              unavailableConfirmed ||
+                              onMissingList
+                            }
                             title={
-                              awaiting
-                                ? t('modelDetail.downloadEarlyHint')
-                                : t('modelDetail.downloadHint')
+                              unavailableConfirmed
+                                ? t('modelDetail.unavailableHint')
+                                : onMissingList
+                                  ? t('modelDetail.onMissingListHint')
+                                  : awaiting
+                                    ? t('modelDetail.downloadEarlyHint')
+                                    : isFailed
+                                      ? t('modelDetail.retryDownloadHint')
+                                      : t('modelDetail.downloadHint')
                             }
                             onClick={() => void downloadVersion(v)}
                           >
-                            {inQueue
-                              ? t('modelDetail.inQueue')
-                              : awaiting
-                                ? t('modelDetail.awaitingAccess')
-                                : t('modelDetail.download')}
+                            {unavailableConfirmed
+                              ? t('modelDetail.unavailable')
+                              : onMissingList
+                                ? t('modelDetail.onMissingList')
+                                : inQueue
+                                  ? t('modelDetail.inQueue')
+                                  : awaiting
+                                    ? t('modelDetail.awaitingAccess')
+                                    : isFailed
+                                      ? t('modelDetail.retryDownload')
+                                      : t('modelDetail.download')}
                           </button>
                         </div>
                       )}

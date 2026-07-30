@@ -195,7 +195,6 @@ export function SettingsTab({
   return (
     <div className="panel settings-panel">
       <div className="settings-panel-head">
-        <h2>{t('settings.title')}</h2>
         {saveRow('settings-save-row-top')}
       </div>
       {onOpenHelp && (
