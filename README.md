@@ -19,9 +19,9 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Auto / Manual / Pause** — auto-queue from harvest, click-to-queue, or pause downloads
 - **Library** — local inventory; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
 - **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; unmatched downloads go to `\*\Unsorted`
-- **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; per-model **Allow**; **Forget** (hide everywhere); click a policy tag to filter that skip list
+- **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; **Mark seen** / **Hide seen** / **Unseen bans** filter; per-model **Allow**; **Forget** (hide everywhere); right-click context menu; click a policy tag to filter that skip list
 - **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL
-- **Updates** — newer versions of models you already own (Queue / Ban / Dismiss)
+- **Updates** — newer versions of models you already own (Queue / Ban / Dismiss); right-click context menu; shows tags from your existing library copies
 - **Download strip** — progress, priority, retries; Early access when a model is gated
 - **Activity** — crawl and download history
 - **Status bar** — fetch, wait, and queue summary at the bottom
@@ -60,7 +60,9 @@ For models you already own, when a newer matching version appears:
 1. During Harvest, matching updates are listed (or auto-queued if **Auto-download new versions** is on).
 2. A background check also looks for updates on owned models.
 
-Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that model).
+Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that model).  
+**Right-click** a card for the context menu (Queue, Always Update, Ban, Open on Civitai).  
+Cards show **tags** from your existing library copies of that model.
 
 ---
 
@@ -95,7 +97,9 @@ Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that mod
 - **404 / Suspect** — Civitai not found; recheck and acknowledge
 - **Paused by tag** — temporary Browse exclude; **Banned by tag** — permanent Tag Folders ban
 - **Banned manual** — model ban from Library/Browse
+- **Mark seen** — move pointer left/right off a ban/pause card to mark seen (green title border). **Hide seen** checkbox removes marked cards. **Unseen bans** sidebar filter shows only unseen; newly marked items stay visible until you check Hide seen.
 - Per model: **Allow** (exception vs pause/ban tags + queue) or **Forget On** → × (hide everywhere; **Show forgotten** to review)
+- **Right-click** a card for context menu (Mark seen, Forget, Unban, Allow, Acknowledge, Open on Civitai)
 - Click a policy tag (sidebar or card) → filter models skipped for that tag. Opening Model details keeps Missing filters and scroll
 
 ---

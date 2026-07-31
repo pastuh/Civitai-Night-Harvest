@@ -149,8 +149,10 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.missingOverview')}</li>
             <li>{t('help.missingKinds')}</li>
             <li>{t('help.missingFilters')}</li>
+            <li>{t('help.missingMarkSeen')}</li>
             <li>{t('help.missingAllow')}</li>
             <li>{t('help.missingForget')}</li>
+            <li>{t('help.missingContextMenu')}</li>
           </ul>
         </section>
 

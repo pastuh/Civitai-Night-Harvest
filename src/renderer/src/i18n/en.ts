@@ -399,6 +399,10 @@ export const en = {
       'Per model — **Allow** (exception vs pause/ban tags + queue). Click a policy tag (sidebar or card) to filter models skipped for that tag',
     missingForget:
       '**Forget On** — × on cards hides the model everywhere and stops suggestions; **Show forgotten** to review; × again = Unforget',
+    missingMarkSeen:
+      '**Mark seen on** — move pointer left/right off a ban/pause card to mark seen (green title border). **Hide seen** checkbox removes marked cards. **Unseen bans** sidebar filter shows only unseen; newly marked items stay visible until you check Hide seen.',
+    missingContextMenu:
+      '**Right-click** a card → Mark seen, Forget, Unban, Allow, Acknowledge, or Open on Civitai — no need to toggle the toolbar buttons first.',
     edgeOwned: 'Green top border — already in your library',
     edgeQueued: 'Queue accent top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',

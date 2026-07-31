@@ -402,6 +402,10 @@ export const lt: Messages = {
       'Vienam modeliui — **Allow** (išimtis vs pause/ban tagai + eilė). Spauskite policy tagą (sidebar ar kortelė) — filtruojami modeliai, praleisti dėl to tago',
     missingForget:
       '**Forget On** — × ant kortelių slepia modelį visur ir nebesiūlo; **Show forgotten** peržiūrai; × vėl = Unforget',
+    missingMarkSeen:
+      '**Mark seen on** — perkelkite žymeklį horizontaliai nuo ban/pause kortelės, kad pažymėtumėte kaip matytą (žalia titulinė linija). **Hide seen** checkbox paslepia pažymėtas korteles. **Unseen bans** sidebar filtras rodo tik nematytus; ką tik pažymėti lieka matomi, kol nepažymite Hide seen.',
+    missingContextMenu:
+      '**Dešinio pelės mygtuko meniu** → Mark seen, Forget, Unban, Allow, Acknowledge, Open on Civitai — nereikia pirma įjungti toggle mygtukų.',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
     edgeQueued: 'Eilės accentas viršuje — siuntimo eilėje',
     edgeDownloading: 'Žalia juosta ant miniatiūros — aktyviai siunčiama',
