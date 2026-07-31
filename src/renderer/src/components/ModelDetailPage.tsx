@@ -17,7 +17,7 @@ import {
 import { isVersionEarlyAccess } from '../../../shared/early-access'
 import { formatCountdownTo } from '../../../shared/utils'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
-import { isUnsortedRoutingTag } from '../../../shared/tag-routing'
+import { isUnsortedRoutingTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
 import { ConfirmModal } from './ConfirmModal'
 import { FastTagAssignModal } from './FastTagAssignModal'
@@ -69,6 +69,10 @@ interface Props {
   inventory?: InventoryRecord[]
   tagRules?: TagFolderRule[]
   tagSuggestions?: string[]
+  /** Tags that permanently ban this model (settings.bannedTags) — style chips like the Library card. */
+  bannedTags?: string[]
+  /** Tags temporarily paused (settings.hiddenTags) — style chips like the Library card. */
+  pausedTags?: string[]
   confirmTagFolderMoves?: boolean
   loraFolder?: string
   checkpointFolder?: string
@@ -130,6 +134,8 @@ export function ModelDetailPage({
   inventory = [],
   tagRules = [],
   tagSuggestions = [],
+  bannedTags = [],
+  pausedTags = [],
   confirmTagFolderMoves = true,
   loraFolder = '',
   checkpointFolder = '',
@@ -156,6 +162,9 @@ export function ModelDetailPage({
   const [downloadBusyIds, setDownloadBusyIds] = useState<Set<number>>(() => new Set())
   const [previewOverrides, setPreviewOverrides] = useState<Record<number, string[]>>({})
   const [previewIndex, setPreviewIndex] = useState(0)
+  /** Original preview indices that failed to load — dropped from the carousel so you can
+      navigate freely (no auto-skip trap when a dead URL sits between two valid ones). */
+  const [brokenIndexes, setBrokenIndexes] = useState<Set<number>>(() => new Set())
   const [previewFetchBusy, setPreviewFetchBusy] = useState(false)
   const [previewSaveBusy, setPreviewSaveBusy] = useState(false)
   const [previewSaveMessage, setPreviewSaveMessage] = useState<string | null>(null)
@@ -256,6 +265,7 @@ export function ModelDetailPage({
     setVersionSort('default')
     setAllowRemote(!target.deferRemote)
     setReloadToken(0)
+    setBrokenIndexes(new Set())
   }, [target])
 
   useEffect(() => {
@@ -391,6 +401,24 @@ export function ModelDetailPage({
     if (ownedRecordForActive?.previewPath) {
       return [window.api.toMediaUrl(ownedRecordForActive.previewPath)]
     }
+    // For a browsed model, keep the preview the user actually clicked as the first
+    // entry, then append Civitai's full set — otherwise a dead first URL from the
+    // API would silently replace the visible thumbnail with "No image".
+    if (target.kind === 'browse' && (target.previewUrls?.length || target.previewUrl)) {
+      const seed = target.previewUrls?.length
+        ? target.previewUrls
+        : [target.previewUrl as string]
+      const meta = activeVersionMeta?.previewUrls?.length
+        ? activeVersionMeta.previewUrls
+        : activeVersionMeta?.previewUrl
+          ? [activeVersionMeta.previewUrl]
+          : []
+      const merged: string[] = []
+      for (const u of [...seed, ...meta]) {
+        if (u && !merged.includes(u)) merged.push(u)
+      }
+      if (merged.length) return merged
+    }
     if (activeVersionMeta?.previewUrls?.length) return activeVersionMeta.previewUrls
     if (activeVersionMeta?.previewUrl) return [activeVersionMeta.previewUrl]
     return fallbackPreviewUrls(target, libraryRecord)
@@ -405,6 +433,7 @@ export function ModelDetailPage({
 
   useEffect(() => {
     setPreviewIndex(0)
+    setBrokenIndexes(new Set())
   }, [activeVersionId, previewUrls.join('|'), previewEpoch])
 
   const formatVersionDate = (iso?: string) => {
@@ -569,8 +598,40 @@ export function ModelDetailPage({
     }
   }
 
-  const selectedPreviewUrl = previewUrls[Math.min(previewIndex, Math.max(0, previewUrls.length - 1))]
+  /** Only previews that loaded (or haven't failed yet) — broken URLs are dropped so
+      navigation steps between real images instead of getting stuck on a dead one. */
+  const validPreviewUrls = useMemo(
+    () => (brokenIndexes.size ? previewUrls.filter((_, i) => !brokenIndexes.has(i)) : previewUrls),
+    [previewUrls, brokenIndexes]
+  )
+
+  const previewCount = validPreviewUrls.length
+  const safeIndex = Math.min(previewIndex, Math.max(0, previewCount - 1))
+  const selectedPreviewUrl = validPreviewUrls[safeIndex]
   const canSavePreview = ownedSet.has(activeVersionId) && Boolean(selectedPreviewUrl)
+
+  /** A preview URL failed to load — drop it from the carousel. The next valid image
+      shifts into the current slot, so we keep showing something instead of "No image". */
+  const handlePreviewError = useCallback(() => {
+    let origIdx = -1
+    let seen = 0
+    for (let i = 0; i < previewUrls.length; i++) {
+      if (brokenIndexes.has(i)) continue
+      if (seen === safeIndex) {
+        origIdx = i
+        break
+      }
+      seen++
+    }
+    if (origIdx >= 0) {
+      setBrokenIndexes((prev) => {
+        const next = new Set(prev)
+        next.add(origIdx)
+        return next
+      })
+    }
+    setPreviewIndex((i) => Math.min(i, Math.max(0, previewCount - 2)))
+  }, [previewUrls, brokenIndexes, safeIndex, previewCount])
 
   const saveSelectedPreview = async () => {
     if (!canSavePreview || !selectedPreviewUrl || previewSaveBusy) return
@@ -804,17 +865,14 @@ export function ModelDetailPage({
               <div className="model-detail-preview-wrap">
                 <PreviewThumb
                   key={`detail-preview-${activeVersionId}-${previewEpoch}-${ownedRecordForActive?.previewPath ?? ''}`}
-                  urls={
-                    previewUrls.length
-                      ? [previewUrls[Math.min(previewIndex, previewUrls.length - 1)]]
-                      : []
-                  }
+                  urls={previewCount ? [selectedPreviewUrl as string] : []}
                   className="preview-modal-img model-detail-preview-img"
                   loading="eager"
+                  onError={handlePreviewError}
                 />
               </div>
               <div className="model-detail-preview-controls">
-                {previewUrls.length > 1 && (
+                {previewCount > 1 && (
                   <div className="model-detail-preview-nav">
                     <button
                       type="button"
@@ -829,16 +887,16 @@ export function ModelDetailPage({
                     </button>
                     <span className="muted model-detail-preview-count">
                       {t('modelDetail.previewOf', {
-                        current: previewIndex + 1,
-                        total: previewUrls.length
+                        current: safeIndex + 1,
+                        total: previewCount
                       })}
                     </span>
                     <button
                       type="button"
                       className="btn-sm"
-                      disabled={previewIndex >= previewUrls.length - 1}
+                      disabled={previewIndex >= previewCount - 1}
                       onClick={() => {
-                        setPreviewIndex((i) => Math.min(previewUrls.length - 1, i + 1))
+                        setPreviewIndex((i) => Math.min(previewCount - 1, i + 1))
                         setPreviewSaveMessage(null)
                       }}
                     >
@@ -895,24 +953,33 @@ export function ModelDetailPage({
                         folderLabel: folderLabelForTags,
                         tagRules
                       })
+                      const banned = isPermanentlyBannedModelTag(tag, bannedTags)
+                      const paused = isPausedOnlyModelTag(tag, pausedTags, bannedTags)
+                      const roleTitle =
+                        role === 'final'
+                          ? t('gallery.tagRoleFinalHint', { tag })
+                          : role === 'mapped'
+                            ? routingForTags?.trim()
+                              ? t('gallery.tagRoleMappedHint', { tag })
+                              : t('gallery.tagRoleMappedPendingHint', { tag })
+                            : fastTagMode && canFastTag
+                              ? t('modelDetail.fastTagHint', { tag })
+                              : onOpenTagFolders
+                                ? t('gallery.tagRoleUnmappedHint', { tag })
+                                : tag
+                      const policyTitle = banned
+                        ? t('gallery.tagBlockedOnCardHint', { tag })
+                        : paused
+                          ? t('gallery.tagPausedOnCardHint', { tag })
+                          : null
                       return (
                         <button
                           key={tag}
                           type="button"
-                          className={`tag-chip model-detail-tag-btn ${cardTagFolderRoleClass(role)}`}
-                          title={
-                            role === 'final'
-                              ? t('gallery.tagRoleFinalHint', { tag })
-                              : role === 'mapped'
-                                ? routingForTags?.trim()
-                                  ? t('gallery.tagRoleMappedHint', { tag })
-                                  : t('gallery.tagRoleMappedPendingHint', { tag })
-                                : fastTagMode && canFastTag
-                                  ? t('modelDetail.fastTagHint', { tag })
-                                  : onOpenTagFolders
-                                    ? t('gallery.tagRoleUnmappedHint', { tag })
-                                    : tag
-                          }
+                          className={`tag-chip model-detail-tag-btn ${cardTagFolderRoleClass(role)}${
+                            banned ? ' is-blocked-tag' : paused ? ' is-paused-tag' : ''
+                          }`}
+                          title={policyTitle ? `${policyTitle} · ${roleTitle}` : roleTitle}
                           disabled={!canFastTag && !onOpenTagFolders}
                           onClick={() => onTagClick(tag)}
                         >

@@ -5,9 +5,11 @@ interface Props {
   className?: string
   /** Virtual grids should use eager — lazy often delays thumbs until after scroll settles. */
   loading?: 'lazy' | 'eager'
+  /** Fired when the currently shown candidate fails to load (after internal fallback). */
+  onError?: () => void
 }
 
-export function PreviewThumb({ urls, className = 'gallery-thumb', loading = 'lazy' }: Props) {
+export function PreviewThumb({ urls, className = 'gallery-thumb', loading = 'lazy', onError }: Props) {
   const candidates = useMemo(() => urls.filter(Boolean), [urls])
   const [index, setIndex] = useState(0)
   const [failed, setFailed] = useState(false)
@@ -43,6 +45,7 @@ export function PreviewThumb({ urls, className = 'gallery-thumb', loading = 'laz
         } else {
           setFailed(true)
         }
+        onError?.()
       }}
     />
   )

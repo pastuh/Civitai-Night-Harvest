@@ -1356,9 +1356,7 @@ function GalleryTabInner({
 
   return (
     <div className="gallery-layout">
-      <div className="gallery-main">
-        <section className="panel gallery-panel">
-          <div className="gallery-panel-head library-panel-head">
+      <div className="gallery-panel-head library-panel-head">
           <div className="browse-results-title-row library-results-title-row">
             <input
               type="search"
@@ -1559,6 +1557,9 @@ function GalleryTabInner({
           {uiExtended && syncMessage && <p className="muted">{syncMessage}</p>}
           {message && <p>{message}</p>}
           </div>
+        <div className="gallery-body-row">
+          <div className="gallery-main">
+            <section className="panel gallery-panel">
           <div className="gallery-main-scroll">
           {!sortedInventory.length ? (
             <p className="muted">
@@ -1642,9 +1643,6 @@ function GalleryTabInner({
             value={tagSearch}
             onChange={(e) => setTagSearch(e.target.value)}
           />
-          <p className="muted sidebar-hint sidebar-hint-compact">
-            {t('gallery.sidebarHint')}
-          </p>
         </div>
 
         <div className="tag-sidebar-scroll">
@@ -2003,8 +2001,9 @@ function GalleryTabInner({
             </p>
           )}
         </div>
-      </aside>
+        </aside>
       ) : null}
+        </div>
 
       {contextMenu && (
         <ContextMenuPortal

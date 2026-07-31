@@ -2015,6 +2015,8 @@ export default function App() {
               inventory={inventory}
               tagRules={tagRules}
               tagSuggestions={tagSuggestions}
+              bannedTags={settings.bannedTags ?? []}
+              pausedTags={settings.hiddenTags ?? []}
               confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
               loraFolder={settings.loraOutputFolder}
               checkpointFolder={settings.checkpointOutputFolder}
@@ -2069,7 +2071,7 @@ export default function App() {
         ) : null}
         {!modelDetailTarget && tab === 'tags' ? (
           tagsCoveringLibrary || tagsCoveringMissing ? (
-            <div className="model-detail-overlay" role="presentation">
+            <div className="tab-cover-overlay" role="presentation">
               {tagsTab}
             </div>
           ) : (

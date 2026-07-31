@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, memo, useCallback } from 'react'
+import { useEffect, useMemo, useState, memo, useCallback, useRef } from 'react'
 import type {
   InventoryRecord,
   LibraryVersionScanProgress,
@@ -9,6 +9,7 @@ import { useT } from '../i18n/context'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
 import { ConfirmModal } from './ConfirmModal'
+import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 
 interface Props {
   pending: PendingVersion[]
@@ -63,6 +64,10 @@ export const PendingTab = memo(function PendingTab({
   const [busyVersionIds, setBusyVersionIds] = useState<Set<number>>(() => new Set())
   const [banTarget, setBanTarget] = useState<PendingVersion | null>(null)
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
+  const [contextMenu, setContextMenu] = useState<{
+    x: number; y: number; modelId: number; modelName: string; versionId: number
+  } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setBanMode(Boolean(banFunctionMode))
@@ -74,6 +79,14 @@ export const PendingTab = memo(function PendingTab({
     onBanFunctionModeChange?.(next)
   }, [banMode, onBanFunctionModeChange])
 
+  const openContextMenu = useCallback(
+    (e: React.MouseEvent, modelId: number, modelName: string, versionId: number) => {
+      e.preventDefault()
+      setContextMenu({ x: e.clientX, y: e.clientY, modelId, modelName, versionId })
+    },
+    []
+  )
+
   const ownedByModel = useMemo(() => {
     const map = new Map<number, InventoryRecord[]>()
     for (const r of inventory) {
@@ -81,6 +94,17 @@ export const PendingTab = memo(function PendingTab({
       const list = map.get(r.modelId) ?? []
       list.push(r)
       map.set(r.modelId, list)
+    }
+    return map
+  }, [inventory])
+
+  const ownedTagsByModel = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const r of inventory) {
+      if (r.modelId <= 0) continue
+      if (map.has(r.modelId)) continue
+      const tags = r.civitaiTags?.length ? r.civitaiTags : []
+      if (tags.length) map.set(r.modelId, tags)
     }
     return map
   }, [inventory])
@@ -255,10 +279,14 @@ export const PendingTab = memo(function PendingTab({
         <div className="gallery-grid status-card-grid" style={{ marginTop: 12 }}>
           {visiblePending.map((item) => {
             const busy = busyVersionIds.has(item.versionId)
+            const tags = ownedTagsByModel.get(item.modelId)
             return (
               <StatusModelCard
                 key={item.versionId}
                 title={item.modelName}
+                onContextMenu={(e) =>
+                  openContextMenu(e, item.modelId, item.modelName, item.versionId)
+                }
                 meta={
                   <>
                     <div className="status-card-version-line">
@@ -266,6 +294,13 @@ export const PendingTab = memo(function PendingTab({
                       <span className="status-card-version-base"> · {item.baseModel}</span>
                     </div>
                     <div className="status-card-detail">{versionsLabel(item)}</div>
+                    {tags && tags.length > 0 ? (
+                      <div className="tag-row library-card-tags" title={tags.join(', ')}>
+                        {tags.slice(0, 6).map((tag) => (
+                          <span key={tag} className="tag-chip">{tag}</span>
+                        ))}
+                      </div>
+                    ) : null}
                   </>
                 }
                 previewUrl={item.previewUrl}
@@ -360,6 +395,55 @@ export const PendingTab = memo(function PendingTab({
           onConfirm={() => void confirmBan()}
           onCancel={() => setBanTarget(null)}
         />
+      )}
+      {contextMenu && (
+        <ContextMenuPortal
+          open
+          x={contextMenu.x}
+          y={contextMenu.y}
+          menuRef={contextMenuRef}
+          onClose={() => setContextMenu(null)}
+        >
+          <div className="context-menu-title">{contextMenu.modelName}</div>
+          {contextMenu.modelId > 0 && (
+            <button
+              {...contextMenuButtonProps(() => {
+                const item = pending.find((p) => p.versionId === contextMenu.versionId)
+                const domain = item ? 'red' : 'red'
+                void window.api.openExternal(
+                  getModelPageUrl(domain, contextMenu.modelId, contextMenu.versionId)
+                )
+              })}
+            >
+              {t('gallery.openOnCivitaiMenu')}
+            </button>
+          )}
+          <button
+            {...contextMenuButtonProps(() => {
+              const item = pending.find((p) => p.versionId === contextMenu.versionId)
+              if (item) void approve(item)
+            })}
+          >
+            {t('pending.queueDownload')}
+          </button>
+          <button
+            {...contextMenuButtonProps(() => {
+              const item = pending.find((p) => p.versionId === contextMenu.versionId)
+              if (item) void alwaysUpdate(item)
+            })}
+          >
+            {t('pending.alwaysUpdate')}
+          </button>
+          <button
+            {...contextMenuButtonProps(() => {
+              const item = pending.find((p) => p.versionId === contextMenu.versionId)
+              if (item) setBanTarget(item)
+            })}
+            className="context-menu-danger"
+          >
+            {t('pending.ban')}
+          </button>
+        </ContextMenuPortal>
       )}
     </div>
   )

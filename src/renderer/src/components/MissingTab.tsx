@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type {
   ExclusionKind,
   ExclusionReviewItem,
@@ -28,6 +28,7 @@ import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import type { ModelDetailTarget } from './ModelDetailPage'
 import { formatCompactCount } from '../../../shared/civitai-meta'
+import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 
 type KindFilter = 'all' | ExclusionKind
 type SortMode = MissingSort
@@ -175,6 +176,15 @@ export const MissingTab = memo(function MissingTab({
   const armedSeenIdRef = useRef<number | null>(null)
   const armedSeenAtRef = useRef(0)
   const armedSeenPosRef = useRef({ x: 0, y: 0 })
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  /** Model IDs that were unseen when the user entered the 'unseen' sidebar filter —
+   *  so they stay visible after being marked seen (until hideSeen is checked). */
+  const unseenSnapshotRef = useRef<Set<number>>(new Set())
+  const [contextMenu, setContextMenu] = useState<{
+    x: number; y: number; item: ExclusionReviewItem
+  } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   // Refresh only when the tab becomes active — not whenever onRefresh identity changes
   // (inline App callbacks would otherwise cause a fetch→setState→re-render loop).
@@ -413,6 +423,15 @@ export const MissingTab = memo(function MissingTab({
     if (next.type !== 'byDate' && next.type !== 'byDateRange') {
       setDateAnchor(null)
     }
+    if (next.type === 'unseen') {
+      const snapshot = new Set<number>()
+      for (const m of itemsRef.current) {
+        if (canMarkExclusionSeen(m.kind) && !banSeenByModelIdRef.current[m.modelId]) {
+          snapshot.add(m.modelId)
+        }
+      }
+      unseenSnapshotRef.current = snapshot
+    }
   }, [])
 
   const applyKindFilter = useCallback((next: KindFilter) => {
@@ -464,6 +483,14 @@ export const MissingTab = memo(function MissingTab({
     [applySideFilter, dateAnchor]
   )
 
+  const openContextMenu = useCallback(
+    (e: MouseEvent, item: ExclusionReviewItem) => {
+      e.preventDefault()
+      setContextMenu({ x: e.clientX, y: e.clientY, item })
+    },
+    []
+  )
+
   const sideFilterActive = useCallback(
     (f: SideFilter) => {
       if (f.type !== sideFilter.type) return false
@@ -503,7 +530,10 @@ export const MissingTab = memo(function MissingTab({
       // Sidebar exclusive modes win over Hide banned / kind toolbar.
       if (sideFilter.type === 'unseen') {
         if (!canMarkExclusionSeen(m.kind)) return false
-        if (banSeenByModelId[m.modelId]) return false
+        if (banSeenByModelId[m.modelId]) {
+          if (hideSeen) return false
+          if (!unseenSnapshotRef.current.has(m.modelId)) return false
+        }
       } else if (sideFilter.type === 'sessionBans') {
         if (!isSessionBan(m)) return false
       } else if (sideFilter.type === 'sessionPause') {
@@ -1064,6 +1094,7 @@ export const MissingTab = memo(function MissingTab({
                     ? (e) => tryMarkBanSeenOnSideLeave(item.modelId, e)
                     : undefined
                 }
+                onContextMenu={(e) => openContextMenu(e, item)}
                 title={item.modelName}
                 previewUrl={previewSrc(item.previewUrl)}
                 onOpen={onOpenModelDetail ? () => openDetails(item) : undefined}
@@ -1286,18 +1317,19 @@ export const MissingTab = memo(function MissingTab({
 
   return (
     <div className="panel status-tab-panel missing-tab-panel">
+      {toolbar}
       <div className="gallery-layout missing-gallery-layout">
-        <div className="gallery-main">
-          <div className="gallery-panel">
-            {toolbar}
-            <div className="gallery-main-scroll missing-main-scroll">
-              {cardGrid}
+        <div className="gallery-body-row">
+          <div className="gallery-main">
+            <div className="gallery-panel">
+              <div className="gallery-main-scroll missing-main-scroll">
+                {cardGrid}
+              </div>
             </div>
           </div>
-        </div>
 
-        {sidebarExpanded ? (
-        <aside className="tag-sidebar">
+          {sidebarExpanded ? (
+          <aside className="tag-sidebar">
           <div className="tag-sidebar-head">
             <div className="tag-sidebar-head-row">
               <h3>
@@ -1518,6 +1550,7 @@ export const MissingTab = memo(function MissingTab({
           </div>
         </aside>
         ) : null}
+        </div>
       </div>
     </div>
   )

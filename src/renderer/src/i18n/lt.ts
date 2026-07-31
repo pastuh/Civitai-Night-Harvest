@@ -917,7 +917,7 @@ export const lt: Messages = {
     fastTagHint: 'Fast tag — priskirti aplanką tagui „{tag}“',
     tags: 'Tagai',
     tagLegend:
-      'Rėmeliai: accent solid = pagrindinis kelias · solid = jau mapped · brūkšninis = laukia priskyrimo',
+      'Rėmeliai: solid accent = pagrindinis kelias · dashed accent = mapped aplanko taisyklė · dotted pilkas = laukia priskyrimo',
     savePreview: 'Išsaugoti preview',
     savingPreview: 'Saugoma…',
     savePreviewHint:

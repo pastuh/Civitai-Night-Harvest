@@ -908,7 +908,7 @@ export const en = {
     fastTagHint: 'Fast tag — assign folder for “{tag}”',
     tags: 'Tags',
     tagLegend:
-      'Borders: solid accent = final route · solid = mapped folder rule · dashed = waiting for assignment',
+      'Borders: solid accent = final route · dashed accent = mapped folder rule · dotted gray = not assigned',
     savePreview: 'Save preview',
     savingPreview: 'Saving…',
     savePreviewHint:

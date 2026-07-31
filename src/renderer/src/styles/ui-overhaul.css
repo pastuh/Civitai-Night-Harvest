@@ -212,13 +212,13 @@
   /* Browse palette kept coherent */
   --browse-cat-loaded: #9aa3ba;
   --browse-cat-owned: #00d7ff;
-  /* Requested: New=orange, Awaiting=banned color, Banned=violet */
+  /* Requested: New=orange, Awaiting=amber (standby), Banned=forbidden red */
   --browse-cat-new: #ff6a1a;
-  --browse-cat-awaiting: #ff4d6d;
+  --browse-cat-awaiting: #ffc24d;
   --browse-cat-blocked: #b38cff;
-  /* Slightly darker violet than `--browse-cat-blocked` so the download strip and gallery cards
-     can distinguish temporary tag-pause ("blocked") from permanent exclusion ("banned"). */
-  --browse-cat-banned: #7c3aed;
+  /* Bright "forbidden" red — pulled far from the amber Awaiting and the violet
+     Updates/Blocked cluster so permanent exclusion ("banned") reads distinctly. */
+  --browse-cat-banned: #ff3b3b;
   --strip-interrupted: #ff6bb2;
   --strip-queued: #c8cdd8;
 
@@ -3288,6 +3288,13 @@ button.missing-tag-chip.is-clickable:hover {
   padding-bottom: calc(var(--content-pad, 20px) + 40px);
 }
 
+/* Sticky sidebars (Library / Missing / etc.) stop 40px short of the viewport bottom so the
+   last tag/blocked-tag chip is not hidden behind the fixed global status bar. Matches the
+   existing `.scroll-to-top` bottom offset pattern. */
+.app.has-global-status .tag-sidebar {
+  max-height: calc(100vh - 136px);
+}
+
 /* ── Tag folders tab ── */
 .tags-tab-head {
   display: flex;
@@ -4076,16 +4083,16 @@ button.missing-tag-chip.is-clickable:hover {
 }
 
 .tags-mass-mode-off {
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: var(--accent-contrast, #020d18);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--surface2);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: color-mix(in srgb, var(--accent) 65%, var(--text));
+  box-shadow: none;
 }
 
 .tags-mass-mode-off:hover:not(:disabled) {
-  background: var(--accent-hover, var(--accent));
-  border-color: var(--accent-hover, var(--accent));
-  color: var(--accent-contrast, #020d18);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .tags-mass-mode-on {

@@ -625,7 +625,7 @@ th {
   overflow-anchor: none;
 }
 
-.content.content-stack > :not(.tab-keepalive-offscreen):not(.model-detail-overlay):not(.tab-panel-under-overlay) {
+.content.content-stack > :not(.tab-keepalive-offscreen):not(.model-detail-overlay):not(.tab-cover-overlay):not(.tab-panel-under-overlay) {
   /* Natural document height; page scroll lives on .content */
   flex: 0 0 auto;
   min-height: 0;
@@ -642,6 +642,17 @@ th {
 }
 
 .model-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* Tag-folders / tab overlay — covers content area only, header stays visible. */
+.tab-cover-overlay {
   position: absolute;
   inset: 0;
   z-index: 40;
@@ -717,12 +728,24 @@ th {
   flex: 0 0 auto;
   min-height: 0;
   display: flex;
-  flex-direction: row;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .gallery-layout {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-height: 0;
+  align-items: stretch;
+  width: 100%;
+}
+
+/* Header spans full width; the sidebar sits beside the content, below the header line. */
+.gallery-body-row {
+  display: flex;
+  flex-direction: row;
   gap: 16px;
   flex: 0 0 auto;
   min-height: 0;
@@ -3232,13 +3255,14 @@ code {
 
 .browse-ban-toggle-off {
   background: var(--surface2);
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
   color: var(--muted);
 }
 
 .browse-ban-toggle-off:hover:not(:disabled) {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 25%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface);
 }
 
 .browse-ban-toggle-on {

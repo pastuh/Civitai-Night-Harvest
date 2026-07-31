@@ -887,13 +887,15 @@ export function WatchRulesTab({
             ) : (
               <div className="skipped-tags-bar-chips">
                 {(settings.bannedTags ?? []).map((tag) => (
-                  <span
+                  <button
                     key={tag}
+                    type="button"
                     className="tag-chip is-blocked-tag"
                     title={t('browse.bannedTagsHint')}
+                    onClick={() => onOpenTagFolders?.(tag)}
                   >
                     {tag}
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
