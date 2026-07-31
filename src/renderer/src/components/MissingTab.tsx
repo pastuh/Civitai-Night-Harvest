@@ -1552,6 +1552,81 @@ export const MissingTab = memo(function MissingTab({
         ) : null}
         </div>
       </div>
+      {contextMenu && (
+        <ContextMenuPortal
+          open
+          x={contextMenu.x}
+          y={contextMenu.y}
+          menuRef={contextMenuRef}
+          onClose={() => setContextMenu(null)}
+        >
+          <div className="context-menu-title">{contextMenu.item.modelName}</div>
+          {contextMenu.item.pageUrl && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void window.api.openExternal(contextMenu.item.pageUrl!)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.openCivitai')}
+            </button>
+          )}
+          {canMarkExclusionSeen(contextMenu.item.kind) && (
+            <button
+              {...contextMenuButtonProps(() => {
+                queueBanSeen(contextMenu.item.modelId)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.markSeenModeOn')}
+            </button>
+          )}
+          {contextMenu.item.kind !== 'forgotten' && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void forget(contextMenu.item)
+              }, () => setContextMenu(null))}
+              className="context-menu-danger"
+            >
+              {t('missingTab.forget')}
+            </button>
+          )}
+          {contextMenu.item.kind === 'forgotten' && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void unban(contextMenu.item.modelId)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.unforgetHint')}
+            </button>
+          )}
+          {contextMenu.item.kind === 'bannedManual' && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void unban(contextMenu.item.modelId)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.unban')}
+            </button>
+          )}
+          {isTagSkipKind(contextMenu.item.kind) && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void allowTagSkip(contextMenu.item.modelId)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.allow')}
+            </button>
+          )}
+          {contextMenu.item.kind === 'missing' && !contextMenu.item.acknowledged && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void acknowledge(contextMenu.item)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.confirm')}
+            </button>
+          )}
+        </ContextMenuPortal>
+      )}
     </div>
   )
 })

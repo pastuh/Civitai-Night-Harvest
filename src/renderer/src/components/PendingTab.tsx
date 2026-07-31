@@ -413,7 +413,7 @@ export const PendingTab = memo(function PendingTab({
                 void window.api.openExternal(
                   getModelPageUrl(domain, contextMenu.modelId, contextMenu.versionId)
                 )
-              })}
+              }, () => setContextMenu(null))}
             >
               {t('gallery.openOnCivitaiMenu')}
             </button>
@@ -422,7 +422,7 @@ export const PendingTab = memo(function PendingTab({
             {...contextMenuButtonProps(() => {
               const item = pending.find((p) => p.versionId === contextMenu.versionId)
               if (item) void approve(item)
-            })}
+            }, () => setContextMenu(null))}
           >
             {t('pending.queueDownload')}
           </button>
@@ -430,7 +430,7 @@ export const PendingTab = memo(function PendingTab({
             {...contextMenuButtonProps(() => {
               const item = pending.find((p) => p.versionId === contextMenu.versionId)
               if (item) void alwaysUpdate(item)
-            })}
+            }, () => setContextMenu(null))}
           >
             {t('pending.alwaysUpdate')}
           </button>
@@ -438,7 +438,7 @@ export const PendingTab = memo(function PendingTab({
             {...contextMenuButtonProps(() => {
               const item = pending.find((p) => p.versionId === contextMenu.versionId)
               if (item) setBanTarget(item)
-            })}
+            }, () => setContextMenu(null))}
             className="context-menu-danger"
           >
             {t('pending.ban')}

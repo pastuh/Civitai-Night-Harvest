@@ -212,8 +212,8 @@
   /* Browse palette kept coherent */
   --browse-cat-loaded: #9aa3ba;
   --browse-cat-owned: #00d7ff;
-  /* Requested: New=orange, Awaiting=amber (standby), Banned=forbidden red */
-  --browse-cat-new: #ff6a1a;
+  /* Requested: New=green (distinct from cyan Owned and red Banned), Awaiting=amber (standby), Banned=forbidden red */
+  --browse-cat-new: #2fa856;
   --browse-cat-awaiting: #ffc24d;
   --browse-cat-blocked: #b38cff;
   /* Bright "forbidden" red — pulled far from the amber Awaiting and the violet
