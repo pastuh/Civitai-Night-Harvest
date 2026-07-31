@@ -87,10 +87,11 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   if (mini.checkPermission && endsAt) {
     return { isEarlyAccess: true, endsAt }
   }
-  // Buzz / paid resource gate — still awaiting access even when availability is not "EarlyAccess".
-  if (mini.additionalResourceCharge) {
-    return { isEarlyAccess: true, endsAt: endsAt }
-  }
+  // Note: `additionalResourceCharge` alone is NOT treated as early access — it only marks an
+  // extra Buzz cost on top of the regular download, not an access gate. A model with that flag
+  // set but otherwise public (no EarlyAccess availability and no unlock timestamp) should still
+  // be tried as a normal download. If the file truly needs payment, the 401/403 from the
+  // download attempt is the reliable signal — refineDeferredFailure upgrades the row then.
   return { isEarlyAccess: false }
 }
 
@@ -124,12 +125,16 @@ export async function refineDeferredFailure(
   try {
     const mini = await client.getVersionMini(versionId)
     const ea = earlyAccessFromMini(mini)
-    if (ea.isEarlyAccess || mini.additionalResourceCharge) {
+    // Only upgrade to early_access when the API actually reports EA gating (availability or
+    // endsAt). `additionalResourceCharge` on its own is just a Buzz-cost flag and does not imply
+    // the file is locked — keeping auth/forbidden classification surfaces the real 401/403 reason
+    // and lets the normal retry caps apply instead of sticking the row in Awaiting access forever.
+    if (ea.isEarlyAccess) {
       return {
         defer: true,
         kind: 'early_access',
-        reason: formatEarlyAccessReason(ea.endsAt ?? mini.earlyAccessEndsAt),
-        earlyAccessEndsAt: ea.endsAt ?? mini.earlyAccessEndsAt ?? undefined
+        reason: formatEarlyAccessReason(ea.endsAt),
+        earlyAccessEndsAt: ea.endsAt
       }
     }
   } catch {
