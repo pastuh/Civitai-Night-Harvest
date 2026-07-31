@@ -3,6 +3,7 @@ import type { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type { CivitaiDomain, MissingModel } from '../shared/types'
 import { MAX_MISSING_CONFIRM_HITS } from '../shared/types'
 import { getModelPageUrl } from '../shared/utils'
+import { isCloudflareOrRateLimitError, sleep } from '../shared/network-retry'
 import * as inventory from './inventory'
 import { sendToRenderer } from './window-notify'
 
@@ -86,14 +87,29 @@ export async function recheckMissingModels(
   pool: CivitaiClientPool,
   getWindow: () => BrowserWindow | null,
   opts?: { onlySuspect?: boolean }
-): Promise<{ checked: number; recovered: number; confirmed: number; items: MissingModel[] }> {
+): Promise<{
+  checked: number
+  recovered: number
+  confirmed: number
+  items: MissingModel[]
+  throttled?: boolean
+}> {
   const items = inventory.getAllMissingModels().filter((m) =>
     opts?.onlySuspect ? m.status === 'suspect' : true
   )
+
   let recovered = 0
   let confirmed = 0
+  let checked = 0
+  // Shared cancel flag — set when Civitai returns 429/Cloudflare so workers stop firing more calls
+  // and we surface a partial result instead of escalating a rate-limit storm.
+  let throttled = false
+  const CONCURRENCY = 4
+  const BREATH_MS = 250
 
-  for (const item of items) {
+  let cursor = 0
+  const processItem = async (item: MissingModel): Promise<void> => {
+    if (throttled) return
     const domains: CivitaiDomain[] = [
       item.sourceDomain,
       item.sourceDomain === 'com' ? 'red' : 'com'
@@ -101,18 +117,26 @@ export async function recheckMissingModels(
     let found = false
     let lastError = 'Civitai API 404'
     for (const domain of domains) {
+      if (throttled) break
       try {
         found = await modelExistsOnDomain(pool, domain, item.modelId, item.versionId)
         if (found) break
       } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err)
+        const msg = err instanceof Error ? err.message : String(err)
+        if (isCloudflareOrRateLimitError(msg)) {
+          throttled = true
+          break
+        }
+        lastError = msg
       }
     }
+    if (throttled) return
 
+    checked++
     if (found) {
       inventory.removeMissingModel(item.modelId)
       recovered++
-      continue
+      return
     }
 
     const updated = inventory.recordMissingModelHit({
@@ -128,14 +152,26 @@ export async function recheckMissingModels(
       error: lastError
     })
     if (updated?.status === 'unavailable') confirmed++
+
+    // Polite spacing between item starts — Civitai API tolerates modest steady load better than a tight burst.
+    await sleep(BREATH_MS)
   }
+
+  const workers = Array.from({ length: Math.min(CONCURRENCY, items.length) }, async () => {
+    while (!throttled && cursor < items.length) {
+      const i = cursor++
+      await processItem(items[i])
+    }
+  })
+  await Promise.all(workers)
 
   emitMissingList(getWindow)
   return {
-    checked: items.length,
+    checked,
     recovered,
     confirmed,
-    items: inventory.getAllMissingModels()
+    items: inventory.getAllMissingModels(),
+    throttled: throttled || undefined
   }
 }
 

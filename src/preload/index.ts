@@ -20,7 +20,6 @@ import type {
   WatchRuleSearchOptions,
   ActivityEntry,
   AppStatus,
-  DownloadProgress,
   PendingVersion,
   DeferredDownload,
   IncompleteModel,
@@ -324,6 +323,7 @@ const api = {
     recovered: number
     confirmed: number
     items: MissingModel[]
+    throttled?: boolean
   }> => ipcRenderer.invoke('missing:recheck', opts),
   dismissMissing: (modelId: number): Promise<MissingModel[]> =>
     ipcRenderer.invoke('missing:dismiss', modelId),
@@ -334,11 +334,9 @@ const api = {
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showInFolder', filePath),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url),
 
-  onDownloadProgress: (cb: (p: DownloadProgress) => void) => {
-    const handler = (_: unknown, p: DownloadProgress) => cb(p)
-    ipcRenderer.on('download:progress', handler)
-    return () => ipcRenderer.removeListener('download:progress', handler)
-  },
+  // Note: per-chunk download progress is broadcast via `download:queue` (throttled).
+  // There is intentionally no `onDownloadProgress`/`download:progress` channel — keep it that way
+  // to avoid reviving a dead contract that the main process never emits.
   onDownloadQueue: (cb: (state: DownloadQueueState) => void) => {
     const handler = (_: unknown, state: DownloadQueueState) => cb(state)
     ipcRenderer.on('download:queue', handler)

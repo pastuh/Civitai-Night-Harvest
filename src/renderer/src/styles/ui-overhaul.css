@@ -216,7 +216,9 @@
   --browse-cat-new: #ff6a1a;
   --browse-cat-awaiting: #ff4d6d;
   --browse-cat-blocked: #b38cff;
-  --browse-cat-banned: #b38cff;
+  /* Slightly darker violet than `--browse-cat-blocked` so the download strip and gallery cards
+     can distinguish temporary tag-pause ("blocked") from permanent exclusion ("banned"). */
+  --browse-cat-banned: #7c3aed;
   --strip-interrupted: #ff6bb2;
   --strip-queued: #c8cdd8;
 

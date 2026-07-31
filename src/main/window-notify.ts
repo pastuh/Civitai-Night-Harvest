@@ -4,6 +4,14 @@ let rendererReady = false
 
 const deferredMessages: { channel: string; data?: unknown }[] = []
 
+/**
+ * Hard cap on queued messages while the renderer is unloaded (crash loop, hidden tray, slow boot).
+ * Without this, high-frequency download/crawl/activity progress could grow the buffer without bound
+ * and OOM the main process. When we hit the cap we drop the oldest message — most useful recent
+ * state (last activity row, latest queue snapshot) is what the renderer wants on reconnect anyway.
+ */
+const MAX_DEFERRED_MESSAGES = 500
+
 /** Renderer finished first paint — safe to push high-frequency IPC (activity, sync progress). */
 export function setRendererReady(ready: boolean): void {
   rendererReady = ready
@@ -20,7 +28,6 @@ export function isRendererReady(): boolean {
 const DEFER_UNTIL_READY = new Set([
   'activity:entry',
   'library:hashProgress',
-  'download:progress',
   'crawl:page',
   'crawl:browseReset'
 ])
@@ -56,6 +63,11 @@ export function sendToRenderer(
 ): void {
   getWindowRef = getWindow
   if (!rendererReady && DEFER_UNTIL_READY.has(channel)) {
+    // Cap queue: when full, drop oldest first — preserves the most recent state for the renderer
+    // to pick up when it reconnects, instead of growing the buffer indefinitely.
+    if (deferredMessages.length >= MAX_DEFERRED_MESSAGES) {
+      deferredMessages.shift()
+    }
     deferredMessages.push({ channel, data })
     return
   }

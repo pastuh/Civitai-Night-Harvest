@@ -325,19 +325,31 @@ export class DownloadQueue {
     return this.items.some((i) => i.status === 'queued' || i.status === 'downloading')
   }
 
-  waitUntilIdle(pollMs = 500, maxMs = 24 * 60 * 60 * 1000): Promise<void> {
+  waitUntilIdle(pollMs = 500, maxMs = 24 * 60 * 60 * 1000, signal?: AbortSignal): Promise<void> {
+    // Already idle — resolve immediately.
     if (!this.isBusy()) return Promise.resolve()
-    return new Promise((resolve, reject) => {
+    // Already aborted — caller doesn't care; resolve so the awaiting code can hit its own stop flag.
+    if (signal?.aborted) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
       const start = Date.now()
+      let settled = false
+      const finish = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        clearInterval(timer)
+        signal?.removeEventListener('abort', onAbort)
+        fn()
+      }
       const timer = setInterval(() => {
         if (!this.isBusy()) {
-          clearInterval(timer)
-          resolve()
+          finish(() => resolve())
         } else if (Date.now() - start > maxMs) {
-          clearInterval(timer)
-          reject(new Error('Download queue idle timeout'))
+          finish(() => reject(new Error('Download queue idle timeout')))
         }
       }, pollMs)
+      const onAbort = () => finish(() => resolve())
+      // Fire between polls — without this we'd wait up to `pollMs` after abort before noticing.
+      signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
 
@@ -2007,5 +2019,29 @@ export class DownloadQueue {
     queueId?: string
   ): Promise<DownloadResult> {
     return this.downloadService.downloadModel(request, onProgress, queueId)
+  }
+
+  /**
+   * Stop all timers owned by this queue. Called once on app shutdown to avoid leaks across
+   * reload sessions and to defuse the auto-retry interval that would otherwise fire forever.
+   * Idempotent.
+   */
+  dispose(): void {
+    if (this.retryIntervalId) {
+      clearInterval(this.retryIntervalId)
+      this.retryIntervalId = null
+    }
+    if (this.quickRetryTimer) {
+      clearTimeout(this.quickRetryTimer)
+      this.quickRetryTimer = null
+    }
+    if (this.progressBroadcastTimer) {
+      clearTimeout(this.progressBroadcastTimer)
+      this.progressBroadcastTimer = null
+    }
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
   }
 }

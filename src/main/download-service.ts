@@ -734,7 +734,10 @@ export class DownloadService {
         connectionsUsed
       }
     } catch (err) {
-      cleanupPartialDownload([modelPath, previewPath, swarmPath])
+      // Include `${modelPath}.tmp` for defense-in-depth: downloadMultipart already unlinks its
+      // .tmp in a failure finally, but an orphan left by a prior interrupted attempt is also
+      // cleaned here. Preview/swarm paths are written via different APIs (no .tmp shim).
+      cleanupPartialDownload([modelPath, `${modelPath}.tmp`, previewPath, swarmPath])
 
       const aborted =
         (err instanceof Error && err.name === 'AbortError') ||

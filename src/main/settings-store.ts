@@ -132,6 +132,16 @@ export function getSettings(): AppSettings {
   if (!raw.downloadStreams || raw.downloadStreams < 1) {
     raw.downloadStreams = 16
   }
+  // downloadConcurrency has a hard upper cap. Each task fires several Civitai API calls
+  // (getModel/getVersionMini) plus 1-N byte-stream connections; values much above 4 reliably
+  // trigger 429s from Civitai. Optimization presets only go up to 4 anyway, so 6 leaves a small
+  // headroom for power users without inviting rate-limit storms.
+  const MAX_DOWNLOAD_CONCURRENCY = 6
+  if (!raw.downloadConcurrency || raw.downloadConcurrency < 1) {
+    raw.downloadConcurrency = 2
+  } else if (raw.downloadConcurrency > MAX_DOWNLOAD_CONCURRENCY) {
+    raw.downloadConcurrency = MAX_DOWNLOAD_CONCURRENCY
+  }
   if (!Array.isArray(raw.hiddenTags)) {
     raw.hiddenTags = []
   } else {

@@ -12,6 +12,14 @@ const MAX_STREAMS = 32
 /** Cap progress callbacks so UI/IPC stays light during fast single-stream transfers. */
 const PROGRESS_REPORT_MS = 250
 
+/**
+ * Multipart-specific failures (server returned a non-matching range length, short read, or
+ * rejected the range request). These are safe to retry with fewer streams — the server may
+ * throttle or cap concurrent range connections, so dropping from N to 4 streams often succeeds
+ * where N failed. Distinct from network errors (handled by isRetryableNetworkError).
+ */
+const MULTIPART_FAILURE_RE = /\b(short read|multipart incomplete|range download failed)\b/i
+
 const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -195,6 +203,7 @@ async function downloadMultipart(
     }
   }
 
+  let succeeded = false
   try {
     const tasks: Promise<void>[] = []
     for (let i = 0; i < streams; i++) {
@@ -202,8 +211,14 @@ async function downloadMultipart(
       if (start >= total) break
       const end = Math.min(total - 1, start + partSize - 1)
       const partIndex = i
+      const expectedLen = end - start + 1
       tasks.push(
         downloadRange(url, headers, start, end, signal).then((buf) => {
+          if (buf.length !== expectedLen) {
+            throw new Error(
+              `Range ${start}-${end} short read: got ${buf.length} of ${expectedLen} bytes`
+            )
+          }
           writeSync(fd, buf, 0, buf.length, start)
           partDone[partIndex] = buf.length
           report()
@@ -211,9 +226,23 @@ async function downloadMultipart(
       )
     }
     await Promise.all(tasks)
+    const received = partDone.reduce((sum, n) => sum + n, 0)
+    if (received !== total) {
+      throw new Error(`Multipart incomplete: ${received} of ${total} bytes`)
+    }
     onProgress?.(total, total)
+    succeeded = true
   } finally {
     await close(fd)
+    if (!succeeded) {
+      // Abort/error path: drop the partial .tmp file so it cannot be mistaken for a finished download
+      // or silently renamed later — caller (cleanupPartialDownload) only knows the final paths.
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   if (existsSync(destPath)) unlinkSync(destPath)
@@ -370,7 +399,12 @@ async function downloadToFileOnce(
         break
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        if (streams === 1 || !isRetryableNetworkError(msg)) break
+        if (streams === 1) break
+        // Network errors AND multipart-specific failures (short read, rejected range) both warrant
+        // a retry with fewer streams — the server may cap concurrent range connections. Without
+        // this, a single bad range response would skip the 4-stream attempt and fall straight to
+        // single-stream (much slower for large files).
+        if (!isRetryableNetworkError(msg) && !MULTIPART_FAILURE_RE.test(msg)) break
         await sleep(1500)
       }
     }

@@ -1661,10 +1661,11 @@ export function initIpc(): void {
 
   ipcMain.handle('missing:recheck', async (_e, opts?: { onlySuspect?: boolean }) => {
     const result = await recheckMissingModels(clientPool, () => mainWindow, opts)
-    if (result.recovered > 0 || result.confirmed > 0) {
+    if (result.recovered > 0 || result.confirmed > 0 || result.throttled) {
+      const tail = result.throttled ? ' — stopped early (Civitai rate limit)' : ''
       scheduler.log(
         'info',
-        `Missing recheck: ${result.checked} checked, ${result.recovered} recovered, ${result.confirmed} unavailable`,
+        `Missing recheck: ${result.checked} checked, ${result.recovered} recovered, ${result.confirmed} unavailable${tail}`,
         undefined,
         { source: 'system' }
       )
@@ -1780,6 +1781,9 @@ export function startScheduler(): void {
 
 export function stopScheduler(): void {
   scheduler?.stop()
+  // Stop the queue's own timers (60s auto-retry, 12s quick-retry, persist/progress) so they
+  // do not keep firing in the background after the scheduler has already stopped.
+  downloadQueue?.dispose()
 }
 
 export function runScanNow(): void {
@@ -1792,4 +1796,22 @@ export function recoverFromNetworkError(): void {
 
 export function flushDownloadQueuePersist(): void {
   downloadQueue?.flushPersist()
+}
+
+/**
+ * Sink for non-network unhandled errors/rejections. Network faults are already handled by
+ * `recoverFromNetworkError`; we want genuine logic bugs to surface in the Activity log
+ * (and the renderer's system stream) instead of vanishing into stderr.
+ *
+ * Safe to call before the scheduler is initialized — it just no-ops in that case.
+ */
+export function logUnhandledError(label: 'uncaughtException' | 'unhandledRejection', err: unknown): void {
+  const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  try {
+    scheduler?.log('error', `Unhandled ${label}: ${msg}`, undefined, { source: 'system' })
+  } catch {
+    /* scheduler not ready or logging failed — fall through to stderr */
+  }
+  // Always also stderr so a crash log / electron dev console still sees the full stack.
+  console.error(`[${label}]`, err)
 }

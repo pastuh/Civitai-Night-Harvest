@@ -58,6 +58,11 @@ export class ScanScheduler {
   private crawler = new RuleCrawler()
   private continuousCrawlPromise: Promise<void> | null = null
   private continuousCrawlStopRequested = false
+  /**
+   * Aborted by `stopContinuousCrawl` so any in-flight `waitUntilIdle` polling stops immediately
+   * instead of running its 500ms tick for up to 6h after the user requested a stop.
+   */
+  private continuousCrawlAbort: AbortController | null = null
   private browseEnums: WatchRuleTestResult['enums'] | null = null
   private scanPageCounts = new Map<string, number>()
   /** Per-rule live browse gallery (only models matching rule keywords). */
@@ -858,10 +863,10 @@ export class ScanScheduler {
       { source: 'library' }
     )
     try {
-      const result = await recheckMissingModels(this.pool, this.getWindow)
+      const result = await recheckMissingModels(this.pool, this.window)
       this.log(
         'success',
-        `Missing check done — ${result.checked} checked, ${result.recovered} recovered, ${result.confirmed} unavailable`,
+        `Missing check done — ${result.checked} checked, ${result.recovered} recovered, ${result.confirmed} unavailable${result.throttled ? ' — stopped early (Civitai rate limit)' : ''}`,
         undefined,
         { source: 'library' }
       )
@@ -1046,7 +1051,7 @@ export class ScanScheduler {
       if (!reach.ok) {
         this.log('error', reach.message, undefined, { source: 'system' })
         this.downloadQueue.pause()
-        sendToRenderer(this.getWindow, 'app:storageError', reach.message)
+        sendToRenderer(this.window, 'app:storageError', reach.message)
       } else {
         // Full folder walk is Settings → Sync library from disk only (not every app launch).
         this.downloadQueue.syncWithInventory()
@@ -1271,6 +1276,18 @@ export class ScanScheduler {
           this.downloadQueue.getItems().some((i) => i.status === 'downloading') ? 'downloading' : 'idle'
         )
       } else if (shouldRunContinuousCrawl()) {
+        // When Harvest turns back on after being off, the catalog session may still be marked
+        // "done" from the previous session — without this reset the crawler would skip the
+        // full backfill and drop straight to peek-only, so toggling Harvest off → on would
+        // not re-fetch anything. Mirrors the manual-scan path below.
+        if (nightTurnedOn) {
+          resetCatalogSessionForAppStart()
+          this.crawler.resetPaginationHints()
+          this.clearCrawlBrowseAccum()
+          this.emit('crawl:browseReset')
+          this.cancelPendingFetchingStatus()
+          this.emitCrawlProgress(null)
+        }
         this.ensureContinuousCrawl()
         // Full scan only when Harvest turns on or domain changes — not on Pause toggle.
         if (nightTurnedOn || domainChanged) {
@@ -1435,6 +1452,12 @@ export class ScanScheduler {
       clearTimeout(this.libraryVersionScanTimer)
       this.libraryVersionScanTimer = null
     }
+    if (this.activityEmitTimer) {
+      clearTimeout(this.activityEmitTimer)
+      this.activityEmitTimer = null
+    }
+    // Drop any leftover activity emits so a post-stop flush cannot resurrect the timer.
+    this.pendingActivityEmits = []
     void this.stopContinuousCrawl()
   }
 
@@ -1767,7 +1790,7 @@ export class ScanScheduler {
           : ''
       this.log(
         'info',
-        `Browse gallery: API page ${pageNumber}, ${pageModels.length} on page, +${added} new → ${modelsForUi.length} total (${domainLabel(client.getDomain())})${dupHint}`,
+        `Browse gallery: API page ${pageNumber}, ${pageModels.length} on page, +${added} new → ${this.crawlBrowseModels(rule.id).length} total (${domainLabel(client.getDomain())})${dupHint}`,
         rule.id,
         { source: 'crawl' }
       )
@@ -1913,8 +1936,12 @@ export class ScanScheduler {
     if (!shouldRunContinuousCrawl()) return
     if (this.continuousCrawlPromise) return
 
+    // Fresh abort controller for this crawl — stopContinuousCrawl calls .abort() to break
+    // any blocking `waitUntilIdle` poll promptly.
+    this.continuousCrawlAbort = new AbortController()
     this.continuousCrawlPromise = this.runContinuousCrawl().finally(() => {
       this.continuousCrawlPromise = null
+      this.continuousCrawlAbort = null
       // Yield before restart — avoids a tight loop when crawl exits immediately (e.g. no rules).
       if (
         shouldRunContinuousCrawl() &&
@@ -1928,6 +1955,10 @@ export class ScanScheduler {
 
   async stopContinuousCrawl(): Promise<void> {
     this.continuousCrawlStopRequested = true
+    // Abort any blocking waits (e.g. download-queue idle poll) so the crawl promise exits promptly
+    // instead of completing the 500ms × 6h wait loop after the user already stopped Harvest.
+    this.continuousCrawlAbort?.abort()
+    this.continuousCrawlAbort = null
     this.crawler.stop()
     if (this.continuousCrawlPromise) {
       await this.continuousCrawlPromise.catch(() => {})
@@ -2066,7 +2097,12 @@ export class ScanScheduler {
             if (requeued > 0) {
               this.log('info', `Re-queued ${requeued} interrupted download(s)`)
               this.maybeStartAutoDownloads()
-              await this.downloadQueue.waitUntilIdle(500, 6 * 60 * 60 * 1000).catch(() => {})
+              // Pass the continuous-crawl abort signal — stopContinuousCrawl breaks this wait
+              // right away instead of leaving a 500ms poll running up to 6h after the user
+              // stopped Harvest.
+              await this.downloadQueue
+                .waitUntilIdle(500, 6 * 60 * 60 * 1000, this.continuousCrawlAbort?.signal)
+                .catch(() => {})
             }
           }
           this.log('info', 'Catalogs complete — peek-only maintenance (waiting for new models)…', undefined, {
@@ -2277,9 +2313,24 @@ export class ScanScheduler {
 
   async runScan(options?: { manual?: boolean }): Promise<ScanResult[]> {
     const manual = options?.manual ?? false
-    while (this.scanning) {
+    // Wait for any in-flight scan to settle. Non-manual scans silently abort; manual scans get a
+    // bounded 30s wait — a hung scan can no longer block the user's manual retry forever.
+    if (this.scanning) {
       if (!manual) return []
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      const BUSY_WAIT_MS = 30_000
+      const started = Date.now()
+      while (this.scanning && Date.now() - started < BUSY_WAIT_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      if (this.scanning) {
+        this.log(
+          'warn',
+          'Manual scan waiting on a busy scan timed out — please retry shortly',
+          undefined,
+          { source: 'manual' }
+        )
+        return []
+      }
     }
     if (!outputFoldersConfigured()) {
       this.log('warn', 'Set LoRA and Checkpoint folders in Settings before scan', undefined, {
@@ -2287,6 +2338,7 @@ export class ScanScheduler {
       })
       throw new Error('Set LoRA and Checkpoint folders in Settings first')
     }
+    // Atomic claim: set scanning synchronously before any await so a concurrent caller sees it.
     this.scanning = true
     this.setStatus('scanning')
     const rules = getWatchRules().filter((r) => r.enabled)

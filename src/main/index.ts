@@ -2,7 +2,7 @@ import './bootstrap-user-data'
 import { app, BrowserWindow, Menu, Tray, shell, protocol, session } from 'electron'
 import { join } from 'path'
 import { isOfflineNetworkError, isRetryableNetworkError } from '../shared/network-retry'
-import { initIpc, registerMediaProtocol, recoverFromNetworkError, setMainWindow, ensureSchedulerStarted, onRendererUnload, stopScheduler, flushDownloadQueuePersist } from './ipc-handlers'
+import { initIpc, registerMediaProtocol, recoverFromNetworkError, setMainWindow, ensureSchedulerStarted, onRendererUnload, stopScheduler, flushDownloadQueuePersist, logUnhandledError } from './ipc-handlers'
 import { closeInventory } from './inventory'
 import { applyLaunchAtLogin, shouldStartHidden } from './launch-at-login'
 import { getSettings } from './settings-store'
@@ -69,14 +69,18 @@ function loadRenderer(win: BrowserWindow, retry = 0): void {
 }
 
 function registerProcessRecovery(): void {
-  const onNetFault = (label: string, err: unknown): void => {
+  const onNetFault = (label: 'uncaughtException' | 'unhandledRejection', err: unknown): void => {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error(`[${label}]`, err)
     // Offline / DNS — do not kick crawl recovery (causes request storms).
     if (isOfflineNetworkError(err)) return
     if (isRetryableNetworkError(msg)) {
       recoverFromNetworkError()
+      // Network errors are still surfaced through the recovery path; no need to spam activity log.
+      return
     }
+    // Non-network unhandled errors are genuine logic bugs — log to activity so the user sees
+    // something went wrong (and the full stack still goes to stderr for crash diagnosis).
+    logUnhandledError(label, err)
   }
 
   process.on('uncaughtException', (err) => onNetFault('uncaughtException', err))
