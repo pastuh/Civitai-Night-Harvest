@@ -385,7 +385,8 @@ export function SettingsTab({
                     }
                     const inv = await onRefreshInventory?.({
                       syncDisk: true,
-                      recognizeLocalModels: true
+                      recognizeLocalModels: true,
+                      repairPreviews: true
                     })
                     if (inv && typeof inv === 'object' && 'items' in inv) {
                       setDiskSyncResult(formatLibrarySyncSummary(inv, draft.locale ?? 'en'))

@@ -79,9 +79,6 @@ function normalizeRules(
     .filter((r) => {
       const names = parseTagRuleNames(r.tagName)
       if (!names.length) return false
-      if (isCustomTagFolderRule(r, loraFolder, checkpointFolder)) {
-        return Boolean(r.folderPath.trim())
-      }
       return true
     })
     .map((r) => ({
@@ -310,7 +307,19 @@ export function TagsTab({
     if (movingTag) return
     if (hideAssigned && pinnedAssignLabels.length > 0) return
     setDraft(rules)
-    setPendingCustomIds(new Set())
+    // Preserve pendingCustomIds that still exist in the refreshed rules — clearing them all
+    // made custom assignment rows disappear from the custom-assignments section after save,
+    // because isCustomTagFolderRule returns false for subfolder rules (folderPath under
+    // LoRA/Checkpoint root). Only drop IDs that no longer match any saved rule.
+    setPendingCustomIds((prev) => {
+      if (!prev.size) return prev
+      const ruleIds = new Set(rules.map((r) => r.id))
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (ruleIds.has(id)) next.add(id)
+      }
+      return next.size === prev.size ? prev : next
+    })
     setSaveState('idle')
     setSaveError(null)
   }, [rules, movingTag, hideAssigned, pinnedAssignLabels.length])
@@ -377,6 +386,17 @@ export function TagsTab({
       ),
     [draft, loraFolder, checkpointFolder, pendingCustomIds]
   )
+
+  // Pre-compute inventory counts per custom rule — countInventoryInFolder iterates all
+  // inventory records, so calling it inline in render freezes the UI with large libraries.
+  const customFolderCounts = useMemo(() => {
+    if (!inventory.length) return {} as Record<string, number>
+    const counts: Record<string, number> = {}
+    for (const rule of customRules) {
+      counts[rule.id] = countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)
+    }
+    return counts
+  }, [customRules, inventory, loraFolder, checkpointFolder])
 
   const availableLetters = useMemo(() => {
     const set = new Set<string>()
@@ -908,7 +928,10 @@ export function TagsTab({
     try {
       await onSave(cleaned)
       setDraft(cleaned)
-      setPendingCustomIds(new Set())
+      // Keep pendingCustomIds — they identify which rows belong in the custom-assignments
+      // section even after save. Clearing them made custom rows disappear from the UI
+      // because isCustomTagFolderRule returns false for subfolder rules (folderPath under
+      // LoRA/Checkpoint root).
       setSaveState('saved')
       await onRefresh?.()
     } catch (err) {
@@ -1071,12 +1094,20 @@ export function TagsTab({
     }
   }
 
-  const dirty = useMemo(() => {
-    const cleaned = normalizeRules(draft, loraFolder, checkpointFolder)
-    const saved = normalizeRules(rules, loraFolder, checkpointFolder)
-    if (JSON.stringify(cleaned) !== JSON.stringify(saved)) return true
-    return pendingCustomIds.size > 0
-  }, [draft, rules, loraFolder, checkpointFolder, pendingCustomIds])
+const dirty = useMemo(() => {
+    if (pendingCustomIds.size > 0) return true
+    if (draft.length !== rules.length) return true
+    // Lightweight field-by-field compare instead of JSON.stringify on every render.
+    const savedById = new Map(rules.map((r) => [r.id, r]))
+    for (const d of draft) {
+      const s = savedById.get(d.id)
+      if (!s) return true
+      if (d.tagName !== s.tagName || d.folderPath !== s.folderPath) return true
+      if ((d.subfolderName ?? '') !== (s.subfolderName ?? '')) return true
+      if ((d.priority ?? 1) !== (s.priority ?? 1)) return true
+    }
+    return false
+  }, [draft, rules, pendingCustomIds])
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -1566,6 +1597,7 @@ export function TagsTab({
         <div className="card-list tags-rule-list">
           {customRules.map((rule) => {
             const parsed = parseTagRuleNames(rule.tagName)
+            const folderCount = customFolderCounts[rule.id] ?? 0
             return (
               <div key={rule.id} className="card tags-rule-card">
                 <div className="row tags-rule-row">

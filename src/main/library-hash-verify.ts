@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { createReadStream, existsSync, readFileSync } from 'fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'fs'
 import type { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type {
   CivitaiDomain,
@@ -36,6 +36,9 @@ export function trainedWordsFromSwarm(swarmPath: string | undefined): string[] |
   return null
 }
 
+/** Files larger than this are skipped during backfill — SHA256 on huge checkpoints blocks sync. */
+const BACKFILL_MAX_BYTES = 10 * 1024 * 1024 * 1024
+
 export async function backfillMissingHashes(
   maxFiles = 40,
   onProgress?: (p: LibraryHashVerifyProgress) => void
@@ -49,6 +52,12 @@ export async function backfillMissingHashes(
 
   for (const record of missing) {
     count++
+    // Skip very large files during auto-backfill — manual verify handles them.
+    try {
+      if (statSync(record.modelPath).size > BACKFILL_MAX_BYTES) continue
+    } catch {
+      /* stat failed — try hash anyway */
+    }
     onProgress?.({
       phase: 'hashing',
       current: count,

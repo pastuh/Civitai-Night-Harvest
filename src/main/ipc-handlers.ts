@@ -729,6 +729,14 @@ export function initIpc(): void {
             localDuplicatesMarked = recognized.duplicatesMarked
             localPromoted = recognized.promoted
             localStillUnrecognized = recognized.stillUnrecognized
+            if (recognized.skippedLarge > 0) {
+              scheduler.log(
+                'info',
+                `Skipped SHA256 hash on ${recognized.skippedLarge} large file(s) (>10GB) — use Verify hashes later`,
+                undefined,
+                { source: 'library' }
+              )
+            }
             if (recognized.errors.length) {
               scheduler.log(
                 'warn',

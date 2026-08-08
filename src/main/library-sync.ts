@@ -151,8 +151,10 @@ export async function repairMissingPreviews(
     }
 
     const previewMissing = !record.previewPath || !existsSync(record.previewPath)
+    // Only check swarm thumbnail when the preview file is also missing — a valid preview.jpg
+    // is the canonical image source, so re-downloading just for the swarm thumb wastes API.
     let swarmThumbMissing = false
-    if (record.swarmPath && existsSync(record.swarmPath)) {
+    if (previewMissing && record.swarmPath && existsSync(record.swarmPath)) {
       try {
         const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
         const thumb = swarm['modelspec.thumbnail']

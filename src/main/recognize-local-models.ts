@@ -1,4 +1,4 @@
-import { existsSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import type { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type { CivitaiDomain, InventoryRecord, LibrarySyncProgress } from '../shared/types'
 import { isLocalInventoryRecord } from '../shared/local-inventory'
@@ -13,12 +13,17 @@ export type RecognizeLocalResult = {
   promoted: number
   stillUnrecognized: number
   bannedSkipped: number
+  skippedLarge: number
   errors: string[]
 }
 
 function pathKey(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase()
 }
+
+/** Files larger than this are skipped during auto-hash — SHA256 on a 40GB checkpoint blocks
+ *  sync for minutes. User can manually verify hashes later via Settings → Verify hashes. */
+const AUTO_HASH_MAX_BYTES = 10 * 1024 * 1024 * 1024
 
 /**
  * Hash local/custom rows, mark SHA256 duplicates vs library, promote via Civitai by-hash.
@@ -36,6 +41,7 @@ export async function recognizeLocalModels(
     promoted: 0,
     stillUnrecognized: 0,
     bannedSkipped: 0,
+    skippedLarge: 0,
     errors: []
   }
 
@@ -57,6 +63,16 @@ export async function recognizeLocalModels(
       action: 'Hashing local / unrecognized file'
     })
     if (record.fileHashSha256) continue
+    // Skip very large files — SHA256 on a 40GB+ checkpoint blocks sync for minutes.
+    try {
+      const size = statSync(record.modelPath).size
+      if (size > AUTO_HASH_MAX_BYTES) {
+        result.skippedLarge++
+        continue
+      }
+    } catch {
+      /* stat failed — try hash anyway */
+    }
     try {
       const hash = await sha256File(record.modelPath)
       inventory.patchVersionFileMeta(record.versionId, { fileHashSha256: hash })
