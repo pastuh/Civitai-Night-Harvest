@@ -13,7 +13,7 @@ export type ListSortKey =
   | 'unlock'
 
 export type LibrarySort = 'recent' | 'name' | 'downloads' | 'likes' | 'folder' | 'tagGroup'
-export type BrowseSort = 'recent' | 'name' | 'downloads' | 'likes' | 'folder'
+export type BrowseSort = 'recent' | 'name' | 'downloads' | 'likes' | 'folder' | 'published'
 export type MissingSort = 'recent' | 'name' | 'downloads' | 'likes' | 'hits'
 export type DeferredSort = 'unlock' | 'recent' | 'name' | 'folder'
 
@@ -28,6 +28,7 @@ export const LIBRARY_SORT_OPTIONS: LibrarySort[] = [
 
 export const BROWSE_SORT_OPTIONS: BrowseSort[] = [
   'recent',
+  'published',
   'downloads',
   'likes',
   'name',

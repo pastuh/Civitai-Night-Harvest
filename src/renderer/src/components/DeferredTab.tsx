@@ -167,6 +167,14 @@ export function DeferredTab({
   } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const wasActiveRef = useRef(false)
+  /** Preview overrides for cards whose stored `previewUrl` is empty/stale — fetched lazily
+   *  via the same Civitai fallback the Model Details page uses, so Early-access covers load
+   *  without the user opening each card. */
+  const [previewOverrides, setPreviewOverrides] = useState<
+    Record<number, { previewUrl?: string; previewUrls: string[] }>
+  >({})
+  const previewFetchStartedRef = useRef<Set<number>>(new Set())
+  const [banConfirmSkipForSession, setBanConfirmSkipForSession] = useState(false)
 
   useEffect(() => {
     setBanMode(Boolean(banFunctionMode))
@@ -187,6 +195,13 @@ export function DeferredTab({
   const onRefreshRef = useRef(onRefresh)
   onRefreshRef.current = onRefresh
 
+  // 404 / not-found deferred rows are owned by the Missing tab (noteMissingModel404 writes
+  // them on classify). Showing them here duplicates the card and clutters Awaiting access.
+  const visibleDeferred = useMemo(
+    () => deferred.filter((d) => d.failureKind !== 'not_found'),
+    [deferred]
+  )
+
   useEffect(() => {
     if (!isActive) return
     void window.api
@@ -194,6 +209,48 @@ export function DeferredTab({
       .then(() => onRefreshRef.current())
       .catch(() => {})
   }, [isActive])
+
+  useEffect(() => {
+    if (!isActive) return
+    const missing = visibleDeferred.filter((d) => {
+      if (d.versionId <= 0 || d.modelId <= 0) return false
+      if (previewOverrides[d.versionId]?.previewUrl) return false
+      if (d.previewUrl?.trim()) return false
+      if (previewFetchStartedRef.current.has(d.versionId)) return false
+      previewFetchStartedRef.current.add(d.versionId)
+      return true
+    })
+    if (!missing.length) return
+    void (async () => {
+      try {
+        const resolved = await window.api.resolvePreviewBatch(
+          missing.map((d) => ({
+            modelId: d.modelId,
+            versionId: d.versionId,
+            sourceDomain: undefined,
+            strictVersion: true
+          })),
+          'all'
+        )
+        const next: Record<number, { previewUrl?: string; previewUrls: string[] }> = {}
+        for (const r of resolved) {
+          if (!r.previewUrls.length && !r.previewUrl) {
+            previewFetchStartedRef.current.delete(r.versionId)
+            continue
+          }
+          next[r.versionId] = {
+            previewUrl: r.previewUrl,
+            previewUrls: r.previewUrls
+          }
+        }
+        if (Object.keys(next).length) {
+          setPreviewOverrides((prev) => ({ ...prev, ...next }))
+        }
+      } catch {
+        for (const d of missing) previewFetchStartedRef.current.delete(d.versionId)
+      }
+    })()
+  }, [isActive, visibleDeferred, previewOverrides])
 
   useEffect(() => {
     if (!isActive) return
@@ -207,11 +264,11 @@ export function DeferredTab({
   const baseSorted = useMemo(
     () =>
       sortDeferred(
-        deferred.filter((d) => !hiddenModelIds.has(d.modelId)),
+        visibleDeferred.filter((d) => !hiddenModelIds.has(d.modelId)),
         pinFavoriteSet,
         deferredSort
       ),
-    [deferred, hiddenModelIds, pinFavoriteSet, deferredSort]
+    [visibleDeferred, hiddenModelIds, pinFavoriteSet, deferredSort]
   )
 
   const waitCount = useMemo(
@@ -249,11 +306,10 @@ export function DeferredTab({
     [fastTagMode, onOpenTagFolders]
   )
 
-  const confirmBan = useCallback(async () => {
-    const item = banTarget
+  const confirmBan = useCallback(async (item: DeferredDownload) => {
+    if (busyId === item.modelId) return
     setBanTarget(null)
     setContextMenu(null)
-    if (!item || busyId === item.modelId) return
     setBusyId(item.modelId)
     setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
     onBrowseModelBanned?.(item.modelId, {
@@ -279,7 +335,23 @@ export function DeferredTab({
     } finally {
       setBusyId(null)
     }
-  }, [banTarget, busyId, onBrowseModelBanned, onRefresh])
+  }, [busyId, onBrowseModelBanned, onRefresh])
+
+  /**
+   * Ban entry point for both the inline × button and the context menu. When the user has
+   * ticked "Don't ask me again (this session)" on a prior confirmation, skip the modal and
+   * run the ban immediately — one less click for the rest of the session.
+   */
+  const requestBan = useCallback(
+    (item: DeferredDownload) => {
+      if (banConfirmSkipForSession) {
+        void confirmBan(item)
+      } else {
+        setBanTarget(item)
+      }
+    },
+    [banConfirmSkipForSession, confirmBan]
+  )
 
   if (!deferred.length && !hiddenModelIds.size) {
     return (
@@ -390,6 +462,9 @@ export function DeferredTab({
             const folderLine = folderLineIfNotDuplicatingTag(folderLabel, item.civitaiTags)
             const shownTags = (item.civitaiTags ?? []).slice(0, 6)
             const extraTagCount = (item.civitaiTags?.length ?? 0) - shownTags.length
+            const previewOverride = previewOverrides[item.versionId]
+            const cardPreviewUrl =
+              previewOverride?.previewUrl ?? previewOverride?.previewUrls?.[0] ?? item.previewUrl
             return (
               <StatusModelCard
                 key={item.versionId}
@@ -492,7 +567,7 @@ export function DeferredTab({
                     )}
                   </>
                 }
-                previewUrl={item.previewUrl}
+                previewUrl={cardPreviewUrl}
                 titleActions={
                   <>
                     {onToggleEaFavorite ? (
@@ -545,7 +620,7 @@ export function DeferredTab({
                         className="gallery-ban-inline-btn electron-no-drag"
                         disabled={busyId === item.modelId}
                         title={t('deferredTab.banHint')}
-                        onClick={() => setBanTarget(item)}
+                        onClick={() => requestBan(item)}
                       >
                         ×
                       </button>
@@ -608,7 +683,7 @@ export function DeferredTab({
           <div className="context-menu-divider" />
           <button
             {...contextMenuButtonProps(() => {
-              setBanTarget(contextMenu.item)
+              requestBan(contextMenu.item)
             }, () => setContextMenu(null))}
             className="context-menu-danger"
           >
@@ -623,7 +698,9 @@ export function DeferredTab({
           message={t('deferredTab.banConfirm', { name: banTarget.modelName })}
           confirmLabel={t('deferredTab.ban')}
           danger
-          onConfirm={() => void confirmBan()}
+          dontAskAgainLabel={t('deferredTab.banConfirmDontAsk')}
+          onDontAskAgainChange={(checked) => setBanConfirmSkipForSession(checked)}
+          onConfirm={() => void confirmBan(banTarget)}
           onCancel={() => setBanTarget(null)}
         />
       )}

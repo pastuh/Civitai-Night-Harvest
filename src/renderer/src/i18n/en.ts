@@ -26,7 +26,8 @@ export const en = {
     folder: 'By folder tag',
     tagGroup: 'By tag group',
     hits: 'Hit count',
-    unlock: 'Unlock time'
+    unlock: 'Unlock time',
+    published: 'Published date'
   },
   tabs: {
     browse: 'Browse',
@@ -1311,6 +1312,7 @@ export const en = {
     banHint: 'Exclude permanently — will not return to Early access or auto-download',
     banConfirm:
       'Ban “{name}”? Excludes it from Early access, Browse auto-download, and future harvest. You can unban later in Settings.',
+    banConfirmDontAsk: "Don't ask me again (this session)",
     emptyAfterBan: 'Banned entries removed.',
     waiting: 'Waiting {duration} · attempts {count}',
     autoRetryPaused: ' · auto-retry paused',
@@ -1358,6 +1360,8 @@ export const en = {
     emptyLead: '404 responses from Civitai — and review banned / tag-skipped models here.',
     emptyHiddenBanned:
       'No Missing (404) entries. {banned} banned / paused hidden — uncheck Hide banned / Hide paused to review.',
+    emptyHiddenMissing:
+      'No ban / pause / tag reviews to show here. {missing} Missing (404) hidden — uncheck Hide missing or click “Missing (404)” in the sidebar to review.',
     desc: '404 responses from Civitai.',
     searchPlaceholder: 'Search name, author, tag, ID…',
     filterLabel: 'Kind',
@@ -1370,6 +1374,9 @@ export const en = {
     filterUnavailable: 'Unavailable',
     hideBanned: 'Hide banned',
     hidePaused: 'Hide paused',
+    hideMissing: 'Hide missing',
+    hideMissingHint:
+      'Hide Missing (404 / not-found) cards so this tab focuses on ban / pause / tag reviews. Click “Missing (404)” in the sidebar / kind filter to review them.',
     hideSeen: 'Hide seen',
     hideSeenHint: 'Hide bans you already marked seen (green title mark)',
     markSeenModeOn: 'Mark seen on',

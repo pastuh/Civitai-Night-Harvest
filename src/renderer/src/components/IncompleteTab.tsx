@@ -220,23 +220,33 @@ export function IncompleteTab({
               previewUrl={item.previewUrl}
               titleActions={
                 onOpenModelDetail ? (
-                  <button
-                    type="button"
-                    className="gallery-detail-btn"
-                    title={t('gallery.modelDetails')}
-                    onClick={() =>
-                      onOpenModelDetail({
-                        kind: 'browse',
-                        modelId: item.modelId,
-                        versionId: item.resolvedVersionId ?? 0,
-                        name: item.modelName,
-                        previewUrl: item.previewUrl,
-                        domain: item.sourceDomain
-                      })
-                    }
-                  >
-                    ℹ
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="gallery-detail-btn"
+                      title={t('gallery.modelDetails')}
+                      onClick={() =>
+                        onOpenModelDetail({
+                          kind: 'browse',
+                          modelId: item.modelId,
+                          versionId: item.resolvedVersionId ?? 0,
+                          name: item.modelName,
+                          previewUrl: item.previewUrl,
+                          domain: item.sourceDomain
+                        })
+                      }
+                    >
+                      ℹ
+                    </button>
+                    <button
+                      type="button"
+                      className="gallery-web-btn-inline"
+                      title={t('gallery.openOnCivitai')}
+                      onClick={() => void window.api.openExternal(item.pageUrl)}
+                    >
+                      ↗
+                    </button>
+                  </>
                 ) : null
               }
               actions={
@@ -277,12 +287,6 @@ export function IncompleteTab({
                         : t('incompleteTab.download')}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => void window.api.openExternal(item.pageUrl)}
-                  >
-                    {t('incompleteTab.openCivitai')}
-                  </button>
                   <button
                     type="button"
                     className="danger-btn"

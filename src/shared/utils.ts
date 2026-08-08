@@ -216,6 +216,7 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
     isBanned: a.isBanned || b.isBanned,
     isEarlyAccess: a.isEarlyAccess || b.isEarlyAccess,
     earlyAccessEndsAt: primary.earlyAccessEndsAt || secondary.earlyAccessEndsAt,
+    publishedAt: primary.publishedAt ?? secondary.publishedAt,
     downloadCount: Math.max(a.downloadCount ?? 0, b.downloadCount ?? 0) || undefined,
     thumbsUpCount: Math.max(a.thumbsUpCount ?? 0, b.thumbsUpCount ?? 0) || undefined,
     fileSizeBytes: primary.fileSizeBytes ?? secondary.fileSizeBytes,

@@ -28,7 +28,8 @@ export const lt: Messages = {
     folder: 'Pagal folder tag',
     tagGroup: 'Pagal tag grupę',
     hits: 'Hit skaičius',
-    unlock: 'Unlock laikas'
+    unlock: 'Unlock laikas',
+    published: 'Publikavimo data'
   },
   tabs: {
     browse: 'Naršymas',
@@ -1325,6 +1326,7 @@ export const lt: Messages = {
     banHint: 'Visam laikui išjungti — nebegrįš į Early access ir nebus auto-siunčiamas',
     banConfirm:
       'Ban „{name}“? Pašalinamas iš Early access, Browse auto-siuntimo ir būsimo harvest. Vėliau galima unban Nustatymuose.',
+    banConfirmDontAsk: 'Daugiau neklausti (šią sesiją)',
     emptyAfterBan: 'Užblokuoti įrašai pašalinti.',
     waiting: 'Laukia {duration} · bandymai {count}',
     autoRetryPaused: ' · auto-retry pauzuotas',
@@ -1372,6 +1374,8 @@ export const lt: Messages = {
     emptyLead: '404 atsakymai iš Civitai — čia ir banned / tag-skip peržiūra.',
     emptyHiddenBanned:
       'Nėra Missing (404). Paslėpta {banned} banned / paused — nuimkite Hide banned / Hide paused peržiūrai.',
+    emptyHiddenMissing:
+      'Nėra ban / pause / tag peržiūros čia. {missing} Missing (404) paslėpta — nuimkite Hide missing arba pasirink „Missing (404)“ sidebar peržiūrai.',
     desc: '404 atsakymai iš Civitai.',
     searchPlaceholder: 'Ieškoti vardo, autoriaus, tago, ID…',
     filterLabel: 'Tipas',
@@ -1384,6 +1388,9 @@ export const lt: Messages = {
     filterUnavailable: 'Unavailable',
     hideBanned: 'Slėpti banned',
     hidePaused: 'Slėpti paused',
+    hideMissing: 'Slėpti missing',
+    hideMissingHint:
+      'Slepia Missing (404 / nerastus) įrašus — tab skirti ban / pause / tag peržiūrai. Norint peržiūrėti — spausk „Missing (404)“ sidebar arba kind filtrą.',
     hideSeen: 'Slėpti seen',
     hideSeenHint: 'Slepia jau pažymėtus seen banus (žalias title ženklas)',
     markSeenModeOn: 'Mark seen įj.',

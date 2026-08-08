@@ -50,6 +50,7 @@ export function buildSampleModels(
           isBanned: bannedIds.has(m.id),
           isEarlyAccess: ea,
           earlyAccessEndsAt: ea ? (v?.earlyAccessEndsAt ?? undefined) : undefined,
+          publishedAt: v?.publishedAt ?? v?.createdAt ?? undefined,
           sourceDomain: domain,
           downloadCount: stats.downloadCount,
           thumbsUpCount: stats.thumbsUpCount,

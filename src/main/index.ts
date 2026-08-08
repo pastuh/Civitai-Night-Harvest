@@ -217,6 +217,15 @@ app.on('child-process-gone', (_event, details) => {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   Menu.setApplicationMenu(null)
+
+  // Clear corrupt HTTP cache — prevents "Invalid cache size" Chromium errors
+  // and stale/corrupt cached API responses on startup.
+  try {
+    void session.defaultSession.clearCache()
+  } catch {
+    /* non-fatal */
+  }
+
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['*://image.civitai.com/*'] },
     (details, callback) => {

@@ -563,6 +563,8 @@ function GalleryTabInner({
       }
       const q = deferredModelSearch.trim().toLowerCase()
       if (!q) return true
+      if (String(record.modelId) === q) return true
+      if (String(record.versionId) === q) return true
       return searchHayByVersionId.get(record.versionId)?.includes(q) ?? false
     },
     [deferredModelSearch, modelLetter, searchHayByVersionId]

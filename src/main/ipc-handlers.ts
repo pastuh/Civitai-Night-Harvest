@@ -518,7 +518,15 @@ export function initIpc(): void {
     return next
   })
 
-  ipcMain.handle('civitai:getEnums', async () => clientPool.primary().getEnums())
+  ipcMain.handle('civitai:getEnums', async () => {
+    try {
+      return await clientPool.primary().getEnums()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[ipc] civitai:getEnums failed — returning empty enums: ${msg}`)
+      return { ModelType: [], BaseModel: [] }
+    }
+  })
 
   ipcMain.handle(
     'preview:resolveBatch',
@@ -549,7 +557,15 @@ export function initIpc(): void {
         rule.id,
         { source: 'manual' }
       )
-      const enumsData = await clientPool.primary().getEnums()
+      let enumsData: { ModelType: string[]; BaseModel: string[] } = { ModelType: [], BaseModel: [] }
+      try {
+        enumsData = await clientPool.primary().getEnums()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        scheduler.log('warn', `Browse enums unavailable (${msg}) — using fallback list`, rule.id, {
+          source: 'manual'
+        })
+      }
       const enums = {
         modelTypes: enumsData.ModelType,
         baseModels: enumsData.BaseModel,

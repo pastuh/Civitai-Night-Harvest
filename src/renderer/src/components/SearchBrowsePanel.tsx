@@ -84,6 +84,8 @@ function modelFromQueueItem(item: DownloadQueueItem, ownedVersionIds: Set<number
 function modelMatchesBrowseSearch(model: WatchRuleTestModel, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
+  if (String(model.id) === q) return true
+  if (String(model.versionId) === q) return true
   if (model.name.toLowerCase().includes(q)) return true
   if (model.creator?.toLowerCase().includes(q)) return true
   return false
@@ -809,6 +811,9 @@ export function SearchBrowsePanel({
     for (const m of ruleScopedModels) {
       if (!matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) continue
 
+      // Hide early access models even when queued — user explicitly wants them hidden.
+      if (hideAwaitingAccess && m.isEarlyAccess) continue
+
       const inActiveQueue =
         (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
         queueActiveForFilter.byModel.has(m.id)
@@ -819,7 +824,7 @@ export function SearchBrowsePanel({
         if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) continue
         if (
           hideAwaitingAccess &&
-          (m.isEarlyAccess || awaitingAccessVersionIds.has(m.versionId))
+          awaitingAccessVersionIds.has(m.versionId)
         ) {
           continue
         }
@@ -897,15 +902,24 @@ export function SearchBrowsePanel({
 
     const sorted = [...list]
     switch (browseSort) {
-      case 'folder':
+      case 'folder': {
+        const folderKeys = new Map<string, string>()
+        for (const m of sorted) {
+          const k = browseModelDedupeKey(m)
+          if (!folderKeys.has(k)) {
+            folderKeys.set(
+              k,
+              resolveModelRoutingTag(m.tags, routingTag, tagRules, m.baseModel).routingTag || '\uffff'
+            )
+          }
+        }
         sorted.sort((a, b) => {
-          const fa =
-            resolveModelRoutingTag(a.tags, routingTag, tagRules, a.baseModel).routingTag || '\uffff'
-          const fb =
-            resolveModelRoutingTag(b.tags, routingTag, tagRules, b.baseModel).routingTag || '\uffff'
+          const fa = folderKeys.get(browseModelDedupeKey(a)) ?? '\uffff'
+          const fb = folderKeys.get(browseModelDedupeKey(b)) ?? '\uffff'
           return fa.localeCompare(fb) || a.name.localeCompare(b.name)
         })
         break
+      }
       case 'downloads':
         sorted.sort(
           (a, b) =>
@@ -921,6 +935,27 @@ export function SearchBrowsePanel({
       case 'name':
         sorted.sort((a, b) => a.name.localeCompare(b.name))
         break
+      case 'published': {
+        const pubTs = new Map<string, number>()
+        for (const m of sorted) {
+          const k = browseModelDedupeKey(m)
+          if (!pubTs.has(k)) {
+            const ts = m.publishedAt ? Date.parse(m.publishedAt) : NaN
+            pubTs.set(k, Number.isFinite(ts) ? ts : NaN)
+          }
+        }
+        sorted.sort((a, b) => {
+          const ta = pubTs.get(browseModelDedupeKey(a)) ?? NaN
+          const tb = pubTs.get(browseModelDedupeKey(b)) ?? NaN
+          const aHas = Number.isFinite(ta)
+          const bHas = Number.isFinite(tb)
+          if (aHas && bHas) return tb - ta
+          if (aHas) return -1
+          if (bHas) return 1
+          return a.name.localeCompare(b.name)
+        })
+        break
+      }
       case 'recent':
       default:
         sorted.sort((a, b) => {
@@ -2191,6 +2226,7 @@ export function SearchBrowsePanel({
         </div>
       </div>
 
+      {catalogBreakdown.total > 0 && (
       <div className="browse-download-progress">
         <div
           className="browse-download-progress-bar-wrap"
@@ -2305,6 +2341,7 @@ export function SearchBrowsePanel({
             )}
           </div>
         </div>
+      )}
 
       <div className={`search-browse-body${galleryLoadingEmpty ? ' is-loading-empty' : ''}`}>
         <div className="gallery-main search-browse-main">

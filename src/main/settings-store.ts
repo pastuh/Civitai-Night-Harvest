@@ -129,6 +129,9 @@ export function getSettings(): AppSettings {
   if (raw.preserveFilters === undefined) {
     raw.preserveFilters = false
   }
+  if (raw.hideAwaitingAccess === undefined) {
+    raw.hideAwaitingAccess = false
+  }
   if (!raw.downloadStreams || raw.downloadStreams < 1) {
     raw.downloadStreams = 16
   }

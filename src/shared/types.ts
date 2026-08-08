@@ -134,6 +134,8 @@ export interface AppSettings {
   resultsDisplayMode: import('./results-display').ResultsDisplayMode
   /** Items per page / lazy chunk (60 or 100) */
   resultsPageSize: import('./results-display').ResultsPageSize
+  /** Browse panel: hide early-access / deferred models in the card grid */
+  hideAwaitingAccess: boolean
 }
 
 export type CivitaiSort = 'Newest' | 'Most Downloaded' | 'Highest Rated'
@@ -328,9 +330,19 @@ export interface CivitaiModelVersion {
   modelId?: number
   createdAt: string
   updatedAt?: string
+  /** ISO timestamp when this version was published — Civitai /models search returns it. */
+  publishedAt?: string | null
   status?: string
   availability?: string
   earlyAccessEndsAt?: string | null
+  /**
+   * Paid-access gate from GET /model-versions/{id}. `{ permanent: true }` means the version
+   * stays behind a Buzz / subscription paywall with no scheduled public unlock — Civitai
+   * still returns 401/403 even when an API key is set, until the user pays. The mini endpoint
+   * omits this field, so callers must fetch the full version when 401/403 appears with an API
+   * key set and no other EA indicator.
+   */
+  paidAccess?: { permanent?: boolean; endsAt?: string | null }
   baseModel: string
   baseModelType?: string
   description?: string
@@ -696,6 +708,8 @@ export interface WatchRuleTestModel {
   isBanned: boolean
   isEarlyAccess?: boolean
   earlyAccessEndsAt?: string
+  /** ISO timestamp version was published — used by Browse `published` sort. */
+  publishedAt?: string | null
   /** Which Civitai site this result came from */
   sourceDomain?: CivitaiDomain
   downloadCount?: number
@@ -1076,6 +1090,8 @@ export interface CivitaiModelDetailVersion {
   name: string
   baseModel: string
   createdAt?: string
+  /** When this version became public (Civitai publishedAt) — used by Browse published sort. */
+  publishedAt?: string | null
   downloadCount?: number
   thumbsUpCount?: number
   previewUrl?: string

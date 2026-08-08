@@ -93,6 +93,8 @@ export interface MissingViewPrefs {
   /** When true, hovering a full ban card marks it seen. Default off — browse without marking. */
   markSeenMode: boolean
   showForgotten: boolean
+  /** Hide Missing (404 / not-found) cards so the tab focuses on ban / pause / tag reviews. */
+  hideMissing: boolean
   sortMode: MissingSort
   search: string
   sidebarExpanded: boolean
@@ -104,6 +106,7 @@ export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
   hideSeen: false,
   markSeenMode: false,
   showForgotten: false,
+  hideMissing: true,
   sortMode: 'recent',
   search: '',
   sidebarExpanded: true

@@ -186,6 +186,7 @@ export default function App() {
       prev.hideSeen === prefs.hideSeen &&
       prev.markSeenMode === prefs.markSeenMode &&
       prev.showForgotten === prefs.showForgotten &&
+      prev.hideMissing === prefs.hideMissing &&
       prev.sortMode === prefs.sortMode &&
       prev.search === prefs.search &&
       prev.sidebarExpanded === prefs.sidebarExpanded
@@ -1986,8 +1987,16 @@ export default function App() {
               browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
               onSaveStateChange={setWatchRulesSaveState}
               onOpenModelDetail={openModelDetail}
-              browseViewPrefs={settings.preserveFilters ? browseViewPrefs : undefined}
-              onBrowseViewPrefsChange={settings.preserveFilters ? setBrowseViewPrefs : undefined}
+              browseViewPrefs={
+                settings.preserveFilters
+                  ? browseViewPrefs
+                  : { ...DEFAULT_BROWSE_VIEW_PREFS, hideAwaitingAccess: settings.hideAwaitingAccess ?? false }
+              }
+              onBrowseViewPrefsChange={
+                settings.preserveFilters
+                  ? setBrowseViewPrefs
+                  : (prefs) => void saveSettings({ hideAwaitingAccess: prefs.hideAwaitingAccess })
+              }
               sessionYieldCount={sessionYieldCount}
               isActive={watchInteractive}
             />
@@ -2164,6 +2173,7 @@ export default function App() {
               onViewPrefsChange={settings.preserveFilters ? onMissingViewPrefsChange : undefined}
               onRefresh={refreshMissingExclusions}
               onOpenModelDetail={openModelDetail}
+              onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'missing' })}
               isActive={missingInteractive}
             />
           </div>

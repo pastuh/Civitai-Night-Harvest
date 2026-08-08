@@ -718,6 +718,9 @@ export class DownloadQueue {
     for (const item of [...this.items]) {
       if (item.status === 'done' || item.status === 'skipped') continue
       if (item.manual) continue
+      // Early-access / auth deferred items are polled by the watcher — keep them
+      // across restarts so Browse does not re-discover and re-defer every launch.
+      if (item.status === 'deferred' && isAwaitingAccessFailureKind(item.failureKind)) continue
       if (!isBlocked(item)) continue
       if (item.status === 'downloading') {
         if (item.versionId) this.downloadService.cancel(item.versionId)
@@ -807,6 +810,9 @@ export class DownloadQueue {
     for (const item of [...this.items]) {
       if (item.manual) continue
       if (item.status === 'done' || item.status === 'skipped') continue
+      // Keep early-access / auth / forbidden deferred items across restarts —
+      // they may match rules again when the creator ends EA or API key is added.
+      if (item.status === 'deferred' && isAwaitingAccessFailureKind(item.failureKind)) continue
       if (modelMatchesAnyEnabledWatchRule({ tags: item.civitaiTags ?? [] }, rules)) continue
       if (item.status === 'downloading') {
         if (item.versionId) this.downloadService.cancel(item.versionId)

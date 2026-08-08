@@ -60,6 +60,8 @@ interface Props {
   onRefresh: () => Promise<void>
   isActive?: boolean
   onOpenModelDetail?: (target: ModelDetailTarget) => void
+  /** Open Tag Folders for a Civitai tag (same behavior as Browse / Library). */
+  onOpenTagFolders?: (tag: string) => void
 }
 
 function previewSrc(previewUrl?: string): string | undefined {
@@ -133,12 +135,13 @@ export const MissingTab = memo(function MissingTab({
   sessionStartedAt,
   sessionBanModelIds = [],
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
-  resultsPageSize: resultsPageSizeProp = 100,
+  resultsPageSize: resultsPageSizeProp = '100',
   viewPrefs,
   onViewPrefsChange,
   onRefresh,
   isActive = false,
-  onOpenModelDetail
+  onOpenModelDetail,
+  onOpenTagFolders
 }: Props) {
   const t = useT()
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
@@ -151,6 +154,7 @@ export const MissingTab = memo(function MissingTab({
   const [hideSeen, setHideSeen] = useState(initial.hideSeen ?? false)
   const [markSeenMode, setMarkSeenMode] = useState(initial.markSeenMode ?? false)
   const [showForgotten, setShowForgotten] = useState(initial.showForgotten)
+  const [hideMissing, setHideMissing] = useState(initial.hideMissing ?? true)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
   const [sideFilter, setSideFilter] = useState<SideFilter>(() => ({ type: 'all' }))
   const [dateAnchor, setDateAnchor] = useState<string | null>(null)
@@ -199,6 +203,7 @@ export const MissingTab = memo(function MissingTab({
     setHidePaused(initial.hidePaused)
     setHideSeen(initial.hideSeen ?? false)
     setMarkSeenMode(initial.markSeenMode ?? false)
+    setHideMissing(initial.hideMissing ?? true)
     setKindFilter('all')
     setDateAnchor(null)
     armedSeenIdRef.current = null
@@ -236,6 +241,7 @@ export const MissingTab = memo(function MissingTab({
       hideSeen,
       markSeenMode,
       showForgotten,
+      hideMissing,
       sortMode,
       search,
       sidebarExpanded
@@ -246,6 +252,7 @@ export const MissingTab = memo(function MissingTab({
     hideSeen,
     markSeenMode,
     showForgotten,
+    hideMissing,
     sortMode,
     search,
     sidebarExpanded,
@@ -322,13 +329,16 @@ export const MissingTab = memo(function MissingTab({
         if (showForgotten) n++
         continue
       }
-      if (m.kind === 'missing') n++
-      else if (m.kind === 'pausedByTag') {
+      if (m.kind === 'missing') {
+        if (!hideMissing) n++
+        continue
+      }
+      if (m.kind === 'pausedByTag') {
         if (!hidePaused) n++
       } else if (!hideBanned) n++
     }
     return n
-  }, [items, hideBanned, hidePaused, showForgotten])
+  }, [items, hideBanned, hidePaused, hideMissing, showForgotten])
 
   const blockedTagCounts = useMemo(() => {
     const map = new Map<string, number>()
@@ -567,6 +577,11 @@ export const MissingTab = memo(function MissingTab({
         if (hideBanned && (m.kind === 'bannedManual' || m.kind === 'bannedByTag')) return false
         if (hidePaused && m.kind === 'pausedByTag') return false
       }
+      // Hide Missing (404) so the tab focuses on ban / pause / tag reviews. A kind filter
+      // override still wins — clicking "Missing" in the sidebar / kind dropdown shows them.
+      if (hideMissing && m.kind === 'missing' && kindFilter === 'all' && sideFilter.type === 'all') {
+        return false
+      }
 
       if (hideSeen && canMarkExclusionSeen(m.kind) && banSeenByModelId[m.modelId]) {
         return false
@@ -629,6 +644,7 @@ export const MissingTab = memo(function MissingTab({
     hideBanned,
     hidePaused,
     hideSeen,
+    hideMissing,
     showForgotten,
     sideFilter,
     isSessionBan,
@@ -645,6 +661,7 @@ export const MissingTab = memo(function MissingTab({
         hideBanned ? 1 : 0,
         hidePaused ? 1 : 0,
         hideSeen ? 1 : 0,
+        hideMissing ? 1 : 0,
         showForgotten ? 1 : 0,
         sideFilter.type,
         sideFilter.type === 'byDate'
@@ -664,6 +681,7 @@ export const MissingTab = memo(function MissingTab({
       hideBanned,
       hidePaused,
       hideSeen,
+      hideMissing,
       showForgotten,
       sideFilter,
       sortMode,
@@ -876,8 +894,12 @@ export const MissingTab = memo(function MissingTab({
   const filterByTag = useCallback((tag: string) => {
     const trimmed = tag.trim()
     if (!trimmed) return
+    if (onOpenTagFolders) {
+      onOpenTagFolders(trimmed)
+      return
+    }
     applySideFilter({ type: 'blockedTag', tag: trimmed })
-  }, [applySideFilter])
+  }, [applySideFilter, onOpenTagFolders])
 
   const openDetails = useCallback(
     (item: ExclusionReviewItem) => {
@@ -943,6 +965,17 @@ export const MissingTab = memo(function MissingTab({
                 onChange={(e) => onHidePausedChange(e.target.checked)}
               />
               {t('missingTab.hidePaused')}
+            </label>
+            <label
+              className="checkbox-field missing-hide-missing"
+              title={t('missingTab.hideMissingHint')}
+            >
+              <input
+                type="checkbox"
+                checked={hideMissing}
+                onChange={(e) => setHideMissing(e.target.checked)}
+              />
+              {t('missingTab.hideMissing')}
             </label>
             <label
               className="checkbox-field missing-hide-seen"
@@ -1035,15 +1068,21 @@ export const MissingTab = memo(function MissingTab({
         <p className="muted">
           {items.length === 0
             ? t('missingTab.emptyLead')
-            : (hideBanned || hidePaused) &&
+            : hideMissing &&
                 kindFilter === 'all' &&
                 sideFilter.type === 'all' &&
-                counts.missing === 0 &&
-                hiddenByDefaultCount > 0
-              ? t('missingTab.emptyHiddenBanned', {
-                  banned: hiddenByDefaultCount
-                })
-              : t('missingTab.emptyFiltered')}
+                counts.missing > 0 &&
+                counts.bannedManual + counts.bannedByTag + counts.pausedByTag + counts.forgotten === 0
+              ? t('missingTab.emptyHiddenMissing', { missing: counts.missing })
+              : (hideBanned || hidePaused) &&
+                  kindFilter === 'all' &&
+                  sideFilter.type === 'all' &&
+                  counts.missing === 0 &&
+                  hiddenByDefaultCount > 0
+                ? t('missingTab.emptyHiddenBanned', {
+                    banned: hiddenByDefaultCount
+                  })
+                : t('missingTab.emptyFiltered')}
         </p>
       ) : (
         <>
@@ -1099,37 +1138,65 @@ export const MissingTab = memo(function MissingTab({
                 previewUrl={previewSrc(item.previewUrl)}
                 onOpen={onOpenModelDetail ? () => openDetails(item) : undefined}
                 titleActions={
-                  forgetFunctionMode ? (
-                    item.kind === 'forgotten' ? (
+                  <>
+                    {onOpenModelDetail && (
                       <button
                         type="button"
-                        className="gallery-ban-inline-btn is-unban electron-no-drag"
-                        disabled={busyId === item.modelId}
+                        className="gallery-detail-btn"
+                        title={t('gallery.modelDetails')}
                         onClick={(e) => {
                           e.stopPropagation()
-                          void unban(item.modelId)
+                          openDetails(item)
                         }}
-                        title={t('missingTab.unforgetHint')}
-                        aria-label={t('missingTab.unforgetHint')}
                       >
-                        ×
+                        ℹ
                       </button>
-                    ) : (
+                    )}
+                    {item.pageUrl ? (
                       <button
                         type="button"
-                        className="gallery-ban-inline-btn electron-no-drag"
-                        disabled={busyId === item.modelId}
+                        className="gallery-web-btn-inline"
+                        title={t('gallery.openOnCivitai')}
                         onClick={(e) => {
                           e.stopPropagation()
-                          void forget(item)
+                          void window.api.openExternal(item.pageUrl!)
                         }}
-                        title={t('missingTab.forgetHint')}
-                        aria-label={t('missingTab.forget')}
                       >
-                        ×
+                        ↗
                       </button>
-                    )
-                  ) : undefined
+                    ) : null}
+                    {forgetFunctionMode ? (
+                      item.kind === 'forgotten' ? (
+                        <button
+                          type="button"
+                          className="gallery-ban-inline-btn is-unban electron-no-drag"
+                          disabled={busyId === item.modelId}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void unban(item.modelId)
+                          }}
+                          title={t('missingTab.unforgetHint')}
+                          aria-label={t('missingTab.unforgetHint')}
+                        >
+                          ×
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="gallery-ban-inline-btn electron-no-drag"
+                          disabled={busyId === item.modelId}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void forget(item)
+                          }}
+                          title={t('missingTab.forgetHint')}
+                          aria-label={t('missingTab.forget')}
+                        >
+                          ×
+                        </button>
+                      )
+                    ) : null}
+                  </>
                 }
                 meta={
                   <>
@@ -1230,15 +1297,6 @@ export const MissingTab = memo(function MissingTab({
                 }
                 actions={
                   <>
-                    {item.pageUrl ? (
-                      <button
-                        type="button"
-                        className="btn-sm"
-                        onClick={() => void window.api.openExternal(item.pageUrl!)}
-                      >
-                        {t('missingTab.openCivitai')}
-                      </button>
-                    ) : null}
                     {item.kind === 'bannedManual' ? (
                       <button
                         type="button"

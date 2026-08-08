@@ -67,6 +67,7 @@ function buildDetailFromModel(
       name: v.name,
       baseModel: v.baseModel,
       createdAt: v.createdAt,
+      publishedAt: v.publishedAt ?? null,
       downloadCount: vStats.downloadCount,
       thumbsUpCount: vStats.thumbsUpCount,
       previewUrl: previewUrls[0],

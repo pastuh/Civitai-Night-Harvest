@@ -11,18 +11,54 @@ export interface CivitaiVersionMini {
   sfwOnly?: boolean
   additionalResourceCharge?: boolean
   freeTrialLimit?: number | null
+  /**
+   * Paid-access gate — usually only present on GET /model-versions/{id}; the mini endpoint
+   * omits this field. When `permanent=true` the version stays behind a paywall with no
+   * scheduled public unlock; auto-retry must stay off until the user pays Civitai directly.
+   */
+  paidAccess?: { permanent?: boolean; endsAt?: string | null }
 }
 
 export function isVersionEarlyAccess(version: {
   availability?: string
   earlyAccessEndsAt?: string | null
+  checkPermission?: boolean
+  additionalResourceCharge?: boolean
+  paidAccess?: { permanent?: boolean; endsAt?: string | null }
 }): boolean {
-  // Prefer unlock timestamp: expired endsAt means public, even if availability still says EarlyAccess.
+  // Prefer unlock timestamp: future endsAt means gated until unlock hour (regardless of any
+  // extra paid / Buzz gate). An expired endsAt alone means the wait is over — fall through so
+  // availability / paid-gate checks can still flag a model that stays gated after unlock, but
+  // only when one of those gate flags is set.
   if (version.earlyAccessEndsAt) {
-    return new Date(version.earlyAccessEndsAt).getTime() > Date.now()
+    if (new Date(version.earlyAccessEndsAt).getTime() > Date.now()) return true
+    // Past endsAt — only keep EA if a paid / require-auth gate still applies, otherwise public.
+    if (
+      version.checkPermission ||
+      version.additionalResourceCharge ||
+      version.paidAccess?.permanent === true ||
+      Boolean(version.paidAccess?.endsAt)
+    ) {
+      return true
+    }
+    return false
   }
   const avail = version.availability?.toLowerCase()
-  return avail === 'earlyaccess'
+  if (avail === 'earlyaccess') return true
+  // Paid / Buzz-gated models (no `endsAt`) — download fails with 401/403 until the user pays.
+  // This covers both `additionalResourceCharge` / `checkPermission` (mini endpoint flags) and
+  // `paidAccess.permanent` (full version endpoint), so Browse routes them to Awaiting access
+  // directly instead of letting the watcher cycle a doomed download every tick. Auto-retry
+  // stays off (no `earlyAccessEndsAt`), leaving a manual Retry after payment / unlock.
+  if (
+    version.checkPermission ||
+    version.additionalResourceCharge ||
+    version.paidAccess?.permanent === true ||
+    Boolean(version.paidAccess?.endsAt)
+  ) {
+    return true
+  }
+  return false
 }
 
 export function isEarlyAccessActive(endsAt: string | null | undefined): boolean {
@@ -74,24 +110,52 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   const endsAt = mini.earlyAccessEndsAt ?? undefined
   const endsActive = endsAt && isEarlyAccessActive(endsAt) ? endsAt : undefined
 
-  // Expired unlock window → treat as public even if availability still says EarlyAccess.
-  if (endsAt && !endsActive) {
-    return { isEarlyAccess: false }
-  }
+  // `paidAccess.permanent=true` (only present on full version endpoint) → permanent paywall
+  // with no scheduled public unlock. `paidAccess.endsAt` may also carry the EA unlock time
+  // even when the mini's `earlyAccessEndsAt` is missing.
+  const paidPermanent = mini.paidAccess?.permanent === true
+  const paidAccessEndsAt = mini.paidAccess?.endsAt ?? undefined
+  const paidAccessEndsActive =
+    paidAccessEndsAt && isEarlyAccessActive(paidAccessEndsAt) ? paidAccessEndsAt : undefined
+  const paidGate =
+    mini.additionalResourceCharge === true ||
+    mini.checkPermission === true ||
+    paidPermanent ||
+    Boolean(paidAccessEndsAt)
+
+  // Waitable early-access unlock (future endsAt) — gated until this timestamp fires,
+  // whether or not an additional Buzz / require-auth gate also applies.
   if (endsActive) {
     return { isEarlyAccess: true, endsAt: endsActive }
   }
+  if (paidAccessEndsActive) {
+    return { isEarlyAccess: true, endsAt: paidAccessEndsActive }
+  }
+
+  // Expired unlock window — if a paid / Buzz / require-auth gate is still set the model is NOT
+  // yet public, so the watcher must not re-queue on a 403 that is guaranteed to fail until the
+  // user pays. Without a paid gate, treat the model as public again (matches isVersionEarlyAccess).
+  if (endsAt && !endsActive) {
+    if (paidGate) return { isEarlyAccess: true }
+    return { isEarlyAccess: false }
+  }
+
+  // No unlock time, but a paid / Buzz / require-auth / permanent-paid-access gate alone —
+  // keep the row in Awaiting access instead of classifying as not-gated. Otherwise the
+  // watcher's `onUnlocked` path would call `requeueDeferredVersion` (which bypasses
+  // `shouldAutoRetryDeferred` cooldowns) every tick, burning a doomed download attempt that
+  // fails with 401/403 until the user pays. With the row kept as `early_access` and no
+  // `endsAt`, `shouldAutoRetryDeferred` returns false, so only a manual Retry (UI / IPC) will
+  // re-queue once the user has paid and the API clears the flag.
+  if (paidGate) {
+    return { isEarlyAccess: true }
+  }
+
+  // EarlyAccess availability without endsAt — paid gate without a public unlock timestamp (rare).
   if (avail === 'earlyaccess') {
     return { isEarlyAccess: true, endsAt: endsAt }
   }
-  if (mini.checkPermission && endsAt) {
-    return { isEarlyAccess: true, endsAt }
-  }
-  // Note: `additionalResourceCharge` alone is NOT treated as early access — it only marks an
-  // extra Buzz cost on top of the regular download, not an access gate. A model with that flag
-  // set but otherwise public (no EarlyAccess availability and no unlock timestamp) should still
-  // be tried as a normal download. If the file truly needs payment, the 401/403 from the
-  // download attempt is the reliable signal — refineDeferredFailure upgrades the row then.
+
   return { isEarlyAccess: false }
 }
 
@@ -124,11 +188,31 @@ export async function refineDeferredFailure(
 
   try {
     const mini = await client.getVersionMini(versionId)
-    const ea = earlyAccessFromMini(mini)
-    // Only upgrade to early_access when the API actually reports EA gating (availability or
-    // endsAt). `additionalResourceCharge` on its own is just a Buzz-cost flag and does not imply
-    // the file is locked — keeping auth/forbidden classification surfaces the real 401/403 reason
-    // and lets the normal retry caps apply instead of sticking the row in Awaiting access forever.
+    let ea = earlyAccessFromMini(mini)
+    // The mini endpoint omits `paidAccess`, so a 401/403 with an API key set often hides
+    // behind a `paidAccess.permanent=true` flag that only the full GET /model-versions/{id}
+    // response carries. Fetch the full version once a mini check returns "not EA" — without
+    // this fallback the watcher would call `onUnlocked`, re-queue via `requeueDeferredVersion`
+    // (which bypasses `shouldAutoRetryDeferred`), and stage a 401/403 download attempt that
+    // just rolls the row back into Deferred. With `early_access` and no `endsAt` set, the row
+    // sits in Awaiting access until the user pays and clicks Retry / the API clears the gate.
+    if (!ea.isEarlyAccess) {
+      try {
+        const version = await client.getModelVersion(versionId)
+        if (version.paidAccess) {
+          ea = earlyAccessFromMini({ ...mini, paidAccess: version.paidAccess })
+        }
+      } catch {
+        /* keep mini classification (paidAccess lookup failed — version may be deleted now) */
+      }
+    }
+    // Upgrade to early_access whenever the API reports any kind of gating — a waitable
+    // early-access window (availability or future `endsAt`) OR a paid / Buzz / require-auth /
+    // permanent-paid-access gate. `kind=early_access` with no `endsAt` makes
+    // `shouldAutoRetryDeferred` return false, so the row sits in Awaiting access instead of
+    // cycling 401/403 every watcher tick; the user can still Retry manually once they have
+    // paid, and the watcher will pick up real unlock for free once the API clears the gate
+    // flags.
     if (ea.isEarlyAccess) {
       return {
         defer: true,
@@ -170,6 +254,11 @@ export async function enrichDeferredDownloads(
 
   const byVersion = new Map(items.map((i) => [i.versionId, i]))
   let checks = 0
+  // Cap the expensive paid-access fallback (full GET /model-versions/{id}) per maintenance pass
+  // so the watcher does not double the API load on a large Awaiting list. Mini still resolves
+  // most rows; this only catches permanent-paid-access versions whose mini omits `paidAccess`.
+  let paidAccessProbes = 0
+  const maxPaidAccessProbes = 10
   for (const item of ordered) {
     const shouldCheck =
       item.failureKind === 'early_access' ||
@@ -180,10 +269,26 @@ export async function enrichDeferredDownloads(
       checks++
       try {
         const mini = await client.getVersionMini(item.versionId)
-        const ea = earlyAccessFromMini(mini)
-        const patch: Partial<DeferredDownload> = {
+        let ea = earlyAccessFromMini(mini)
+        let patch: Partial<DeferredDownload> = {
           additionalResourceCharge: mini.additionalResourceCharge,
           freeTrialLimit: mini.freeTrialLimit ?? undefined
+        }
+        // Mini omits `paidAccess`, so versions gated only by `paidAccess.permanent` look "not
+        // EA" via the mini and would otherwise drop the row and trigger `onUnlocked` → the
+        // watcher re-queues a doomed 401/403 download attempt. Falling back to the full
+        // version endpoint for these rows keeps them in Awaiting access (matching the initial
+        // classify path) until the user pays or the creator removes the paywall.
+        if (!ea.isEarlyAccess && paidAccessProbes < maxPaidAccessProbes) {
+          try {
+            const fullVersion = await client.getModelVersion(item.versionId)
+            if (fullVersion.paidAccess) {
+              paidAccessProbes++
+              ea = earlyAccessFromMini({ ...mini, paidAccess: fullVersion.paidAccess })
+            }
+          } catch {
+            /* paidAccess lookup failed — keep mini classification (likely deleted upstream) */
+          }
         }
         if (ea.isEarlyAccess) {
           const next = {

@@ -1008,10 +1008,10 @@ export function ModelDetailPage({
                   </>
                 )}
                 {baseModelLabel ? ` · ${baseModelLabel}` : ''}
-                {formatVersionDate(activeVersionMeta?.createdAt) ? (
+                {formatVersionDate(activeVersionMeta?.publishedAt ?? activeVersionMeta?.createdAt) ? (
                   <>
                     {' · '}
-                    {formatVersionDate(activeVersionMeta?.createdAt)}
+                    {formatVersionDate(activeVersionMeta?.publishedAt ?? activeVersionMeta?.createdAt)}
                   </>
                 ) : null}
               </p>
@@ -1217,7 +1217,7 @@ export function ModelDetailPage({
                   // Trust live Civitai fields from model detail — not a stale deferred queue flag.
                   const awaiting = ea
                   const busy = downloadBusyIds.has(v.id)
-                  const created = formatVersionDate(v.createdAt)
+                  const created = formatVersionDate(v.publishedAt ?? v.createdAt)
                   const showBaseOnRow =
                     versionsHaveMixedBaseModels && Boolean(v.baseModel?.trim())
                   const unlockHint =
