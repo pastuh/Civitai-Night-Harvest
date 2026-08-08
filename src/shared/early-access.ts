@@ -26,16 +26,10 @@ export function isVersionEarlyAccess(version: {
   additionalResourceCharge?: boolean
   paidAccess?: { permanent?: boolean; endsAt?: string | null }
 }): boolean {
-  // Prefer unlock timestamp: future endsAt means gated until unlock hour (regardless of any
-  // extra paid / Buzz gate). An expired endsAt alone means the wait is over — fall through so
-  // availability / paid-gate checks can still flag a model that stays gated after unlock, but
-  // only when one of those gate flags is set.
   if (version.earlyAccessEndsAt) {
     if (new Date(version.earlyAccessEndsAt).getTime() > Date.now()) return true
-    // Past endsAt — only keep EA if a paid / require-auth gate still applies, otherwise public.
     if (
       version.checkPermission ||
-      version.additionalResourceCharge ||
       version.paidAccess?.permanent === true ||
       Boolean(version.paidAccess?.endsAt)
     ) {
@@ -45,14 +39,13 @@ export function isVersionEarlyAccess(version: {
   }
   const avail = version.availability?.toLowerCase()
   if (avail === 'earlyaccess') return true
-  // Paid / Buzz-gated models (no `endsAt`) — download fails with 401/403 until the user pays.
-  // This covers both `additionalResourceCharge` / `checkPermission` (mini endpoint flags) and
-  // `paidAccess.permanent` (full version endpoint), so Browse routes them to Awaiting access
-  // directly instead of letting the watcher cycle a doomed download every tick. Auto-retry
-  // stays off (no `earlyAccessEndsAt`), leaving a manual Retry after payment / unlock.
+  // `checkPermission` and `paidAccess.permanent` are real access gates — download will fail
+  // with 401/403 until the user pays. `additionalResourceCharge` alone is NOT a gate — it
+  // only marks an extra Buzz cost on top of a public download and must not route a model
+  // to Awaiting access. If a charge-gated download truly fails, `refineDeferredFailure`
+  // upgrades the row then.
   if (
     version.checkPermission ||
-    version.additionalResourceCharge ||
     version.paidAccess?.permanent === true ||
     Boolean(version.paidAccess?.endsAt)
   ) {
@@ -117,11 +110,10 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   const paidAccessEndsAt = mini.paidAccess?.endsAt ?? undefined
   const paidAccessEndsActive =
     paidAccessEndsAt && isEarlyAccessActive(paidAccessEndsAt) ? paidAccessEndsAt : undefined
+  // `paidGate` = real access restriction. `additionalResourceCharge` alone is NOT included —
+  // it only marks an extra Buzz cost on a public download and must not be treated as a gate.
   const paidGate =
-    mini.additionalResourceCharge === true ||
-    mini.checkPermission === true ||
-    paidPermanent ||
-    Boolean(paidAccessEndsAt)
+    mini.checkPermission === true || paidPermanent || Boolean(paidAccessEndsAt)
 
   // Waitable early-access unlock (future endsAt) — gated until this timestamp fires,
   // whether or not an additional Buzz / require-auth gate also applies.
