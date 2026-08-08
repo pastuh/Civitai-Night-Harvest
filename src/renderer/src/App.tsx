@@ -121,6 +121,10 @@ export default function App() {
   tabRef.current = tab
   const contentRef = useRef<HTMLElement | null>(null)
   const scrollTabPrevRef = useRef<Tab>(tab)
+  /** Saved scroll position before opening Tag Folders / Model Details — restored on back. */
+  const savedScrollRef = useRef<number | null>(null)
+  /** When true, the next tab-change effect restores savedScrollRef instead of scrolling to top. */
+  const restoreScrollRef = useRef(false)
   const [settings, setSettings] = useState<AppSettingsPublic | null>(null)
   const [tagRules, setTagRules] = useState<TagFolderRule[]>([])
   const [watchRules, setWatchRules] = useState<WatchRule[]>([])
@@ -1199,11 +1203,24 @@ export default function App() {
   }, [])
 
   const openModelDetail = useCallback((target: ModelDetailTarget) => {
+    // Save scroll position so the back button returns to the exact spot, not the top.
+    if (contentRef.current) savedScrollRef.current = contentRef.current.scrollTop
     setModelDetailTarget(target)
   }, [])
 
   const closeModelDetail = useCallback(() => {
     setModelDetailTarget(null)
+    // Model Details opens as an overlay on top of the current tab — the tab doesn't change.
+    // Restore scroll position directly since tab-change effects don't fire for overlay close.
+    if (savedScrollRef.current != null && contentRef.current) {
+      const target = savedScrollRef.current
+      const el = contentRef.current
+      el.scrollTop = target
+      window.requestAnimationFrame(() => {
+        el.scrollTop = target
+      })
+    }
+    savedScrollRef.current = null
   }, [])
 
   const openTagFolders = useCallback(
@@ -1211,6 +1228,8 @@ export default function App() {
       tag: string,
       returnTo?: TagFoldersReturnTo | null
     ) => {
+      // Save scroll position so the back button returns to the exact spot, not the top.
+      if (contentRef.current) savedScrollRef.current = contentRef.current.scrollTop
       if (returnTo) {
         setTagFoldersReturnTo(returnTo)
       } else if (modelDetailTarget) {
@@ -1237,6 +1256,8 @@ export default function App() {
       setTab('gallery')
       return
     }
+    // Indicate that the next tab-switch effect should restore the saved scroll position.
+    restoreScrollRef.current = true
     if (ret.kind === 'modelDetail') {
       setTab(ret.previousTab)
       const target = ret.target
@@ -1557,27 +1578,46 @@ export default function App() {
   const watchInteractive = watchOnTab && !modelDetailTarget
   const missingInteractive = missingOnTab && !modelDetailTarget && !tagsCoveringMissing
 
-  // Shared `.content` scroller across keep-alive tabs. Always open a tab at the top —
-  // restoring mid-scroll (or scrollIntoView on the grid anchor) landed on model cards.
+  // Shared `.content` scroller across keep-alive tabs. Open a tab at the top —
+  // unless returning from Tag Folders / Model Details where we restore the saved position.
   useLayoutEffect(() => {
     const el = contentRef.current
     if (!el) return
     const prev = scrollTabPrevRef.current
     if (prev === tab) return
     scrollTabPrevRef.current = tab
-    el.scrollTop = 0
+    if (restoreScrollRef.current && savedScrollRef.current != null) {
+      el.scrollTop = savedScrollRef.current
+    } else {
+      el.scrollTop = 0
+    }
   }, [tab])
 
   // Win over late scroll-anchoring / child effects after the tab panel swaps in.
   useEffect(() => {
     const el = contentRef.current
     if (!el) return
-    el.scrollTop = 0
-    const a = window.requestAnimationFrame(() => {
+    const shouldRestore = restoreScrollRef.current && savedScrollRef.current != null
+    if (shouldRestore) {
+      el.scrollTop = savedScrollRef.current
+    } else {
       el.scrollTop = 0
+    }
+    const a = window.requestAnimationFrame(() => {
+      if (shouldRestore && savedScrollRef.current != null) {
+        el.scrollTop = savedScrollRef.current
+      } else {
+        el.scrollTop = 0
+      }
     })
     const b = window.setTimeout(() => {
-      el.scrollTop = 0
+      if (shouldRestore && savedScrollRef.current != null) {
+        el.scrollTop = savedScrollRef.current
+        savedScrollRef.current = null
+        restoreScrollRef.current = false
+      } else {
+        el.scrollTop = 0
+      }
     }, 50)
     return () => {
       window.cancelAnimationFrame(a)
