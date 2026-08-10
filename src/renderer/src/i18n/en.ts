@@ -818,6 +818,13 @@ export const en = {
       'Lists every missing version whose base model matches one you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
     emptyAfterBan: 'Banned entries removed.',
     dismissHint: 'Hide this offer only (keeps your library files).',
+    skip: 'Skip',
+    skipHint: 'Skip this version only (keeps your library). It stays skipped across rescans until you Unskip.',
+    unskip: 'Unskip',
+    unskipHint: 'Return this version to the Updates list',
+    showSkipped: 'Show skipped',
+    showSkippedTitle: 'Show versions you previously skipped on this page',
+    skippedBadge: 'Skipped',
     ban: 'Ban',
     banHint: 'Delete all owned versions of this model and exclude it from future downloads',
     banConfirm:

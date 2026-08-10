@@ -228,7 +228,9 @@ function LibraryModelCardInner({
             </button>
           )}
         </div>
-        <div className="muted">{record.versionName}</div>
+        <div className="gallery-card-version-row" title={record.versionName}>
+          {record.versionName}
+        </div>
         {!hideBaseModelOnCards && (
           <div className="muted library-base-model-line">
             {record.baseModel}

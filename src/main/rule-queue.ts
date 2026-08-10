@@ -581,6 +581,10 @@ function processModel(
   for (const version of versions) {
     if (ctx.pendingVersionIds.has(version.id)) continue
     if (inventory.hasVersion(version.id)) continue
+    if (inventory.isPendingVersionSkipped(version.id)) {
+      // User skipped this version on Updates — do not re-offer.
+      continue
+    }
     // User already queued this update (e.g. Updates → Sync/Download) and it sits in Early access.
     if (inventory.getDeferredDownload(version.id)) {
       result.upToDate++

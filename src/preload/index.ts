@@ -287,6 +287,10 @@ const api = {
   getAutoUpdateModels: () => ipcRenderer.invoke('model:getAutoUpdate'),
   dismissPending: (versionId: number): Promise<void> =>
     ipcRenderer.invoke('pending:dismiss', versionId),
+  skipPending: (versionId: number): Promise<void> =>
+    ipcRenderer.invoke('pending:skip', versionId),
+  unskipPending: (versionId: number): Promise<void> =>
+    ipcRenderer.invoke('pending:unskip', versionId),
 
   getDeferred: (): Promise<DeferredDownload[]> => ipcRenderer.invoke('deferred:get'),
   getCrawlStatus: (): Promise<Record<string, import('../shared/types').RuleCrawlStatus>> =>

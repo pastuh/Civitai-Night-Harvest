@@ -1651,6 +1651,14 @@ th {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--success) 58%, transparent);
 }
 
+.status-gallery-card.pending-card-skipped {
+  opacity: 0.62;
+}
+
+.status-gallery-card.pending-card-skipped .status-card-skipped-badge {
+  font-weight: 600;
+}
+
 .sidebar-cal-hint {
   margin: 6px 0 0;
   font-size: 10px;
@@ -2534,14 +2542,40 @@ th {
   min-width: 0;
   margin: 0 -10px 6px;
   padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.52);
+  background: var(--gallery-card-title-bg, rgba(0, 0, 0, 0.52));
+}
+
+/* Version subtitle strip under the model title (Library + status cards). */
+.gallery-card-title-row:has(+ .gallery-card-version-row),
+.gallery-card-title-row:has(+ .status-model-card-meta) {
+  margin-bottom: 0;
+}
+
+.gallery-card-version-row,
+.status-model-card-meta > .status-card-version-line:first-child {
+  margin: 0 -10px 6px;
+  padding: 5px 10px;
+  background: var(--gallery-card-version-bg, color-mix(in srgb, #000 28%, var(--surface2, #0c2a42)));
+  color: var(--gallery-card-version-fg, rgba(255, 255, 255, 0.78));
+  text-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.gallery-card-version-row {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gallery-card-title-row strong {
   flex: 1;
   min-width: 0;
   display: block;
-  color: rgba(255, 255, 255, 0.94);
+  color: var(--gallery-card-title-fg, rgba(255, 255, 255, 0.94));
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   white-space: nowrap;
   overflow: hidden;

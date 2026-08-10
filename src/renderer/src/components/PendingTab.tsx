@@ -64,6 +64,7 @@ export const PendingTab = memo(function PendingTab({
   const [busyVersionIds, setBusyVersionIds] = useState<Set<number>>(() => new Set())
   const [banTarget, setBanTarget] = useState<PendingVersion | null>(null)
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
+  const [showSkipped, setShowSkipped] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; modelId: number; modelName: string; versionId: number
   } | null>(null)
@@ -114,15 +115,18 @@ export const PendingTab = memo(function PendingTab({
       pending.filter((p) => {
         if (hiddenModelIds.has(p.modelId)) return false
         if (ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)) return false
+        if (p.skipped && !showSkipped) return false
         return true
       }),
-    [pending, hiddenModelIds, ownedByModel]
+    [pending, hiddenModelIds, ownedByModel, showSkipped]
   )
 
 
   useEffect(() => {
-    const stale = pending.filter((p) =>
-      ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)
+    const stale = pending.filter(
+      (p) =>
+        !p.skipped &&
+        ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)
     )
     for (const p of stale) {
       void window.api.dismissPending(p.versionId)
@@ -136,6 +140,30 @@ export const PendingTab = memo(function PendingTab({
       else next.delete(versionId)
       return next
     })
+  }
+
+  const skipVersion = async (item: PendingVersion) => {
+    if (busyVersionIds.has(item.versionId) || item.skipped) return
+    markBusy(item.versionId, true)
+    try {
+      await window.api.skipPending(item.versionId)
+    } catch {
+      // Event stream restores if skip failed.
+    } finally {
+      markBusy(item.versionId, false)
+    }
+  }
+
+  const unskipVersion = async (item: PendingVersion) => {
+    if (busyVersionIds.has(item.versionId) || !item.skipped) return
+    markBusy(item.versionId, true)
+    try {
+      await window.api.unskipPending(item.versionId)
+    } catch {
+      // Keep as skipped until next pending event.
+    } finally {
+      markBusy(item.versionId, false)
+    }
   }
 
   const approve = async (item: PendingVersion) => {
@@ -248,6 +276,14 @@ export const PendingTab = memo(function PendingTab({
               ) : null}
             </span>
           )}
+          <label className="checkbox-field" title={t('pending.showSkippedTitle')}>
+            <input
+              type="checkbox"
+              checked={showSkipped}
+              onChange={(e) => setShowSkipped(e.target.checked)}
+            />
+            {t('pending.showSkipped')}
+          </label>
           {onBanFunctionModeChange && (
             <button
               type="button"
@@ -280,9 +316,11 @@ export const PendingTab = memo(function PendingTab({
           {visiblePending.map((item) => {
             const busy = busyVersionIds.has(item.versionId)
             const tags = ownedTagsByModel.get(item.modelId)
+            const skipped = Boolean(item.skipped)
             return (
               <StatusModelCard
                 key={item.versionId}
+                className={skipped ? 'pending-card-skipped' : undefined}
                 title={item.modelName}
                 onContextMenu={(e) =>
                   openContextMenu(e, item.modelId, item.modelName, item.versionId)
@@ -292,6 +330,9 @@ export const PendingTab = memo(function PendingTab({
                     <div className="status-card-version-line">
                       <span className="status-card-version-name">{item.versionName}</span>
                       <span className="status-card-version-base"> · {item.baseModel}</span>
+                      {skipped ? (
+                        <span className="status-card-skipped-badge"> · {t('pending.skippedBadge')}</span>
+                      ) : null}
                     </div>
                     <div className="status-card-detail">{versionsLabel(item)}</div>
                     {tags && tags.length > 0 ? (
@@ -335,7 +376,7 @@ export const PendingTab = memo(function PendingTab({
                     >
                       ↗
                     </button>
-                    {banMode && (
+                    {banMode && !skipped && (
                       <button
                         type="button"
                         className="gallery-ban-inline-btn electron-no-drag"
@@ -349,34 +390,73 @@ export const PendingTab = memo(function PendingTab({
                   </>
                 }
                 actions={
-                  <>
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={busy}
-                      title={t('pending.queueHint')}
-                      onClick={() => void approve(item)}
-                    >
-                      {t('pending.queueDownload')}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      title={t('pending.alwaysUpdateHint')}
-                      onClick={() => void alwaysUpdate(item)}
-                    >
-                      {t('pending.alwaysUpdate')}
-                    </button>
-                    {onOpenInLibrary && (
+                  skipped ? (
+                    <>
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => onOpenInLibrary(item.modelId, item.modelName)}
+                        title={t('pending.unskipHint')}
+                        onClick={() => void unskipVersion(item)}
                       >
-                        {t('pending.openInLibrary')}
+                        {t('pending.unskip')}
                       </button>
-                    )}
-                  </>
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={busy}
+                        title={t('pending.queueHint')}
+                        onClick={() => void approve(item)}
+                      >
+                        {t('pending.queueDownload')}
+                      </button>
+                      {onOpenInLibrary && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onOpenInLibrary(item.modelId, item.modelName)}
+                        >
+                          {t('pending.openInLibrary')}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={busy}
+                        title={t('pending.queueHint')}
+                        onClick={() => void approve(item)}
+                      >
+                        {t('pending.queueDownload')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        title={t('pending.alwaysUpdateHint')}
+                        onClick={() => void alwaysUpdate(item)}
+                      >
+                        {t('pending.alwaysUpdate')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        title={t('pending.skipHint')}
+                        onClick={() => void skipVersion(item)}
+                      >
+                        {t('pending.skip')}
+                      </button>
+                      {onOpenInLibrary && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onOpenInLibrary(item.modelId, item.modelName)}
+                        >
+                          {t('pending.openInLibrary')}
+                        </button>
+                      )}
+                    </>
+                  )
                 }
               />
             )
@@ -426,23 +506,46 @@ export const PendingTab = memo(function PendingTab({
           >
             {t('pending.queueDownload')}
           </button>
-          <button
-            {...contextMenuButtonProps(() => {
-              const item = pending.find((p) => p.versionId === contextMenu.versionId)
-              if (item) void alwaysUpdate(item)
-            }, () => setContextMenu(null))}
-          >
-            {t('pending.alwaysUpdate')}
-          </button>
-          <button
-            {...contextMenuButtonProps(() => {
-              const item = pending.find((p) => p.versionId === contextMenu.versionId)
-              if (item) setBanTarget(item)
-            }, () => setContextMenu(null))}
-            className="context-menu-danger"
-          >
-            {t('pending.ban')}
-          </button>
+          {(() => {
+            const item = pending.find((p) => p.versionId === contextMenu.versionId)
+            if (item?.skipped) {
+              return (
+                <button
+                  {...contextMenuButtonProps(() => {
+                    if (item) void unskipVersion(item)
+                  }, () => setContextMenu(null))}
+                >
+                  {t('pending.unskip')}
+                </button>
+              )
+            }
+            return (
+              <>
+                <button
+                  {...contextMenuButtonProps(() => {
+                    if (item) void alwaysUpdate(item)
+                  }, () => setContextMenu(null))}
+                >
+                  {t('pending.alwaysUpdate')}
+                </button>
+                <button
+                  {...contextMenuButtonProps(() => {
+                    if (item) void skipVersion(item)
+                  }, () => setContextMenu(null))}
+                >
+                  {t('pending.skip')}
+                </button>
+                <button
+                  {...contextMenuButtonProps(() => {
+                    if (item) setBanTarget(item)
+                  }, () => setContextMenu(null))}
+                  className="context-menu-danger"
+                >
+                  {t('pending.ban')}
+                </button>
+              </>
+            )
+          })()}
         </ContextMenuPortal>
       )}
     </div>

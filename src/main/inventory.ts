@@ -371,6 +371,24 @@ function migrateInventorySchema(database: Database.Database): void {
   database.exec(
     `CREATE INDEX IF NOT EXISTS idx_missing_ban_seen_day ON missing_ban_seen(seen_day)`
   )
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS skipped_pending_versions (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      model_id INTEGER NOT NULL,
+      model_name TEXT NOT NULL,
+      version_name TEXT NOT NULL,
+      base_model TEXT NOT NULL,
+      author TEXT NOT NULL,
+      preview_url TEXT,
+      existing_folder TEXT NOT NULL,
+      total_versions INTEGER,
+      skipped_at TEXT NOT NULL
+    );
+  `)
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_skipped_pending_model ON skipped_pending_versions(model_id)`
+  )
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -1533,6 +1551,93 @@ export function updatePendingPreviewUrl(versionId: number, previewUrl: string): 
   getDb()
     .prepare('UPDATE pending_versions SET preview_url = ? WHERE version_id = ?')
     .run(url, versionId)
+}
+
+export function isPendingVersionSkipped(versionId: number): boolean {
+  const row = getDb()
+    .prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ?')
+    .get(versionId)
+  return Boolean(row)
+}
+
+export function getSkippedPendingVersionIds(): Set<number> {
+  const rows = getDb()
+    .prepare('SELECT version_id FROM skipped_pending_versions')
+    .all() as Array<{ version_id: number }>
+  return new Set(rows.map((r) => r.version_id))
+}
+
+export function getAllSkippedPendingVersions(): PendingVersion[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM skipped_pending_versions ORDER BY skipped_at ASC')
+    .all()
+  return rows.map((r) => ({ ...rowToPending(r as Record<string, unknown>), skipped: true }))
+}
+
+/** Persist a skipped Updates offer (keeps library files). */
+export function skipPendingVersion(pending: PendingVersion): void {
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO skipped_pending_versions (
+        version_id, model_id, model_name, version_name, base_model,
+        author, preview_url, existing_folder, total_versions, skipped_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      pending.versionId,
+      pending.modelId,
+      pending.modelName,
+      pending.versionName,
+      pending.baseModel,
+      pending.author,
+      pending.previewUrl ?? null,
+      pending.existingFolder,
+      pending.totalVersions ?? null,
+      new Date().toISOString()
+    )
+  removePendingVersion(pending.versionId)
+}
+
+export function unskipPendingVersion(versionId: number): PendingVersion | null {
+  const row = getDb()
+    .prepare('SELECT * FROM skipped_pending_versions WHERE version_id = ?')
+    .get(versionId) as Record<string, unknown> | undefined
+  if (!row) return null
+  const pending = rowToPending(row)
+  getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
+  return pending
+}
+
+export function removeSkippedPendingVersion(versionId: number): void {
+  getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
+}
+
+export function removeSkippedPendingForModel(modelId: number): void {
+  getDb().prepare('DELETE FROM skipped_pending_versions WHERE model_id = ?').run(modelId)
+}
+
+/** Drop skipped rows that are owned, banned, deferred, or no longer relevant. */
+export function pruneSkippedPendingVersions(): void {
+  const snapshot = buildInventorySnapshot()
+  const rows = getAllSkippedPendingVersions()
+  for (const p of rows) {
+    if (isModelBanned(p.modelId) || isMissingUnavailable(p.modelId)) {
+      removeSkippedPendingVersion(p.versionId)
+      continue
+    }
+    if (snapshot.versionIds.has(p.versionId) || hasVersion(p.versionId)) {
+      removeSkippedPendingVersion(p.versionId)
+      continue
+    }
+    if (getDeferredDownload(p.versionId)) {
+      removeSkippedPendingVersion(p.versionId)
+      continue
+    }
+    const known = snapshot.versionsByModel.get(p.modelId) ?? []
+    if (!known.length) {
+      removeSkippedPendingVersion(p.versionId)
+    }
+  }
 }
 
 /** Per-model last successful New Versions API poll (ISO), or null if never checked. */

@@ -989,11 +989,23 @@ export class ScanScheduler {
     // Drop stale rows (already owned) and pending whose base no longer matches owned/Browse filters.
     const before = this.pendingVersions.length
     this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
+    inventory.pruneSkippedPendingVersions()
     if (this.pendingVersions.length !== before) {
-      this.emit('pending:versions', this.pendingVersions)
+      this.emitPendingVersions()
     }
     this.schedulePendingPreviewEnrich()
-    return [...this.pendingVersions]
+    return this.combinedPendingVersions()
+  }
+
+  /** Active Updates offers + persisted skipped rows (flagged). */
+  private combinedPendingVersions(): PendingVersion[] {
+    const active = this.pendingVersions.map((p) => ({ ...p, skipped: false as const }))
+    const skipped = inventory.getAllSkippedPendingVersions()
+    return [...active, ...skipped]
+  }
+
+  private emitPendingVersions(): void {
+    this.emit('pending:versions', this.combinedPendingVersions())
   }
 
   private pendingPreviewEnrichBusy = false
@@ -1009,7 +1021,7 @@ export class ScanScheduler {
     this.pendingPreviewEnrichBusy = true
     void enrichPendingVersionPreviews(this.pool, this.pendingVersions, (pending) => {
       this.pendingVersions = pending
-      this.emit('pending:versions', this.pendingVersions)
+      this.emitPendingVersions()
     })
       .then(() => {
         this.pendingPreviewEnrichKey = key
@@ -1462,8 +1474,8 @@ export class ScanScheduler {
   }
 
   private pendingChangeHandler = (pending: PendingVersion[]): void => {
-    this.pendingVersions = pending
-    this.emit('pending:versions', pending)
+    this.pendingVersions = pending.filter((p) => !p.skipped)
+    this.emitPendingVersions()
   }
 
   private crawlQueueOptions(
@@ -2653,7 +2665,7 @@ export class ScanScheduler {
     const item = this.pendingVersions.find((p) => p.versionId === versionId)
     inventory.removePendingVersion(versionId)
     this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
-    this.emit('pending:versions', this.pendingVersions)
+    this.emitPendingVersions()
     if (item) {
       this.log(
         'info',
@@ -2666,8 +2678,46 @@ export class ScanScheduler {
 
   dismissPendingForModel(modelId: number): void {
     inventory.removePendingForModel(modelId)
+    inventory.removeSkippedPendingForModel(modelId)
     this.pendingVersions = this.pendingVersions.filter((p) => p.modelId !== modelId)
-    this.emit('pending:versions', this.pendingVersions)
+    this.emitPendingVersions()
+  }
+
+  /** Persist skip for one Updates version (keeps library; survives rescans). */
+  skipPending(versionId: number): void {
+    const item =
+      this.pendingVersions.find((p) => p.versionId === versionId) ??
+      inventory.getAllPendingVersions().find((p) => p.versionId === versionId)
+    if (!item) return
+    inventory.skipPendingVersion(item)
+    this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
+    this.emitPendingVersions()
+    this.log(
+      'info',
+      `Skipped update: ${item.modelName} → ${item.versionName} · ${item.baseModel} · #${item.modelId}`,
+      undefined,
+      { source: 'library', modelId: item.modelId, versionId: item.versionId }
+    )
+  }
+
+  /** Restore a skipped Updates offer into the active pending list. */
+  unskipPending(versionId: number): void {
+    const restored = inventory.unskipPendingVersion(versionId)
+    if (!restored) return
+    if (inventory.hasVersion(versionId) || inventory.isModelBanned(restored.modelId)) {
+      return
+    }
+    inventory.addPendingVersion(restored)
+    if (!this.pendingVersions.some((p) => p.versionId === versionId)) {
+      this.pendingVersions = [...this.pendingVersions, restored]
+    }
+    this.emitPendingVersions()
+    this.log(
+      'info',
+      `Unskipped update: ${restored.modelName} → ${restored.versionName} · #${restored.modelId}`,
+      undefined,
+      { source: 'library', modelId: restored.modelId, versionId: restored.versionId }
+    )
   }
 
   /** Drop a model from the in-memory Browse crawl gallery (all rules). */

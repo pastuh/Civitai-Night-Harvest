@@ -1323,7 +1323,9 @@ export default function App() {
   )
 
   const pendingBadgeCount = useMemo(() => {
-    const n = pending.filter((p) => !ownedVersionIds.has(p.versionId)).length
+    const n = pending.filter(
+      (p) => !p.skipped && !ownedVersionIds.has(p.versionId)
+    ).length
     return n || undefined
   }, [pending, ownedVersionIds])
 

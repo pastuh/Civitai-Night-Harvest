@@ -827,6 +827,14 @@ export const lt: Messages = {
       'Rodomos visos trūkstamos versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
     emptyAfterBan: 'Ban’inti įrašai pašalinti.',
     dismissHint: 'Paslėpti tik šį pasiūlymą (bibliotekos failų neliesti).',
+    skip: 'Skip',
+    skipHint:
+      'Praleisti tik šią versiją (bibliotekos neliesti). Lieka skipped ir po rescan, kol Unskip.',
+    unskip: 'Unskip',
+    unskipHint: 'Grąžinti šią versiją į Updates sąrašą',
+    showSkipped: 'Rodyti skipped',
+    showSkippedTitle: 'Rodyti versijas, kurias anksčiau praleidote šiame puslapyje',
+    skippedBadge: 'Skipped',
     ban: 'Ban',
     banHint: 'Ištrina visas turimas šio modelio versijas ir exclude’ina nuo būsimų siuntimų',
     banConfirm:

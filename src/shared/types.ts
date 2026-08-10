@@ -571,6 +571,8 @@ export interface PendingVersion {
   existingFolder: string
   /** Total Civitai versions on the model when the pending row was created. */
   totalVersions?: number
+  /** User skipped this offer on Updates (persisted; hidden unless Show skipped). */
+  skipped?: boolean
 }
 
 /**

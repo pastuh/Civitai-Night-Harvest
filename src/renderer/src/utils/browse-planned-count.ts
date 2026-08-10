@@ -33,8 +33,9 @@ export interface BrowsePlannedCountInput {
 export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): number {
   const ownedVersionIds = new Set(input.inventory.map((r) => r.versionId))
   const ownedModelIds = new Set(input.inventory.map((r) => r.modelId).filter((id) => id > 0))
-  const pendingVersionIds = new Set(input.pending.map((p) => p.versionId).filter((id) => id > 0))
-  const pendingModelIds = new Set(input.pending.map((p) => p.modelId).filter((id) => id > 0))
+  const activePending = input.pending.filter((p) => !p.skipped)
+  const pendingVersionIds = new Set(activePending.map((p) => p.versionId).filter((id) => id > 0))
+  const pendingModelIds = new Set(activePending.map((p) => p.modelId).filter((id) => id > 0))
   const deferredIds = new Set(input.deferred.map((d) => d.versionId))
   const ids = new Set<number>()
 

@@ -140,6 +140,8 @@ const IPC_CHANNELS = [
   'pending:approve',
   'pending:ignore',
   'pending:dismiss',
+  'pending:skip',
+  'pending:unskip',
   'deferred:get',
   'deferred:enrich',
   'deferred:retry',
@@ -1513,9 +1515,9 @@ export function initIpc(): void {
   ipcMain.handle(
     'pending:approve',
     async (_e, payload: { modelId: number; versionId: number; routingTag?: string }) => {
-      const pending = inventory
-        .getAllPendingVersions()
-        .find((p) => p.versionId === payload.versionId)
+      const pending =
+        inventory.getAllPendingVersions().find((p) => p.versionId === payload.versionId) ??
+        inventory.getAllSkippedPendingVersions().find((p) => p.versionId === payload.versionId)
       const existing = inventory.getVersionsForModel(payload.modelId)[0]
       const modelName = pending?.modelName ?? existing?.modelName ?? `Model #${payload.modelId}`
       const versionName = pending?.versionName ?? existing?.versionName ?? 'new version'
@@ -1535,6 +1537,7 @@ export function initIpc(): void {
         }
       )
       scheduler.dismissPending(payload.versionId)
+      inventory.removeSkippedPendingVersion(payload.versionId)
       // Same as manual download:enqueue — otherwise Updates→Queue sits forever while paused.
       if (id && shouldCrawlAutoDownload()) {
         downloadQueue.start()
@@ -1562,6 +1565,14 @@ export function initIpc(): void {
 
   ipcMain.handle('pending:dismiss', (_e, versionId: number) => {
     scheduler.dismissPending(versionId)
+  })
+
+  ipcMain.handle('pending:skip', (_e, versionId: number) => {
+    scheduler.skipPending(versionId)
+  })
+
+  ipcMain.handle('pending:unskip', (_e, versionId: number) => {
+    scheduler.unskipPending(versionId)
   })
 
   ipcMain.handle('deferred:get', () => inventory.getAllDeferredDownloads())

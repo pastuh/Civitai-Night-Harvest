@@ -46,6 +46,12 @@
   --section-head-bg: #041424;
   --section-head-border: #0f2d48;
   --panel-pad: 16px;
+  /* Card title strip (model name) + softer version strip (never stronger than title) */
+  --gallery-card-title-bg: rgba(0, 0, 0, 0.52);
+  --gallery-card-title-fg: rgba(255, 255, 255, 0.94);
+  --gallery-card-version-bg: color-mix(in srgb, #000 28%, var(--surface2));
+  --gallery-card-version-fg: color-mix(in srgb, #fff 78%, transparent);
+  --gallery-card-version-muted: color-mix(in srgb, #fff 52%, transparent);
   font-size: 13px;
 }
 
@@ -76,6 +82,9 @@
   --strip-queued: #334155;
   --section-head-bg: #b8c6d6;
   --section-head-border: #a3b3c6;
+  --gallery-card-version-bg: color-mix(in srgb, #000 18%, var(--surface2));
+  --gallery-card-version-fg: color-mix(in srgb, var(--text) 72%, #fff 28%);
+  --gallery-card-version-muted: color-mix(in srgb, var(--muted) 70%, var(--text) 30%);
 }
 
 .theme-gothic {
@@ -113,6 +122,9 @@
   --chrome-surface-hover: #202026;
   --section-head-bg: #101014;
   --section-head-border: #282830;
+  --gallery-card-version-bg: color-mix(in srgb, #000 22%, var(--surface2));
+  --gallery-card-version-fg: color-mix(in srgb, var(--gallery-card-title-fg) 70%, transparent);
+  --gallery-card-version-muted: color-mix(in srgb, var(--gallery-card-title-fg) 45%, transparent);
 }
 
 .theme-gothic .header-app-icon {
@@ -163,6 +175,9 @@
   --section-head-border: #efd6e0;
   --radius: 10px;
   --radius-sm: 8px;
+  --gallery-card-version-bg: color-mix(in srgb, #000 14%, var(--surface2));
+  --gallery-card-version-fg: color-mix(in srgb, var(--text) 70%, #fff 30%);
+  --gallery-card-version-muted: color-mix(in srgb, var(--muted) 75%, var(--text) 25%);
 }
 
 .theme-candy .gallery-card {
@@ -233,6 +248,10 @@
   --section-head-border: color-mix(in srgb, var(--section-head-bg) 45%, transparent);
   --radius: 10px;
   --radius-sm: 8px;
+  /* Softer than title bar — tint toward surface, dimmer type */
+  --gallery-card-version-bg: color-mix(in srgb, #000 16%, var(--surface2));
+  --gallery-card-version-fg: color-mix(in srgb, var(--gallery-card-title-fg) 72%, transparent);
+  --gallery-card-version-muted: color-mix(in srgb, var(--gallery-card-title-fg) 48%, transparent);
 }
 
 /* Aroma: soft gradients + minimal borders */
@@ -2411,19 +2430,29 @@ button.missing-tag-chip.is-clickable:hover {
   min-width: 0;
 }
 
+.status-model-card-meta > .status-card-version-line:first-child {
+  margin-top: 0;
+}
+
 .status-card-version-name {
   display: inline;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.01em;
-  color: var(--text, #e8e6e3);
+  color: var(--gallery-card-version-fg, rgba(255, 255, 255, 0.78));
   word-break: break-word;
 }
 
 .status-card-version-base {
   font-size: 11px;
   font-weight: 500;
-  color: var(--muted, #888);
+  color: var(--gallery-card-version-muted, rgba(255, 255, 255, 0.52));
+}
+
+.status-card-skipped-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gallery-card-version-muted, rgba(255, 255, 255, 0.52));
 }
 
 .status-gallery-card .deferred-kind {
