@@ -6,6 +6,7 @@ import {
   nextFreeSyntheticVersionId,
   syntheticVersionIdFromPath
 } from '../shared/local-inventory'
+import { applyCustomAssignmentDefaultsToRecord, parseTagRuleNames } from '../shared/tag-routing'
 import * as inventory from './inventory'
 import { isOutputPathRootReachable, safePathExists } from './output-paths'
 
@@ -63,13 +64,15 @@ function inferRoutingTag(folder: string, tagRules: TagFolderRule[]): string {
   let best: TagFolderRule | null = null
   for (const rule of tagRules) {
     const rulePath = rule.folderPath.replace(/\\/g, '/').toLowerCase()
+    if (!rulePath) continue
     if (normalized === rulePath || normalized.startsWith(`${rulePath}/`)) {
       if (!best || rulePath.length > best.folderPath.replace(/\\/g, '/').length) {
         best = rule
       }
     }
   }
-  return best?.tagName ?? ''
+  if (!best) return ''
+  return parseTagRuleNames(best.tagName)[0]?.trim() || best.tagName.trim()
 }
 
 function collectScanRoots(loraFolder: string, checkpointFolder: string, tagRules: TagFolderRule[]): string[] {
@@ -217,26 +220,29 @@ function buildLocalRecordFromDisk(params: {
   }
   const preferred = syntheticVersionIdFromPath(modelPath)
   const versionId = nextFreeSyntheticVersionId(preferred, (id) => inventory.versionIdExists(id))
-  return {
-    modelId: 0,
-    versionId,
-    slug,
-    modelName: slug,
-    versionName: 'local',
-    author: 'local',
-    baseModel: '',
-    routingTag: inferRoutingTag(folder, tagRules),
-    outputFolder: folder,
-    modelPath,
-    previewPath: safePathExists(previewPath) === true ? previewPath : '',
-    swarmPath: '',
-    downloadedAt: new Date().toISOString(),
-    ignored: false,
-    civitaiTags: [],
-    fileSizeBytes,
-    civitaiDomain: 'com',
-    origin: 'local'
-  }
+  return applyCustomAssignmentDefaultsToRecord(
+    {
+      modelId: 0,
+      versionId,
+      slug,
+      modelName: slug,
+      versionName: 'local',
+      author: 'local',
+      baseModel: '',
+      routingTag: inferRoutingTag(folder, tagRules),
+      outputFolder: folder,
+      modelPath,
+      previewPath: safePathExists(previewPath) === true ? previewPath : '',
+      swarmPath: '',
+      downloadedAt: new Date().toISOString(),
+      ignored: false,
+      civitaiTags: [],
+      fileSizeBytes,
+      civitaiDomain: 'com' as const,
+      origin: 'local' as const
+    },
+    tagRules
+  )
 }
 
 /** Scan LoRA / checkpoint folders (and tag folders) for on-disk files and register missing versions in inventory. */
@@ -409,5 +415,6 @@ export async function importModelsFromDisk(
     result.imported++
   }
 
+  inventory.applyCustomAssignmentDefaults(tagRules)
   return result
 }

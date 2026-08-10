@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent as ReactMouseEvent } from 'react'
 import { flushSync } from 'react-dom'
 
 import type { HiddenTagApplyProgress, InventoryRecord, TagFolderRule } from '../../../shared/types'
@@ -10,8 +10,8 @@ import {
   isCustomTagFolderRule,
   parseTagRuleNames,
   ruleCoversTag,
-  countInventoryInFolder,
   countLibraryTagFolderReconcile,
+  countInventoryUnderFolderPath,
   expandCivitaiTagNames,
   tagFolderFilterMatch,
   getRulePriority,
@@ -86,9 +86,203 @@ function normalizeRules(
       tagName: parseTagRuleNames(r.tagName).join(', '),
       folderPath: r.folderPath.trim(),
       subfolderName: r.subfolderName?.trim() || undefined,
-      priority: storedTagPriority(r.priority)
+      priority: storedTagPriority(r.priority),
+      customAssignment: r.customAssignment ? true : undefined,
+      assignmentModelType: r.customAssignment
+        ? r.assignmentModelType === 'Checkpoint'
+          ? 'Checkpoint'
+          : r.assignmentModelType === 'LORA'
+            ? 'LORA'
+            : undefined
+        : undefined,
+      assignmentBaseModel: r.customAssignment
+        ? r.assignmentBaseModel?.trim() || undefined
+        : undefined
     }))
 }
+
+type CustomAssignmentRowProps = {
+  rule: TagFolderRule
+  folderCount: number
+  showLibraryCount: boolean
+  baseModelSuggestions: string[]
+  onCommit: (id: string, patch: Partial<TagFolderRule>) => void
+  onPickFolder: (id: string) => void
+  onRemove: (id: string) => void
+  onFilterLibrary?: (tag: string) => void
+}
+
+/**
+ * Local input state so typing does not rebuild the whole Tags tab (inventory reconcile + tag table).
+ * Debounced commit keeps Save/dirty in sync without per-keystroke full-tab work.
+ */
+const CustomAssignmentRow = memo(function CustomAssignmentRow({
+  rule,
+  folderCount,
+  showLibraryCount,
+  baseModelSuggestions,
+  onCommit,
+  onPickFolder,
+  onRemove,
+  onFilterLibrary
+}: CustomAssignmentRowProps) {
+  const t = useT()
+  const [tagName, setTagName] = useState(rule.tagName)
+  const [folderPath, setFolderPath] = useState(rule.folderPath)
+  const [baseModel, setBaseModel] = useState(rule.assignmentBaseModel ?? '')
+  const commitTimer = useRef<number | null>(null)
+
+  useEffect(() => setTagName(rule.tagName), [rule.tagName])
+  useEffect(() => setFolderPath(rule.folderPath), [rule.folderPath])
+  useEffect(() => setBaseModel(rule.assignmentBaseModel ?? ''), [rule.assignmentBaseModel])
+  useEffect(
+    () => () => {
+      if (commitTimer.current) window.clearTimeout(commitTimer.current)
+    },
+    []
+  )
+
+  const flushCommit = useCallback(
+    (patch: Partial<TagFolderRule>) => {
+      if (commitTimer.current) {
+        window.clearTimeout(commitTimer.current)
+        commitTimer.current = null
+      }
+      onCommit(rule.id, patch)
+    },
+    [onCommit, rule.id]
+  )
+
+  const scheduleCommit = useCallback(
+    (patch: Partial<TagFolderRule>) => {
+      if (commitTimer.current) window.clearTimeout(commitTimer.current)
+      commitTimer.current = window.setTimeout(() => {
+        commitTimer.current = null
+        onCommit(rule.id, patch)
+      }, 350)
+    },
+    [onCommit, rule.id]
+  )
+
+  const filterTag = parseTagRuleNames(tagName)[0] ?? tagName.trim()
+
+  return (
+    <div className="card tags-rule-card">
+      <div className="row tags-rule-row">
+        <div className="field tags-rule-names" style={{ margin: 0 }}>
+          <label>{t('tagsTab.customTagName')}</label>
+          <input
+            value={tagName}
+            onChange={(e) => {
+              const v = e.target.value
+              setTagName(v)
+              scheduleCommit({ tagName: v })
+            }}
+            onBlur={() => {
+              if (tagName !== rule.tagName) flushCommit({ tagName })
+            }}
+            placeholder={t('tagsTab.customTagPlaceholder')}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="field tags-rule-folder" style={{ margin: 0, flex: 2 }}>
+          <label>
+            {t('tagsTab.ruleFolder')}
+            {showLibraryCount && (
+              <span className="tags-rule-folder-count muted">
+                {' '}
+                · {folderCount} {t('tagsTab.inLibrary')}
+              </span>
+            )}
+          </label>
+          <div className="row">
+            <input
+              value={folderPath}
+              onChange={(e) => {
+                const v = e.target.value
+                setFolderPath(v)
+                scheduleCommit({ folderPath: v })
+              }}
+              onBlur={() => {
+                if (folderPath !== rule.folderPath) flushCommit({ folderPath })
+              }}
+            />
+            <button type="button" onClick={() => onPickFolder(rule.id)} style={{ flex: 'none' }}>
+              {t('common.browse')}
+            </button>
+          </div>
+        </div>
+        <div className="field tags-rule-type" style={{ margin: 0, minWidth: '7.5rem' }}>
+          <label>{t('tagsTab.ruleModelType')}</label>
+          <select
+            value={
+              rule.assignmentModelType === 'Checkpoint'
+                ? 'Checkpoint'
+                : rule.assignmentModelType === 'LORA'
+                  ? 'LORA'
+                  : ''
+            }
+            onChange={(e) => {
+              const v = e.target.value
+              flushCommit({
+                assignmentModelType:
+                  v === 'Checkpoint' ? 'Checkpoint' : v === 'LORA' ? 'LORA' : undefined
+              })
+            }}
+          >
+            <option value="">{t('tagsTab.modelTypeUnspecified')}</option>
+            <option value="LORA">{t('tagsTab.modelTypeLora')}</option>
+            <option value="Checkpoint">{t('tagsTab.modelTypeCheckpoint')}</option>
+          </select>
+        </div>
+        <div className="field tags-rule-base" style={{ margin: 0, flex: 1, minWidth: '8rem' }}>
+          <label>{t('tagsTab.ruleBaseModel')}</label>
+          <input
+            list={`custom-base-models-${rule.id}`}
+            value={baseModel}
+            onChange={(e) => {
+              const v = e.target.value
+              setBaseModel(v)
+              scheduleCommit({ assignmentBaseModel: v })
+            }}
+            onBlur={() => {
+              const prev = rule.assignmentBaseModel ?? ''
+              if (baseModel !== prev) flushCommit({ assignmentBaseModel: baseModel })
+            }}
+            placeholder={t('tagsTab.ruleBaseModelPlaceholder')}
+          />
+          <datalist id={`custom-base-models-${rule.id}`}>
+            {baseModelSuggestions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </div>
+        {onFilterLibrary && filterTag ? (
+          <button
+            type="button"
+            className="tag-library-filter-btn"
+            style={{ flex: 'none', alignSelf: 'end' }}
+            title={t('tagsTab.showInLibrary')}
+            onClick={() => {
+              if (tagName !== rule.tagName) flushCommit({ tagName })
+              onFilterLibrary(filterTag)
+            }}
+          >
+            →
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => onRemove(rule.id)}
+          style={{ flex: 'none', alignSelf: 'end' }}
+        >
+          {t('tagsTab.removeRule')}
+        </button>
+      </div>
+    </div>
+  )
+})
 
 export function TagsTab({
   rules,
@@ -162,7 +356,7 @@ export function TagsTab({
   const [manualTableTags, setManualTableTags] = useState<string[]>([])
   const hideAssignedRef = useRef(hideAssigned)
   hideAssignedRef.current = hideAssigned
-  const [customOpen, setCustomOpen] = useState(true)
+  const [customOpen, setCustomOpen] = useState(false)
   /** Blank rows from "Add custom assignment" — not auto table rules (those use empty folderPath too). */
   const [pendingCustomIds, setPendingCustomIds] = useState<Set<string>>(() => new Set())
   const [movingTag, setMovingTag] = useState<string | null>(null)
@@ -307,10 +501,8 @@ export function TagsTab({
     if (movingTag) return
     if (hideAssigned && pinnedAssignLabels.length > 0) return
     setDraft(rules)
-    // Preserve pendingCustomIds that still exist in the refreshed rules — clearing them all
-    // made custom assignment rows disappear from the custom-assignments section after save,
-    // because isCustomTagFolderRule returns false for subfolder rules (folderPath under
-    // LoRA/Checkpoint root). Only drop IDs that no longer match any saved rule.
+    // Preserve pendingCustomIds that still exist as in-progress draft rows.
+    // Saved customAssignment rules stay visible via isCustomTagFolderRule / customAssignment.
     setPendingCustomIds((prev) => {
       if (!prev.size) return prev
       const ruleIds = new Set(rules.map((r) => r.id))
@@ -377,26 +569,30 @@ export function TagsTab({
     }
   }, [massAssign])
 
-  // Custom section: only fully custom disk paths, plus in-progress blank rows from Add custom.
+  // Custom section: customAssignment rows + fully custom disk paths + in-progress Add rows.
   const customRules = useMemo(
     () =>
       draft.filter(
         (r) =>
-          isCustomTagFolderRule(r, loraFolder, checkpointFolder) || pendingCustomIds.has(r.id)
+          r.customAssignment ||
+          isCustomTagFolderRule(r, loraFolder, checkpointFolder) ||
+          pendingCustomIds.has(r.id)
       ),
     [draft, loraFolder, checkpointFolder, pendingCustomIds]
   )
 
-  // Pre-compute inventory counts per custom rule — countInventoryInFolder iterates all
-  // inventory records, so calling it inline in render freezes the UI with large libraries.
+  // Only scan inventory while the panel is open — and match by folder path only (cheap).
+  const deferredInventory = useDeferredValue(inventory)
   const customFolderCounts = useMemo(() => {
-    if (!inventory.length) return {} as Record<string, number>
+    if (!customOpen || !deferredInventory.length || !customRules.length) {
+      return {} as Record<string, number>
+    }
     const counts: Record<string, number> = {}
     for (const rule of customRules) {
-      counts[rule.id] = countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)
+      counts[rule.id] = countInventoryUnderFolderPath(rule.folderPath, deferredInventory)
     }
     return counts
-  }, [customRules, inventory, loraFolder, checkpointFolder])
+  }, [customOpen, customRules, deferredInventory])
 
   const availableLetters = useMemo(() => {
     const set = new Set<string>()
@@ -734,9 +930,11 @@ export function TagsTab({
     }
   }
 
+  // Defer heavy inventory walk — must not run synchronously on every draft keystroke.
+  const deferredDraft = useDeferredValue(draft)
   const reconcilePendingCount = useMemo(
-    () => countLibraryTagFolderReconcile(inventory, draft, loraFolder, checkpointFolder),
-    [inventory, draft, loraFolder, checkpointFolder]
+    () => countLibraryTagFolderReconcile(inventory, deferredDraft, loraFolder, checkpointFolder),
+    [inventory, deferredDraft, loraFolder, checkpointFolder]
   )
 
   const runLibraryReconcile = async (opts?: { confirm?: boolean }) => {
@@ -928,10 +1126,17 @@ export function TagsTab({
     try {
       await onSave(cleaned)
       setDraft(cleaned)
-      // Keep pendingCustomIds — they identify which rows belong in the custom-assignments
-      // section even after save. Clearing them made custom rows disappear from the UI
-      // because isCustomTagFolderRule returns false for subfolder rules (folderPath under
-      // LoRA/Checkpoint root).
+      // customAssignment on saved rules keeps them in the Custom section; pending ids are only
+      // for in-progress blank rows before Save.
+      setPendingCustomIds((prev) => {
+        if (!prev.size) return prev
+        const savedIds = new Set(cleaned.map((r) => r.id))
+        const next = new Set<string>()
+        for (const id of prev) {
+          if (!savedIds.has(id)) next.add(id)
+        }
+        return next.size === prev.size && next.size === 0 ? prev : next
+      })
       setSaveState('saved')
       await onRefresh?.()
     } catch (err) {
@@ -1057,30 +1262,34 @@ export function TagsTab({
     }
   }
 
-  const update = (id: string, patch: Partial<TagFolderRule>) => {
-    setDraft(draft.map((r) => (r.id === id ? { ...r, ...patch } : r)))
-    if (saveState === 'saved') setSaveState('idle')
-  }
-
-  const remove = (id: string) => {
-    setDraft(draft.filter((r) => r.id !== id))
-    setPendingCustomIds((prev) => {
-      if (!prev.has(id)) return prev
-      const next = new Set(prev)
-      next.delete(id)
-      return next
+  const update = useCallback((id: string, patch: Partial<TagFolderRule>) => {
+    startTransition(() => {
+      setDraft((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+      setSaveState((s) => (s === 'saved' ? 'idle' : s))
     })
-    if (saveState === 'saved') setSaveState('idle')
-  }
+  }, [])
 
-  const pickFolder = async (id: string) => {
+  const remove = useCallback((id: string) => {
+    startTransition(() => {
+      setDraft((prev) => prev.filter((r) => r.id !== id))
+      setPendingCustomIds((prev) => {
+        if (!prev.has(id)) return prev
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      setSaveState((s) => (s === 'saved' ? 'idle' : s))
+    })
+  }, [])
+
+  const pickFolder = useCallback(async (id: string) => {
     const path = await window.api.pickFolder()
     if (path) update(id, { folderPath: path })
-  }
+  }, [update])
 
   const addCustomRule = () => {
     const id = newId()
-    setDraft([...draft, { id, tagName: '', folderPath: '' }])
+    setDraft([...draft, { id, tagName: '', folderPath: '', customAssignment: true }])
     setPendingCustomIds((prev) => new Set(prev).add(id))
     setCustomOpen(true)
     if (saveState === 'saved') setSaveState('idle')
@@ -1105,9 +1314,21 @@ const dirty = useMemo(() => {
       if (d.tagName !== s.tagName || d.folderPath !== s.folderPath) return true
       if ((d.subfolderName ?? '') !== (s.subfolderName ?? '')) return true
       if ((d.priority ?? 1) !== (s.priority ?? 1)) return true
+      if (Boolean(d.customAssignment) !== Boolean(s.customAssignment)) return true
+      if ((d.assignmentModelType ?? '') !== (s.assignmentModelType ?? '')) return true
+      if ((d.assignmentBaseModel ?? '') !== (s.assignmentBaseModel ?? '')) return true
     }
     return false
   }, [draft, rules, pendingCustomIds])
+
+  const baseModelSuggestions = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of inventory) {
+      const bm = r.baseModel?.trim()
+      if (bm) set.add(bm)
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [inventory])
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -1585,78 +1806,51 @@ const dirty = useMemo(() => {
         </div>
       </div>
 
-      <details className="tags-custom-panel" open={customOpen} onToggle={(e) => setCustomOpen(e.currentTarget.open)}>
-        <summary className="tags-custom-summary">
+      <details className="tags-custom-panel" open={customOpen}>
+        <summary
+          className="tags-custom-summary"
+          onClick={(e) => {
+            // Controlled <details open + onToggle> can infinite-loop in Chromium/Electron
+            // (toggle → setState → open attr update → toggle again). Toggle via React only.
+            e.preventDefault()
+            setCustomOpen((o) => !o)
+          }}
+        >
           {t('tagsTab.customTitle')}
           <span className="muted tags-custom-count">
             {customRules.length ? ` (${customRules.length})` : ''}
           </span>
         </summary>
-        <p className="muted tags-tab-hint">{t('tagsTab.customHint')}</p>
+        {customOpen ? (
+          <>
+            <p className="muted tags-tab-hint">{t('tagsTab.customHint')}</p>
 
-        <div className="card-list tags-rule-list">
-          {customRules.map((rule) => {
-            const parsed = parseTagRuleNames(rule.tagName)
-            const folderCount = customFolderCounts[rule.id] ?? 0
-            return (
-              <div key={rule.id} className="card tags-rule-card">
-                <div className="row tags-rule-row">
-                  <div className="field tags-rule-names" style={{ margin: 0 }}>
-                    <label>{t('tagsTab.ruleTags')}</label>
-                    <TagAutocompleteInput
-                      value={rule.tagName}
-                      onChange={(tagName) => update(rule.id, { tagName })}
-                      suggestions={tagSuggestions}
-                      placeholder={t('tagsTab.ruleTagsPlaceholder')}
-                    />
-                    {parsed.length > 1 && (
-                      <div className="tags-rule-parsed muted">
-                        {t('tagsTab.ruleMatches', { tags: parsed.join(' · ') })}
-                      </div>
-                    )}
-                  </div>
-                  <div className="field tags-rule-folder" style={{ margin: 0, flex: 2 }}>
-                    <label>
-                      {t('tagsTab.ruleFolder')}
-                      {inventory.length > 0 && (
-                        <span className="tags-rule-folder-count muted">
-                          {' '}
-                          · {countInventoryInFolder(rule, inventory, loraFolder, checkpointFolder)}{' '}
-                          {t('tagsTab.inLibrary')}
-                        </span>
-                      )}
-                    </label>
-                    <div className="row">
-                      <input
-                        value={rule.folderPath}
-                        onChange={(e) => update(rule.id, { folderPath: e.target.value })}
-                      />
-                      <button type="button" onClick={() => void pickFolder(rule.id)} style={{ flex: 'none' }}>
-                        {t('common.browse')}
-                      </button>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => remove(rule.id)}
-                    style={{ flex: 'none', alignSelf: 'end' }}
-                  >
-                    {t('tagsTab.removeRule')}
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-          {!customRules.length && (
-            <p className="muted tags-custom-empty">{t('tagsTab.customEmpty')}</p>
-          )}
-        </div>
+            <div className="card-list tags-rule-list">
+              {customRules.map((rule) => (
+                <CustomAssignmentRow
+                  key={rule.id}
+                  rule={rule}
+                  folderCount={customFolderCounts[rule.id] ?? 0}
+                  showLibraryCount={inventory.length > 0}
+                  baseModelSuggestions={baseModelSuggestions}
+                  onCommit={update}
+                  onPickFolder={(id) => void pickFolder(id)}
+                  onRemove={remove}
+                  onFilterLibrary={onFilterLibrary}
+                />
+              ))}
+              {!customRules.length && (
+                <p className="muted tags-custom-empty">{t('tagsTab.customEmpty')}</p>
+              )}
+            </div>
 
-        <div className="row tags-tab-actions">
-          <button type="button" onClick={addCustomRule}>
-            {t('tagsTab.addCustomRule')}
-          </button>
-        </div>
+            <div className="row tags-tab-actions">
+              <button type="button" onClick={addCustomRule}>
+                {t('tagsTab.addCustomRule')}
+              </button>
+            </div>
+          </>
+        ) : null}
       </details>
 
       {saveError && <p className="tags-save-error">{saveError}</p>}

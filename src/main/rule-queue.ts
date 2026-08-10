@@ -29,9 +29,11 @@ import {
   collectUsedTags,
   findFirstUsedTag,
   firstPolicyMatch,
+  isCustomAssignmentInventoryRecord,
   modelHasPolicyTag,
   resolveModelRoutingTag
 } from '../shared/tag-routing'
+import { isLocalInventoryRecord } from '../shared/local-inventory'
 import type { DownloadQueue } from './download-queue'
 import { buildSampleModels } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
@@ -1159,11 +1161,18 @@ export async function scanOwnedModelsForNewVersions(
 }> {
   const snapshot = inventory.buildInventorySnapshot()
   const domainByModel = libraryDomainByModelId()
+  const tagRules = getTagRules()
   const modelIds = [
     ...new Set(
       inventory
         .getAllVersions()
-        .filter((v) => !snapshot.ignoredModelIds.has(v.modelId))
+        .filter(
+          (v) =>
+            v.modelId > 0 &&
+            !snapshot.ignoredModelIds.has(v.modelId) &&
+            !isLocalInventoryRecord(v) &&
+            !isCustomAssignmentInventoryRecord(v, tagRules)
+        )
         .map((v) => v.modelId)
     )
   ].filter((id) => !inventory.isModelBanned(id) && !inventory.isMissingUnavailable(id))

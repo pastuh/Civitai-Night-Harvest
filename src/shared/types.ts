@@ -74,6 +74,11 @@ export interface AppSettings {
    * Off = move immediately without the count confirmation dialog.
    */
   confirmTagFolderMoves: boolean
+  /**
+   * Library: for Custom folder assignments, show tag + relative subfolder path
+   * (e.g. randoms/cars). Off = show only the custom tag name.
+   */
+  showCustomAssignmentSubfolders: boolean
   /** Library: click a card tag → assign folder popup (default off). */
   fastTagMode: boolean
   /** Civitai tags to temporarily pause (Browse exclude) — skip auto-download while listed */
@@ -177,6 +182,11 @@ export interface AppSettingsPublic {
   preserveFilters: boolean
   banFunctionMode: boolean
   confirmTagFolderMoves: boolean
+  /**
+   * Library: for Custom folder assignments, show tag + relative subfolder path
+   * (e.g. randoms/cars). Off = show only the custom tag name.
+   */
+  showCustomAssignmentSubfolders: boolean
   /** Library: click a card tag → assign folder popup (default off). */
   fastTagMode: boolean
   hiddenTags: string[]
@@ -230,6 +240,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preserveFilters: false,
   banFunctionMode: false,
   confirmTagFolderMoves: true,
+  showCustomAssignmentSubfolders: true,
   fastTagMode: false,
   hiddenTags: [],
   bannedTags: [],
@@ -268,6 +279,23 @@ export interface TagFolderRule {
   folderPath: string
   /** Disk subfolder under each base model (e.g. "style"). Defaults to tag name when empty. */
   subfolderName?: string
+  /**
+   * Created via Tag folders → Custom folder assignments. Kept in that section after save
+   * even when folderPath sits under LoRA/Checkpoint roots (otherwise it only appears in the tag table).
+   * Personal library label + folder — auto Civitai download routing ignores folderPath
+   * (uses the app tag subfolder under LoRA/Checkpoint roots instead).
+   */
+  customAssignment?: boolean
+  /**
+   * Declared model type for models in this custom assignment folder (Library filters).
+   * Only meaningful with customAssignment.
+   */
+  assignmentModelType?: 'LORA' | 'Checkpoint'
+  /**
+   * Declared base model for models in this custom assignment folder (e.g. Flux, Krea2).
+   * Only meaningful with customAssignment.
+   */
+  assignmentBaseModel?: string
   /**
    * Folder-match priority when a model has several assigned tags.
    * Default 1 (omit). 0 = fixed (always wins auto-routing). Higher beats lower; negatives lose to 1+.
@@ -1043,6 +1071,11 @@ export interface InventoryRecord {
   versionName: string
   author: string
   baseModel: string
+  /**
+   * LoRA / Checkpoint (etc). Empty = infer from output path under Settings roots,
+   * or from a matching custom folder assignment.
+   */
+  modelType?: string
   routingTag: string
   /** When true, tag bulk-assign must not move this model (Library manual placement). */
   routingLocked?: boolean

@@ -3,7 +3,9 @@ import type { InventoryRecord, LibrarySyncProgress } from '../shared/types'
 import * as inventory from './inventory'
 import { writeCivitaiSidecar, readCivitaiSidecar, readIdsFromSwarm } from './model-sidecar'
 import { isLocalInventoryRecord } from '../shared/local-inventory'
+import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
 import { safePathExists } from './output-paths'
+import { getTagRules } from './settings-store'
 
 export interface BackfillCivitaiIdsResult {
   checked: number
@@ -105,13 +107,19 @@ export async function backfillCivitaiIdentityFiles(
   }
 
   const candidates: InventoryRecord[] = []
+  const tagRules = getTagRules()
   for (const record of records) {
     result.checked++
     if (!record.modelPath || !safePathExists(record.modelPath)) {
       result.skippedMissing++
       continue
     }
-    if (isLocalInventoryRecord(record) || record.modelId <= 0 || record.versionId <= 0) {
+    if (
+      isLocalInventoryRecord(record) ||
+      isCustomAssignmentInventoryRecord(record, tagRules) ||
+      record.modelId <= 0 ||
+      record.versionId <= 0
+    ) {
       result.skippedOk++
       continue
     }

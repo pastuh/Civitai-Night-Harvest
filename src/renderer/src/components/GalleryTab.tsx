@@ -22,12 +22,14 @@ import {
   parseTagRuleNames,
   ruleCoversTag,
   countInventoryInTagSubfolder,
+  collectCustomAssignmentSidebarEntries,
   collectTagSubfolderRoutes,
   displayFolderForTag,
   recordMatchesTagSubfolder,
+  recordMatchesCustomAssignmentTag,
+  customAssignmentPrimaryTag,
   subfolderNameForRule,
   isCustomTagFolderRule,
-  formatTagRuleLabel,
   normalizeHiddenTags,
   isUnsortedRoutingTag,
   expandCivitaiTagNames
@@ -82,6 +84,8 @@ interface Props {
   tagSuggestions?: string[]
   /** When false, skip Fast tag / bulk move confirmation. Default true. */
   confirmTagFolderMoves?: boolean
+  /** Show custom assignment tag + relative subfolder paths (default on). */
+  showCustomAssignmentSubfolders?: boolean
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   focusModelId?: number | null
   /** Prefill Library search (Updates → Open in Library). */
@@ -190,6 +194,7 @@ function GalleryTabInner({
   pausedTags = [],
   tagSuggestions = [],
   confirmTagFolderMoves = true,
+  showCustomAssignmentSubfolders = true,
   onSaveTagRules,
   focusModelId,
   focusModelName,
@@ -628,7 +633,11 @@ function GalleryTabInner({
         const names = new Set(
           namesForRoutingFilter(libraryFilter.name, tagRules).map((n) => n.toLowerCase())
         )
-        list = list.filter((r) => names.has(r.routingTag.toLowerCase()))
+        list = list.filter((r) => {
+          if (names.has(r.routingTag.toLowerCase())) return true
+          if (recordMatchesCustomAssignmentTag(r, libraryFilter.name, tagRules)) return true
+          return false
+        })
         break
       }
       case 'subfolder':
@@ -637,11 +646,17 @@ function GalleryTabInner({
         )
         break
       case 'civitai':
-        list = list.filter((r) =>
-          expandCivitaiTagNames(r.civitaiTags).some(
-            (t) => t.toLowerCase() === libraryFilter.name.toLowerCase()
-          )
-        )
+        list = list.filter((r) => {
+          if (
+            expandCivitaiTagNames(r.civitaiTags).some(
+              (t) => t.toLowerCase() === libraryFilter.name.toLowerCase()
+            )
+          ) {
+            return true
+          }
+          // Custom folder assignments are personal labels — also match by folder path.
+          return recordMatchesCustomAssignmentTag(r, libraryFilter.name, tagRules)
+        })
         break
       case 'cluster': {
         const cluster = tagClusters.find((c) => c.key === libraryFilter.key)
@@ -934,12 +949,19 @@ function GalleryTabInner({
 
   useEffect(() => {
     if (!focusCivitaiTag?.trim()) return
+    const name = focusCivitaiTag.trim()
     setPinModelId(null)
-    setLibraryFilter({ type: 'civitai', name: focusCivitaiTag.trim() })
+    const rule = findRuleForTag(name, tagRules)
+    if (rule?.customAssignment) {
+      const tag = parseTagRuleNames(rule.tagName)[0] ?? name
+      setLibraryFilter({ type: 'routing', name: tag })
+    } else {
+      setLibraryFilter({ type: 'civitai', name })
+    }
     setModelSearch('')
     setModelLetter(null)
     onFocusTagHandled?.()
-  }, [focusCivitaiTag, onFocusTagHandled])
+  }, [focusCivitaiTag, onFocusTagHandled, tagRules])
 
   const unrecognizedCount = useMemo(
     () => inventory.filter((r) => isUnrecognizedInventoryRecord(r)).length,
@@ -1591,6 +1613,7 @@ function GalleryTabInner({
               tagRules={tagRules}
               loraFolder={loraFolder}
               checkpointFolder={checkpointFolder}
+              showCustomAssignmentSubfolders={showCustomAssignmentSubfolders}
               banFunctionMode={banFunctionMode}
               hideCardTags={hideCardTags}
               hideAssignedTags={hideAllAssignedTags}
@@ -1890,34 +1913,45 @@ function GalleryTabInner({
                       </div>
                     )
                   })}
-                  {customFolderRules.map((rule) => {
-                    const tag = parseTagRuleNames(rule.tagName)[0] ?? rule.tagName
-                    return (
-                      <div key={rule.id} className="sidebar-tag-row">
+                  {customFolderRules.flatMap((rule) => {
+                    const entries = collectCustomAssignmentSidebarEntries(
+                      rule,
+                      inventory,
+                      showCustomAssignmentSubfolders
+                    )
+                    return entries.map((entry) => (
+                      <div
+                        key={`${rule.id}:${entry.label}`}
+                        className={`sidebar-tag-row ${entry.isRoot ? '' : 'tag-cluster-variant'}`}
+                      >
                         <button
                           type="button"
-                          className={`sidebar-tag ${filterActive({ type: 'routing', name: tag }) ? 'active' : ''}`}
-                          onClick={() => setLibraryFilter({ type: 'routing', name: tag })}
-                          title={rule.folderPath || formatTagRuleLabel(rule)}
+                          className={`sidebar-tag ${filterActive({ type: 'routing', name: entry.label }) ? 'active' : ''}`}
+                          onClick={() => setLibraryFilter({ type: 'routing', name: entry.label })}
+                          title={
+                            entry.isRoot
+                              ? rule.folderPath || entry.label
+                              : `${rule.folderPath}\\${entry.label.slice(entry.label.indexOf('/') + 1)}`
+                          }
                         >
-                          <span className="tag-name">{formatTagRuleLabel(rule)}</span>
-                          <span className="muted tag-count-inline">
-                            {routingTagCounts.get(tag.toLowerCase()) ?? 0}
-                          </span>
+                          <span className="tag-name">{entry.label}</span>
+                          <span className="muted tag-count-inline">{entry.count}</span>
                         </button>
-                        {selected.size > 0 && (
+                        {selected.size > 0 && entry.isRoot && (
                           <button
                             type="button"
                             className="sidebar-move"
                             disabled={moving}
-                            onClick={() => void moveSelectedToTag(tag)}
-                            title={rule.folderPath || t('gallery.moveTo', { folder: tag })}
+                            onClick={() =>
+                              void moveSelectedToTag(customAssignmentPrimaryTag(rule) || entry.label)
+                            }
+                            title={rule.folderPath || t('gallery.moveTo', { folder: entry.label })}
                           >
                             {t('gallery.move')}
                           </button>
                         )}
                       </div>
-                    )
+                    ))
                   })}
                 </>
               )}
@@ -2230,6 +2264,7 @@ type LibraryCardGridProps = {
   tagRules: TagFolderRule[]
   loraFolder: string
   checkpointFolder: string
+  showCustomAssignmentSubfolders?: boolean
   banFunctionMode: boolean
   hideCardTags?: string[]
   hideAssignedTags?: boolean
@@ -2263,6 +2298,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   tagRules,
   loraFolder,
   checkpointFolder,
+  showCustomAssignmentSubfolders = true,
   banFunctionMode,
   hideCardTags,
   hideAssignedTags = false,
@@ -2294,6 +2330,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
           tagRules={tagRules}
           loraFolder={loraFolder}
           checkpointFolder={checkpointFolder}
+          showCustomSubfolders={showCustomAssignmentSubfolders}
           banFunctionMode={banFunctionMode}
           hideCardTags={hideCardTags}
           hideAssignedTags={hideAssignedTags}

@@ -30,7 +30,7 @@ import {
   type RatingFilter
 } from '../../../shared/rating-filter'
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
-import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
+import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag, expandCivitaiTagNames, parseTagRuleNames } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
@@ -38,6 +38,7 @@ import type { ModelDetailTarget } from './ModelDetailModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { useT } from '../i18n/context'
 import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole, cardTagFolderRoleClass } from './gallery-card-utils'
+import { TagAutocompleteInput } from './TagAutocompleteInput'
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { useDownloadQueue, useQueuedMembership } from '../hooks/useDownloadQueue'
 import { ResultsPager } from './ResultsPager'
@@ -330,6 +331,11 @@ export function SearchBrowsePanel({
   const tagCatalogRef = useRef<Map<number, WatchRuleTestModel>>(new Map())
   const [tagCatalogTick, setTagCatalogTick] = useState(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [assignTagOpen, setAssignTagOpen] = useState(false)
+  const [assignTagQuery, setAssignTagQuery] = useState('')
+  const [assignTagBusy, setAssignTagBusy] = useState(false)
+  /** Per-version folder route set from context menu (used on next enqueue + card folder line). */
+  const [routingOverrides, setRoutingOverrides] = useState<Record<number, string>>({})
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const gridSentinelRef = useRef<HTMLDivElement>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
@@ -1600,12 +1606,21 @@ export function SearchBrowsePanel({
       setMessage('')
       try {
         const urls = previewUrlsFor(model)
-        const { routingTag: resolvedTag, needsConfirmation } = resolveModelRoutingTag(
-          model.tags,
-          routingTag,
-          tagRules,
-          model.baseModel
-        )
+        const override = (model.versionId > 0 ? routingOverrides[model.versionId] : undefined)?.trim()
+        let resolvedTag: string | undefined
+        let needsConfirmation = false
+        if (override) {
+          resolvedTag = override
+        } else {
+          const resolved = resolveModelRoutingTag(
+            model.tags,
+            routingTag,
+            tagRules,
+            model.baseModel
+          )
+          resolvedTag = resolved.routingTag || undefined
+          needsConfirmation = resolved.needsConfirmation
+        }
         await window.api.enqueueDownload(
           {
             modelId: model.id,
@@ -1634,7 +1649,7 @@ export function SearchBrowsePanel({
         setQueuingId(null)
       }
     },
-    [isBanned, queueItemFor, routingTag, tagRules]
+    [isBanned, queueItemFor, routingTag, routingOverrides, tagRules]
   )
 
   const enqueueModelRef = useRef(enqueueModel)
@@ -1648,11 +1663,90 @@ export function SearchBrowsePanel({
   const onCardViewDetails = useCallback((model: WatchRuleTestModel) => {
     openDetailRef.current(model)
   }, [])
-  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null)
+    setAssignTagOpen(false)
+    setAssignTagQuery('')
+  }, [])
   const onCardContextMenu = useCallback((e: MouseEvent, model: WatchRuleTestModel) => {
     e.preventDefault()
+    setAssignTagOpen(false)
+    setAssignTagQuery('')
     setContextMenu({ x: e.clientX, y: e.clientY, model })
   }, [])
+
+  const folderTagSuggestions = useMemo(() => {
+    const names = new Set<string>()
+    for (const rule of tagRules) {
+      for (const n of parseTagRuleNames(rule.tagName)) {
+        const t = n.trim()
+        if (t) names.add(t)
+      }
+      const sub = rule.subfolderName?.trim()
+      if (sub) names.add(sub)
+    }
+    for (const tag of result.tagsInResults ?? []) {
+      if (tag.name.trim()) names.add(tag.name.trim())
+    }
+    if (contextMenu?.model) {
+      for (const t of expandCivitaiTagNames(contextMenu.model.tags)) {
+        if (t.trim()) names.add(t.trim())
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [tagRules, result.tagsInResults, contextMenu?.model])
+
+  const ensureTagFolder = useCallback(
+    async (tagName: string): Promise<boolean> => {
+      if (findRuleForTag(tagName, tagRules)) return true
+      await onSaveTagRules([...tagRules, { id: crypto.randomUUID(), tagName, folderPath: '' }])
+      return true
+    },
+    [onSaveTagRules, tagRules]
+  )
+
+  const assignModelToTag = useCallback(
+    async (model: WatchRuleTestModel, rawTag: string) => {
+      const tagName = rawTag.trim()
+      if (!tagName || model.versionId <= 0) return
+      setAssignTagBusy(true)
+      setMessage('')
+      try {
+        if (!(await ensureTagFolder(tagName))) return
+        const owned = model.inInventory || ownedVersionIds.has(model.versionId)
+        if (owned) {
+          await window.api.assignTag([model.versionId], tagName)
+          await onRefreshInventory?.()
+          setMessage(t('gallery.assignedOne', { tag: tagName }))
+        } else {
+          setRoutingOverrides((prev) => ({ ...prev, [model.versionId]: tagName }))
+          const queued = queueItemFor(model)
+          if (
+            queued &&
+            (queued.status === 'queued' ||
+              queued.status === 'downloading' ||
+              queued.status === 'deferred')
+          ) {
+            await window.api.setDownloadRouting(model.versionId, tagName)
+          }
+          setMessage(t('browse.assignedRoute', { tag: tagName, name: model.name }))
+        }
+        closeContextMenu()
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : String(err))
+      } finally {
+        setAssignTagBusy(false)
+      }
+    },
+    [
+      ensureTagFolder,
+      ownedVersionIds,
+      onRefreshInventory,
+      queueItemFor,
+      closeContextMenu,
+      t
+    ]
+  )
   const onOpenTagFoldersRef = useRef(onOpenTagFolders)
   onOpenTagFoldersRef.current = onOpenTagFolders
   const onCardTagClick = useCallback((tag: string) => {
@@ -2458,6 +2552,7 @@ export function SearchBrowsePanel({
             queuePaused={queuePaused}
             queuingId={queuingId}
             routingTag={routingTag}
+            routingOverrides={routingOverrides}
             tagRules={tagRules}
             loraFolder={loraFolder}
             checkpointFolder={checkpointFolder}
@@ -2664,6 +2759,54 @@ export function SearchBrowsePanel({
                 Delete files & exclude
               </button>
             )}
+            {contextMenu.model.versionId > 0 && (
+              <>
+                <div className="context-menu-divider" />
+                {!assignTagOpen ? (
+                  <button
+                    type="button"
+                    disabled={assignTagBusy}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setAssignTagOpen(true)
+                    }}
+                  >
+                    {t('gallery.assignFolderByTag')}
+                  </button>
+                ) : (
+                  <div
+                    className="context-menu-assign-folder"
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="context-menu-subtitle">{t('gallery.assignFolderByTag')}</div>
+                    <TagAutocompleteInput
+                      value={assignTagQuery}
+                      onChange={setAssignTagQuery}
+                      suggestions={folderTagSuggestions}
+                      singleTag
+                      autoFocus
+                      matchMode="fuzzy"
+                      placeholder={t('gallery.assignFolderPlaceholder')}
+                      confirmLabel={t('gallery.assignFolderConfirm')}
+                      confirmText="→"
+                      clearable
+                      clearLabel={t('gallery.clearSearch')}
+                      disabled={assignTagBusy}
+                      onConfirm={() =>
+                        void assignModelToTag(contextMenu.model, assignTagQuery)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
+                          e.preventDefault()
+                          void assignModelToTag(contextMenu.model, assignTagQuery)
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </>
+            )}
             {expandCivitaiTagNames(contextMenu.model.tags).length > 0 && onHiddenTagsChange && (
               <>
                 <div className="context-menu-divider" />
@@ -2826,6 +2969,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   queuePaused,
   queuingId,
   routingTag,
+  routingOverrides = {},
   tagRules,
   loraFolder,
   checkpointFolder,
@@ -2850,6 +2994,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   queuePaused: boolean
   queuingId: number | null
   routingTag: string
+  routingOverrides?: Record<number, string>
   tagRules: TagFolderRule[]
   loraFolder: string
   checkpointFolder: string
@@ -2888,6 +3033,9 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             waitAccessVersionIds={waitAccessVersionIds}
             queuing={queuingId === m.versionId}
             routingTag={routingTag}
+            lockedRoutingTag={
+              (m.versionId > 0 ? routingOverrides[m.versionId] : undefined)?.trim() || undefined
+            }
             tagRules={tagRules}
             loraFolder={loraFolder}
             checkpointFolder={checkpointFolder}
@@ -2918,6 +3066,7 @@ const ModelCard = memo(function ModelCard({
   waitAccessVersionIds,
   queuing,
   routingTag,
+  lockedRoutingTag,
   tagRules = [],
   loraFolder = '',
   checkpointFolder = '',
@@ -2943,6 +3092,8 @@ const ModelCard = memo(function ModelCard({
   waitAccessVersionIds?: Set<number>
   queuing: boolean
   routingTag: string
+  /** Manual Assign model to tag — wins over auto-resolve even if tag is not on the card. */
+  lockedRoutingTag?: string
   tagRules?: TagFolderRule[]
   loraFolder?: string
   checkpointFolder?: string
@@ -2989,12 +3140,10 @@ const ModelCard = memo(function ModelCard({
     !isEarlyAccessCard
 
   const cardTags = expandCivitaiTagNames(model.tags)
-  const resolvedRoute = resolveModelRoutingTag(
-    cardTags,
-    routingTag,
-    tagRules,
-    model.baseModel
-  ).routingTag.trim()
+  const resolvedRoute = (
+    lockedRoutingTag?.trim() ||
+    resolveModelRoutingTag(cardTags, routingTag, tagRules, model.baseModel).routingTag
+  ).trim()
   const folderLabel = shortCardFolderLabel(
     resolvedRoute || null,
     model.baseModel,

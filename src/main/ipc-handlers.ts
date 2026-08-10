@@ -130,6 +130,7 @@ const IPC_CHANNELS = [
   'download:dismiss',
   'download:retryFailed',
   'download:priority',
+  'download:setRouting',
   'download:clearQueue',
   'scan:run',
   'scan:libraryVersions',
@@ -509,7 +510,11 @@ export function initIpc(): void {
   })
 
   ipcMain.handle('tagRules:get', () => getTagRules())
-  ipcMain.handle('tagRules:save', (_e, rules: TagFolderRule[]) => saveTagRules(rules))
+  ipcMain.handle('tagRules:save', (_e, rules: TagFolderRule[]) => {
+    const saved = saveTagRules(rules)
+    inventory.applyCustomAssignmentDefaults(saved)
+    return saved
+  })
 
   ipcMain.handle('watchRules:get', () => getWatchRules())
   ipcMain.handle('watchRules:save', async (_e, rules: WatchRule[]) => {
@@ -1442,6 +1447,16 @@ export function initIpc(): void {
     downloadQueue.prioritizeQueueItem(queueId)
     return downloadQueue.getState()
   })
+
+  ipcMain.handle(
+    'download:setRouting',
+    (_e, payload: { versionId: number; routingTag: string }) => {
+      const tag = payload.routingTag?.trim() ?? ''
+      if (!payload.versionId || !tag) return downloadQueue.getState()
+      downloadQueue.updateRoutingForVersion(payload.versionId, tag)
+      return downloadQueue.getState()
+    }
+  )
 
   ipcMain.handle('download:clearQueue', () => {
     const removed = downloadQueue.clearAll()

@@ -963,7 +963,7 @@ export class DownloadQueue {
       this.emitDeferred()
     }
 
-    if (changed && item) this.broadcast()
+    if (changed) this.broadcast()
     return changed
   }
 

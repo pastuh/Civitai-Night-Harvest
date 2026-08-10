@@ -7,7 +7,9 @@ import type {
   LibraryHashVerifyProgress,
   LibraryHashVerifyResult
 } from '../shared/types'
+import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
 import * as inventory from './inventory'
+import { getTagRules } from './settings-store'
 
 export function sha256File(path: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -43,9 +45,16 @@ export async function backfillMissingHashes(
   maxFiles = 40,
   onProgress?: (p: LibraryHashVerifyProgress) => void
 ): Promise<number> {
+  const tagRules = getTagRules()
   const missing = inventory
     .getAllVersions()
-    .filter((r) => !r.fileHashSha256 && existsSync(r.modelPath) && r.versionId > 0)
+    .filter(
+      (r) =>
+        !r.fileHashSha256 &&
+        existsSync(r.modelPath) &&
+        r.versionId > 0 &&
+        !isCustomAssignmentInventoryRecord(r, tagRules)
+    )
     .slice(0, maxFiles)
   const total = missing.length
   let count = 0
@@ -95,8 +104,13 @@ export async function verifyLibraryHashes(
     apiDomains: []
   }
 
+  const tagRules = getTagRules()
   const records = inventory.getAllVersions().filter(
-    (r) => existsSync(r.modelPath) && r.versionId > 0 && r.origin !== 'local'
+    (r) =>
+      existsSync(r.modelPath) &&
+      r.versionId > 0 &&
+      r.origin !== 'local' &&
+      !isCustomAssignmentInventoryRecord(r, tagRules)
   )
   const pending: InventoryRecord[] = []
 

@@ -26,6 +26,8 @@ export type LibraryModelCardProps = {
   tagRules: TagFolderRule[]
   loraFolder: string
   checkpointFolder: string
+  /** Show custom assignment tag + relative subfolder on cards (default on). */
+  showCustomSubfolders?: boolean
   banFunctionMode?: boolean
   onBanModel?: (modelId: number, modelName: string, versionId?: number) => void
   duplicateOfName?: string | null
@@ -62,6 +64,7 @@ function LibraryModelCardInner({
   tagRules,
   loraFolder,
   checkpointFolder,
+  showCustomSubfolders = true,
   banFunctionMode = false,
   onBanModel,
   duplicateOfName = null,
@@ -82,7 +85,9 @@ function LibraryModelCardInner({
     record.isNsfw != null || record.nsfwLevel
       ? describeNsfwRating(record.isNsfw, record.nsfwLevel)
       : null
-  const folderLabel = folderLabelForRecord(record, tagRules, loraFolder, checkpointFolder)
+  const folderLabel = folderLabelForRecord(record, tagRules, loraFolder, checkpointFolder, {
+    showCustomSubfolders
+  })
   const folderLine = folderLineIfNotDuplicatingTag(folderLabel, record.civitaiTags)
   const unrecognized = isUnrecognizedInventoryRecord(record)
   const canOpenCivitai = !unrecognized && record.modelId > 0 && record.versionId > 0

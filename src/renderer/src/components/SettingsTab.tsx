@@ -782,6 +782,21 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
+              checked={draft.showCustomAssignmentSubfolders !== false}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                update('showCustomAssignmentSubfolders', enabled)
+                void onSave({ showCustomAssignmentSubfolders: enabled })
+              }}
+            />
+            {t('settings.fields.showCustomAssignmentSubfolders')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.showCustomAssignmentSubfolders')}</p>
+        </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
               checked={draft.browseSettledToEnd ?? false}
               onChange={(e) => update('browseSettledToEnd', e.target.checked)}
             />

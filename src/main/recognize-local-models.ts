@@ -2,7 +2,9 @@ import { existsSync, statSync } from 'fs'
 import type { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type { CivitaiDomain, InventoryRecord, LibrarySyncProgress } from '../shared/types'
 import { isLocalInventoryRecord } from '../shared/local-inventory'
+import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
 import * as inventory from './inventory'
+import { getTagRules } from './settings-store'
 import { sha256File } from './library-hash-verify'
 import { writeCivitaiSidecar } from './model-sidecar'
 import { deleteVersionFromLibrary } from './model-delete'
@@ -45,8 +47,15 @@ export async function recognizeLocalModels(
     errors: []
   }
 
+  const tagRules = getTagRules()
   const all = inventory.getAllVersions()
-  const locals = all.filter((r) => isLocalInventoryRecord(r) && existsSync(r.modelPath))
+  // Custom folder assignments are intentional locals — never hash/promote via Civitai.
+  const locals = all.filter(
+    (r) =>
+      isLocalInventoryRecord(r) &&
+      existsSync(r.modelPath) &&
+      !isCustomAssignmentInventoryRecord(r, tagRules)
+  )
   if (!locals.length) return result
 
   const onProgress = options.onProgress

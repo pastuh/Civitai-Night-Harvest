@@ -239,6 +239,9 @@ export function getSettings(): AppSettings {
   if (raw.confirmTagFolderMoves === undefined) {
     raw.confirmTagFolderMoves = true
   }
+  if (raw.showCustomAssignmentSubfolders === undefined) {
+    raw.showCustomAssignmentSubfolders = true
+  }
   if (raw.slugFormat !== 'compact' && raw.slugFormat !== 'versionName' && raw.slugFormat !== 'modelTitle') {
     raw.slugFormat = 'compact'
   }

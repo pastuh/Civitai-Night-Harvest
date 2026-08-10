@@ -138,6 +138,7 @@ export const lt: Messages = {
       showBannedInGallery: 'Rodyti banned galerijoje',
       banFunctionMode: 'Ban function (× šalia kortelės pavadinimo)',
       confirmTagFolderMoves: 'Patvirtinti prieš masinį tag-folder perkėlimą',
+      showCustomAssignmentSubfolders: 'Rodyti custom folderio subkelius Library',
       browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
       browseSettledDimPercent: 'Pritemdyti settled Browse korteles',
       resultsDisplayMode: 'Rezultatų rodymas (Browse ir Library)',
@@ -253,6 +254,8 @@ export const lt: Messages = {
         'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
       confirmTagFolderMoves:
         'Priskiriant tag aplanką (Tag folders ar Library Fast tag), klausti kiek modelių bus perkelta. Išjunkite — perkelti iškart be dialogo.',
+      showCustomAssignmentSubfolders:
+        'Custom folder assignments: kortelėse ir Library šoninėje juostoje rodyti tagą + santykinį subfolderį (pvz. randoms/cars). Išjungta = tik custom tago vardas. Pagal nutylėjimą įjungta.',
       blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
       downloadStripVisibility:
         'Pagal nutylėjimą juostos nėra — Clear queue dešinėje prie tabų. Įjunkite Browse / Browse+Library / Visus tabus, kad matytumėte pilną download juostą (Clear queue tada bus juostoje).',
@@ -382,9 +385,9 @@ export const lt: Messages = {
       'Sort — folder tag, Civitai downloads, tag group arba download order. Tas pats Settings rezultatų rodymas (lazy / puslapiai) kaip Browse.',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
     libraryTags:
-      'Dešinis spustelėjimas → **Priskirti aplanką pagal tag**. Spustelėkite tag ant kortelės — atidaromi Tag folders (arba Fast tag popup, jei įjungta). Žali / mapped chip’ai = aplanko taisyklės.',
+      'Dešinis spustelėjimas → **Priskirti modelį tagui**. Spustelėkite tag ant kortelės — atidaromi Tag folders (arba Fast tag popup, jei įjungta). Žali / mapped chip’ai = aplanko taisyklės.',
     libraryFastTag:
-      '**Fast tag** — priskirkite aplanką paspaustam tagui neišeidami iš Library (kelias `\\*\\name`; pakeiskite vardą pvz. glass plug → plug). Pasiūlymai grupuoti: Folders / Assigned / Library tagai.',
+      '**Fast tag** — priskirkite paspaustą tagą kaip šio modelio folder route neišeidami iš Library (kelias `\\*\\name`; pakeiskite vardą pvz. glass plug → plug). Pasiūlymai grupuoti: Folders / Assigned / Library tagai.',
     libraryExcluded:
       '**Excluded** + **Ignore excluded** su **Hide folder-assigned** — palieka modelius, kurių routing tag yra Excluded (pvz. concept). **All assigned** slepia mapped tagus ant kortelių (lieka brūkšninis placeholder).',
     libraryManual:
@@ -466,6 +469,8 @@ export const lt: Messages = {
       banFunctionMode: 'Rodo raudoną × šalia modelio pavadinimo Browse, Library, Updates, Awaiting ir download juostoje.',
       confirmTagFolderMoves:
         'Priskiriant tag aplanką (Tag folders ar Library Fast tag), klausti kiek modelių bus perkelta. Išjunkite — perkelti iškart be dialogo.',
+      showCustomAssignmentSubfolders:
+        'Custom folder assignments: kortelėse ir Library šoninėje juostoje rodyti tagą + santykinį subfolderį (pvz. randoms/cars). Išjungta = tik custom tago vardas. Pagal nutylėjimą įjungta.',
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
       hashVerify: 'Lyginama SHA256 diske su Civitai /model-versions/by-hash.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
@@ -573,6 +578,7 @@ export const lt: Messages = {
     loadMoreStallTitle: 'Crawl sustojo — krauti kitą puslapį rankiniu būdu',
     loadMore: 'Daugiau ({label})',
     contextSkipTag: 'Praleisti tag',
+    assignedRoute: '„{name}“ bus atsiųstas į tag folderį „{tag}“',
     fetchPreviews: 'Gauti preview ({count})',
     fetchPreviewsTitle:
       'Užkrauti preview — NSFW / R+ modeliams naudojamas tik civitai.red (.com jų negrąžina)',
@@ -1080,6 +1086,7 @@ export const lt: Messages = {
     sortDefault: 'Atsisiuntimo eilės tvarka',
     searchPlaceholder: 'Ieškoti pavadinimo, autoriaus, slug, Civitai tagų…',
     clear: 'Valyti',
+    clearSearch: 'Valyti',
     filterByLetter: 'Filtruoti pagal pirmą raidę',
     allLetters: 'Visi',
     helpText:
@@ -1122,7 +1129,7 @@ export const lt: Messages = {
     statThumbsUp: 'Thumbs up',
     defaultFolder: 'Numatytasis aplankas',
     assignedToFolder: 'Priskirta šiam tag aplankui',
-    assignFolderHint: 'Priskirti aplanką — spustelėkite: visi su „{tag}" ar tik ši kortelė',
+    assignFolderHint: 'Priskirti modelį tagui — spustelėkite: visi su „{tag}" ar tik ši kortelė',
     openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti dinaminiam aplankui',
     openTagFoldersAssigned: 'Priskirta — atidaryti Tag folders valdyti „{tag}"',
     tagRoleFinalHint:
@@ -1175,9 +1182,9 @@ export const lt: Messages = {
     noTagsYet: 'Civitai tagų bibliotekoje dar nėra — jie išsaugomi atsisiunčiant modelius.',
     selectedCount: 'Pažymėta {count}',
     openOnCivitaiMenu: 'Atidaryti Civitai ↗',
-    assignFolderByTag: 'Priskirti aplanką pagal tag',
-    assignFolderPlaceholder: 'Tag arba aplanko pavadinimas…',
-    assignFolderConfirm: 'Priskirti aplankui',
+    assignFolderByTag: 'Priskirti modelį tagui',
+    assignFolderPlaceholder: 'Tago pavadinimas (folder route)…',
+    assignFolderConfirm: 'Priskirti tagui',
     markSfw: 'Pažymėti kaip SFW',
     markNsfw: 'Pažymėti kaip NSFW',
     unbanAllow: 'Unban — leisti atsisiuntimus',
@@ -1270,12 +1277,20 @@ export const lt: Messages = {
     noTags: 'Bibliotekoje dar nėra tagų',
     customTitle: 'Custom aplankų priskyrimai',
     customHint:
-      'Prideda eilutę šiame bloke: pasirinkite bet kokį diską kelio už numatytų LoRA/Checkpoint šaknų, įrašykite tag sinonimus (kableliais) ir spauskite Save. Tuščios eilutės neišsaugomos, kol neužpildytos.',
+      'Asmeniniai tagai lokalams modeliams: tagas + aplankas + tipas/base (nebūtina). Civitai atsisiuntimai su tuo pačiu tagu eina į aplikacijos tag folderį po LoRA/Checkpoint šaknimis — ne į šį custom kelią. Po Save aplankas (su subfolderiais) nuskaitomas į Library. Tuščios eilutės (be tago) Save metu pašalinamos.',
     customEmpty: 'Nėra custom kelių — pridėkite apačioje, jei reikia.',
+    customTagName: 'Tagas',
+    customTagPlaceholder: 'mano modeliai',
     ruleTags: 'Tag pavadinimai (kableliais)',
     ruleTagsPlaceholder: 'fantasy style, horror style, style',
     ruleMatches: 'Atitinka: {tags}',
     ruleFolder: 'Aplanko kelias',
+    ruleModelType: 'Tipas',
+    modelTypeUnspecified: '—',
+    modelTypeLora: 'LoRA',
+    modelTypeCheckpoint: 'Checkpoint',
+    ruleBaseModel: 'Base modelis',
+    ruleBaseModelPlaceholder: 'Flux, Krea2, …',
     inLibrary: 'bibliotekoje',
     removeRule: 'Pašalinti',
     addCustomRule: 'Pridėti custom priskyrimą',

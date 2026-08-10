@@ -69,11 +69,19 @@ export function isCustomTagFolderPath(
 
 /** Folder label for tag table: `\\*\\name` under each base model, or full path when custom. */
 export function formatTagFolderDisplay(
-  rule: Pick<TagFolderRule, 'folderPath' | 'subfolderName' | 'tagName'>,
+  rule: Pick<TagFolderRule, 'folderPath' | 'subfolderName' | 'tagName' | 'customAssignment'>,
   tagName: string,
   loraFolder: string,
   checkpointFolder: string
 ): string {
+  // Personal custom assignment path is not the Civitai download destination — show app tag folder label.
+  if (rule.customAssignment) {
+    const seg =
+      rule.subfolderName?.trim() ||
+      parseTagRuleNames(rule.tagName)[0]?.trim() ||
+      tagName.trim()
+    return seg ? `\\*\\${seg}` : '\\'
+  }
   const fp = rule.folderPath.trim()
   if (!fp) {
     const seg =
@@ -142,14 +150,27 @@ export function resolveSubfolderUnderTypeRoot(
   return joinFolderPath(root, seg)
 }
 
+export type ResolveTagFolderOpts = {
+  /**
+   * When true, customAssignment rules may use their absolute folderPath.
+   * Default false: auto download / reconcile use the app tag subfolder under type roots
+   * so Civitai models never land in the personal custom folder.
+   */
+  useCustomAssignmentPath?: boolean
+}
+
 export function resolveTagRuleFolderPath(
   rule: TagFolderRule,
   loraFolder: string,
   checkpointFolder: string,
   modelType = 'LORA',
-  baseModel?: string
+  baseModel?: string,
+  opts?: ResolveTagFolderOpts
 ): string {
-  if (rule.folderPath?.trim()) return rule.folderPath.trim()
+  const useCustomPath = opts?.useCustomAssignmentPath === true
+  if (rule.folderPath?.trim() && (!rule.customAssignment || useCustomPath)) {
+    return rule.folderPath.trim()
+  }
   const typeRoot = getDefaultFolderForType(loraFolder, checkpointFolder, modelType)
   const primaryTag = parseTagRuleNames(rule.tagName)[0] ?? rule.tagName.trim()
   const segment = rule.subfolderName?.trim() || primaryTag
@@ -163,11 +184,19 @@ export function resolveFolderForTag(
   loraFolder: string,
   checkpointFolder: string,
   modelType = 'LORA',
-  baseModel?: string
+  baseModel?: string,
+  opts?: ResolveTagFolderOpts
 ): string | undefined {
   const rule = findRuleForTag(tagName, tagRules)
   if (!rule) return undefined
-  return resolveTagRuleFolderPath(rule, loraFolder, checkpointFolder, modelType, baseModel)
+  return resolveTagRuleFolderPath(
+    rule,
+    loraFolder,
+    checkpointFolder,
+    modelType,
+    baseModel,
+    opts
+  )
 }
 
 export function hasTagFolderRule(tagName: string, tagRules: TagFolderRule[]): boolean {
@@ -553,12 +582,13 @@ export function folderForTag(tagName: string, tagRules: TagFolderRule[]): string
   return rule.folderPath?.trim() || undefined
 }
 
-/** Rules shown in the custom-assignments editor (fully custom disk paths only). */
+/** Rules shown in the custom-assignments editor (custom path and/or Custom section origin). */
 export function isCustomTagFolderRule(
   rule: TagFolderRule,
   loraFolder: string,
   checkpointFolder: string
 ): boolean {
+  if (rule.customAssignment) return true
   const fp = rule.folderPath.trim()
   if (!fp) return false
   return isCustomTagFolderPath(fp, loraFolder, checkpointFolder)
@@ -581,7 +611,17 @@ export function resolveModelOutputFolder(params: {
   if (!typeRoot) return ''
   const tag = params.routingTag?.trim() || UNSORTED_FOLDER_NAME
   const rule = findRuleForTag(tag, params.tagRules)
-  if (rule?.folderPath?.trim()) return rule.folderPath.trim()
+  if (rule) {
+    const resolved = resolveTagRuleFolderPath(
+      rule,
+      params.loraFolder,
+      params.checkpointFolder,
+      params.modelType,
+      params.baseModel
+      // auto downloads: never use customAssignment.folderPath
+    )
+    if (resolved) return resolved
+  }
   return resolveSubfolderUnderTypeRoot(typeRoot, tag, params.baseModel)
 }
 /** Strip trailing punctuation from tag input (autocomplete may append ", "). */
@@ -842,4 +882,201 @@ export function shouldPromptTagAssignment(
   // Only ask when the user manually queued a model with ambiguous folder tags (Browse click).
   // Background / night-mode downloads pick the first matching folder silently.
   return confirmTagsAfter === true
+}
+
+function normalizeFolderKey(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** True when `folder` equals `root` or is a subdirectory of it. */
+export function folderIsUnderPath(folder: string, root: string): boolean {
+  const needle = normalizeFolderKey(folder)
+  const key = normalizeFolderKey(root)
+  if (!needle || !key) return false
+  return needle === key || needle.startsWith(`${key}/`)
+}
+
+/** Inventory under a customAssignment folder — local-only; skip Civitai API during sync. */
+export function isCustomAssignmentInventoryRecord(
+  record: { outputFolder: string },
+  tagRules: TagFolderRule[]
+): boolean {
+  return findCustomAssignmentForFolder(record.outputFolder, tagRules) != null
+}
+
+/** Longest customAssignment folderPath that equals or contains `folder`. */
+export function findCustomAssignmentForFolder(
+  folder: string,
+  tagRules: TagFolderRule[]
+): TagFolderRule | undefined {
+  const needle = normalizeFolderKey(folder)
+  if (!needle) return undefined
+  let best: TagFolderRule | undefined
+  let bestLen = -1
+  for (const rule of tagRules) {
+    if (!rule.customAssignment) continue
+    const fp = rule.folderPath?.trim()
+    if (!fp) continue
+    const key = normalizeFolderKey(fp)
+    if (!key) continue
+    if (needle === key || needle.startsWith(`${key}/`)) {
+      if (key.length > bestLen) {
+        best = rule
+        bestLen = key.length
+      }
+    }
+  }
+  return best
+}
+
+/** Count inventory rows under a custom folder path (includes subfolders). */
+export function countInventoryUnderFolderPath(
+  folderPath: string,
+  inventory: { outputFolder: string }[]
+): number {
+  const fp = folderPath.trim()
+  if (!fp) return 0
+  let n = 0
+  for (const rec of inventory) {
+    if (folderIsUnderPath(rec.outputFolder, fp)) n++
+  }
+  return n
+}
+
+/**
+ * Relative path of `outputFolder` under custom root, using `/` separators.
+ * Empty when the model sits in the custom root itself.
+ */
+export function relativePathUnderCustomFolder(outputFolder: string, customRoot: string): string {
+  const needle = normalizeFolderKey(outputFolder)
+  const root = normalizeFolderKey(customRoot)
+  if (!needle || !root) return ''
+  if (needle === root) return ''
+  if (!needle.startsWith(`${root}/`)) return ''
+  return needle.slice(root.length + 1)
+}
+
+/** Primary tag label for a custom assignment rule. */
+export function customAssignmentPrimaryTag(rule: TagFolderRule): string {
+  return parseTagRuleNames(rule.tagName)[0]?.trim() || rule.tagName.trim()
+}
+
+/**
+ * Display label: `randoms` or `randoms/cars` / `randoms/houses/wooden`.
+ */
+export function customAssignmentLabelForRecord(
+  record: { outputFolder: string },
+  rule: TagFolderRule,
+  includeSubfolders: boolean
+): string {
+  const tag = customAssignmentPrimaryTag(rule)
+  if (!tag) return ''
+  if (!includeSubfolders) return tag
+  const rel = relativePathUnderCustomFolder(record.outputFolder, rule.folderPath)
+  return rel ? `${tag}/${rel}` : tag
+}
+
+export type CustomAssignmentSidebarEntry = {
+  /** Filter / display label (`randoms` or `randoms/cars`). */
+  label: string
+  count: number
+  isRoot: boolean
+}
+
+/** Sidebar rows for one custom assignment (root + optional unique subfolder paths). */
+export function collectCustomAssignmentSidebarEntries(
+  rule: TagFolderRule,
+  inventory: { outputFolder: string }[],
+  includeSubfolders: boolean
+): CustomAssignmentSidebarEntry[] {
+  const tag = customAssignmentPrimaryTag(rule)
+  const root = rule.folderPath?.trim()
+  if (!tag || !root) return []
+
+  const rootCount = countInventoryUnderFolderPath(root, inventory)
+  const entries: CustomAssignmentSidebarEntry[] = [
+    { label: tag, count: rootCount, isRoot: true }
+  ]
+  if (!includeSubfolders) return entries
+
+  const subCounts = new Map<string, number>()
+  for (const rec of inventory) {
+    if (!folderIsUnderPath(rec.outputFolder, root)) continue
+    const rel = relativePathUnderCustomFolder(rec.outputFolder, root)
+    if (!rel) continue
+    subCounts.set(rel, (subCounts.get(rel) ?? 0) + 1)
+  }
+  const subs = [...subCounts.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+    .map(([rel, count]) => ({
+      label: `${tag}/${rel}`,
+      count,
+      isRoot: false
+    }))
+  return [...entries, ...subs]
+}
+
+/**
+ * Custom-assignment Library filter: routingTag match OR file lives under the custom folder.
+ * `tagName` may be `randoms` (whole tree) or `randoms/cars` (that subfolder tree).
+ */
+export function recordMatchesCustomAssignmentTag(
+  record: { routingTag: string; outputFolder: string },
+  tagName: string,
+  tagRules: TagFolderRule[]
+): boolean {
+  const raw = tagName.trim()
+  if (!raw) return false
+
+  const slash = raw.indexOf('/')
+  if (slash > 0) {
+    const tagPart = raw.slice(0, slash).trim()
+    const relWanted = raw
+      .slice(slash + 1)
+      .replace(/\\/g, '/')
+      .replace(/^\/+|\/+$/g, '')
+      .toLowerCase()
+    const rule = findRuleForTag(tagPart, tagRules)
+    if (!rule?.customAssignment || !rule.folderPath.trim() || !relWanted) return false
+    const rel = relativePathUnderCustomFolder(record.outputFolder, rule.folderPath).toLowerCase()
+    return rel === relWanted || rel.startsWith(`${relWanted}/`)
+  }
+
+  const rule = findRuleForTag(raw, tagRules)
+  if (!rule?.customAssignment) return false
+  const names = parseTagRuleNames(rule.tagName).map((n) => n.toLowerCase())
+  const rt = record.routingTag.trim().toLowerCase()
+  if (rt && names.some((n) => n === rt)) return true
+  const fp = rule.folderPath?.trim()
+  if (fp && folderIsUnderPath(record.outputFolder, fp)) return true
+  return false
+}
+
+/**
+ * Fill empty baseModel / modelType / routingTag from a matching custom assignment rule.
+ * Never overwrites non-empty fields (keeps Civitai / existing metadata).
+ */
+export function applyCustomAssignmentDefaultsToRecord<
+  T extends { outputFolder: string; baseModel?: string; modelType?: string; routingTag?: string }
+>(record: T, tagRules: TagFolderRule[]): T {
+  const rule = findCustomAssignmentForFolder(record.outputFolder, tagRules)
+  if (!rule) return record
+  const nextBase = rule.assignmentBaseModel?.trim()
+  const nextType = rule.assignmentModelType?.trim()
+  const nextTag = parseTagRuleNames(rule.tagName)[0]?.trim()
+  let changed = false
+  const out = { ...record }
+  if (nextBase && !record.baseModel?.trim()) {
+    out.baseModel = nextBase
+    changed = true
+  }
+  if (nextType && !record.modelType?.trim()) {
+    out.modelType = nextType
+    changed = true
+  }
+  if (nextTag && !record.routingTag?.trim()) {
+    out.routingTag = nextTag
+    changed = true
+  }
+  return changed ? out : record
 }

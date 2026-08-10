@@ -2,7 +2,9 @@ import type { InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { isTagAssignedToRecord } from '../../../shared/tag-cluster'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
 import {
+  customAssignmentLabelForRecord,
   displayFolderForTag,
+  findCustomAssignmentForFolder,
   findRuleForTag,
   isCustomTagFolderRule,
   isUnsortedRoutingTag,
@@ -75,7 +77,8 @@ export function shortCardFolderLabel(
   baseModel: string | undefined | null,
   tagRules: TagFolderRule[],
   loraFolder: string,
-  checkpointFolder: string
+  checkpointFolder: string,
+  options?: { outputFolder?: string; showCustomSubfolders?: boolean }
 ): string | null {
   const rt = routingTag?.trim()
   if (!rt) return null
@@ -91,6 +94,22 @@ export function shortCardFolderLabel(
     if (!rule) return null
   }
 
+  const outputFolder = options?.outputFolder?.trim() || ''
+  const showCustomSubfolders = options?.showCustomSubfolders !== false
+
+  // Prefer custom assignment path from output folder (covers empty routingTag after import).
+  if (outputFolder) {
+    const customRule = findCustomAssignmentForFolder(outputFolder, tagRules)
+    if (customRule) {
+      const label = customAssignmentLabelForRecord(
+        { outputFolder },
+        customRule,
+        showCustomSubfolders
+      )
+      return label || null
+    }
+  }
+
   const rule = findRuleForTag(rt, tagRules)
   if (!rule) {
     if (baseLower && rt.toLowerCase() === baseLower) return null
@@ -98,6 +117,14 @@ export function shortCardFolderLabel(
   }
 
   if (isCustomTagFolderRule(rule, loraFolder, checkpointFolder)) {
+    if (outputFolder && rule.folderPath.trim()) {
+      const label = customAssignmentLabelForRecord(
+        { outputFolder },
+        rule,
+        showCustomSubfolders
+      )
+      return label || null
+    }
     const display = displayFolderForTag(rt, tagRules, loraFolder, checkpointFolder)
     if (!display) return null
     return stripBaseModelPrefix(display, base)
@@ -132,14 +159,19 @@ export function folderLabelForRecord(
   record: InventoryRecord,
   tagRules: TagFolderRule[],
   loraFolder: string,
-  checkpointFolder: string
+  checkpointFolder: string,
+  options?: { showCustomSubfolders?: boolean }
 ): string | null {
   return shortCardFolderLabel(
     record.routingTag,
     record.baseModel,
     tagRules,
     loraFolder,
-    checkpointFolder
+    checkpointFolder,
+    {
+      outputFolder: record.outputFolder,
+      showCustomSubfolders: options?.showCustomSubfolders
+    }
   )
 }
 

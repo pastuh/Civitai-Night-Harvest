@@ -216,6 +216,8 @@ const api = {
     ipcRenderer.invoke('download:retryFailed', queueId),
   prioritizeDownload: (queueId: string): Promise<DownloadQueueState> =>
     ipcRenderer.invoke('download:priority', queueId),
+  setDownloadRouting: (versionId: number, routingTag: string): Promise<DownloadQueueState> =>
+    ipcRenderer.invoke('download:setRouting', { versionId, routingTag }),
   clearDownloadQueue: (): Promise<{ queue: DownloadQueueState; settings: AppSettingsPublic }> =>
     ipcRenderer.invoke('download:clearQueue'),
 

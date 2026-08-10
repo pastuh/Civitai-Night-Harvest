@@ -4048,10 +4048,28 @@ code {
 .context-menu-assign-folder {
   padding: 6px 10px 10px;
   min-width: 220px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .context-menu-assign-folder .context-menu-subtitle {
   padding: 0 2px 6px;
+}
+
+.context-menu-assign-folder .tag-autocomplete {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.context-menu-assign-folder .tag-autocomplete-field {
+  width: 100%;
+  min-width: 0;
+}
+
+.context-menu-assign-folder .tag-autocomplete-field input {
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .context-menu-assign-folder .tag-autocomplete-list {
@@ -4102,7 +4120,7 @@ code {
   max-width: 280px;
 }
 
-.context-menu button {
+.context-menu button:not(.tag-autocomplete-clear):not(.tag-autocomplete-confirm) {
   display: block;
   width: 100%;
   text-align: left;
@@ -4114,7 +4132,7 @@ code {
   cursor: pointer;
 }
 
-.context-menu button:hover {
+.context-menu button:not(.tag-autocomplete-clear):not(.tag-autocomplete-confirm):hover {
   background: var(--surface2);
   color: var(--error);
 }

@@ -17,11 +17,12 @@ import type {
   MissingModel,
   MissingModelStatus,
   CivitaiDomain,
+  TagFolderRule,
   TagPolicyKind,
   TagSkipReview
 } from '../shared/types'
 import { MAX_MISSING_CONFIRM_HITS, MAX_TAG_SKIP_REVIEWS } from '../shared/types'
-import { expandCivitaiTagNames, matchingHiddenTags } from '../shared/tag-routing'
+import { expandCivitaiTagNames, matchingHiddenTags, applyCustomAssignmentDefaultsToRecord } from '../shared/tag-routing'
 import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { safePathExists } from './output-paths'
 
@@ -203,6 +204,9 @@ function migrateInventorySchema(database: Database.Database): void {
   }
   if (!hasCol('duplicate_of_version_id')) {
     database.exec(`ALTER TABLE versions ADD COLUMN duplicate_of_version_id INTEGER`)
+  }
+  if (!hasCol('model_type')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN model_type TEXT NOT NULL DEFAULT ''`)
   }
 
   const pendingCols = database.pragma('table_info(pending_versions)') as { name: string }[]
@@ -391,6 +395,7 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     versionName: row.version_name as string,
     author: row.author as string,
     baseModel: row.base_model as string,
+    modelType: ((row.model_type as string) || '').trim() || undefined,
     routingTag: row.routing_tag as string,
     routingLocked: Boolean(row.routing_locked),
     outputFolder: row.output_folder as string,
@@ -1240,12 +1245,12 @@ export function addVersion(record: InventoryRecord): void {
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO versions (
-        model_id, version_id, slug, model_name, version_name, author, base_model,
+        model_id, version_id, slug, model_name, version_name, author, base_model, model_type,
         routing_tag, routing_locked, output_folder, model_path, preview_path, swarm_path, downloaded_at, ignored,
         civitai_tags, file_size_bytes, file_fp, file_variant, training_resolution, is_nsfw,
         nsfw_level, awaiting_since, civitai_domain, download_count, thumbs_up_count, checkpoint_type,
         civitai_mode, file_hash_sha256, origin, duplicate_of_version_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       record.modelId,
@@ -1255,6 +1260,7 @@ export function addVersion(record: InventoryRecord): void {
       record.versionName,
       record.author,
       record.baseModel,
+      record.modelType?.trim() || '',
       record.routingTag,
       record.routingLocked ? 1 : 0,
       record.outputFolder,
@@ -1430,6 +1436,24 @@ export function pruneMissingOnDisk(): number {
 export function getAllVersions(): InventoryRecord[] {
   const rows = getDb().prepare('SELECT * FROM versions ORDER BY downloaded_at DESC').all()
   return rows.map((r) => rowToRecord(r as Record<string, unknown>))
+}
+
+/** Fill empty baseModel / modelType / routingTag from custom folder assignment rules. Returns patched count. */
+export function applyCustomAssignmentDefaults(tagRules: TagFolderRule[]): number {
+  let updated = 0
+  for (const record of getAllVersions()) {
+    const next = applyCustomAssignmentDefaultsToRecord(record, tagRules)
+    if (
+      next.baseModel === record.baseModel &&
+      (next.modelType || '') === (record.modelType || '') &&
+      (next.routingTag || '') === (record.routingTag || '')
+    ) {
+      continue
+    }
+    addVersion(next)
+    updated++
+  }
+  return updated
 }
 
 /** Single DB read for scan — avoids per-model inventory queries */

@@ -12,6 +12,9 @@ import {
   safePathExists
 } from './output-paths'
 import { backfillCivitaiIdentityFiles, invalidateIdentityBackfillCache } from './backfill-civitai-ids'
+import { getTagRules } from './settings-store'
+import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
+import { isLocalInventoryRecord } from '../shared/local-inventory'
 
 function pathsForSlug(record: InventoryRecord, slug: string, ext: string): InventoryRecord {
   const folder = record.outputFolder
@@ -96,9 +99,16 @@ export async function repairMissingPreviews(
   let repairedRatings = 0
   const total = records.length
   const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+  const tagRules = getTagRules()
 
   const needsRating = (record: InventoryRecord): boolean =>
     record.isNsfw === undefined || record.nsfwLevel === undefined
+
+  const skipCivitaiApi = (record: InventoryRecord): boolean =>
+    isCustomAssignmentInventoryRecord(record, tagRules) ||
+    isLocalInventoryRecord(record) ||
+    record.modelId <= 0 ||
+    record.versionId <= 0
 
   const backfillRating = async (
     record: InventoryRecord,
@@ -147,6 +157,11 @@ export async function repairMissingPreviews(
 
     if (!existsSync(record.modelPath)) {
       report('Model file missing on disk')
+      continue
+    }
+
+    if (skipCivitaiApi(record)) {
+      report('Skipped (custom / local — no Civitai lookup)')
       continue
     }
 
@@ -278,8 +293,10 @@ export async function repairHardcodedSwarmUsageHints(
   records: InventoryRecord[],
   onProgress?: (p: LibrarySyncProgress) => void
 ): Promise<{ repaired: number; checked: number; failed: number }> {
+  const tagRules = getTagRules()
   const candidates = records.filter((r) => {
     if (!r.modelId || r.modelId <= 0 || !r.versionId || r.versionId <= 0) return false
+    if (isCustomAssignmentInventoryRecord(r, tagRules) || isLocalInventoryRecord(r)) return false
     if (!r.swarmPath || safePathExists(r.swarmPath) !== true) return false
     try {
       const swarm = JSON.parse(readFileSync(r.swarmPath, 'utf-8')) as Record<string, unknown>

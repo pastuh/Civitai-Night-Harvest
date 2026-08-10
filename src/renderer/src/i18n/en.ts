@@ -136,6 +136,7 @@ export const en = {
       showBannedInGallery: 'Show banned in gallery',
       banFunctionMode: 'Ban function (× next to card title)',
       confirmTagFolderMoves: 'Confirm before bulk tag-folder moves',
+      showCustomAssignmentSubfolders: 'Show custom folder subpaths in Library',
       browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
       browseSettledDimPercent: 'Dim settled Browse cards',
       resultsDisplayMode: 'Results display (Browse & Library)',
@@ -251,6 +252,8 @@ export const en = {
         'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
       confirmTagFolderMoves:
         'When assigning a tag folder (Tag folders or Library Fast tag), ask how many models will move. Turn off to move immediately.',
+      showCustomAssignmentSubfolders:
+        'For Custom folder assignments, show tag + relative subfolder on cards and in the Library sidebar (e.g. randoms/cars). Off = show only the custom tag name. Default on.',
       blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
       downloadStripVisibility:
         'Default Hidden: no top queue strip — Clear queue sits on the right of the tab bar. Enable Browse / Browse+Library / All tabs to show the full download strip (Clear queue moves into the strip).',
@@ -379,9 +382,9 @@ export const en = {
       'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
     libraryTags:
-      'Right-click a card → **Assign folder by tag**. Click a card tag opens Tag folders (or Fast tag popup when enabled). Green / mapped chips = folder rules.',
+      'Right-click a card → **Assign model to tag**. Click a card tag opens Tag folders (or Fast tag popup when enabled). Green / mapped chips = folder rules.',
     libraryFastTag:
-      '**Fast tag** — assign a folder for the clicked tag without leaving Library (Path `\\*\\name`; change the name e.g. glass plug → plug). Suggestions group Folders / Assigned / Library tags.',
+      '**Fast tag** — assign the clicked tag as this model’s folder route without leaving Library (Path `\\*\\name`; change the name e.g. glass plug → plug). Suggestions group Folders / Assigned / Library tags.',
     libraryExcluded:
       '**Excluded** + **Ignore excluded** with **Hide folder-assigned** — keep models whose routing tag is in Excluded (e.g. concept). **All assigned** hides mapped tags on cards (dashed placeholder remains).',
     libraryManual:
@@ -461,6 +464,8 @@ export const en = {
       banFunctionMode: 'Shows red × next to the model title in Browse, Library, Updates, Awaiting, and download strip.',
       confirmTagFolderMoves:
         'When assigning a tag folder (Tag folders or Library Fast tag), ask how many models will move. Turn off to move immediately.',
+      showCustomAssignmentSubfolders:
+        'For Custom folder assignments, show tag + relative subfolder on cards and in the Library sidebar (e.g. randoms/cars). Off = show only the custom tag name. Default on.',
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
       hashVerify: 'Compares SHA256 on disk with Civitai /model-versions/by-hash. Use after moving files manually or if a model seems corrupted.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
@@ -568,6 +573,7 @@ export const en = {
     loadMoreStallTitle: 'Crawl paused or stuck — load next page manually',
     loadMore: 'Load more ({label})',
     contextSkipTag: 'Skip tag',
+    assignedRoute: 'Will download “{name}” into tag folder “{tag}”',
     fetchPreviews: 'Fetch previews ({count})',
     fetchPreviewsTitle:
       'Load preview images — NSFW / R+ models are fetched from civitai.red only (.com blocks them)',
@@ -1070,6 +1076,7 @@ export const en = {
     sortDefault: 'Download order',
     searchPlaceholder: 'Search name, author, slug, Civitai tags…',
     clear: 'Clear',
+    clearSearch: 'Clear',
     filterByLetter: 'Filter by first letter',
     allLetters: 'All',
     helpText:
@@ -1112,7 +1119,7 @@ export const en = {
     statThumbsUp: 'Thumbs up',
     defaultFolder: 'Default folder',
     assignedToFolder: 'Assigned to this tag folder',
-    assignFolderHint: 'Assign folder — click: choose all with "{tag}" or this card only',
+    assignFolderHint: 'Assign model to tag — click: choose all with "{tag}" or this card only',
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a dynamic folder',
     openTagFoldersAssigned: 'Assigned — open Tag folders to manage “{tag}”',
     tagRoleFinalHint:
@@ -1165,9 +1172,9 @@ export const en = {
     noTagsYet: 'No Civitai tags in library yet — they are saved when you download models.',
     selectedCount: '{count} selected',
     openOnCivitaiMenu: 'Open on Civitai ↗',
-    assignFolderByTag: 'Assign folder by tag',
-    assignFolderPlaceholder: 'Tag or folder name…',
-    assignFolderConfirm: 'Assign to folder',
+    assignFolderByTag: 'Assign model to tag',
+    assignFolderPlaceholder: 'Tag name (folder route)…',
+    assignFolderConfirm: 'Assign to tag',
     markSfw: 'Mark as SFW',
     markNsfw: 'Mark as NSFW',
     unbanAllow: 'Unban — allow downloads',
@@ -1257,12 +1264,20 @@ export const en = {
     noTags: 'No tags in library yet',
     customTitle: 'Custom folder assignments',
     customHint:
-      'Adds a row under this section: pick any disk folder outside default LoRA/Checkpoint roots, enter tag aliases (comma-separated), then Save. Incomplete rows are not kept until filled in.',
+      'Personal tags for your local models: tag + folder + optional type/base model. Civitai downloads with the same tag name go to the app tag folder under LoRA/Checkpoint roots — not into this custom path. After Save, the folder (including subfolders) is scanned into Library. Incomplete rows (empty tag) are dropped on Save.',
     customEmpty: 'No custom path overrides — add one below if needed.',
+    customTagName: 'Tag name',
+    customTagPlaceholder: 'my models',
     ruleTags: 'Tag names (comma-separated)',
     ruleTagsPlaceholder: 'fantasy style, horror style, style',
     ruleMatches: 'Matches: {tags}',
     ruleFolder: 'Folder path',
+    ruleModelType: 'Type',
+    modelTypeUnspecified: '—',
+    modelTypeLora: 'LoRA',
+    modelTypeCheckpoint: 'Checkpoint',
+    ruleBaseModel: 'Base model',
+    ruleBaseModelPlaceholder: 'Flux, Krea2, …',
     inLibrary: 'in library',
     removeRule: 'Remove',
     addCustomRule: 'Add custom assignment',

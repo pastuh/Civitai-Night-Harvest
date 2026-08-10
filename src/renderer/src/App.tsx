@@ -1124,6 +1124,18 @@ export default function App() {
   const saveTagRules = useCallback(async (rules: TagFolderRule[]) => {
     const next = await window.api.saveTagRules(rules)
     setTagRules(next)
+    const hasCustomPath = next.some((r) => r.customAssignment && r.folderPath.trim())
+    try {
+      // Import models from custom assignment folders (incl. subfolders, no swarm required).
+      const inv = await window.api.getInventory(
+        hasCustomPath
+          ? { syncDisk: true, diskImportOnly: true, skipHashBackfill: true }
+          : { syncDisk: false }
+      )
+      setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+    } catch {
+      /* ignore */
+    }
   }, [])
 
   const saveWatchRules = useCallback(async (rules: WatchRule[]) => {
@@ -1973,6 +1985,7 @@ export default function App() {
               pausedTags={settings.hiddenTags ?? EMPTY_STRING_LIST}
               tagSuggestions={tagSuggestions}
               confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
+              showCustomAssignmentSubfolders={settings.showCustomAssignmentSubfolders !== false}
               onSaveTagRules={saveTagRules}
               focusModelId={galleryFocusModelId}
               focusModelName={galleryFocusModelName}

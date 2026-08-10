@@ -49,30 +49,53 @@ export function moveRecordToTagFolder(
     settings.loraOutputFolder,
     settings.checkpointOutputFolder
   )
+  const lockRouting = options.lockRouting === true
   const targetFolder = resolveTagRuleFolderPath(
     rule,
     settings.loraOutputFolder,
     settings.checkpointOutputFolder,
     modelType,
-    record.baseModel
+    record.baseModel,
+    { useCustomAssignmentPath: lockRouting && !!rule.customAssignment }
   )
   if (!targetFolder) throw new Error(`No folder mapped for tag "${tagName}"`)
 
-  const lockRouting = options.lockRouting === true
+  const withCustomMeta = (rec: InventoryRecord): InventoryRecord => {
+    if (!lockRouting || !rule.customAssignment) return rec
+    return {
+      ...rec,
+      baseModel: rec.baseModel?.trim()
+        ? rec.baseModel
+        : rule.assignmentBaseModel?.trim() || rec.baseModel,
+      modelType: rec.modelType?.trim()
+        ? rec.modelType
+        : rule.assignmentModelType?.trim() || rec.modelType
+    }
+  }
+
   if (foldersEqual(record.outputFolder, targetFolder) && tagsEqual(record.routingTag, tagName)) {
-    if (record.routingLocked === lockRouting) return record
-    const lockedOnly: InventoryRecord = { ...record, routingLocked: lockRouting }
+    if (record.routingLocked === lockRouting) {
+      const patched = withCustomMeta(record)
+      if (patched === record || (
+        patched.baseModel === record.baseModel && patched.modelType === record.modelType
+      )) {
+        return record
+      }
+      inventory.addVersion(patched)
+      return patched
+    }
+    const lockedOnly = withCustomMeta({ ...record, routingLocked: lockRouting })
     inventory.addVersion(lockedOnly)
     return lockedOnly
   }
 
   // Already on disk in the right place — only fix routing metadata (common for older imports).
   if (foldersEqual(record.outputFolder, targetFolder)) {
-    const metaOnly: InventoryRecord = {
+    const metaOnly = withCustomMeta({
       ...record,
       routingTag: tagName,
       routingLocked: lockRouting
-    }
+    })
     inventory.addVersion(metaOnly)
     return metaOnly
   }
@@ -115,8 +138,10 @@ export function moveRecordToTagFolder(
     swarmPath: newSwarmPath
   }
 
-  inventory.addVersion(updated)
-  return updated
+  const withDefaults = withCustomMeta(updated)
+
+  inventory.addVersion(withDefaults)
+  return withDefaults
 }
 
 export function moveRecordsToTagFolder(
