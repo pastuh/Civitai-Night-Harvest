@@ -66,9 +66,10 @@ let storageAlertSent = false
 /** Tell the renderer — never use native dialog.showMessageBox (it freezes the UI). */
 function notifyOutputStorageUnavailable(message: string): void {
   applyOutputStorageOfflinePolicy()
-  sendToRenderer(() => mainWindow, 'app:storageError', message)
+  // One modal/banner per offline episode (reset when folders become reachable again).
   if (storageAlertSent) return
   storageAlertSent = true
+  sendToRenderer(() => mainWindow, 'app:storageError', message)
 }
 
 function resetStorageAlertGate(): void {
@@ -683,6 +684,8 @@ export function initIpc(): void {
           notifyOutputStorageUnavailable(reach.message)
           downloadQueue.pause()
         } else {
+          resetStorageAlertGate()
+          ensureSchedulerStarted()
           const emitSync = createThrottledProgressEmitter(
             () => mainWindow,
             'library:syncProgress',
@@ -1791,8 +1794,10 @@ export function onRendererUnload(): void {
 export async function ensureSchedulerStarted(): Promise<void> {
   if (schedulerStarted || !scheduler) return
   // Do not start crawl/downloads while output drive is missing — keeps UI responsive.
-  if (isConfiguredOutputOffline()) {
-    applyOutputStorageOfflinePolicy()
+  const reach = checkConfiguredOutputFoldersReachable()
+  if (!reach.ok) {
+    // Must notify here: startAfterLibraryReady() never runs if we skip scheduler.start().
+    notifyOutputStorageUnavailable(reach.message)
     return
   }
   schedulerStarted = true

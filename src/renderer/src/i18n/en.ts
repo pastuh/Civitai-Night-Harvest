@@ -370,7 +370,7 @@ export const en = {
     libraryBadge:
       'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Show List** from Updates still opens All models pinned to that model',
     librarySession:
-      '**Session downloads** — sidebar filter for everything added to the library during this app run (not the same as Show List)',
+      '**Session downloads** — sidebar filter for models actually downloaded this app run (queue completions only — not disk sync / import)',
     libraryByDate:
       '**Downloaded by date** — Today / Yesterday / Last 7 days, or the calendar: click one day, or two days for a from–to range. Shows how many downloads match the selection.',
     libraryDetails:

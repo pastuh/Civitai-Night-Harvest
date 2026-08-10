@@ -238,8 +238,8 @@ export default function App() {
   const busyRef = useRef(false)
   const previewRepairRef = useRef(false)
   previewRepairRef.current = previewRepairActive
-  const sessionBaselineRef = useRef<Set<number> | null>(null)
-  const libraryBadgeSeenRef = useRef<Set<number> | null>(null)
+  /** Session-download ids already counted toward the Library +N badge (cleared on visit). */
+  const libraryBadgeSeenRef = useRef<Set<number>>(new Set())
   /** Models banned from New Versions this session — ignore stale scan echoes that re-add them. */
   const bannedPendingModelIdsRef = useRef<Set<number>>(new Set())
   /** Full banned model id set — badge must not count banned/queued leftovers. */
@@ -263,6 +263,39 @@ export default function App() {
       added++
     }
     if (added > 0) setSessionYieldCount(set.size)
+  }, [])
+
+  /** Real queue completions only — disk sync / inventory import must not appear here. */
+  const noteSessionDownloads = useCallback((versionIds: number[]) => {
+    const unique: number[] = []
+    const seen = new Set<number>()
+    for (const id of versionIds) {
+      if (id <= 0 || seen.has(id)) continue
+      seen.add(id)
+      unique.push(id)
+    }
+    if (!unique.length) return
+    setSessionDownloadIds((prev) => {
+      const next = [...prev]
+      let changed = false
+      for (const id of unique) {
+        if (next.includes(id)) continue
+        next.push(id)
+        changed = true
+      }
+      return changed ? next : prev
+    })
+    setLibraryHighlightIds((prev) => {
+      const next = [...prev]
+      let changed = false
+      for (const id of unique) {
+        if (next.includes(id)) continue
+        next.push(id)
+        changed = true
+      }
+      return changed ? next : prev
+    })
+    setLibraryBadgeTick((n) => n + 1)
   }, [])
 
   // Any queue structure change (Auto / Updates / details / Manual) grows Yield for this session.
@@ -295,44 +328,16 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!startupReady) return
-    const ids = inventory.map((i) => i.versionId)
-    if (sessionBaselineRef.current === null) {
-      sessionBaselineRef.current = new Set(ids)
-      return
-    }
-    const newIds = ids.filter((id) => !sessionBaselineRef.current!.has(id))
-    if (!newIds.length) return
-    for (const id of newIds) sessionBaselineRef.current!.add(id)
-    setSessionDownloadIds((prev) => {
-      const next = [...prev]
-      for (const id of newIds) if (!next.includes(id)) next.push(id)
-      return next
-    })
-    setLibraryHighlightIds((prev) => {
-      const next = [...prev]
-      for (const id of newIds) if (!next.includes(id)) next.push(id)
-      return next
-    })
-  }, [inventory, startupReady])
-
-  useEffect(() => {
     if (tab !== 'gallery') {
       setLibraryHighlightIds([])
     }
   }, [tab])
 
   useEffect(() => {
-    if (!startupReady || libraryBadgeSeenRef.current !== null) return
-    libraryBadgeSeenRef.current = new Set(inventory.map((i) => i.versionId))
-    setLibraryBadgeTick((n) => n + 1)
-  }, [startupReady, inventory])
-
-  useEffect(() => {
     if (tab !== 'gallery' || !startupReady) return
-    libraryBadgeSeenRef.current = new Set(inventory.map((i) => i.versionId))
+    libraryBadgeSeenRef.current = new Set(sessionDownloadIds)
     setLibraryBadgeTick((n) => n + 1)
-  }, [tab, inventory, startupReady])
+  }, [tab, sessionDownloadIds, startupReady])
 
   useEffect(() => {
     busyRef.current = Boolean(busy)
@@ -606,7 +611,10 @@ export default function App() {
       setStartupReady(true)
       void window.api.notifyRendererReady()
     })
-    const prevQueueStatus = new Map<string, DownloadQueueItem['status']>()
+    const prevQueueMeta = new Map<
+      string,
+      { status: DownloadQueueItem['status']; versionId: number }
+    >()
     let lastQueueStructureKey = ''
     let progressQueueTimer: number | null = null
     let pendingProgressQueue: { items: DownloadQueueItem[]; paused: boolean } | null = null
@@ -614,14 +622,19 @@ export default function App() {
 
     const applyQueueState = (q: { items: DownloadQueueItem[]; paused: boolean }) => {
       let needsInventory = false
-      const hadActive = Array.from(prevQueueStatus.values()).some(
-        (s) => s === 'queued' || s === 'downloading'
+      const completedVersionIds: number[] = []
+      const hadActive = Array.from(prevQueueMeta.values()).some(
+        (m) => m.status === 'queued' || m.status === 'downloading'
       )
       for (const item of q.items) {
-        const prev = prevQueueStatus.get(item.id)
-        if (item.status === 'done' && prev !== 'done') needsInventory = true
+        const prev = prevQueueMeta.get(item.id)
+        // Only count transitions we observed — first snapshot seeds the map without false "new" downloads.
+        if (item.status === 'done' && prev && prev.status !== 'done' && item.versionId > 0) {
+          completedVersionIds.push(item.versionId)
+          needsInventory = true
+        }
         if (
-          prev === 'downloading' &&
+          prev?.status === 'downloading' &&
           (item.status === 'done' ||
             item.status === 'failed' ||
             item.status === 'skipped' ||
@@ -631,14 +644,17 @@ export default function App() {
           needsInventory = true
         }
       }
-      for (const [id, status] of Array.from(prevQueueStatus.entries())) {
-        if (status === 'downloading' && !q.items.some((i) => i.id === id)) {
+      for (const [id, meta] of Array.from(prevQueueMeta.entries())) {
+        if (meta.status === 'downloading' && !q.items.some((i) => i.id === id)) {
           needsInventory = true
         }
       }
-      prevQueueStatus.clear()
-      for (const item of q.items) prevQueueStatus.set(item.id, item.status)
+      prevQueueMeta.clear()
+      for (const item of q.items) {
+        prevQueueMeta.set(item.id, { status: item.status, versionId: item.versionId })
+      }
 
+      if (completedVersionIds.length) noteSessionDownloads(completedVersionIds)
       noteSessionYield(q.items)
       setDownloadQueueState({ items: q.items, paused: q.paused })
       const hasActive = q.items.some((i) => i.status === 'queued' || i.status === 'downloading')
@@ -875,7 +891,7 @@ export default function App() {
       if (inventoryRefreshTimer != null) window.clearTimeout(inventoryRefreshTimer)
       unsubs.forEach((u) => u())
     }
-  }, [refreshAfterScan, refreshInventory, withBusy, applyPendingVersions])
+  }, [refreshAfterScan, refreshInventory, withBusy, applyPendingVersions, noteSessionDownloads, noteSessionYield])
 
   useEffect(() => {
     if (!settings) return
@@ -928,13 +944,12 @@ export default function App() {
   const newLibraryCount = useMemo(() => {
     if (tab === 'gallery' || !startupReady) return 0
     const seen = libraryBadgeSeenRef.current
-    if (!seen) return 0
     let count = 0
-    for (const item of inventory) {
-      if (!seen.has(item.versionId)) count++
+    for (const id of sessionDownloadIds) {
+      if (!seen.has(id)) count++
     }
     return count
-  }, [inventory, tab, startupReady, libraryBadgeTick])
+  }, [sessionDownloadIds, tab, startupReady, libraryBadgeTick])
 
   const enabledRuleNames = useMemo(
     () => watchRules.filter((r) => r.enabled).map((r) => r.name),

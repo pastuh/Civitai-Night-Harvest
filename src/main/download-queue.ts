@@ -1797,8 +1797,10 @@ export class DownloadQueue {
           } satisfies TagAssignmentPrompt)
         }
 
-        this.broadcast()
+        // Emit done before prune so Session downloads can observe the completion.
+        this.emitQueueState()
         this.items = this.items.filter((i) => i.id !== item.id)
+        this.broadcast()
       } else if (result.status === 'deferred') {
         const priorDeferred =
           item.versionId > 0 ? inventory.getDeferredDownload(item.versionId) : null

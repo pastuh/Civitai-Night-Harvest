@@ -373,7 +373,7 @@ export const lt: Messages = {
     libraryBadge:
       'Library skilties **+N** — nauji atsisiuntimai nuo paskutinio apsilankymo; atidarius Library su ženkliuku įsijungia **Session downloads**. **Show List** iš Updates vis tiek atidaro All models su pin’intu modeliu',
     librarySession:
-      '**Session downloads** — šoninis filtras viskam, kas pridėta į biblioteką per šį app paleidimą (ne tas pats kaip Show List)',
+      '**Session downloads** — šoninis filtras modeliams, realiai atsisiųstiems šį paleidimą (tik queue — ne disk sync / import)',
     libraryByDate:
       '**Atsisiųsta pagal datą** — Šiandien / Vakar / 7 dienos, arba kalendorius: viena diena, arba dvi dienos nuo–iki intervalui. Rodo, kiek atsisiuntimų atitinka pasirinkimą.',
     libraryDetails:
