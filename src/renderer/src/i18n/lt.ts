@@ -351,7 +351,7 @@ export const lt: Messages = {
     headerBlur: 'Blur — slėpti preview miniatiūras',
     browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort)',
     browseResults:
-      'Results — paieška, filtrai (Hide owned ir kt.), Loaded / Owned / Yield statistika, Sort ir Tags; spustelėkite kortelę į eilę',
+      'Results — paieška pagal vardą, autorių ar skaitinį Civitai modelio/versijos ID; filtrai (Hide owned ir kt.); Loaded / Owned / Yield statistika; Sort ir Tags; spustelėkite kortelę į eilę',
     browseDetails:
       'ℹ ant kortelės atidaro **Model details** (pilnas puslapis) — versijos dešinėje, lipni Back/Civitai/Show List/Ban juosta, trūkstamų versijų download, Load/Save preview turimoms versijoms',
     browsePreviews:
@@ -369,6 +369,8 @@ export const lt: Messages = {
       'Dešinis pelės mygtukas ant modelio → pause tag (laikinas). Permanent ban-by-tag: Tag Folders **Ban** stulpelis',
     libraryFolders:
       'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias). Pažymėk tagus download routing ir unsorted bibliotekos perkėlimui. **Apply to library** — perrikiuoti po priority pakeitimų; rankiniu būdu Library perkelti modeliai praleidžiami. **Mass** priskiria daug tagų vienam aplanko vardui. Be taisyklės → `\\*\\Unsorted`.',
+    libraryCustomAssignments:
+      '**Custom folder assignments** (Tag Folders) — asmeninis tagas + aplankas lokaliesiems modeliams (nebūtinas tipas/base). Po Save aplankas ir subfolderiai importuojami į Library. Civitai siuntimai su tuo pačiu tago vardu eina į įprastą app tag aplanką — ne į custom kelią. Tokie lokalūs modeliai neieškomi Civitai preview/update patikrose.',
     libraryPriority:
       'Tag Folders **Priority** — kai modelis atitinka kelis tagus, laimi didesnis skaičius (▲/▼ praleidžia 0). Vienodos priority: pirmas atitinkantis tag. Priority 0 = fiksuotas auto-route. Rankiniai Library priskyrimai visada laimi.',
     libraryTagBan:
@@ -396,6 +398,8 @@ export const lt: Messages = {
       'Nustatymai → **Išsaugoti filtrus** — Browse/Library filtrai, rikiavimas ir show/hide checkbox lieka keičiant tabus',
     libraryConfirmMoves:
       'Nustatymai → **Patvirtinti prieš masinius tag-folder perkėlimus** — išjunkite, kad praleistumėte „kiek modelių?“ dialogą (Tag folders / Fast tag)',
+    libraryDiskSync:
+      'Nustatymai → **Sync library from disk** — failų importas/perkėlimas į Library. Failai >10GB praleidžia auto-hash sync metu (vėliau — **Verify hashes**). Custom/lokalūs modeliai Civitai neieškomi.',
     missingOverview:
       'Missing — 404 / Suspect peržiūra, modeliai praleisti dėl pause ar ban-by-tag, ir manual banai. Model details / Tag Folders overlay išsaugo Missing filtrus ir scroll.',
     missingKinds:
@@ -431,7 +435,7 @@ export const lt: Messages = {
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be versijos duomenų; recheck arba įklijuokite download URL',
     dlNewVersions:
-      'Atnaujinimai — **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio. Jei Early access — eina į Awaiting ir neturi likti Updates. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę.',
+      'Atnaujinimai — **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio; **Skip** slepia tik tą versiją (failų neliesti; lieka skipped iki **Unskip**); **Rodyti skipped** (pagal nutylėjimą off) rodo juos vėl. Jei Early access — eina į Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
     dlTabBadges:
       'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
@@ -448,7 +452,7 @@ export const lt: Messages = {
       autoStart:
         'Išjungus (aktyvus Pause) vykdomi siuntimai sustabdomi; Harvest vis tiek gali pildyti eilę. Išjunkite Pause, kad pradėtų siųsti. Auto/Manual valdo ar Harvest deda modelius į eilę.',
       autoDownloadNewVersions:
-        'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda Atnaujinimai — Download / Ban / Visada atnaujinti tik tam modeliui. Visiškai nauji Browse modeliai tvarkomi atskirai.',
+        'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda Atnaujinimai — Download / Visada atnaujinti / Skip / Ban — arba Visada atnaujinti tik tam modeliui. Visiškai nauji Browse modeliai tvarkomi atskirai.',
       scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = off (night mode nustato 60 min jei reikia).',
       parallelDownloads: 'Kiek modelių siunčiama vienu metu. 1 = vienas failas pilnu greičiu.',
       domain:
@@ -472,7 +476,8 @@ export const lt: Messages = {
       showCustomAssignmentSubfolders:
         'Custom folder assignments: kortelėse ir Library šoninėje juostoje rodyti tagą + santykinį subfolderį (pvz. randoms/cars). Išjungta = tik custom tago vardas. Pagal nutylėjimą įjungta.',
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
-      hashVerify: 'Lyginama SHA256 diske su Civitai /model-versions/by-hash.',
+      hashVerify:
+        'Lyginama SHA256 diske su Civitai. Naudokite po rankinio failų perkėlimo. Disk sync praleidžia auto-hash failams >10GB — paleiskite čia, jei reikia juos patikrinti.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
       browseSettledToEnd:
         'Browse Results — owned, excluded ir awaiting-access kortelės į galerijos galą. Paieškos atitikmenys lieka savo vietoje.',

@@ -18,14 +18,14 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Model details** — full page with versions, download, and preview save
 - **Auto / Manual / Pause** — auto-queue from harvest, click-to-queue, or pause downloads
 - **Library** — local inventory; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
-- **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; unmatched downloads go to `\*\Unsorted`
+- **Tag Folders** — map Civitai tags to `\*\name` folders; **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; **Custom folder assignments** for your own local-only folders; unmatched downloads go to `\*\Unsorted`
 - **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; **Mark seen** / **Hide seen** / **Unseen bans** filter; per-model **Allow**; **Forget** (hide everywhere); right-click context menu; click a policy tag to filter that skip list
 - **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL
-- **Updates** — newer versions of models you already own (Queue / Ban / Dismiss); right-click context menu; shows tags from your existing library copies
+- **Updates** — newer versions of models you already own (Queue / Always update / Skip / Ban); **Show skipped** to review skipped offers; right-click context menu; tags from your library copies
 - **Download strip** — progress, priority, retries; Early access when a model is gated
 - **Activity** — crawl and download history
 - **Status bar** — fetch, wait, and queue summary at the bottom
-- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters, confirm tag moves
+- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters, confirm tag moves, custom-folder subpaths in Library
 
 Open the in-app **Help** tab for a short UI guide.
 
@@ -60,9 +60,12 @@ For models you already own, when a newer matching version appears:
 1. During Harvest, matching updates are listed (or auto-queued if **Auto-download new versions** is on).
 2. A background check also looks for updates on owned models.
 
-Use **Queue**, **Ban**, **Dismiss**, or **Show List** (opens Library on that model).  
-**Right-click** a card for the context menu (Queue, Always Update, Ban, Open on Civitai).  
-Cards show **tags** from your existing library copies of that model.
+Use **Download**, **Always update**, **Skip**, **Ban**, or **Show List** (opens Library on that model).  
+**Skip** hides that version only (keeps your files) and stays skipped after rescans until you **Unskip**.  
+**Show skipped** (off by default) lists skipped offers again.  
+**Right-click** a card for the context menu. Cards show **tags** from your existing library copies of that model.
+
+Local-only models under **Custom folder assignments** are not checked for Civitai updates.
 
 ---
 
@@ -86,8 +89,10 @@ Cards show **tags** from your existing library copies of that model.
 - **Mass** — select many tags and assign one folder name
 - **Priority** — when a model matches several tags, higher wins (▲/▼; skips `0`). Equal priorities: first matching tag. Manual Library assigns always win
 - **Ban** — permanent ban-by-tag (skip auto-download). Temporary pause is Browse → **Paused** only
+- **Custom folder assignments** — personal tag + folder for local models (optional type/base). After Save, that folder (and subfolders) is imported into Library. Civitai downloads with the same tag name still go to the normal app tag folder under your LoRA/Checkpoint roots — not into the custom path. These locals are skipped for Civitai preview/update lookups
 - No matching Tag Folders rule → `\*\Unsorted` under the version’s base model (not the shared base-model root)
 - Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog
+- Settings → **Show custom folder subpaths** — Library can show `tag/subfolder` labels for files inside a custom assignment
 - **Sync folders** also rewrites old invented `Suggested LoRA strength: 0.6–1.0` lines in `.swarm.json` using Civitai description text (API has no dedicated weight field)
 
 ---
@@ -113,7 +118,7 @@ Cards show **tags** from your existing library copies of that model.
 
 ## Browse
 
-- **Search** — by model or author
+- **Search** — by name, author, or a numeric Civitai model/version ID
 - **Filters** — content, hide owned, paused tags (temporary), banned tags (read-only; edit in Tag Folders), awaiting, show updates; ban mode
 - **Paused** bar — temporary exclude tags (amber chips on cards)
 - **Banned** bar — permanent ban-by-tag list (purple chips; manage in Tag Folders)
@@ -148,9 +153,9 @@ Card size is adjustable for Row and Grid.
 3. Press **Harvest** (Backfill on for a full catalog pass).
 4. **Auto** for hands-off queueing, or **Manual** and click cards; turn **Pause** off to download.
 5. Optional: **👁** for a quieter harvest UI; snapshot or turn 👁 off to see cards again.
-6. Optional: **Settings → Sync library from disk** when you import/move files, fix swarm hints, or check for tiny/truncated downloads (not run on every app launch).
+6. Optional: **Settings → Sync library from disk** when you import/move files, fix swarm hints, or check for tiny/truncated downloads (not run on every app launch). Large files (>10GB) skip auto-hash during sync — use **Verify hashes** if you need a hash check later.
 
-Use **Tag Folders** (and Library **Fast tag**) to map Civitai tags to subfolders on disk.
+Use **Tag Folders** (and Library **Fast tag**) to map Civitai tags to subfolders. Use **Custom folder assignments** for personal local-only folders.
 
 ---
 

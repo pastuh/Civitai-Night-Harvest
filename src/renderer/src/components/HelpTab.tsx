@@ -25,6 +25,7 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'preserveFilters', fieldKey: 'settings.fields.preserveFilters' },
   { refKey: 'banFunctionMode', fieldKey: 'settings.fields.banFunctionMode' },
   { refKey: 'confirmTagFolderMoves', fieldKey: 'settings.fields.confirmTagFolderMoves' },
+  { refKey: 'showCustomAssignmentSubfolders', fieldKey: 'settings.fields.showCustomAssignmentSubfolders' },
   { refKey: 'launchAtLogin', fieldKey: 'settings.fields.launchAtLogin' },
   { refKey: 'galleryGridSize', fieldKey: 'settings.fields.galleryGridSize' },
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
@@ -121,6 +122,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <li>{t('help.libraryFolders')}</li>
+            <li>{t('help.libraryCustomAssignments')}</li>
             <li>{t('help.libraryPriority')}</li>
             <li>{t('help.libraryTagBan')}</li>
             <li>{t('help.libraryBadge')}</li>
@@ -135,6 +137,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.libraryManual')}</li>
             <li>{t('help.libraryPreserve')}</li>
             <li>{t('help.libraryConfirmMoves')}</li>
+            <li>{t('help.libraryDiskSync')}</li>
           </ul>
         </section>
 

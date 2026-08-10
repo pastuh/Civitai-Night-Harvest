@@ -348,7 +348,7 @@ export const en = {
     headerBlur: 'Blur — hide preview thumbnails',
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort)',
     browseResults:
-      'Results — search, filters (Hide owned, etc.), Loaded / Owned / Yield stats, Sort and Tags; click a card to queue',
+      'Results — search by name, author, or numeric Civitai model/version ID; filters (Hide owned, etc.); Loaded / Owned / Yield stats; Sort and Tags; click a card to queue',
     browseDetails:
       'ℹ on a card opens **Model details** (full page) — versions on the right, sticky Back/Civitai/Show List/Ban bar, download missing versions, Load/Save preview for owned versions',
     browsePreviews:
@@ -366,6 +366,8 @@ export const en = {
       'Right-click a model → pause a tag (temporary). Permanent ban-by-tag: Tag Folders **Ban** column',
     libraryFolders:
       'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). Check tags to route downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted`.',
+    libraryCustomAssignments:
+      '**Custom folder assignments** (Tag Folders) — personal tag + folder for local-only models (optional type/base). After Save, that folder and its subfolders import into Library. Civitai downloads with the same tag name still use the normal app tag folder — not your custom path. These locals skip Civitai preview/update checks.',
     libraryPriority:
       'Tag Folders **Priority** — when a model matches several tags, higher number wins (▲/▼ skip 0). Equal priorities: first matching tag. Priority 0 = fixed auto-route. Manual Library assigns always win.',
     libraryTagBan:
@@ -393,6 +395,8 @@ export const en = {
       'Settings → **Preserve filters** — keep Browse/Library filters, sort, and show/hide checkboxes when switching tabs',
     libraryConfirmMoves:
       'Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog (Tag folders / Fast tag)',
+    libraryDiskSync:
+      'Settings → **Sync library from disk** — import/move files into Library. Files over 10GB skip auto-hash during sync (use **Verify hashes** later if needed). Custom/local models are not looked up on Civitai.',
     missingOverview:
       'Missing — 404 / Suspect reviews, models skipped by pause or ban-by-tag, and manual bans. Opening Model details or Tag Folders keeps your Missing filters and scroll.',
     missingKinds:
@@ -428,7 +432,7 @@ export const en = {
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but version data is empty; recheck or paste a download URL',
     dlNewVersions:
-      'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model. If the version is Early access, it moves to Awaiting and should leave Updates. Filled during Harvest and by a background library check (one API GET per owned model). Settings → Auto-download new versions: ON queues them globally.',
+      'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model; **Skip** hides that version only (keeps your files; stays skipped until **Unskip**); **Show skipped** (off by default) lists them again. If Early access, it moves to Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
     dlTabBadges:
       'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
@@ -443,7 +447,7 @@ export const en = {
       autoStart:
         'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
       autoDownloadNewVersions:
-        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Queue / Ban / Dismiss — or use Always update on a card for that model only. Brand-new Browse models are always eligible separately.',
+        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Download / Always update / Skip / Ban — or use Always update on a card for that model only. Brand-new Browse models are always eligible separately.',
       scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
       parallelDownloads: 'How many models download at once. Use 1 for one file at full speed.',
       domain:
@@ -467,7 +471,8 @@ export const en = {
       showCustomAssignmentSubfolders:
         'For Custom folder assignments, show tag + relative subfolder on cards and in the Library sidebar (e.g. randoms/cars). Off = show only the custom tag name. Default on.',
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
-      hashVerify: 'Compares SHA256 on disk with Civitai /model-versions/by-hash. Use after moving files manually or if a model seems corrupted.',
+      hashVerify:
+        'Compares SHA256 on disk with Civitai. Use after moving files manually. Disk sync skips auto-hash on files over 10GB — run this if you need those checked.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
       browseSettledToEnd:
         'Browse Results — move owned, excluded, and awaiting-access cards to the end of the gallery. Search matches keep normal order.',
