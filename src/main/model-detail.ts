@@ -7,6 +7,7 @@ import {
   pickVersionStats
 } from '../shared/civitai-meta'
 import { getModelPageUrl } from '../shared/utils'
+import { expandCivitaiTagNames } from '../shared/tag-routing'
 import { trainedWordsFromSwarm } from './library-hash-verify'
 import * as inventory from './inventory'
 import { clearMissingModel, noteMissingModel404 } from './missing-models'
@@ -86,7 +87,7 @@ function buildDetailFromModel(
     baseModel: version.baseModel,
     baseModelType: version.baseModelType,
     creator: model.creator?.username,
-    tags: model.tags ?? [],
+    tags: expandCivitaiTagNames(model.tags),
     downloadCount: stats.downloadCount ?? vs.downloadCount,
     thumbsUpCount: stats.thumbsUpCount ?? vs.thumbsUpCount,
     license,
@@ -195,9 +196,9 @@ export function buildLocalModelDetail(
       .map((t) => t.trim())
       .filter(Boolean) ?? []
   const tags =
-    (primary?.civitaiTags && primary.civitaiTags.length
-      ? primary.civitaiTags
-      : tagsFromSwarm) ?? []
+    expandCivitaiTagNames(
+      primary?.civitaiTags && primary.civitaiTags.length ? primary.civitaiTags : tagsFromSwarm
+    ) ?? []
   const versions =
     owned.length > 0
       ? owned.map((r) => ({

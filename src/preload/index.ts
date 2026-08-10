@@ -44,7 +44,8 @@ import type {
   TagAssignmentPrompt,
   CrawlPagePayload,
   RuleQueueAllResult,
-  WatchRuleTestResult
+  WatchRuleTestResult,
+  WatchRuleTestModel
 } from '../shared/types'
 
 function readAppearanceBootstrapSync(): AppearanceBootstrap {
@@ -228,6 +229,8 @@ const api = {
   getPending: (): Promise<PendingVersion[]> => ipcRenderer.invoke('pending:get'),
   getBrowseGallery: (): Promise<WatchRuleTestResult | null> =>
     ipcRenderer.invoke('browse:getGallery'),
+  lookupBrowseId: (id: number | string): Promise<WatchRuleTestModel | null> =>
+    ipcRenderer.invoke('browse:lookupId', id),
   approvePending: (payload: {
     modelId: number
     versionId: number

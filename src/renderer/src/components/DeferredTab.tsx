@@ -7,7 +7,7 @@ import {
 } from '../../../shared/download-errors'
 import { canWaitForDeferredUnlock } from '../../../shared/early-access'
 import { formatCountdownTo, formatWaitDuration } from '../../../shared/utils'
-import { isPermanentlyBannedModelTag, isPausedOnlyModelTag } from '../../../shared/tag-routing'
+import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
 import { ConfirmModal } from './ConfirmModal'
@@ -460,8 +460,9 @@ export function DeferredTab({
               checkpointFolder
             )
             const folderLine = folderLineIfNotDuplicatingTag(folderLabel, item.civitaiTags)
-            const shownTags = (item.civitaiTags ?? []).slice(0, 6)
-            const extraTagCount = (item.civitaiTags?.length ?? 0) - shownTags.length
+            const cardTags = expandCivitaiTagNames(item.civitaiTags)
+            const shownTags = cardTags.slice(0, 6)
+            const extraTagCount = cardTags.length - shownTags.length
             const previewOverride = previewOverrides[item.versionId]
             const cardPreviewUrl =
               previewOverride?.previewUrl ?? previewOverride?.previewUrls?.[0] ?? item.previewUrl
@@ -495,7 +496,7 @@ export function DeferredTab({
                     {shownTags.length > 0 ? (
                       <div
                         className="tag-row library-card-tags"
-                        title={(item.civitaiTags ?? []).join(', ')}
+                        title={cardTags.join(', ')}
                       >
                         {shownTags.map((tag) => {
                           const role = cardTagFolderRole(tag, {

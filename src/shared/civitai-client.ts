@@ -9,6 +9,20 @@ import type {
 import { getApiBase, getSiteBase } from './utils'
 import { formatCivitaiHttpError, withNetworkRetry } from './network-retry'
 import type { CivitaiVersionMini } from './early-access'
+import { expandCivitaiTagNames } from './tag-routing'
+
+/** Some creators paste a comma-separated list as a single Civitai tag — split for routing/UI. */
+function withNormalizedTags(model: CivitaiModel): CivitaiModel {
+  if (!model.tags?.length) return model
+  const tags = expandCivitaiTagNames(model.tags)
+  if (tags.length === model.tags.length && tags.every((t, i) => t === model.tags![i])) return model
+  return { ...model, tags }
+}
+
+function normalizeSearchResult(result: CivitaiSearchResult): CivitaiSearchResult {
+  if (!result.items?.length) return result
+  return { ...result, items: result.items.map(withNormalizedTags) }
+}
 
 export interface CivitaiClientOptions {
   domain: CivitaiDomain
@@ -93,7 +107,7 @@ export class CivitaiClient {
   }
 
   async getModel(modelId: number): Promise<CivitaiModel> {
-    return this.fetchJson<CivitaiModel>(`/models/${modelId}`)
+    return withNormalizedTags(await this.fetchJson<CivitaiModel>(`/models/${modelId}`))
   }
 
   async getModelVersion(versionId: number): Promise<CivitaiModelVersion> {
@@ -152,7 +166,7 @@ export class CivitaiClient {
       queryParams.page = params.page ?? 1
     }
 
-    return this.fetchJson<CivitaiSearchResult>('/models', queryParams)
+    return normalizeSearchResult(await this.fetchJson<CivitaiSearchResult>('/models', queryParams))
   }
 
   async searchAllModels(params: {

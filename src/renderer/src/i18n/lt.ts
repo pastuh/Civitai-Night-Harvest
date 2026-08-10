@@ -642,8 +642,11 @@ export const lt: Messages = {
     contentAll: 'All',
     contentSfw: 'SFW',
     contentNsfw: 'NSFW',
-    searchPlaceholder: 'Ieškoti pavadinimo ar autoriaus…',
-    searchTitle: 'Filtruoti įkeltus modelius pagal pavadinimą ar kūrėjo vardą',
+    searchPlaceholder: 'Ieškoti pavadinimo, autoriaus ar model/version ID…',
+    searchTitle:
+      'Filtruoti įkeltus modelius pagal pavadinimą, kūrėją ar tikslų model/version ID (skaičius ieško ir Civitai)',
+    idLookupLoading: 'Ieškoma ID Civitai…',
+    idLookupMiss: 'Tokio model/version ID nerasta',
     hideOwned: 'Slėpti turimus',
     hideOwnedTitle: 'Slėpti modelius, kurie jau bibliotekoje',
     badgeOwnedTitle: 'Jau bibliotekoje',

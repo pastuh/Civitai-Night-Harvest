@@ -30,7 +30,7 @@ import {
   type RatingFilter
 } from '../../../shared/rating-filter'
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
-import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag } from '../../../shared/tag-routing'
+import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
@@ -89,6 +89,13 @@ function modelMatchesBrowseSearch(model: WatchRuleTestModel, query: string): boo
   if (model.name.toLowerCase().includes(q)) return true
   if (model.creator?.toLowerCase().includes(q)) return true
   return false
+}
+
+/** Exact model/version id typed in Browse search — keep visible even if blocked/owned filters would hide it. */
+function isExactBrowseIdHit(model: WatchRuleTestModel, query: string): boolean {
+  const q = query.trim()
+  if (!/^\d+$/.test(q)) return false
+  return String(model.id) === q || String(model.versionId) === q
 }
 
 function isBrowseSettledModel(
@@ -291,6 +298,9 @@ export function SearchBrowsePanel({
 
   const [tagFilter, setTagFilter] = useState<string | null>(browseInitial.tagFilter)
   const [searchQuery, setSearchQuery] = useState(browseInitial.searchQuery)
+  const [idLookupModel, setIdLookupModel] = useState<WatchRuleTestModel | null>(null)
+  const [idLookupStatus, setIdLookupStatus] = useState<'idle' | 'loading' | 'miss'>('idle')
+  const idLookupSeqRef = useRef(0)
   const [onlyMissing, setOnlyMissing] = useState(browseInitial.onlyMissing)
   const [hideBanned, setHideBanned] = useState(browseInitial.hideBanned)
   const [showBlockedModels, setShowBlockedModels] = useState(browseInitial.showBlockedModels)
@@ -724,8 +734,54 @@ export function SearchBrowsePanel({
         out.push({ ...m, isBanned: banned, inInventory })
       }
     }
+    if (idLookupModel) {
+      const banned = isBanned(idLookupModel)
+      const inInventory = idLookupModel.inInventory || ownedVersionIds.has(idLookupModel.versionId)
+      const card = {
+        ...idLookupModel,
+        isBanned: banned,
+        inInventory
+      }
+      const key = browseModelDedupeKey(card)
+      if (!out.some((m) => browseModelDedupeKey(m) === key)) {
+        out.unshift(card)
+      }
+    }
     return out
-  }, [modelsWithPreviews, isBanned, ownedVersionIds])
+  }, [modelsWithPreviews, isBanned, ownedVersionIds, idLookupModel])
+
+  useEffect(() => {
+    const q = searchQuery.trim()
+    if (!/^\d+$/.test(q)) {
+      setIdLookupModel(null)
+      setIdLookupStatus('idle')
+      return
+    }
+    const numericId = Number(q)
+    // Skip API when the crawl gallery already has this model/version id.
+    if (modelsWithPreviews.some((m) => m.id === numericId || m.versionId === numericId)) {
+      setIdLookupModel(null)
+      setIdLookupStatus('idle')
+      return
+    }
+    const seq = ++idLookupSeqRef.current
+    setIdLookupStatus('loading')
+    const timer = window.setTimeout(() => {
+      void window.api
+        .lookupBrowseId(numericId)
+        .then((card) => {
+          if (idLookupSeqRef.current !== seq) return
+          setIdLookupModel(card)
+          setIdLookupStatus(card ? 'idle' : 'miss')
+        })
+        .catch(() => {
+          if (idLookupSeqRef.current !== seq) return
+          setIdLookupModel(null)
+          setIdLookupStatus('miss')
+        })
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [searchQuery, modelsWithPreviews])
 
   const ruleKeywordExtras = useMemo(() => {
     const extras: string[] = []
@@ -735,18 +791,34 @@ export function SearchBrowsePanel({
   }, [result.searchApiTag, tagFilter])
 
   const ruleScopedModels = useMemo(() => {
-    if (result.crawlSource) return enrichedModels
-    const ruleKeywords = browseRule ? parseRuleFilterTags(browseRule.query ?? '') : []
-    // Tag/query rules: API already scoped results — model.tags often omits the searched tag.
-    if (ruleKeywords.length > 0 && enrichedModels.length > 0) return enrichedModels
-    const hasRuleKeywords = ruleKeywords.length > 0
-    if (!browseRule || (!hasRuleKeywords && !ruleKeywordExtras.length)) {
-      return enrichedModels
+    let list: WatchRuleTestModel[]
+    if (result.crawlSource) {
+      list = enrichedModels
+    } else {
+      const ruleKeywords = browseRule ? parseRuleFilterTags(browseRule.query ?? '') : []
+      // Tag/query rules: API already scoped results — model.tags often omits the searched tag.
+      if (ruleKeywords.length > 0 && enrichedModels.length > 0) {
+        list = enrichedModels
+      } else {
+        const hasRuleKeywords = ruleKeywords.length > 0
+        if (!browseRule || (!hasRuleKeywords && !ruleKeywordExtras.length)) {
+          list = enrichedModels
+        } else {
+          list = enrichedModels.filter((m) =>
+            modelMatchesRuleBrowseFilter(m, browseRule, ruleKeywordExtras)
+          )
+        }
+      }
     }
-    return enrichedModels.filter((m) =>
-      modelMatchesRuleBrowseFilter(m, browseRule, ruleKeywordExtras)
-    )
-  }, [enrichedModels, browseRule, ruleKeywordExtras, result.crawlSource])
+    // Numeric ID lookup must stay visible even if rule keyword filter would drop it.
+    if (idLookupModel) {
+      const key = browseModelDedupeKey(idLookupModel)
+      if (!list.some((m) => browseModelDedupeKey(m) === key)) {
+        list = [idLookupModel, ...list]
+      }
+    }
+    return list
+  }, [enrichedModels, browseRule, ruleKeywordExtras, result.crawlSource, idLookupModel])
 
   const browseRatingCounts = useMemo(
     () =>
@@ -808,17 +880,24 @@ export function SearchBrowsePanel({
 
   const filtered = useMemo(() => {
     const byKey = new Map<string, WatchRuleTestModel>()
+    const searchActive = searchQuery.trim().length > 0
     for (const m of ruleScopedModels) {
-      if (!matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) continue
+      const idHit = isExactBrowseIdHit(m, searchQuery)
+      if (!idHit && !matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) {
+        continue
+      }
 
       // Hide early access models even when queued — user explicitly wants them hidden.
-      if (hideAwaitingAccess && m.isEarlyAccess) continue
+      if (!idHit && hideAwaitingAccess && m.isEarlyAccess) continue
+
+      if (searchActive && !modelMatchesBrowseSearch(m, searchQuery)) continue
 
       const inActiveQueue =
         (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
         queueActiveForFilter.byModel.has(m.id)
 
-      if (!inActiveQueue) {
+      // Exact id search keeps the card visible; queue no longer bypasses text/id search.
+      if (!idHit && !inActiveQueue) {
         if (forgottenModelIds?.has(m.id)) continue
         if (hideBanned && m.isBanned) continue
         if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) continue
@@ -831,7 +910,6 @@ export function SearchBrowsePanel({
         if (!showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
-        if (searchQuery.trim() && !modelMatchesBrowseSearch(m, searchQuery)) continue
       }
 
       const key = browseModelDedupeKey(m)
@@ -1784,6 +1862,11 @@ export function SearchBrowsePanel({
               title={t('browse.searchTitle')}
               aria-label={t('browse.searchPlaceholder')}
             />
+            {idLookupStatus === 'loading' ? (
+              <span className="muted browse-id-lookup-status">{t('browse.idLookupLoading')}</span>
+            ) : idLookupStatus === 'miss' ? (
+              <span className="muted browse-id-lookup-status">{t('browse.idLookupMiss')}</span>
+            ) : null}
             <div className="browse-results-filters-box">
             <div className="browse-results-filters-row">
               <select
@@ -2581,12 +2664,12 @@ export function SearchBrowsePanel({
                 Delete files & exclude
               </button>
             )}
-            {contextMenu.model.tags.length > 0 && onHiddenTagsChange && (
+            {expandCivitaiTagNames(contextMenu.model.tags).length > 0 && onHiddenTagsChange && (
               <>
                 <div className="context-menu-divider" />
                 <div className="context-menu-label">{t('browse.contextSkipTag')}</div>
                 <div className="context-menu-tag-picks">
-                  {contextMenu.model.tags.map((tag) => {
+                  {expandCivitaiTagNames(contextMenu.model.tags).map((tag) => {
                     const hidden = hiddenTags.some((t) => t.toLowerCase() === tag.toLowerCase())
                     return (
                       <button
@@ -2905,8 +2988,9 @@ const ModelCard = memo(function ModelCard({
     !isDeferred &&
     !isEarlyAccessCard
 
+  const cardTags = expandCivitaiTagNames(model.tags)
   const resolvedRoute = resolveModelRoutingTag(
-    model.tags,
+    cardTags,
     routingTag,
     tagRules,
     model.baseModel
@@ -2918,7 +3002,7 @@ const ModelCard = memo(function ModelCard({
     loraFolder,
     checkpointFolder
   )
-  const folderLine = folderLineIfNotDuplicatingTag(folderLabel, model.tags)
+  const folderLine = folderLineIfNotDuplicatingTag(folderLabel, cardTags)
 
   let badge = ''
   let badgeClass = ''
@@ -3185,7 +3269,7 @@ const ModelCard = memo(function ModelCard({
           </div>
         ) : null}
         <div className="tag-row library-card-tags">
-          {model.tags.slice(0, 6).map((tag) => {
+          {cardTags.slice(0, 6).map((tag) => {
             const role = cardTagFolderRole(tag, {
               routingTag: resolvedRoute || routingTag,
               folderLabel,

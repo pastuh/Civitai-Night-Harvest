@@ -17,7 +17,7 @@ import {
 import { isVersionEarlyAccess } from '../../../shared/early-access'
 import { formatCountdownTo } from '../../../shared/utils'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
-import { isUnsortedRoutingTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag } from '../../../shared/tag-routing'
+import { isUnsortedRoutingTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
 import { ConfirmModal } from './ConfirmModal'
 import { FastTagAssignModal } from './FastTagAssignModal'
@@ -497,9 +497,9 @@ export function ModelDetailPage({
       seen.add(key)
       out.push(name)
     }
-    for (const t of detail?.tags ?? []) push(t)
-    for (const t of libraryRecord?.civitaiTags ?? []) push(t)
-    for (const t of ownedRecordForActive?.civitaiTags ?? []) push(t)
+    for (const t of expandCivitaiTagNames(detail?.tags)) push(t)
+    for (const t of expandCivitaiTagNames(libraryRecord?.civitaiTags)) push(t)
+    for (const t of expandCivitaiTagNames(ownedRecordForActive?.civitaiTags)) push(t)
     // Folder route name (e.g. Fast-tag rename) may not be a Civitai tag — still show as final.
     if (routingForTags && !isUnsortedRoutingTag(routingForTags)) {
       if (!out.some((t) => tagsEqual(t, routingForTags))) push(routingForTags)

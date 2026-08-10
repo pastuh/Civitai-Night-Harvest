@@ -636,8 +636,11 @@ export const en = {
     contentAll: 'All',
     contentSfw: 'SFW',
     contentNsfw: 'NSFW',
-    searchPlaceholder: 'Search name or author…',
-    searchTitle: 'Filter loaded models by title or creator username',
+    searchPlaceholder: 'Search name, author, or model/version ID…',
+    searchTitle:
+      'Filter loaded models by title, creator, or exact model/version ID (numeric ID also looks up on Civitai)',
+    idLookupLoading: 'Looking up ID on Civitai…',
+    idLookupMiss: 'No model/version found for that ID',
     hideOwned: 'Hide owned',
     hideOwnedTitle: 'Hide models already in your library',
     badgeOwnedTitle: 'Already in library',

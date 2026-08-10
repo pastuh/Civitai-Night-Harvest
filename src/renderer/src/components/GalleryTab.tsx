@@ -29,7 +29,8 @@ import {
   isCustomTagFolderRule,
   formatTagRuleLabel,
   normalizeHiddenTags,
-  isUnsortedRoutingTag
+  isUnsortedRoutingTag,
+  expandCivitaiTagNames
 } from '../../../shared/tag-routing'
 import {
   buildTagClusters,
@@ -158,7 +159,7 @@ function recordInDownloadRange(r: InventoryRecord, from: string, to: string): bo
 function aggregateModelTags(inventory: InventoryRecord[]): Array<{ name: string; count: number }> {
   const map = new Map<string, number>()
   for (const r of inventory) {
-    for (const raw of r.civitaiTags ?? []) {
+    for (const raw of expandCivitaiTagNames(r.civitaiTags)) {
       const name = raw.trim()
       if (!name) continue
       map.set(name, (map.get(name) ?? 0) + 1)
@@ -637,7 +638,9 @@ function GalleryTabInner({
         break
       case 'civitai':
         list = list.filter((r) =>
-          r.civitaiTags?.some((t) => t.toLowerCase() === libraryFilter.name.toLowerCase())
+          expandCivitaiTagNames(r.civitaiTags).some(
+            (t) => t.toLowerCase() === libraryFilter.name.toLowerCase()
+          )
         )
         break
       case 'cluster': {

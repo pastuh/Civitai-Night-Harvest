@@ -431,7 +431,7 @@ export function inventoryVersionIdsWithCivitaiTag(
 export function getMatchingFolderTags(tags: string[], tagRules: TagFolderRule[]): string[] {
   const result: string[] = []
   const seen = new Set<string>()
-  for (const t of tags) {
+  for (const t of expandCivitaiTagNames(tags)) {
     const rule = findRuleForTag(t, tagRules)
     if (!rule) continue
     const canonical =
@@ -618,7 +618,7 @@ export function matchingHiddenTags(
 ): HiddenTagMatch[] {
   const hidden = normalizeHiddenTags(hiddenTags)
   if (!hidden.length) return []
-  const modelList = modelTags ?? []
+  const modelList = expandCivitaiTagNames(modelTags)
   if (!modelList.length) return []
   const out: HiddenTagMatch[] = []
   const seenModel = new Set<string>()
@@ -759,11 +759,12 @@ export function resolveModelRoutingTag(
   tagRules: TagFolderRule[],
   _baseModel?: string
 ): { routingTag: string; needsConfirmation: boolean } {
+  const tags = expandCivitaiTagNames(modelTags)
   const active = activeRoutingTag.trim()
-  const matching = getMatchingFolderTags(modelTags, tagRules)
+  const matching = getMatchingFolderTags(tags, tagRules)
 
-  if (active && modelTags.some((t) => tagAliasMatch(active, t))) {
-    return { routingTag: active, needsConfirmation: matchingFolderTagsNeedConfirmation(modelTags, tagRules) }
+  if (active && tags.some((t) => tagAliasMatch(active, t))) {
+    return { routingTag: active, needsConfirmation: matchingFolderTagsNeedConfirmation(tags, tagRules) }
   }
 
   if (matching.length === 0) {
@@ -771,15 +772,15 @@ export function resolveModelRoutingTag(
     return { routingTag: UNSORTED_FOLDER_NAME, needsConfirmation: false }
   }
 
-  const best = pickBestMatchingFolderTag(modelTags, tagRules) ?? matching[0]
+  const best = pickBestMatchingFolderTag(tags, tagRules) ?? matching[0]
   return {
     routingTag: best,
-    needsConfirmation: matchingFolderTagsNeedConfirmation(modelTags, tagRules)
+    needsConfirmation: matchingFolderTagsNeedConfirmation(tags, tagRules)
   }
 }
 
 export function findFirstUsedTag(modelTags: string[], usedTags: Set<string>): string | null {
-  for (const t of modelTags) {
+  for (const t of expandCivitaiTagNames(modelTags)) {
     if (usedTags.has(t.toLowerCase())) return t
     for (const used of usedTags) {
       if (tagAliasMatch(used, t)) return t

@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom'
 import type { InventoryRecord } from '../../../shared/types'
 import { formatAuthorWithWeight, getModelPageUrl } from '../../../shared/utils'
+import { expandCivitaiTagNames } from '../../../shared/tag-routing'
 
 interface Props {
   record: InventoryRecord
@@ -52,7 +53,7 @@ export function GalleryPreviewModal({ record, domain, onClose, onDelete }: Props
             )}
             {record.civitaiTags && record.civitaiTags.length > 0 && (
               <div className="preview-modal-tags">
-                {record.civitaiTags.map((tag) => (
+                {expandCivitaiTagNames(record.civitaiTags).map((tag) => (
                   <span key={tag} className="tag-chip">
                     {tag}
                   </span>

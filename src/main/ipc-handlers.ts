@@ -32,7 +32,7 @@ import * as inventory from './inventory'
 import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync, findSuspiciousModelFiles } from './library-sync'
 import { setLibraryPreviewFromUrl } from './library-preview'
 import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, enrichDeferredPreviews } from './preview-enrich'
-import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
+import { buildSampleModels, buildWatchRuleTestResult, lookupBrowseModelByNumericId } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
 import { moveRecordToTagFolder, moveRecordsToTagFolder, reconcileLibraryTagFolders } from './model-move'
@@ -1465,6 +1465,12 @@ export function initIpc(): void {
   ipcMain.handle('pending:get', () => scheduler.getPendingVersions())
 
   ipcMain.handle('browse:getGallery', () => scheduler.getBrowseGallerySnapshot())
+
+  ipcMain.handle('browse:lookupId', async (_e, rawId: number | string) => {
+    const numericId = typeof rawId === 'number' ? rawId : Number(String(rawId).trim())
+    if (!Number.isFinite(numericId) || numericId <= 0) return null
+    return lookupBrowseModelByNumericId(clientPool, numericId)
+  })
 
   ipcMain.handle('app:rendererReady', async () => {
     await onRendererReady()

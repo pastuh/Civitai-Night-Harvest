@@ -1263,7 +1263,7 @@ export function addVersion(record: InventoryRecord): void {
       record.swarmPath,
       record.downloadedAt,
       record.ignored ? 1 : 0,
-      JSON.stringify(record.civitaiTags ?? []),
+      JSON.stringify(expandCivitaiTagNames(record.civitaiTags)),
       record.fileSizeBytes ?? null,
       record.fileFp ?? null,
       record.fileVariant ?? null,

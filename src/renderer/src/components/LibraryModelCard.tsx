@@ -13,7 +13,7 @@ import {
   cardTagFolderRoleClass
 } from './gallery-card-utils'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
-import { isPermanentlyBannedModelTag, isPausedOnlyModelTag } from '../../../shared/tag-routing'
+import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 
 export type LibraryModelCardProps = {
   record: InventoryRecord
@@ -90,7 +90,7 @@ function LibraryModelCardInner({
     hideCardTags && hideCardTags.length
       ? new Set(hideCardTags.map((x) => x.toLowerCase()))
       : null
-  const allTags = record.civitaiTags ?? []
+  const allTags = expandCivitaiTagNames(record.civitaiTags)
   const visibleTags = allTags.filter((tag) => {
     if (hideTagSet?.has(tag.trim().toLowerCase())) return false
     if (hideAssignedTags) {
