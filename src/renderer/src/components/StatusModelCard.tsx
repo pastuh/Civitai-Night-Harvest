@@ -59,9 +59,23 @@ export function StatusModelCard({
       role={onOpen ? 'button' : undefined}
       tabIndex={onOpen ? 0 : undefined}
     >
+      {/* Overlay on photo — must be outside .gallery-card-body (that box is position:relative). */}
+      {badges}
       <div className="gallery-thumb-wrap" aria-hidden="true">
         {previewUrl ? (
-          <img src={previewUrl} alt="" className="gallery-thumb" decoding="async" />
+          <img
+            src={previewUrl}
+            alt=""
+            className="gallery-thumb"
+            decoding="async"
+            onError={(e) => {
+              // Remote Civitai URLs expire; hide broken icon → empty placeholder.
+              const img = e.currentTarget
+              img.onerror = null
+              img.removeAttribute('src')
+              img.classList.add('placeholder')
+            }}
+          />
         ) : (
           <div className="gallery-thumb placeholder" />
         )}
@@ -82,7 +96,6 @@ export function StatusModelCard({
           )}
         </div>
         {meta && <div className="muted status-model-card-meta">{meta}</div>}
-        {badges}
         {details}
         {actions ? (
           <div className="row status-model-card-actions" onClick={(e) => e.stopPropagation()}>

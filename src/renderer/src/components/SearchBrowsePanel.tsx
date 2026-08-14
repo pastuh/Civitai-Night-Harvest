@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition, type MouseEvent } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type MouseEvent } from 'react'
 import type {
   ContentFilter,
   DownloadQueueItem,
@@ -183,6 +183,8 @@ interface Props {
   onViewPrefsChange?: (prefs: BrowseViewPrefs) => void
   /** Session Yield — models that entered download pipeline (only grows). */
   sessionYieldCount?: number
+  /** Pending Updates version IDs the user skipped — exclude from Browse Updates count. */
+  skippedPendingVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause scroll observers so inactive tabs do not expand mid-scroll. */
   isActive?: boolean
 }
@@ -247,6 +249,7 @@ export function SearchBrowsePanel({
   viewPrefs,
   onViewPrefsChange,
   sessionYieldCount = 0,
+  skippedPendingVersionIds,
   isActive = true
 }: Props) {
   const t = useT()
@@ -299,6 +302,7 @@ export function SearchBrowsePanel({
 
   const [tagFilter, setTagFilter] = useState<string | null>(browseInitial.tagFilter)
   const [searchQuery, setSearchQuery] = useState(browseInitial.searchQuery)
+  const deferredSearchQuery = useDeferredValue(searchQuery)
   const [idLookupModel, setIdLookupModel] = useState<WatchRuleTestModel | null>(null)
   const [idLookupStatus, setIdLookupStatus] = useState<'idle' | 'loading' | 'miss'>('idle')
   const idLookupSeqRef = useRef(0)
@@ -659,8 +663,9 @@ export function SearchBrowsePanel({
       !m.inInventory &&
       !ownedVersionIds.has(m.versionId) &&
       ownedModelIds.has(m.id) &&
-      !isBanned(m),
-    [ownedModelIds, ownedVersionIds, isBanned]
+      !isBanned(m) &&
+      !(m.versionId > 0 && skippedPendingVersionIds?.has(m.versionId)),
+    [ownedModelIds, ownedVersionIds, isBanned, skippedPendingVersionIds]
   )
 
   /** Stable key for queue membership (not byte progress) — avoids refiltering gallery on every download tick. */
@@ -886,9 +891,9 @@ export function SearchBrowsePanel({
 
   const filtered = useMemo(() => {
     const byKey = new Map<string, WatchRuleTestModel>()
-    const searchActive = searchQuery.trim().length > 0
+    const searchActive = deferredSearchQuery.trim().length > 0
     for (const m of ruleScopedModels) {
-      const idHit = isExactBrowseIdHit(m, searchQuery)
+      const idHit = isExactBrowseIdHit(m, deferredSearchQuery)
       if (!idHit && !matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) {
         continue
       }
@@ -896,7 +901,7 @@ export function SearchBrowsePanel({
       // Hide early access models even when queued — user explicitly wants them hidden.
       if (!idHit && hideAwaitingAccess && m.isEarlyAccess) continue
 
-      if (searchActive && !modelMatchesBrowseSearch(m, searchQuery)) continue
+      if (searchActive && !modelMatchesBrowseSearch(m, deferredSearchQuery)) continue
 
       const inActiveQueue =
         (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
@@ -937,7 +942,7 @@ export function SearchBrowsePanel({
     bannedTags,
     forgottenModelIds,
     tagFilter,
-    searchQuery,
+    deferredSearchQuery,
     queueActiveForFilter,
     result.crawlSource
   ])
@@ -3390,6 +3395,11 @@ const ModelCard = memo(function ModelCard({
             )}
           </div>
         </div>
+        {model.versionName ? (
+          <div className="gallery-card-version-row" title={model.versionName}>
+            {model.versionName}
+          </div>
+        ) : null}
         <div className="muted">
           {model.type} · {model.baseModel}
           {model.baseModelType && (

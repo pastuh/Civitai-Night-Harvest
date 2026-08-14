@@ -508,6 +508,8 @@ export interface DownloadQueueItem {
   confirmTagsAfter?: boolean
   /** True when the user explicitly queued from Browse/Library — affects gallery highlighting. */
   manual?: boolean
+  /** Civitai version title (shown in strip / cards). */
+  versionName?: string
   /** Set on restore when this row was actively downloading before shutdown (do not treat as stale auto-queue). */
   interruptedResume?: boolean
   sourceDomain?: CivitaiDomain
@@ -573,6 +575,20 @@ export interface PendingVersion {
   totalVersions?: number
   /** User skipped this offer on Updates (persisted; hidden unless Show skipped). */
   skipped?: boolean
+  /**
+   * User forgot this Updates offer permanently (this version only; not the whole model).
+   * Hidden unless Show forgotten.
+   */
+  forgotten?: boolean
+  /** Civitai model type (LORA, Checkpoint, VAE, …). */
+  modelType?: string
+  nsfw?: boolean
+  nsfwLevel?: number
+  civitaiTags?: string[]
+  /** ISO timestamp when the offer was first detected. */
+  detectedAt?: string
+  downloadCount?: number
+  thumbsUpCount?: number
 }
 
 /**
@@ -725,6 +741,8 @@ export interface WatchRuleTestModel {
   id: number
   versionId: number
   name: string
+  /** Civitai version title when known (e.g. Krea2-SAT-DirtyRealismV4). */
+  versionName?: string
   type: string
   baseModel: string
   previewUrl?: string

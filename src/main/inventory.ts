@@ -209,10 +209,57 @@ function migrateInventorySchema(database: Database.Database): void {
     database.exec(`ALTER TABLE versions ADD COLUMN model_type TEXT NOT NULL DEFAULT ''`)
   }
 
-  const pendingCols = database.pragma('table_info(pending_versions)') as { name: string }[]
-  if (!pendingCols.some((c) => c.name === 'total_versions')) {
-    database.exec(`ALTER TABLE pending_versions ADD COLUMN total_versions INTEGER`)
+  const ensurePendingCol = (name: string, ddl: string) => {
+    const cols = database.pragma('table_info(pending_versions)') as { name: string }[]
+    if (!cols.some((c) => c.name === name)) {
+      database.exec(`ALTER TABLE pending_versions ADD COLUMN ${ddl}`)
+    }
   }
+  ensurePendingCol('total_versions', 'total_versions INTEGER')
+  ensurePendingCol('model_type', "model_type TEXT NOT NULL DEFAULT ''")
+  ensurePendingCol('is_nsfw', 'is_nsfw INTEGER')
+  ensurePendingCol('nsfw_level', 'nsfw_level INTEGER')
+  ensurePendingCol('civitai_tags', "civitai_tags TEXT NOT NULL DEFAULT '[]'")
+  ensurePendingCol('download_count', 'download_count INTEGER')
+  ensurePendingCol('thumbs_up_count', 'thumbs_up_count INTEGER')
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS skipped_pending_versions (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      model_id INTEGER NOT NULL,
+      model_name TEXT NOT NULL,
+      version_name TEXT NOT NULL,
+      base_model TEXT NOT NULL,
+      author TEXT NOT NULL,
+      preview_url TEXT,
+      existing_folder TEXT NOT NULL,
+      total_versions INTEGER,
+      skipped_at TEXT NOT NULL
+    );
+  `)
+  const ensureSkippedCol = (name: string, ddl: string) => {
+    const cols = database.pragma('table_info(skipped_pending_versions)') as { name: string }[]
+    if (!cols.some((c) => c.name === name)) {
+      database.exec(`ALTER TABLE skipped_pending_versions ADD COLUMN ${ddl}`)
+    }
+  }
+  ensureSkippedCol('model_type', "model_type TEXT NOT NULL DEFAULT ''")
+  ensureSkippedCol('is_nsfw', 'is_nsfw INTEGER')
+  ensureSkippedCol('nsfw_level', 'nsfw_level INTEGER')
+  ensureSkippedCol('civitai_tags', "civitai_tags TEXT NOT NULL DEFAULT '[]'")
+  ensureSkippedCol('download_count', 'download_count INTEGER')
+  ensureSkippedCol('thumbs_up_count', 'thumbs_up_count INTEGER')
+  ensureSkippedCol('detected_at', 'detected_at TEXT')
+  ensureSkippedCol('forgotten', 'forgotten INTEGER NOT NULL DEFAULT 0')
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS pending_seen (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      seen_day TEXT NOT NULL,
+      seen_at TEXT NOT NULL
+    );
+  `)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_pending_seen_day ON pending_seen(seen_day)`)
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS library_version_checks (
@@ -449,6 +496,12 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
 
 function rowToPending(row: Record<string, unknown>): PendingVersion {
   const total = row.total_versions
+  const isNsfwRaw = row.is_nsfw as number | null | undefined
+  const tags = parseCivitaiTags(row.civitai_tags)
+  const detectedAt =
+    (typeof row.detected_at === 'string' && row.detected_at) ||
+    (typeof row.skipped_at === 'string' && row.skipped_at) ||
+    undefined
   return {
     modelId: row.model_id as number,
     modelName: row.model_name as string,
@@ -463,7 +516,17 @@ function rowToPending(row: Record<string, unknown>): PendingVersion {
         ? total
         : typeof total === 'string' && Number(total) > 0
           ? Number(total)
-          : undefined
+          : undefined,
+    modelType: ((row.model_type as string) || '').trim() || undefined,
+    nsfw: isNsfwRaw == null ? undefined : Boolean(isNsfwRaw),
+    nsfwLevel:
+      row.nsfw_level != null && row.nsfw_level !== ''
+        ? Number(row.nsfw_level)
+        : undefined,
+    civitaiTags: tags.length ? tags : undefined,
+    detectedAt,
+    downloadCount: optStatCount(row.download_count),
+    thumbsUpCount: optStatCount(row.thumbs_up_count)
   }
 }
 
@@ -913,6 +976,18 @@ export function removeTagSkipReviewsForTags(tags: string[]): number {
 /** Unified Missing-page feed: 404 + manual bans + tag-skip reviews. */
 export function getExclusionReviewItems(): ExclusionReviewItem[] {
   pruneStaleTagSkipReviews()
+  const localPreviewByModel = new Map<number, string>()
+  for (const r of getAllVersions()) {
+    if (r.modelId <= 0 || !r.previewPath?.trim()) continue
+    if (!localPreviewByModel.has(r.modelId)) localPreviewByModel.set(r.modelId, r.previewPath)
+  }
+  const withLocalPreview = (modelId: number, remote?: string): string | undefined => {
+    const local = localPreviewByModel.get(modelId)
+    // Prefer on-disk Library preview — remote Civitai URLs often 404 later.
+    if (local) return local
+    return remote || undefined
+  }
+
   const missing = getAllMissingModels().map(
     (m): ExclusionReviewItem => ({
       kind: 'missing',
@@ -922,7 +997,7 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
       modelType: m.modelType,
       author: m.author,
       baseModel: m.baseModel,
-      previewUrl: m.previewUrl,
+      previewUrl: withLocalPreview(m.modelId, m.previewUrl),
       pageUrl: m.pageUrl,
       sourceDomain: m.sourceDomain,
       at: m.lastHitAt,
@@ -946,7 +1021,7 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
       modelType: b.modelType,
       author: b.author,
       baseModel: b.baseModel,
-      previewUrl: b.previewUrl,
+      previewUrl: withLocalPreview(b.modelId, b.previewUrl),
       pageUrl: b.pageUrl,
       sourceDomain: b.sourceDomain,
       tags: b.tags,
@@ -967,7 +1042,7 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
         modelType: s.modelType,
         author: s.author,
         baseModel: s.baseModel,
-        previewUrl: s.previewUrl,
+        previewUrl: withLocalPreview(s.modelId, s.previewUrl),
         pageUrl: s.pageUrl,
         sourceDomain: s.sourceDomain,
         tags: s.tags,
@@ -1516,12 +1591,15 @@ export function getAllPendingVersions(): PendingVersion[] {
 }
 
 export function addPendingVersion(pending: PendingVersion): void {
+  const tagsJson = JSON.stringify(pending.civitaiTags ?? [])
+  const detectedAt = pending.detectedAt?.trim() || new Date().toISOString()
   getDb()
     .prepare(
       `INSERT OR IGNORE INTO pending_versions (
         version_id, model_id, model_name, version_name, base_model,
-        author, preview_url, existing_folder, detected_at, total_versions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        author, preview_url, existing_folder, detected_at, total_versions,
+        model_type, is_nsfw, nsfw_level, civitai_tags, download_count, thumbs_up_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pending.versionId,
@@ -1532,16 +1610,24 @@ export function addPendingVersion(pending: PendingVersion): void {
       pending.author,
       pending.previewUrl ?? null,
       pending.existingFolder,
-      new Date().toISOString(),
-      pending.totalVersions ?? null
+      detectedAt,
+      pending.totalVersions ?? null,
+      pending.modelType?.trim() || '',
+      pending.nsfw == null ? null : pending.nsfw ? 1 : 0,
+      pending.nsfwLevel ?? null,
+      tagsJson,
+      pending.downloadCount ?? null,
+      pending.thumbsUpCount ?? null
     )
 }
 
 export function removePendingVersion(versionId: number): void {
   getDb().prepare('DELETE FROM pending_versions WHERE version_id = ?').run(versionId)
+  clearPendingSeen(versionId)
 }
 
 export function removePendingForModel(modelId: number): void {
+  clearPendingSeenForModel(modelId)
   getDb().prepare('DELETE FROM pending_versions WHERE model_id = ?').run(modelId)
 }
 
@@ -1571,17 +1657,37 @@ export function getAllSkippedPendingVersions(): PendingVersion[] {
   const rows = getDb()
     .prepare('SELECT * FROM skipped_pending_versions ORDER BY skipped_at ASC')
     .all()
-  return rows.map((r) => ({ ...rowToPending(r as Record<string, unknown>), skipped: true }))
+  return rows.map((r) => {
+    const row = r as Record<string, unknown>
+    const forgotten = Number(row.forgotten) === 1
+    return {
+      ...rowToPending(row),
+      skipped: !forgotten,
+      forgotten
+    }
+  })
 }
 
 /** Persist a skipped Updates offer (keeps library files). */
 export function skipPendingVersion(pending: PendingVersion): void {
+  upsertSkippedPendingVersion(pending, false)
+}
+
+/** Persist a forgotten Updates offer — this version only, never resurface unless Unforget. */
+export function forgetPendingVersion(pending: PendingVersion): void {
+  upsertSkippedPendingVersion(pending, true)
+}
+
+function upsertSkippedPendingVersion(pending: PendingVersion, forgotten: boolean): void {
+  const tagsJson = JSON.stringify(pending.civitaiTags ?? [])
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO skipped_pending_versions (
         version_id, model_id, model_name, version_name, base_model,
-        author, preview_url, existing_folder, total_versions, skipped_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        author, preview_url, existing_folder, total_versions, skipped_at,
+        model_type, is_nsfw, nsfw_level, civitai_tags, download_count, thumbs_up_count, detected_at,
+        forgotten
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pending.versionId,
@@ -1593,14 +1699,35 @@ export function skipPendingVersion(pending: PendingVersion): void {
       pending.previewUrl ?? null,
       pending.existingFolder,
       pending.totalVersions ?? null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      pending.modelType?.trim() || '',
+      pending.nsfw == null ? null : pending.nsfw ? 1 : 0,
+      pending.nsfwLevel ?? null,
+      tagsJson,
+      pending.downloadCount ?? null,
+      pending.thumbsUpCount ?? null,
+      pending.detectedAt ?? null,
+      forgotten ? 1 : 0
     )
   removePendingVersion(pending.versionId)
+  clearPendingSeen(pending.versionId)
 }
 
 export function unskipPendingVersion(versionId: number): PendingVersion | null {
   const row = getDb()
     .prepare('SELECT * FROM skipped_pending_versions WHERE version_id = ?')
+    .get(versionId) as Record<string, unknown> | undefined
+  if (!row) return null
+  // Only restore soft-skipped rows via Unskip (not forgotten).
+  if (Boolean(row.forgotten)) return null
+  const pending = rowToPending(row)
+  getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
+  return pending
+}
+
+export function unforgetPendingVersion(versionId: number): PendingVersion | null {
+  const row = getDb()
+    .prepare('SELECT * FROM skipped_pending_versions WHERE version_id = ? AND forgotten = 1')
     .get(versionId) as Record<string, unknown> | undefined
   if (!row) return null
   const pending = rowToPending(row)
@@ -1610,17 +1737,27 @@ export function unskipPendingVersion(versionId: number): PendingVersion | null {
 
 export function removeSkippedPendingVersion(versionId: number): void {
   getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
+  clearPendingSeen(versionId)
 }
 
 export function removeSkippedPendingForModel(modelId: number): void {
+  clearPendingSeenForModel(modelId)
   getDb().prepare('DELETE FROM skipped_pending_versions WHERE model_id = ?').run(modelId)
 }
 
-/** Drop skipped rows that are owned, banned, deferred, or no longer relevant. */
+/** Drop skipped rows that are owned, banned, deferred, or no longer relevant.
+ *  Forgotten update versions are sticky — only clear when that version is owned. */
 export function pruneSkippedPendingVersions(): void {
   const snapshot = buildInventorySnapshot()
   const rows = getAllSkippedPendingVersions()
   for (const p of rows) {
+    // Forgotten: keep until the user downloads this version (or Unforget).
+    if (p.forgotten) {
+      if (snapshot.versionIds.has(p.versionId) || hasVersion(p.versionId)) {
+        removeSkippedPendingVersion(p.versionId)
+      }
+      continue
+    }
     if (isModelBanned(p.modelId) || isMissingUnavailable(p.modelId)) {
       removeSkippedPendingVersion(p.versionId)
       continue
@@ -2277,4 +2414,52 @@ export function clearMissingBanSeenDay(seenDay: string): void {
   const day = seenDay.trim().slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return
   getDb().prepare('DELETE FROM missing_ban_seen WHERE seen_day = ?').run(day)
+}
+
+/** versionId → local calendar day when the Updates card was marked seen. */
+export function getPendingSeenMap(): Record<number, string> {
+  const rows = getDb()
+    .prepare('SELECT version_id, seen_day FROM pending_seen')
+    .all() as Array<{ version_id: number; seen_day: string }>
+  const out: Record<number, string> = {}
+  for (const r of rows) out[r.version_id] = r.seen_day
+  return out
+}
+
+export function markPendingSeen(versionIds: number[], seenDay: string): number[] {
+  if (!versionIds.length) return []
+  const day = seenDay.trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return []
+  const now = new Date().toISOString()
+  const insert = getDb().prepare(
+    `INSERT OR IGNORE INTO pending_seen (version_id, seen_day, seen_at) VALUES (?, ?, ?)`
+  )
+  const marked: number[] = []
+  const tx = getDb().transaction((ids: number[]) => {
+    for (const id of ids) {
+      if (!id || id <= 0) continue
+      const info = insert.run(id, day, now)
+      if (info.changes > 0) marked.push(id)
+    }
+  })
+  tx(versionIds)
+  return marked
+}
+
+export function clearPendingSeen(versionId: number): void {
+  if (!versionId || versionId <= 0) return
+  getDb().prepare('DELETE FROM pending_seen WHERE version_id = ?').run(versionId)
+}
+
+export function clearPendingSeenForModel(modelId: number): void {
+  if (!modelId || modelId <= 0) return
+  getDb()
+    .prepare(
+      `DELETE FROM pending_seen WHERE version_id IN (
+        SELECT version_id FROM pending_versions WHERE model_id = ?
+        UNION
+        SELECT version_id FROM skipped_pending_versions WHERE model_id = ?
+      )`
+    )
+    .run(modelId, modelId)
 }

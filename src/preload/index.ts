@@ -291,6 +291,21 @@ const api = {
     ipcRenderer.invoke('pending:skip', versionId),
   unskipPending: (versionId: number): Promise<void> =>
     ipcRenderer.invoke('pending:unskip', versionId),
+  forgetPendingVersion: (versionId: number): Promise<void> =>
+    ipcRenderer.invoke('pending:forgetVersion', versionId),
+  unforgetPendingVersion: (versionId: number): Promise<void> =>
+    ipcRenderer.invoke('pending:unforgetVersion', versionId),
+  getPendingSeen: (): Promise<{ byVersionId: Record<number, string> }> =>
+    ipcRenderer.invoke('pending:getSeen'),
+  markPendingSeen: (
+    versionIds: number[],
+    seenDay: string
+  ): Promise<{ marked: number[]; byVersionId: Record<number, string> }> =>
+    ipcRenderer.invoke('pending:markSeen', { versionIds, seenDay }),
+  clearPendingSeen: (
+    versionId?: number
+  ): Promise<{ byVersionId: Record<number, string> }> =>
+    ipcRenderer.invoke('pending:clearSeen', versionId ? { versionId } : {}),
 
   getDeferred: (): Promise<DeferredDownload[]> => ipcRenderer.invoke('deferred:get'),
   getCrawlStatus: (): Promise<Record<string, import('../shared/types').RuleCrawlStatus>> =>
@@ -400,6 +415,28 @@ const api = {
     const handler = (_: unknown, payload: HiddenTagApplyProgress) => cb(payload)
     ipcRenderer.on('hiddenTags:applyProgress', handler)
     return () => ipcRenderer.removeListener('hiddenTags:applyProgress', handler)
+  },
+  onTagFoldersReconcileProgress: (
+    cb: (payload: {
+      phase: string
+      current: number
+      total: number
+      moved?: number
+      message: string
+    }) => void
+  ) => {
+    const handler = (
+      _: unknown,
+      payload: {
+        phase: string
+        current: number
+        total: number
+        moved?: number
+        message: string
+      }
+    ) => cb(payload)
+    ipcRenderer.on('tagFolders:reconcileProgress', handler)
+    return () => ipcRenderer.removeListener('tagFolders:reconcileProgress', handler)
   },
   onScanComplete: (cb: (r: ScanResult[]) => void) => {
     const handler = (_: unknown, r: ScanResult[]) => cb(r)

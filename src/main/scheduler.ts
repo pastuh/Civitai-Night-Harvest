@@ -1332,6 +1332,34 @@ export class ScanScheduler {
 
   /** Restart crawl when saved Browse rules change search criteria. */
   async onWatchRulesChanged(previous: WatchRule[], next: WatchRule[]): Promise<void> {
+    const hadEnabledCheckpoint = previous.some(
+      (r) => r.enabled && String(r.modelType).toUpperCase() === 'CHECKPOINT'
+    )
+    const hasEnabledCheckpoint = next.some(
+      (r) => r.enabled && String(r.modelType).toUpperCase() === 'CHECKPOINT'
+    )
+    const purgedCkpt = this.downloadQueue.purgeAutoQueuedCheckpoints()
+    if (purgedCkpt > 0) {
+      this.log(
+        'info',
+        `Removed ${purgedCkpt} auto-queued Checkpoint download(s) — queue only manual picks`,
+        undefined,
+        { source: 'system' }
+      )
+    }
+    // Enabling a Checkpoint rule → Pause downloads so large files are not started by accident.
+    if (hasEnabledCheckpoint && !hadEnabledCheckpoint) {
+      saveSettings({ crawlAutoDownload: false })
+      this.downloadQueue.pause()
+      sendToRenderer(this.window, 'settings:changed', toPublicSettings(getSettings()))
+      this.log(
+        'info',
+        'Checkpoint downloads paused — unpause when ready (only manually queued Checkpoints stay in the list)',
+        undefined,
+        { source: 'system' }
+      )
+    }
+
     if (!watchRulesCrawlChanged(previous, next)) return
 
     const prevById = new Map(previous.map((r) => [r.id, r]))
@@ -1360,6 +1388,7 @@ export class ScanScheduler {
     this.emit('crawl:browseReset')
     this.downloadQueue.purgeStaleAutoQueued()
     this.downloadQueue.purgeNonMatchingWatchRules()
+    this.downloadQueue.purgeAutoQueuedCheckpoints()
 
     const enabledNext = next.filter((r) => r.enabled)
     if (!enabledNext.length) {
@@ -1561,6 +1590,10 @@ export class ScanScheduler {
         continue
       }
       if (ownedModelIds.has(m.id)) {
+        if (m.versionId > 0 && inventory.isPendingVersionSkipped(m.versionId)) {
+          missing++
+          continue
+        }
         awaitingConfirm++
         continue
       }
@@ -2687,14 +2720,33 @@ export class ScanScheduler {
   skipPending(versionId: number): void {
     const item =
       this.pendingVersions.find((p) => p.versionId === versionId) ??
-      inventory.getAllPendingVersions().find((p) => p.versionId === versionId)
+      inventory.getAllPendingVersions().find((p) => p.versionId === versionId) ??
+      inventory.getAllSkippedPendingVersions().find((p) => p.versionId === versionId && p.forgotten)
     if (!item) return
-    inventory.skipPendingVersion(item)
+    inventory.skipPendingVersion({ ...item, forgotten: false, skipped: true })
     this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
     this.emitPendingVersions()
     this.log(
       'info',
       `Skipped update: ${item.modelName} → ${item.versionName} · ${item.baseModel} · #${item.modelId}`,
+      undefined,
+      { source: 'library', modelId: item.modelId, versionId: item.versionId }
+    )
+  }
+
+  /** Forget one Updates version only (not the whole model). Survives rescans until Unforget. */
+  forgetPending(versionId: number): void {
+    const item =
+      this.pendingVersions.find((p) => p.versionId === versionId) ??
+      inventory.getAllPendingVersions().find((p) => p.versionId === versionId) ??
+      inventory.getAllSkippedPendingVersions().find((p) => p.versionId === versionId)
+    if (!item) return
+    inventory.forgetPendingVersion({ ...item, forgotten: true, skipped: false })
+    this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
+    this.emitPendingVersions()
+    this.log(
+      'info',
+      `Forgot update version: ${item.modelName} → ${item.versionName} · ${item.baseModel} · #${item.modelId}`,
       undefined,
       { source: 'library', modelId: item.modelId, versionId: item.versionId }
     )
@@ -2715,6 +2767,26 @@ export class ScanScheduler {
     this.log(
       'info',
       `Unskipped update: ${restored.modelName} → ${restored.versionName} · #${restored.modelId}`,
+      undefined,
+      { source: 'library', modelId: restored.modelId, versionId: restored.versionId }
+    )
+  }
+
+  /** Restore a forgotten Updates version offer. */
+  unforgetPending(versionId: number): void {
+    const restored = inventory.unforgetPendingVersion(versionId)
+    if (!restored) return
+    if (inventory.hasVersion(versionId) || inventory.isModelBanned(restored.modelId)) {
+      return
+    }
+    inventory.addPendingVersion(restored)
+    if (!this.pendingVersions.some((p) => p.versionId === versionId)) {
+      this.pendingVersions = [...this.pendingVersions, restored]
+    }
+    this.emitPendingVersions()
+    this.log(
+      'info',
+      `Unforgot update version: ${restored.modelName} → ${restored.versionName} · #${restored.modelId}`,
       undefined,
       { source: 'library', modelId: restored.modelId, versionId: restored.versionId }
     )

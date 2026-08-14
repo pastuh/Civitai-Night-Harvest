@@ -369,11 +369,17 @@ export function shouldSkipTagBulkMove(
     baseModel?: string
     civitaiTags?: string[]
     routingLocked?: boolean
+    modelType?: string
   },
   tagRules: TagFolderRule[],
   loraFolder: string,
   checkpointFolder: string
 ): boolean {
+  // Checkpoints are never bulk-moved by Civitai tag rules.
+  if ((record.modelType || '').toUpperCase() === 'CHECKPOINT') return true
+  const inferred = inferModelTypeFromFolders(record.outputFolder, loraFolder, checkpointFolder)
+  if (inferred.toUpperCase() === 'CHECKPOINT') return true
+
   if (record.routingLocked) return true
 
   const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules)
@@ -385,11 +391,7 @@ export function shouldSkipTagBulkMove(
   const rule = findRuleForTag(winner, tagRules)
   if (!rule) return false
 
-  const modelType = inferModelTypeFromFolders(
-    record.outputFolder,
-    loraFolder,
-    checkpointFolder
-  )
+  const modelType = inferred
   const expected = resolveTagRuleFolderPath(
     rule,
     loraFolder,
@@ -609,6 +611,12 @@ export function resolveModelOutputFolder(params: {
     params.modelType
   )
   if (!typeRoot) return ''
+  // Checkpoints: only `{checkpointRoot}/{baseModel}/` — never Civitai tag subfolders.
+  // Custom folder paths are applied only via manual Assign (useCustomAssignmentPath).
+  if ((params.modelType || '').toUpperCase() === 'CHECKPOINT') {
+    const bm = params.baseModel?.trim()
+    return bm ? joinFolderPath(typeRoot, bm) : typeRoot
+  }
   const tag = params.routingTag?.trim() || UNSORTED_FOLDER_NAME
   const rule = findRuleForTag(tag, params.tagRules)
   if (rule) {

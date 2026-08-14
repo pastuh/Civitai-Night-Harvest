@@ -90,6 +90,14 @@ function LibraryModelCardInner({
   })
   const folderLine = folderLineIfNotDuplicatingTag(folderLabel, record.civitaiTags)
   const unrecognized = isUnrecognizedInventoryRecord(record)
+  const isCheckpoint = (() => {
+    const mt = (record.modelType || '').trim().toUpperCase()
+    if (mt === 'CHECKPOINT') return true
+    if (mt === 'LORA') return false
+    const folder = record.outputFolder.replace(/\\/g, '/').toLowerCase()
+    const ckpt = checkpointFolder.replace(/\\/g, '/').toLowerCase()
+    return Boolean(ckpt && folder.startsWith(ckpt))
+  })()
   const canOpenCivitai = !unrecognized && record.modelId > 0 && record.versionId > 0
   const hideTagSet =
     hideCardTags && hideCardTags.length
@@ -114,12 +122,17 @@ function LibraryModelCardInner({
 
   return (
     <div
-      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''}`}
+      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''} ${isCheckpoint ? 'library-checkpoint' : 'library-lora'}`}
       onClick={() => onToggleSelect(record.versionId)}
       onContextMenu={(e) =>
         onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
     >
+      {isCheckpoint ? (
+        <span className="library-type-badge is-checkpoint" title={t('gallery.filterCheckpoint')}>
+          {t('gallery.filterCheckpoint')}
+        </span>
+      ) : null}
       {unrecognized ? (
         <span className="library-unrecognized-badge" title={t('gallery.unrecognizedHint')}>
           {t('gallery.unrecognized')}

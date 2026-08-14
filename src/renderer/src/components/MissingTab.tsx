@@ -33,6 +33,7 @@ import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu
 type KindFilter = 'all' | ExclusionKind
 type SortMode = MissingSort
 
+/** Status / date / tag modes — mutually exclusive with each other (not with model type). */
 type SideFilter =
   | { type: 'all' }
   | { type: 'unseen' }
@@ -68,6 +69,44 @@ function previewSrc(previewUrl?: string): string | undefined {
   if (!previewUrl) return undefined
   if (/^https?:\/\//i.test(previewUrl) || previewUrl.startsWith('media://')) return previewUrl
   return window.api.toMediaUrl(previewUrl)
+}
+
+/** Prefer local Library preview (stable) over remote Civitai URLs that often break. */
+function resolveExclusionPreview(
+  item: ExclusionReviewItem,
+  localPreviewByModelId: Map<number, string>
+): string | undefined {
+  const localPath = localPreviewByModelId.get(item.modelId)
+  if (localPath) return window.api.toMediaUrl(localPath)
+  return previewSrc(item.previewUrl)
+}
+
+/** Normalize Civitai / inventory model types for Missing sidebar (same labels as Updates). */
+function resolveExclusionModelType(
+  item: ExclusionReviewItem,
+  owned?: InventoryRecord
+): string {
+  const raw = (item.modelType || owned?.modelType || '').trim()
+  const upper = raw.toUpperCase()
+  if (upper === 'LORA' || upper === 'LORAS') return 'LoRA'
+  if (upper === 'CHECKPOINT' || upper === 'CHECKPOINTS') return 'Checkpoint'
+  if (upper === 'TEXTUALINVERSION' || upper === 'TEXTUAL INVERSION') return 'TextualInversion'
+  if (upper === 'VAE') return 'VAE'
+  if (upper === 'TEXENCODER' || upper === 'TEXTENCODER' || upper === 'TEXT ENCODER') {
+    return 'Text Encoder'
+  }
+  if (raw) return raw
+
+  const folder = (owned?.outputFolder || '').replace(/\\/g, '/').toLowerCase()
+  if (folder.includes('/checkpoint')) return 'Checkpoint'
+  if (folder.includes('/vae')) return 'VAE'
+  if (folder.includes('/embedding') || folder.includes('/textual')) return 'TextualInversion'
+  if (folder.includes('/textencoder') || folder.includes('/text-encoder') || folder.includes('/clip')) {
+    return 'Text Encoder'
+  }
+  if (folder.includes('/lora')) return 'LoRA'
+  // Match Updates: unknown / stub exclusions still land under LoRA so the sidebar stays useful.
+  return 'LoRA'
 }
 
 function formatWhen(iso: string): string {
@@ -148,6 +187,22 @@ export const MissingTab = memo(function MissingTab({
   const normalizedDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const displayMode = normalizedDisplayMode === 'autoAdvance' ? 'lazy' : normalizedDisplayMode
   const initial = viewPrefs ?? DEFAULT_MISSING_VIEW_PREFS
+  const localPreviewByModelId = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const r of inventory) {
+      if (r.modelId <= 0 || !r.previewPath?.trim()) continue
+      if (!map.has(r.modelId)) map.set(r.modelId, r.previewPath)
+    }
+    return map
+  }, [inventory])
+  const ownedPrimaryByModel = useMemo(() => {
+    const map = new Map<number, InventoryRecord>()
+    for (const r of inventory) {
+      if (r.modelId <= 0 || map.has(r.modelId)) continue
+      map.set(r.modelId, r)
+    }
+    return map
+  }, [inventory])
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [hideBanned, setHideBanned] = useState(initial.hideBanned)
   const [hidePaused, setHidePaused] = useState(initial.hidePaused)
@@ -157,6 +212,8 @@ export const MissingTab = memo(function MissingTab({
   const [hideMissing, setHideMissing] = useState(initial.hideMissing ?? true)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
   const [sideFilter, setSideFilter] = useState<SideFilter>(() => ({ type: 'all' }))
+  /** Stacks with kind + side filters (LoRA ∩ Session pause, etc.). */
+  const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(null)
   const [dateAnchor, setDateAnchor] = useState<string | null>(null)
   const [tagSearch, setTagSearch] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>(() => normalizeMissingSort(initial.sortMode))
@@ -199,6 +256,7 @@ export const MissingTab = memo(function MissingTab({
     void onRefreshRef.current()
     // Default: All + Hide banned/paused prefs (sidebar Unseen is one click).
     setSideFilter({ type: 'all' })
+    setModelTypeFilter(null)
     setHideBanned(initial.hideBanned)
     setHidePaused(initial.hidePaused)
     setHideSeen(initial.hideSeen ?? false)
@@ -261,21 +319,43 @@ export const MissingTab = memo(function MissingTab({
 
   const sessionBanSet = useMemo(() => new Set(sessionBanModelIds), [sessionBanModelIds])
 
+  const matchesModelTypeFilter = useCallback(
+    (m: ExclusionReviewItem) => {
+      if (!modelTypeFilter) return true
+      const mt = resolveExclusionModelType(m, ownedPrimaryByModel.get(m.modelId))
+      return mt.toUpperCase() === modelTypeFilter.toUpperCase()
+    },
+    [modelTypeFilter, ownedPrimaryByModel]
+  )
+
+  /** Main sidebar counts follow model type; Model types section keeps global totals. */
+  const itemsForMainCounts = useMemo(
+    () => (modelTypeFilter ? items.filter(matchesModelTypeFilter) : items),
+    [items, modelTypeFilter, matchesModelTypeFilter]
+  )
+
   const counts = useMemo(() => {
     let missing = 0
     let bannedManual = 0
     let bannedByTag = 0
     let pausedByTag = 0
     let forgotten = 0
-    for (const m of items) {
+    for (const m of itemsForMainCounts) {
       if (m.kind === 'missing') missing++
       else if (m.kind === 'bannedManual') bannedManual++
       else if (m.kind === 'pausedByTag') pausedByTag++
       else if (m.kind === 'bannedByTag') bannedByTag++
       else if (m.kind === 'forgotten') forgotten++
     }
-    return { missing, bannedManual, bannedByTag, pausedByTag, forgotten, all: items.length }
-  }, [items])
+    return {
+      missing,
+      bannedManual,
+      bannedByTag,
+      pausedByTag,
+      forgotten,
+      all: itemsForMainCounts.length
+    }
+  }, [itemsForMainCounts])
 
   const isInSession = useCallback(
     (m: ExclusionReviewItem) => {
@@ -298,18 +378,18 @@ export const MissingTab = memo(function MissingTab({
   )
 
   const sessionBanCount = useMemo(
-    () => items.filter((m) => isSessionBan(m)).length,
-    [items, isSessionBan]
+    () => itemsForMainCounts.filter((m) => isSessionBan(m)).length,
+    [itemsForMainCounts, isSessionBan]
   )
 
   const sessionPauseCount = useMemo(
-    () => items.filter((m) => isSessionPause(m)).length,
-    [items, isSessionPause]
+    () => itemsForMainCounts.filter((m) => isSessionPause(m)).length,
+    [itemsForMainCounts, isSessionPause]
   )
 
   const hiddenByDefaultCount = useMemo(() => {
     let n = 0
-    for (const m of items) {
+    for (const m of itemsForMainCounts) {
       if (m.kind === 'forgotten') {
         if (!showForgotten) n++
         continue
@@ -320,11 +400,11 @@ export const MissingTab = memo(function MissingTab({
       } else if (hideBanned) n++
     }
     return n
-  }, [items, hideBanned, hidePaused, showForgotten])
+  }, [itemsForMainCounts, hideBanned, hidePaused, showForgotten])
 
   const filterAllCount = useMemo(() => {
     let n = 0
-    for (const m of items) {
+    for (const m of itemsForMainCounts) {
       if (m.kind === 'forgotten') {
         if (showForgotten) n++
         continue
@@ -338,7 +418,7 @@ export const MissingTab = memo(function MissingTab({
       } else if (!hideBanned) n++
     }
     return n
-  }, [items, hideBanned, hidePaused, hideMissing, showForgotten])
+  }, [itemsForMainCounts, hideBanned, hidePaused, hideMissing, showForgotten])
 
   const blockedTagCounts = useMemo(() => {
     const map = new Map<string, number>()
@@ -350,7 +430,7 @@ export const MissingTab = memo(function MissingTab({
       const name = tag.trim()
       if (name && !map.has(name)) map.set(name, 0)
     }
-    for (const m of items) {
+    for (const m of itemsForMainCounts) {
       if (!isTagSkipKind(m.kind)) continue
       const tag = (m.blockedTag || '').trim()
       if (!tag) continue
@@ -359,7 +439,7 @@ export const MissingTab = memo(function MissingTab({
     return [...map.entries()]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }, [items, bannedTags, hiddenTags])
+  }, [itemsForMainCounts, bannedTags, hiddenTags])
 
   const filteredBlockedTags = useMemo(() => {
     const q = tagSearch.trim().toLowerCase()
@@ -369,23 +449,23 @@ export const MissingTab = memo(function MissingTab({
 
   const banCountByDay = useMemo(() => {
     const map = new Map<string, number>()
-    for (const m of items) {
+    for (const m of itemsForMainCounts) {
       if (!isManualOrTagBanKind(m.kind)) continue
       const day = itemDayKey(m.at)
       if (!day) continue
       map.set(day, (map.get(day) ?? 0) + 1)
     }
     return map
-  }, [items])
+  }, [itemsForMainCounts])
 
   const unseenBanCount = useMemo(() => {
     let n = 0
-    for (const m of items) {
+    for (const m of itemsForMainCounts) {
       if (!canMarkExclusionSeen(m.kind)) continue
       if (!banSeenByModelId[m.modelId]) n++
     }
     return n
-  }, [items, banSeenByModelId])
+  }, [itemsForMainCounts, banSeenByModelId])
 
   const totalSeenCount = useMemo(
     () => Object.keys(banSeenByModelId).length,
@@ -429,7 +509,7 @@ export const MissingTab = memo(function MissingTab({
   const applySideFilter = useCallback((next: SideFilter) => {
     setSideFilter(next)
     setKindFilter('all')
-    // Keep Hide banned / paused prefs — only the All view applies them.
+    // Keep modelTypeFilter — status/date/tag stacks with Model types.
     if (next.type !== 'byDate' && next.type !== 'byDateRange') {
       setDateAnchor(null)
     }
@@ -448,10 +528,19 @@ export const MissingTab = memo(function MissingTab({
     setKindFilter(next)
     setSideFilter({ type: 'all' })
     setDateAnchor(null)
-    // Explicit kind = show that kind; don't force-uncheck hide prefs (they apply on All).
+    // Keep modelTypeFilter — kind stacks with Model types. All resets type too.
+    if (next === 'all') {
+      setModelTypeFilter(null)
+    }
     if (next === 'forgotten') {
       setShowForgotten(true)
     }
+  }, [])
+
+  const applyModelTypeFilter = useCallback((name: string) => {
+    setModelTypeFilter((prev) =>
+      prev && prev.toLowerCase() === name.toLowerCase() ? null : name
+    )
   }, [])
 
   const onHideBannedChange = useCallback((checked: boolean) => {
@@ -524,15 +613,22 @@ export const MissingTab = memo(function MissingTab({
     [sideFilter]
   )
 
-  const sideFilterLabel = useMemo(() => {
-    if (sideFilter.type === 'unseen') return t('missingTab.unseenBans')
-    if (sideFilter.type === 'sessionBans') return t('missingTab.sessionBans')
-    if (sideFilter.type === 'sessionPause') return t('missingTab.sessionPause')
-    if (sideFilter.type === 'byDate') return sideFilter.day
-    if (sideFilter.type === 'byDateRange') return `${sideFilter.from} – ${sideFilter.to}`
-    if (sideFilter.type === 'blockedTag') return t('missingTab.blockedTagFilter', { tag: sideFilter.tag })
-    return null
-  }, [sideFilter, t])
+  const modelTypeFilterActive = useCallback(
+    (name: string) =>
+      Boolean(modelTypeFilter && modelTypeFilter.toLowerCase() === name.toLowerCase()),
+    [modelTypeFilter]
+  )
+
+  // Model types: always global totals (don't shrink when a type or status is selected).
+  const typeCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const m of items) {
+      if (m.kind === 'forgotten' && !showForgotten) continue
+      const mt = resolveExclusionModelType(m, ownedPrimaryByModel.get(m.modelId))
+      map.set(mt, (map.get(mt) ?? 0) + 1)
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }, [items, showForgotten, ownedPrimaryByModel])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -563,6 +659,7 @@ export const MissingTab = memo(function MissingTab({
         if (!isTagSkipKind(m.kind)) return false
         if ((m.blockedTag || '').toLowerCase() !== sideFilter.tag.toLowerCase()) return false
       } else {
+        // all — kind filter
         if (m.kind === 'forgotten') {
           if (!showForgotten && kindFilter !== 'forgotten') return false
           if (kindFilter !== 'all' && kindFilter !== 'forgotten') return false
@@ -571,15 +668,22 @@ export const MissingTab = memo(function MissingTab({
         }
       }
 
-      // Hide banned / paused apply on All (+ other non-policy views). Policy-tag filter
-      // is exactly those rows — don't wipe the list the sidebar count promised.
-      if (sideFilter.type !== 'blockedTag') {
+      // Model type stacks with any kind / status / date / tag filter.
+      if (!matchesModelTypeFilter(m)) return false
+
+      // Hide banned / paused apply only on the plain All view (no kind/side/type pick).
+      if (kindFilter === 'all' && sideFilter.type === 'all' && !modelTypeFilter) {
         if (hideBanned && (m.kind === 'bannedManual' || m.kind === 'bannedByTag')) return false
         if (hidePaused && m.kind === 'pausedByTag') return false
       }
-      // Hide Missing (404) so the tab focuses on ban / pause / tag reviews. A kind filter
-      // override still wins — clicking "Missing" in the sidebar / kind dropdown shows them.
-      if (hideMissing && m.kind === 'missing' && kindFilter === 'all' && sideFilter.type === 'all') {
+      // Hide Missing (404) unless a kind / model-type sidebar pick is active.
+      if (
+        hideMissing &&
+        m.kind === 'missing' &&
+        kindFilter === 'all' &&
+        sideFilter.type === 'all' &&
+        !modelTypeFilter
+      ) {
         return false
       }
 
@@ -592,6 +696,7 @@ export const MissingTab = memo(function MissingTab({
         m.modelName.toLowerCase().includes(q) ||
         (m.author ?? '').toLowerCase().includes(q) ||
         (m.baseModel ?? '').toLowerCase().includes(q) ||
+        (m.modelType ?? '').toLowerCase().includes(q) ||
         (m.blockedTag ?? '').toLowerCase().includes(q) ||
         (m.tags ?? []).some((tag) => tag.toLowerCase().includes(q)) ||
         String(m.modelId).includes(q) ||
@@ -647,6 +752,8 @@ export const MissingTab = memo(function MissingTab({
     hideMissing,
     showForgotten,
     sideFilter,
+    modelTypeFilter,
+    matchesModelTypeFilter,
     isSessionBan,
     isSessionPause,
     search,
@@ -671,6 +778,7 @@ export const MissingTab = memo(function MissingTab({
             : sideFilter.type === 'blockedTag'
               ? sideFilter.tag
               : '',
+        modelTypeFilter ?? '',
         sortMode,
         search.trim().toLowerCase(),
         displayMode,
@@ -684,6 +792,7 @@ export const MissingTab = memo(function MissingTab({
       hideMissing,
       showForgotten,
       sideFilter,
+      modelTypeFilter,
       sortMode,
       search,
       displayMode,
@@ -708,8 +817,9 @@ export const MissingTab = memo(function MissingTab({
   }, [])
 
   const queueBanSeen = useCallback(
-    (modelId: number) => {
-      if (!isActive || !markSeenMode) return
+    (modelId: number, opts?: { force?: boolean }) => {
+      if (!isActive) return
+      if (!opts?.force && !markSeenMode) return
       if (banSeenByModelIdRef.current[modelId]) return
       if (pendingSeenRef.current.has(modelId)) return
       pendingSeenRef.current.add(modelId)
@@ -996,37 +1106,26 @@ export const MissingTab = memo(function MissingTab({
               />
               {t('missingTab.showForgotten')}
             </label>
-            <button
-              type="button"
-              className={`btn-sm browse-ban-toggle ${markSeenMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-              onClick={() => setMarkSeenMode((v) => !v)}
-              title={t('missingTab.markSeenModeTitle')}
-              aria-pressed={markSeenMode}
-            >
-              {markSeenMode ? t('missingTab.markSeenModeOn') : t('missingTab.markSeenModeOff')}
-            </button>
-            <button
-              type="button"
-              className={`btn-sm browse-ban-toggle ${forgetFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-              onClick={() => setForgetFunctionMode((v) => !v)}
-              title={t('missingTab.forgetModeTitle')}
-              aria-pressed={forgetFunctionMode}
-            >
-              {forgetFunctionMode ? t('missingTab.forgetModeOn') : t('missingTab.forgetModeOff')}
-            </button>
-            {sideFilterLabel ? (
+            <div className="browse-mode-toggles">
               <button
                 type="button"
-                className="btn-sm primary missing-side-filter-chip"
-                onClick={clearSideFilter}
-                title={`${t('missingTab.clearSideFilter')}: ${sideFilterLabel}`}
+                className={`btn-sm browse-ban-toggle ${markSeenMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                onClick={() => setMarkSeenMode((v) => !v)}
+                title={t('missingTab.markSeenModeTitle')}
+                aria-pressed={markSeenMode}
               >
-                <span className="missing-side-filter-chip-text">{sideFilterLabel}</span>
-                <span className="missing-side-filter-chip-x" aria-hidden>
-                  ×
-                </span>
+                {markSeenMode ? t('missingTab.markSeenModeOn') : t('missingTab.markSeenModeOff')}
               </button>
-            ) : null}
+              <button
+                type="button"
+                className={`btn-sm browse-ban-toggle ${forgetFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                onClick={() => setForgetFunctionMode((v) => !v)}
+                title={t('missingTab.forgetModeTitle')}
+                aria-pressed={forgetFunctionMode}
+              >
+                {forgetFunctionMode ? t('missingTab.forgetModeOn') : t('missingTab.forgetModeOff')}
+              </button>
+            </div>
           </div>
         </div>
         <div className="browse-results-controls-box">
@@ -1071,12 +1170,14 @@ export const MissingTab = memo(function MissingTab({
             : hideMissing &&
                 kindFilter === 'all' &&
                 sideFilter.type === 'all' &&
+                !modelTypeFilter &&
                 counts.missing > 0 &&
                 counts.bannedManual + counts.bannedByTag + counts.pausedByTag + counts.forgotten === 0
               ? t('missingTab.emptyHiddenMissing', { missing: counts.missing })
               : (hideBanned || hidePaused) &&
                   kindFilter === 'all' &&
                   sideFilter.type === 'all' &&
+                  !modelTypeFilter &&
                   counts.missing === 0 &&
                   hiddenByDefaultCount > 0
                 ? t('missingTab.emptyHiddenBanned', {
@@ -1135,7 +1236,7 @@ export const MissingTab = memo(function MissingTab({
                 }
                 onContextMenu={(e) => openContextMenu(e, item)}
                 title={item.modelName}
-                previewUrl={previewSrc(item.previewUrl)}
+                previewUrl={resolveExclusionPreview(item, localPreviewByModelId)}
                 onOpen={onOpenModelDetail ? () => openDetails(item) : undefined}
                 titleActions={
                   <>
@@ -1357,6 +1458,7 @@ export const MissingTab = memo(function MissingTab({
       hidePaused &&
       sideFilter.type === 'all' &&
       kindFilter === 'all' &&
+      !modelTypeFilter &&
       hiddenByDefaultCount > 0 &&
       !filtered.length ? (
         <button
@@ -1412,13 +1514,15 @@ export const MissingTab = memo(function MissingTab({
             <button
               type="button"
               className={`sidebar-tag ${
-                sideFilter.type === 'all' && kindFilter === 'all' ? 'active' : ''
+                sideFilter.type === 'all' && kindFilter === 'all' && !modelTypeFilter ? 'active' : ''
               }`}
               onClick={() => applyKindFilter('all')}
             >
               <span className="tag-name">{t('missingTab.sidebarAll')}</span>
               <span className="muted tag-count-inline">
-                {sideFilter.type === 'all' && kindFilter === 'all' ? filterAllCount : counts.all}
+                {sideFilter.type === 'all' && kindFilter === 'all' && !modelTypeFilter
+                  ? filterAllCount
+                  : counts.all}
               </span>
             </button>
 
@@ -1499,6 +1603,23 @@ export const MissingTab = memo(function MissingTab({
               <span className="tag-name">{t('missingTab.filterForgotten')}</span>
               <span className="muted tag-count-inline">{counts.forgotten}</span>
             </button>
+
+            {typeCounts.length > 0 ? (
+              <>
+                <h4 className="sidebar-section-title">{t('missingTab.sidebarTypes')}</h4>
+                {typeCounts.map(([name, count]) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`sidebar-tag ${modelTypeFilterActive(name) ? 'active' : ''}`}
+                    onClick={() => applyModelTypeFilter(name)}
+                  >
+                    <span className="tag-name">{name}</span>
+                    <span className="muted tag-count-inline">{count}</span>
+                  </button>
+                ))}
+              </>
+            ) : null}
 
             {banDayCounts.length > 0 && (
               <>
@@ -1631,7 +1752,7 @@ export const MissingTab = memo(function MissingTab({
           {canMarkExclusionSeen(contextMenu.item.kind) && (
             <button
               {...contextMenuButtonProps(() => {
-                queueBanSeen(contextMenu.item.modelId)
+                queueBanSeen(contextMenu.item.modelId, { force: true })
               }, () => setContextMenu(null))}
             >
               {t('missingTab.markSeenModeOn')}

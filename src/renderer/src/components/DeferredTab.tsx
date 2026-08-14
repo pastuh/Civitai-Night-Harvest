@@ -26,7 +26,14 @@ import {
   type DeferredSort
 } from '../view-prefs'
 
-type AccessFilter = 'all' | 'wait' | 'buy'
+type SideFilter =
+  | { type: 'all' }
+  | { type: 'wait' }
+  | { type: 'buy' }
+  | { type: 'favorites' }
+  | { type: 'sessionBans' }
+  | { type: 'sessionPause' }
+  | { type: 'blockedTag'; tag: string }
 
 interface Props {
   deferred: DeferredDownload[]
@@ -56,6 +63,8 @@ interface Props {
   checkpointFolder?: string
   hiddenTags?: string[]
   bannedTags?: string[]
+  /** Model IDs banned / tag-skipped during this app session (Missing + Browse). */
+  sessionBanModelIds?: number[]
   fastTagMode?: boolean
   confirmTagFolderMoves?: boolean
   onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
@@ -122,6 +131,62 @@ function matchesSearch(item: DeferredDownload, q: string): boolean {
   )
 }
 
+function resolveDeferredModelType(item: DeferredDownload): string {
+  const raw = (item.modelType || '').trim()
+  const upper = raw.toUpperCase()
+  if (upper === 'LORA' || upper === 'LORAS') return 'LoRA'
+  if (upper === 'CHECKPOINT' || upper === 'CHECKPOINTS') return 'Checkpoint'
+  if (upper === 'TEXTUALINVERSION' || upper === 'TEXTUAL INVERSION') return 'TextualInversion'
+  if (upper === 'VAE') return 'VAE'
+  if (upper === 'TEXENCODER' || upper === 'TEXTENCODER' || upper === 'TEXT ENCODER') {
+    return 'Text Encoder'
+  }
+  if (raw) return raw
+  const folder = (item.outputFolder || '').replace(/\\/g, '/').toLowerCase()
+  if (folder.includes('/checkpoint')) return 'Checkpoint'
+  if (folder.includes('/vae')) return 'VAE'
+  if (folder.includes('/embedding') || folder.includes('/textual')) return 'TextualInversion'
+  if (folder.includes('/textencoder') || folder.includes('/text-encoder') || folder.includes('/clip')) {
+    return 'Text Encoder'
+  }
+  if (folder.includes('/lora')) return 'LoRA'
+  return 'LoRA'
+}
+
+function itemHasPausedTag(
+  item: DeferredDownload,
+  hiddenTags: string[],
+  bannedTags: string[]
+): boolean {
+  for (const tag of expandCivitaiTagNames(item.civitaiTags)) {
+    if (isPausedOnlyModelTag(tag, hiddenTags, bannedTags)) return true
+  }
+  const route = item.routingTag?.trim()
+  if (route && isPausedOnlyModelTag(route, hiddenTags, bannedTags)) return true
+  return false
+}
+
+function itemBlockedPolicyTag(
+  item: DeferredDownload,
+  hiddenTags: string[],
+  bannedTags: string[]
+): string | null {
+  for (const tag of expandCivitaiTagNames(item.civitaiTags)) {
+    if (isPermanentlyBannedModelTag(tag, bannedTags) || isPausedOnlyModelTag(tag, hiddenTags, bannedTags)) {
+      return tag
+    }
+  }
+  const route = item.routingTag?.trim()
+  if (
+    route &&
+    (isPermanentlyBannedModelTag(route, bannedTags) ||
+      isPausedOnlyModelTag(route, hiddenTags, bannedTags))
+  ) {
+    return route
+  }
+  return null
+}
+
 export function DeferredTab({
   deferred,
   domain,
@@ -142,6 +207,7 @@ export function DeferredTab({
   checkpointFolder = '',
   hiddenTags = [],
   bannedTags = [],
+  sessionBanModelIds = [],
   fastTagMode = false,
   confirmTagFolderMoves = true,
   onSaveTagRules,
@@ -153,11 +219,17 @@ export function DeferredTab({
   const [busyId, setBusyId] = useState<number | null>(null)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
-  const [accessFilter, setAccessFilter] = useState<AccessFilter>('all')
+  const [sideFilter, setSideFilter] = useState<SideFilter>({ type: 'all' })
+  const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(null)
+  const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [deferredSort, setDeferredSort] = useState<DeferredSort>('unlock')
   const [search, setSearch] = useState('')
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [tagMessage, setTagMessage] = useState('')
+  /** Kept after Ban so Session bans sidebar can still find them this session. */
+  const [sessionBannedByModelId, setSessionBannedByModelId] = useState<
+    Map<number, DeferredDownload>
+  >(() => new Map())
   /** Favorites used for sort — refreshed only when entering the tab (no jump while starring). */
   const [pinFavoriteIds, setPinFavoriteIds] = useState<number[]>(eaFavoriteIds)
   const [contextMenu, setContextMenu] = useState<{
@@ -260,32 +332,171 @@ export function DeferredTab({
 
   const liveFavoriteSet = useMemo(() => new Set(eaFavoriteIds), [eaFavoriteIds])
   const pinFavoriteSet = useMemo(() => new Set(pinFavoriteIds), [pinFavoriteIds])
+  const sessionBanSet = useMemo(() => new Set(sessionBanModelIds), [sessionBanModelIds])
 
-  const baseSorted = useMemo(
+  const sessionBannedList = useMemo(
+    () =>
+      sortDeferred([...sessionBannedByModelId.values()], pinFavoriteSet, deferredSort),
+    [sessionBannedByModelId, pinFavoriteSet, deferredSort]
+  )
+
+  /** Active EA queue (not session-banned / hidden). */
+  const activeDeferred = useMemo(
     () =>
       sortDeferred(
-        visibleDeferred.filter((d) => !hiddenModelIds.has(d.modelId)),
+        visibleDeferred.filter(
+          (d) => !hiddenModelIds.has(d.modelId) && !sessionBannedByModelId.has(d.modelId)
+        ),
         pinFavoriteSet,
         deferredSort
       ),
-    [visibleDeferred, hiddenModelIds, pinFavoriteSet, deferredSort]
+    [visibleDeferred, hiddenModelIds, sessionBannedByModelId, pinFavoriteSet, deferredSort]
   )
 
+  const itemsForMainCounts = useMemo(() => {
+    if (!modelTypeFilter) return activeDeferred
+    const want = modelTypeFilter.toUpperCase()
+    return activeDeferred.filter((d) => resolveDeferredModelType(d).toUpperCase() === want)
+  }, [activeDeferred, modelTypeFilter])
+
   const waitCount = useMemo(
-    () => baseSorted.filter((d) => canWaitForDeferredUnlock(d)).length,
-    [baseSorted]
+    () => itemsForMainCounts.filter((d) => canWaitForDeferredUnlock(d)).length,
+    [itemsForMainCounts]
   )
-  const buyCount = baseSorted.length - waitCount
+  const buyCount = itemsForMainCounts.length - waitCount
+  const favoriteCount = useMemo(
+    () => itemsForMainCounts.filter((d) => liveFavoriteSet.has(d.modelId)).length,
+    [itemsForMainCounts, liveFavoriteSet]
+  )
+  const sessionPausePool = useMemo(
+    () => activeDeferred.filter((d) => itemHasPausedTag(d, hiddenTags, bannedTags)),
+    [activeDeferred, hiddenTags, bannedTags]
+  )
+  const sessionPauseCount = useMemo(() => {
+    if (!modelTypeFilter) return sessionPausePool.length
+    const want = modelTypeFilter.toUpperCase()
+    return sessionPausePool.filter((d) => resolveDeferredModelType(d).toUpperCase() === want)
+      .length
+  }, [sessionPausePool, modelTypeFilter])
+  /** Also surface live deferred rows that match session ban ids (Browse ban before purge). */
+  const sessionBanLive = useMemo(
+    () =>
+      visibleDeferred.filter(
+        (d) =>
+          sessionBanSet.has(d.modelId) &&
+          !sessionBannedByModelId.has(d.modelId) &&
+          !hiddenModelIds.has(d.modelId)
+      ),
+    [visibleDeferred, sessionBanSet, sessionBannedByModelId, hiddenModelIds]
+  )
+  const sessionBanCount = useMemo(() => {
+    const all = [...sessionBannedList, ...sessionBanLive]
+    if (!modelTypeFilter) return all.length
+    const want = modelTypeFilter.toUpperCase()
+    return all.filter((d) => resolveDeferredModelType(d).toUpperCase() === want).length
+  }, [sessionBannedList, sessionBanLive, modelTypeFilter])
+
+  // Model types: global totals from active queue (don't shrink when a type is selected).
+  const typeCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const d of activeDeferred) {
+      const mt = resolveDeferredModelType(d)
+      map.set(mt, (map.get(mt) ?? 0) + 1)
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }, [activeDeferred])
+
+  const policyTagCounts = useMemo(() => {
+    const pool = modelTypeFilter ? itemsForMainCounts : activeDeferred
+    const map = new Map<string, number>()
+    for (const tag of bannedTags) {
+      const name = tag.trim()
+      if (name) map.set(name, 0)
+    }
+    for (const tag of hiddenTags) {
+      const name = tag.trim()
+      if (name && !map.has(name)) map.set(name, 0)
+    }
+    for (const d of pool) {
+      const hit = itemBlockedPolicyTag(d, hiddenTags, bannedTags)
+      if (!hit) continue
+      map.set(hit, (map.get(hit) ?? 0) + 1)
+    }
+    return [...map.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .filter((t) => t.count > 0)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [activeDeferred, itemsForMainCounts, modelTypeFilter, bannedTags, hiddenTags])
 
   const sorted = useMemo(() => {
     const q = search.trim().toLowerCase()
-    let list = baseSorted
-    if (accessFilter === 'wait') list = list.filter((d) => canWaitForDeferredUnlock(d))
-    else if (accessFilter === 'buy') list = list.filter((d) => !canWaitForDeferredUnlock(d))
+    let list: DeferredDownload[]
+    if (sideFilter.type === 'sessionBans') {
+      list = sortDeferred(
+        [...sessionBannedList, ...sessionBanLive],
+        pinFavoriteSet,
+        deferredSort
+      )
+    } else if (sideFilter.type === 'sessionPause') {
+      list = sessionPausePool
+    } else if (sideFilter.type === 'favorites') {
+      list = activeDeferred.filter((d) => liveFavoriteSet.has(d.modelId))
+    } else if (sideFilter.type === 'wait') {
+      list = activeDeferred.filter((d) => canWaitForDeferredUnlock(d))
+    } else if (sideFilter.type === 'buy') {
+      list = activeDeferred.filter((d) => !canWaitForDeferredUnlock(d))
+    } else if (sideFilter.type === 'blockedTag') {
+      const want = sideFilter.tag.toLowerCase()
+      list = activeDeferred.filter((d) => {
+        const tags = expandCivitaiTagNames(d.civitaiTags).map((x) => x.toLowerCase())
+        if (tags.includes(want)) return true
+        return (d.routingTag || '').toLowerCase() === want
+      })
+    } else {
+      list = activeDeferred
+    }
+
+    if (modelTypeFilter) {
+      const want = modelTypeFilter.toUpperCase()
+      list = list.filter((d) => resolveDeferredModelType(d).toUpperCase() === want)
+    }
     if (q) list = list.filter((d) => matchesSearch(d, q))
     return list
-  }, [baseSorted, accessFilter, search])
+  }, [
+    search,
+    sideFilter,
+    modelTypeFilter,
+    activeDeferred,
+    sessionBannedList,
+    sessionBanLive,
+    sessionPausePool,
+    liveFavoriteSet,
+    pinFavoriteSet,
+    deferredSort
+  ])
 
+  const applySideFilter = useCallback((next: SideFilter) => {
+    setSideFilter(next)
+  }, [])
+
+  const applyModelTypeFilter = useCallback((name: string) => {
+    setModelTypeFilter((prev) =>
+      prev && prev.toLowerCase() === name.toLowerCase() ? null : name
+    )
+  }, [])
+
+  const clearSideFilter = useCallback(() => setSideFilter({ type: 'all' }), [])
+
+  const sideFilterActive = useCallback(
+    (f: SideFilter) => {
+      if (f.type !== sideFilter.type) return false
+      if (f.type === 'blockedTag' && sideFilter.type === 'blockedTag') {
+        return f.tag.toLowerCase() === sideFilter.tag.toLowerCase()
+      }
+      return true
+    },
+    [sideFilter]
+  )
 
   const openContextMenu = useCallback((e: MouseEvent, item: DeferredDownload) => {
     e.preventDefault()
@@ -312,6 +523,11 @@ export function DeferredTab({
     setContextMenu(null)
     setBusyId(item.modelId)
     setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
+    setSessionBannedByModelId((prev) => {
+      const next = new Map(prev)
+      next.set(item.modelId, item)
+      return next
+    })
     onBrowseModelBanned?.(item.modelId, {
       name: item.modelName,
       versionId: item.versionId,
@@ -329,6 +545,11 @@ export function DeferredTab({
     } catch {
       setHiddenModelIds((prev) => {
         const next = new Set(prev)
+        next.delete(item.modelId)
+        return next
+      })
+      setSessionBannedByModelId((prev) => {
+        const next = new Map(prev)
         next.delete(item.modelId)
         return next
       })
@@ -353,7 +574,7 @@ export function DeferredTab({
     [banConfirmSkipForSession, confirmBan]
   )
 
-  if (!deferred.length && !hiddenModelIds.size) {
+  if (!deferred.length && !hiddenModelIds.size && !sessionBannedByModelId.size) {
     return (
       <div className="panel status-tab-panel">
         <p className="muted">
@@ -363,7 +584,7 @@ export function DeferredTab({
     )
   }
 
-  if (!baseSorted.length) {
+  if (!activeDeferred.length && !sessionBannedByModelId.size && !sessionBanLive.length) {
     return (
       <div className="panel status-tab-panel">
         <p className="muted">{t('deferredTab.emptyAfterBan')}</p>
@@ -371,270 +592,435 @@ export function DeferredTab({
     )
   }
 
-  return (
-    <div className="panel status-tab-panel">
-      <div className="gallery-panel-head library-panel-head">
-        <div className="browse-results-title-row library-results-title-row">
-          <input
-            type="search"
-            className="browse-results-search library-model-search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('deferredTab.searchPlaceholder')}
-            aria-label={t('deferredTab.searchPlaceholder')}
-          />
-          <div className="browse-results-filters-box">
-            <div className="browse-results-filters-row">
-              <select
-                className={`browse-content-filter${accessFilter !== 'all' ? ' filtered' : ''}`}
-                value={accessFilter}
-                onChange={(e) => setAccessFilter(e.target.value as AccessFilter)}
-                title={t('deferredTab.filterLabel')}
+  const toolbar = (
+    <div className="gallery-panel-head library-panel-head">
+      <div className="browse-results-title-row library-results-title-row">
+        <input
+          type="search"
+          className="browse-results-search library-model-search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t('deferredTab.searchPlaceholder')}
+          aria-label={t('deferredTab.searchPlaceholder')}
+        />
+        <div className="browse-results-filters-box">
+          <div className="browse-results-filters-row">
+            {onBanFunctionModeChange && (
+              <button
+                type="button"
+                className={`btn-sm browse-ban-toggle ${banMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                onClick={toggleBanMode}
+                title={t('browse.banModeTitle')}
+                aria-pressed={banMode}
               >
-                <option value="all">
-                  {t('deferredTab.filterAll')} ({baseSorted.length})
-                </option>
-                <option value="wait" disabled={waitCount === 0 && accessFilter !== 'wait'}>
-                  {t('deferredTab.filterWait')} ({waitCount})
-                </option>
-                <option value="buy" disabled={buyCount === 0 && accessFilter !== 'buy'}>
-                  {t('deferredTab.filterBuy')} ({buyCount})
-                </option>
-              </select>
-              {onBanFunctionModeChange && (
-                <button
-                  type="button"
-                  className={`btn-sm browse-ban-toggle ${banMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                  onClick={toggleBanMode}
-                  title={t('browse.banModeTitle')}
-                  aria-pressed={banMode}
-                >
-                  {banMode ? t('browse.banModeOn') : t('browse.banModeOff')}
-                </button>
-              )}
-            </div>
+                {banMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+              </button>
+            )}
           </div>
-          <div className="browse-results-controls-box">
-            <label className="library-sort browse-results-sort">
-              {t('listSort.label')}
-              <select
-                value={deferredSort}
-                onChange={(e) => setDeferredSort(normalizeDeferredSort(e.target.value))}
-              >
-                {DEFERRED_SORT_OPTIONS.map((key) => (
-                  <option key={key} value={key}>
-                    {key === 'recent'
-                      ? t('listSort.recentDeferred')
-                      : key === 'unlock'
-                        ? t('listSort.unlock')
-                        : key === 'folder'
-                          ? t('listSort.folder')
-                          : t(`listSort.${key}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+        </div>
+        <div className="browse-results-controls-box">
+          <label className="library-sort browse-results-sort">
+            {t('listSort.label')}
+            <select
+              value={deferredSort}
+              onChange={(e) => setDeferredSort(normalizeDeferredSort(e.target.value))}
+            >
+              {DEFERRED_SORT_OPTIONS.map((key) => (
+                <option key={key} value={key}>
+                  {key === 'recent'
+                    ? t('listSort.recentDeferred')
+                    : key === 'unlock'
+                      ? t('listSort.unlock')
+                      : key === 'folder'
+                        ? t('listSort.folder')
+                        : t(`listSort.${key}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!sidebarExpanded ? (
+            <button
+              type="button"
+              className="tag-sidebar-rail-btn"
+              aria-expanded={false}
+              title={t('missingTab.expandSidebar')}
+              onClick={() => setSidebarExpanded(true)}
+            >
+              «
+            </button>
+          ) : null}
         </div>
       </div>
+    </div>
+  )
 
-      {!sorted.length ? (
-        <p className="muted">{t('deferredTab.emptyFiltered')}</p>
-      ) : (
-        <div className="gallery-grid status-card-grid">
-          {sorted.map((item) => {
-            const isEarlyAccess = item.failureKind === 'early_access'
-            const canWait = canWaitForDeferredUnlock(item)
-            const autoRetry = shouldAutoRetryDeferred(item, hasApiKey)
-            const countdown =
-              item.earlyAccessEndsAt && canWait
-                ? formatCountdownTo(item.earlyAccessEndsAt)
-                : null
-            const waitingSoFar = formatWaitDuration(item.deferredAt, new Date().toISOString())
-            const favorited = liveFavoriteSet.has(item.modelId)
-            const folderLabel = shortCardFolderLabel(
-              item.routingTag,
-              null,
-              tagRules,
-              loraFolder,
-              checkpointFolder
-            )
-            const folderLine = folderLineIfNotDuplicatingTag(folderLabel, item.civitaiTags)
-            const cardTags = expandCivitaiTagNames(item.civitaiTags)
-            const shownTags = cardTags.slice(0, 6)
-            const extraTagCount = cardTags.length - shownTags.length
-            const previewOverride = previewOverrides[item.versionId]
-            const cardPreviewUrl =
-              previewOverride?.previewUrl ?? previewOverride?.previewUrls?.[0] ?? item.previewUrl
-            return (
-              <StatusModelCard
-                key={item.versionId}
-                className={[
-                  canWait ? 'deferred-access-wait' : 'deferred-access-buy',
-                  favorited ? 'is-ea-favorite' : ''
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                title={item.modelName}
-                onContextMenu={(e) => openContextMenu(e, item)}
-                meta={
+  return (
+    <div className="panel status-tab-panel missing-tab-panel">
+      {toolbar}
+      <div className="gallery-layout missing-gallery-layout">
+        <div className="gallery-body-row">
+          <div className="gallery-main">
+            <div className="gallery-panel">
+              <div className="gallery-main-scroll missing-main-scroll">
+                {!sorted.length ? (
+                  <p className="muted">{t('deferredTab.emptyFiltered')}</p>
+                ) : (
+                  <div className="gallery-grid status-card-grid">
+                    {sorted.map((item) => {
+                      const isEarlyAccess = item.failureKind === 'early_access'
+                      const canWait = canWaitForDeferredUnlock(item)
+                      const autoRetry = shouldAutoRetryDeferred(item, hasApiKey)
+                      const countdown =
+                        item.earlyAccessEndsAt && canWait
+                          ? formatCountdownTo(item.earlyAccessEndsAt)
+                          : null
+                      const waitingSoFar = formatWaitDuration(
+                        item.deferredAt,
+                        new Date().toISOString()
+                      )
+                      const favorited = liveFavoriteSet.has(item.modelId)
+                      const sessionBanned = sessionBannedByModelId.has(item.modelId)
+                      const folderLabel = shortCardFolderLabel(
+                        item.routingTag,
+                        null,
+                        tagRules,
+                        loraFolder,
+                        checkpointFolder
+                      )
+                      const folderLine = folderLineIfNotDuplicatingTag(
+                        folderLabel,
+                        item.civitaiTags
+                      )
+                      const cardTags = expandCivitaiTagNames(item.civitaiTags)
+                      const shownTags = cardTags.slice(0, 6)
+                      const extraTagCount = cardTags.length - shownTags.length
+                      const previewOverride = previewOverrides[item.versionId]
+                      const cardPreviewUrl =
+                        previewOverride?.previewUrl ??
+                        previewOverride?.previewUrls?.[0] ??
+                        item.previewUrl
+                      return (
+                        <StatusModelCard
+                          key={item.versionId}
+                          className={[
+                            canWait ? 'deferred-access-wait' : 'deferred-access-buy',
+                            favorited ? 'is-ea-favorite' : '',
+                            sessionBanned ? 'missing-card-banned-manual' : ''
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          title={item.modelName}
+                          onContextMenu={(e) => openContextMenu(e, item)}
+                          meta={
+                            <>
+                              {item.versionName ? (
+                                <div className="status-card-version-line">
+                                  <span className="status-card-version-name">
+                                    {item.versionName}
+                                  </span>
+                                </div>
+                              ) : null}
+                              <div className="muted status-card-detail">
+                                {resolveDeferredModelType(item)} · v{item.versionId}
+                                {item.routingTag ? ` · ${item.routingTag}` : ''}
+                                {sessionBanned ? ` · ${t('deferredTab.sessionBannedBadge')}` : ''}
+                              </div>
+                              {folderLine ? (
+                                <div className="gallery-folder-line is-assigned" title={folderLine}>
+                                  <span className="gallery-folder-path">{folderLine}</span>
+                                </div>
+                              ) : null}
+                              {shownTags.length > 0 ? (
+                                <div
+                                  className="tag-row library-card-tags"
+                                  title={cardTags.join(', ')}
+                                >
+                                  {shownTags.map((tag) => {
+                                    const role = cardTagFolderRole(tag, {
+                                      routingTag: item.routingTag,
+                                      folderLabel,
+                                      tagRules
+                                    })
+                                    const banned = isPermanentlyBannedModelTag(tag, bannedTags)
+                                    const paused = isPausedOnlyModelTag(
+                                      tag,
+                                      hiddenTags,
+                                      bannedTags
+                                    )
+                                    return (
+                                      <button
+                                        key={tag}
+                                        type="button"
+                                        className={`tag-chip ${cardTagFolderRoleClass(role)}${
+                                          banned
+                                            ? ' is-blocked-tag'
+                                            : paused
+                                              ? ' is-paused-tag'
+                                              : ''
+                                        }`}
+                                        title={t('deferredTab.openTagFoldersHint', { tag })}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          openTagInFolders(tag)
+                                        }}
+                                      >
+                                        {tag}
+                                      </button>
+                                    )
+                                  })}
+                                  {extraTagCount > 0 ? (
+                                    <span className="tag-chip muted">+{extraTagCount}</span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </>
+                          }
+                          badges={
+                            item.failureKind !== 'early_access' ? (
+                              <div className="deferred-kind">
+                                {DEFERRED_KIND_LABELS[item.failureKind]}
+                              </div>
+                            ) : undefined
+                          }
+                          details={
+                            <>
+                              <div className="deferred-reason">
+                                {isEarlyAccess
+                                  ? canWait
+                                    ? t('deferredTab.reasonWait')
+                                    : t('deferredTab.reasonBuy')
+                                  : item.reason}
+                              </div>
+                              {!isEarlyAccess && (
+                                <div className="muted status-card-detail">
+                                  {t('deferredTab.waiting', {
+                                    duration: waitingSoFar,
+                                    count: item.attemptCount
+                                  })}
+                                  {!autoRetry ? t('deferredTab.autoRetryPaused') : ''}
+                                </div>
+                              )}
+                              {countdown && (
+                                <div className="muted status-card-detail">
+                                  {t('deferredTab.unlocksInShort', { countdown })}
+                                </div>
+                              )}
+                              {item.additionalResourceCharge && (
+                                <div className="muted status-card-detail">
+                                  {t('deferredTab.extraBuzz')}
+                                </div>
+                              )}
+                              {item.freeTrialLimit != null && item.freeTrialLimit > 0 && (
+                                <div className="muted status-card-detail">
+                                  {t('deferredTab.freeTrial', { count: item.freeTrialLimit })}
+                                </div>
+                              )}
+                            </>
+                          }
+                          previewUrl={cardPreviewUrl}
+                          titleActions={
+                            <>
+                              {onToggleEaFavorite ? (
+                                <button
+                                  type="button"
+                                  className={`ea-favorite-btn${favorited ? ' is-on' : ''}`}
+                                  title={
+                                    favorited
+                                      ? t('deferredTab.favoriteOnHint')
+                                      : t('deferredTab.favoriteOffHint')
+                                  }
+                                  aria-pressed={favorited}
+                                  onClick={() => onToggleEaFavorite(item.modelId)}
+                                >
+                                  {favorited ? '★' : '☆'}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="gallery-detail-btn"
+                                title={t('gallery.modelDetails')}
+                                onClick={() =>
+                                  onOpenModelDetail?.({
+                                    kind: 'browse',
+                                    modelId: item.modelId,
+                                    versionId: item.versionId,
+                                    name: item.modelName,
+                                    previewUrl: item.previewUrl,
+                                    domain: domain === 'both' ? 'com' : domain
+                                  })
+                                }
+                              >
+                                ℹ
+                              </button>
+                              <button
+                                type="button"
+                                className="gallery-web-btn-inline"
+                                title={t('gallery.openOnCivitai')}
+                                onClick={() =>
+                                  void window.api.openExternal(
+                                    modelPageUrl(domain, item.modelId, item.versionId)
+                                  )
+                                }
+                              >
+                                ↗
+                              </button>
+                              {banMode && !sessionBanned && (
+                                <button
+                                  type="button"
+                                  className="gallery-ban-inline-btn electron-no-drag"
+                                  disabled={busyId === item.modelId}
+                                  title={t('deferredTab.banHint')}
+                                  onClick={() => requestBan(item)}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </>
+                          }
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+                {tagMessage ? <p className="muted status-inline-msg">{tagMessage}</p> : null}
+              </div>
+            </div>
+          </div>
+
+          {sidebarExpanded ? (
+            <aside className="tag-sidebar">
+              <div className="tag-sidebar-head">
+                <div className="tag-sidebar-head-row">
+                  <h3>{t('deferredTab.sidebarTitle')}</h3>
+                  <button
+                    type="button"
+                    className="tag-sidebar-toggle"
+                    aria-expanded
+                    title={t('missingTab.collapseSidebar')}
+                    onClick={() => setSidebarExpanded(false)}
+                  >
+                    »
+                  </button>
+                </div>
+              </div>
+              <div className="tag-sidebar-scroll">
+                <button
+                  type="button"
+                  className={`sidebar-tag ${
+                    sideFilterActive({ type: 'all' }) && !modelTypeFilter ? 'active' : ''
+                  }`}
+                  onClick={() => {
+                    applySideFilter({ type: 'all' })
+                    setModelTypeFilter(null)
+                  }}
+                >
+                  <span className="tag-name">{t('missingTab.sidebarAll')}</span>
+                  <span className="muted tag-count-inline">{itemsForMainCounts.length}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-tag ${sideFilterActive({ type: 'wait' }) ? 'active' : ''}`}
+                  onClick={() => applySideFilter({ type: 'wait' })}
+                >
+                  <span className="tag-name">{t('deferredTab.filterWait')}</span>
+                  <span className="muted tag-count-inline">{waitCount}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-tag ${sideFilterActive({ type: 'buy' }) ? 'active' : ''}`}
+                  onClick={() => applySideFilter({ type: 'buy' })}
+                >
+                  <span className="tag-name">{t('deferredTab.filterBuy')}</span>
+                  <span className="muted tag-count-inline">{buyCount}</span>
+                </button>
+                {favoriteCount > 0 || sideFilter.type === 'favorites' ? (
+                  <button
+                    type="button"
+                    className={`sidebar-tag ${
+                      sideFilterActive({ type: 'favorites' }) ? 'active' : ''
+                    }`}
+                    onClick={() => applySideFilter({ type: 'favorites' })}
+                  >
+                    <span className="tag-name">{t('deferredTab.filterFavorites')}</span>
+                    <span className="muted tag-count-inline">{favoriteCount}</span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className={`sidebar-tag ${
+                    sideFilterActive({ type: 'sessionBans' }) ? 'active' : ''
+                  }`}
+                  onClick={() => applySideFilter({ type: 'sessionBans' })}
+                >
+                  <span className="tag-name">{t('missingTab.sessionBans')}</span>
+                  <span className="muted tag-count-inline">{sessionBanCount}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-tag ${
+                    sideFilterActive({ type: 'sessionPause' }) ? 'active' : ''
+                  }`}
+                  onClick={() => applySideFilter({ type: 'sessionPause' })}
+                >
+                  <span className="tag-name">{t('missingTab.sessionPause')}</span>
+                  <span className="muted tag-count-inline">{sessionPauseCount}</span>
+                </button>
+
+                {typeCounts.length > 0 ? (
                   <>
-                    {item.versionName ? (
-                      <div className="status-card-version-line">
-                        <span className="status-card-version-name">{item.versionName}</span>
-                      </div>
-                    ) : null}
-                    <div className="muted status-card-detail">
-                      {item.modelType} · v{item.versionId}
-                      {item.routingTag ? ` · ${item.routingTag}` : ''}
-                    </div>
-                    {folderLine ? (
-                      <div className="gallery-folder-line is-assigned" title={folderLine}>
-                        <span className="gallery-folder-path">{folderLine}</span>
-                      </div>
-                    ) : null}
-                    {shownTags.length > 0 ? (
-                      <div
-                        className="tag-row library-card-tags"
-                        title={cardTags.join(', ')}
-                      >
-                        {shownTags.map((tag) => {
-                          const role = cardTagFolderRole(tag, {
-                            routingTag: item.routingTag,
-                            folderLabel,
-                            tagRules
-                          })
-                          const banned = isPermanentlyBannedModelTag(tag, bannedTags)
-                          const paused = isPausedOnlyModelTag(tag, hiddenTags, bannedTags)
-                          return (
-                            <button
-                              key={tag}
-                              type="button"
-                              className={`tag-chip ${cardTagFolderRoleClass(role)}${
-                                banned ? ' is-blocked-tag' : paused ? ' is-paused-tag' : ''
-                              }`}
-                              title={t('deferredTab.openTagFoldersHint', { tag })}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openTagInFolders(tag)
-                              }}
-                            >
-                              {tag}
-                            </button>
-                          )
-                        })}
-                        {extraTagCount > 0 ? (
-                          <span className="tag-chip muted">+{extraTagCount}</span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </>
-                }
-                badges={
-                  item.failureKind !== 'early_access' ? (
-                    <div className="deferred-kind">{DEFERRED_KIND_LABELS[item.failureKind]}</div>
-                  ) : undefined
-                }
-                details={
-                  <>
-                    <div className="deferred-reason">
-                      {isEarlyAccess
-                        ? canWait
-                          ? t('deferredTab.reasonWait')
-                          : t('deferredTab.reasonBuy')
-                        : item.reason}
-                    </div>
-                    {!isEarlyAccess && (
-                      <div className="muted status-card-detail">
-                        {t('deferredTab.waiting', {
-                          duration: waitingSoFar,
-                          count: item.attemptCount
-                        })}
-                        {!autoRetry ? t('deferredTab.autoRetryPaused') : ''}
-                      </div>
-                    )}
-                    {countdown && (
-                      <div className="muted status-card-detail">
-                        {t('deferredTab.unlocksInShort', { countdown })}
-                      </div>
-                    )}
-                    {item.additionalResourceCharge && (
-                      <div className="muted status-card-detail">{t('deferredTab.extraBuzz')}</div>
-                    )}
-                    {item.freeTrialLimit != null && item.freeTrialLimit > 0 && (
-                      <div className="muted status-card-detail">
-                        {t('deferredTab.freeTrial', { count: item.freeTrialLimit })}
-                      </div>
-                    )}
-                  </>
-                }
-                previewUrl={cardPreviewUrl}
-                titleActions={
-                  <>
-                    {onToggleEaFavorite ? (
+                    <h4 className="sidebar-section-title">{t('missingTab.sidebarTypes')}</h4>
+                    {typeCounts.map(([name, count]) => (
                       <button
+                        key={name}
                         type="button"
-                        className={`ea-favorite-btn${favorited ? ' is-on' : ''}`}
-                        title={
-                          favorited
-                            ? t('deferredTab.favoriteOnHint')
-                            : t('deferredTab.favoriteOffHint')
-                        }
-                        aria-pressed={favorited}
-                        onClick={() => onToggleEaFavorite(item.modelId)}
+                        className={`sidebar-tag ${
+                          modelTypeFilter &&
+                          modelTypeFilter.toLowerCase() === name.toLowerCase()
+                            ? 'active'
+                            : ''
+                        }`}
+                        onClick={() => applyModelTypeFilter(name)}
                       >
-                        {favorited ? '★' : '☆'}
+                        <span className="tag-name">{name}</span>
+                        <span className="muted tag-count-inline">{count}</span>
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="gallery-detail-btn"
-                      title={t('gallery.modelDetails')}
-                      onClick={() =>
-                        onOpenModelDetail?.({
-                          kind: 'browse',
-                          modelId: item.modelId,
-                          versionId: item.versionId,
-                          name: item.modelName,
-                          previewUrl: item.previewUrl,
-                          domain: domain === 'both' ? 'com' : domain
-                        })
-                      }
-                    >
-                      ℹ
-                    </button>
-                    <button
-                      type="button"
-                      className="gallery-web-btn-inline"
-                      title={t('gallery.openOnCivitai')}
-                      onClick={() =>
-                        void window.api.openExternal(
-                          modelPageUrl(domain, item.modelId, item.versionId)
-                        )
-                      }
-                    >
-                      ↗
-                    </button>
-                    {banMode && (
-                      <button
-                        type="button"
-                        className="gallery-ban-inline-btn electron-no-drag"
-                        disabled={busyId === item.modelId}
-                        title={t('deferredTab.banHint')}
-                        onClick={() => requestBan(item)}
-                      >
-                        ×
-                      </button>
-                    )}
+                    ))}
                   </>
-                }
-              />
-            )
-          })}
+                ) : null}
+
+                {policyTagCounts.length > 0 ? (
+                  <>
+                    <h4 className="sidebar-section-title">{t('missingTab.policyTagsSection')}</h4>
+                    <p className="muted sidebar-hint sidebar-hint-compact">
+                      {t('deferredTab.policyTagsHint')}
+                    </p>
+                    {policyTagCounts.map(({ name, count }) => (
+                      <button
+                        key={name}
+                        type="button"
+                        className={`sidebar-tag ${
+                          sideFilterActive({ type: 'blockedTag', tag: name }) ? 'active' : ''
+                        }`}
+                        title={t('missingTab.blockedTagFilter', { tag: name })}
+                        onClick={() => {
+                          if (sideFilterActive({ type: 'blockedTag', tag: name })) {
+                            clearSideFilter()
+                          } else {
+                            applySideFilter({ type: 'blockedTag', tag: name })
+                          }
+                        }}
+                      >
+                        <span className="tag-name">{name}</span>
+                        <span className="muted tag-count-inline">{count}</span>
+                      </button>
+                    ))}
+                  </>
+                ) : null}
+              </div>
+            </aside>
+          ) : null}
         </div>
-      )}
-
-      {tagMessage ? <p className="muted status-inline-msg">{tagMessage}</p> : null}
+      </div>
 
       {contextMenu && (
         <ContextMenuPortal

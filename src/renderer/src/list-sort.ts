@@ -15,6 +15,7 @@ export type ListSortKey =
 export type LibrarySort = 'recent' | 'name' | 'downloads' | 'likes' | 'folder' | 'tagGroup'
 export type BrowseSort = 'recent' | 'name' | 'downloads' | 'likes' | 'folder' | 'published'
 export type MissingSort = 'recent' | 'name' | 'downloads' | 'likes' | 'hits'
+export type PendingSort = 'recent' | 'name' | 'downloads' | 'likes'
 export type DeferredSort = 'unlock' | 'recent' | 'name' | 'folder'
 
 export const LIBRARY_SORT_OPTIONS: LibrarySort[] = [
@@ -43,6 +44,8 @@ export const MISSING_SORT_OPTIONS: MissingSort[] = [
   'name'
 ]
 
+export const PENDING_SORT_OPTIONS: PendingSort[] = ['recent', 'downloads', 'likes', 'name']
+
 export const DEFERRED_SORT_OPTIONS: DeferredSort[] = ['unlock', 'recent', 'name', 'folder']
 
 /** Map legacy prefs (`default`) and unknown values onto a page sort key. */
@@ -65,6 +68,13 @@ export function normalizeBrowseSort(raw: unknown, fallback: BrowseSort = 'recent
 export function normalizeMissingSort(raw: unknown, fallback: MissingSort = 'recent'): MissingSort {
   if (typeof raw === 'string' && (MISSING_SORT_OPTIONS as string[]).includes(raw)) {
     return raw as MissingSort
+  }
+  return fallback
+}
+
+export function normalizePendingSort(raw: unknown, fallback: PendingSort = 'recent'): PendingSort {
+  if (typeof raw === 'string' && (PENDING_SORT_OPTIONS as string[]).includes(raw)) {
+    return raw as PendingSort
   }
   return fallback
 }

@@ -345,32 +345,32 @@ export const lt: Messages = {
     headerNightModes:
       '🌙 Harvesting — eilėn deda visus naujus modelius pagal įjungtas Browse taisykles (paused / banned tagai vis tiek praleidžiami). Aplanką / Tags galite priskirti vėliau po atsisiuntimo.',
     headerDownloads:
-      '**Auto** / **Manual** — atskiri antraštės mygtukai: Auto deda tinkamus modelius į eilę (iki 10 pipeline); Manual — tik paspaustos kortelės. **Pause** (raudonas) sustabdo siuntimus nekeisdamas režimo.',
+      '**Auto** / **Manual** — atskiri antraštės mygtukai: Auto deda tinkamus **LoRA** į eilę (iki 10 pipeline); Manual — tik paspaustos kortelės. **Checkpoint niekada neauto-queue** — tik spustelėjus. Įjungus Checkpoint Browse taisyklę įsijungia **Pause**, kad dideli failai nestartuotų, kol patys neatspausite. **Pause** (raudonas) sustabdo siuntimus nekeisdamas režimo.',
     headerEye: '👁 — slepia Browse korteles harvest metu (tylesnis UI; siuntimai tęsiasi)',
     headerScan: 'Scan — vieną kartą paleisti visas enabled Browse taisykles ir atnaujinti Results',
     headerBlur: 'Blur — slėpti preview miniatiūras',
     browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort)',
     browseResults:
-      'Results — paieška pagal vardą, autorių ar skaitinį Civitai modelio/versijos ID; filtrai (Hide owned ir kt.); Loaded / Owned / Yield statistika; Sort ir Tags; spustelėkite kortelę į eilę',
+      'Results — paieška pagal vardą, autorių ar skaitinį Civitai modelio/versijos ID; filtrai (Hide owned ir kt.); Loaded / Owned / Yield; **Updates** neskaičiuoja skipped versijų; Sort ir Tags; spustelėkite kortelę į eilę',
     browseDetails:
       'ℹ ant kortelės atidaro **Model details** (pilnas puslapis) — versijos dešinėje, lipni Back/Civitai/Show List/Ban juosta, trūkstamų versijų download, Load/Save preview turimoms versijoms',
     browsePreviews:
-      'Preview yra **pagal versiją** (ne bendras modelio paveikslėlis). Load previews krauna tik tos versijos nuotraukas; Save preview įrašo `.preview.jpg` pasirinktai turimai versijai',
+      'Preview yra **pagal versiją** (ne bendras modelio paveikslėlis). Kortelės ir siuntimo juosta rodo **version name**; Load previews krauna tik tos versijos nuotraukas; Save preview įrašo `.preview.jpg` pasirinktai turimai versijai',
     browseTags:
       'Tags langas — filtruoti grid · ⏸ pause tag (laikinas Browse exclude) · permanent ban — Tag Folders (violetiniai chip’ai)',
     browsePausedBanned:
       '**Paused** juosta — laikinas exclude. **Banned** juosta — permanent ban-by-tag (čia tik skaitymui; Ban / Unban — Tag Folders). Amber = pause · purple = permanent ant kortelių',
     browseManualQueue:
-      'Manual — crawl/scan ir Auto pipeline nebededa modelių; tik jūsų paspaustos kortelės eina į eilę (be limito)',
+      'Manual — crawl/scan ir Auto pipeline nebededa modelių; tik jūsų paspaustos kortelės eina į eilę (be limito). Checkpoint visada reikia spausti, net kai Auto ON.',
     browseSettled:
       'Nustatymai → Browse gallery — owned/excluded/awaiting galima perkelti į galerijos galą ir pritemdyti (hover atstatyti; paieškos atitikmenys lieka ryškūs)',
     browseBan: 'Ban On — raudonas × ant kortelės nebeįtraukia modelio į auto-queue',
     browseContextSkipTag:
       'Dešinis pelės mygtukas ant modelio → pause tag (laikinas). Permanent ban-by-tag: Tag Folders **Ban** stulpelis',
     libraryFolders:
-      'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias). Pažymėk tagus download routing ir unsorted bibliotekos perkėlimui. **Apply to library** — perrikiuoti po priority pakeitimų; rankiniu būdu Library perkelti modeliai praleidžiami. **Mass** priskiria daug tagų vienam aplanko vardui. Be taisyklės → `\\*\\Unsorted`.',
+      'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias) **LoRA**. Checkpoint **ignoruojami** Tag Folders tagai ir lieka `{checkpoint}/{baseModel}/`, nebent **Custom folder assignments** / rankinis Assign. Pažymėk tagus LoRA routing ir unsorted perkėlimui. **Apply to library** — perrikiuoti po priority; rankiniu būdu Library perkelti praleidžiami. **Mass** — daug tagų vienam aplankui. Be taisyklės → `\\*\\Unsorted` (LoRA).',
     libraryCustomAssignments:
-      '**Custom folder assignments** (Tag Folders) — asmeninis tagas + aplankas lokaliesiems modeliams (nebūtinas tipas/base). Po Save aplankas ir subfolderiai importuojami į Library. Civitai siuntimai su tuo pačiu tago vardu eina į įprastą app tag aplanką — ne į custom kelią. Tokie lokalūs modeliai neieškomi Civitai preview/update patikrose.',
+      '**Custom folder assignments** (Tag Folders) — asmeninis tagas + aplankas lokaliesiems (nebūtinas tipas/base). Checkpoint — vienintelis būdas failus dėti ne į `{checkpoint}/{baseModel}/`. Po Save aplankas ir subfolderiai importuojami į Library. Civitai LoRA su tuo pačiu tago vardu eina į įprastą app tag aplanką — ne į custom. Lokalūs skip Civitai preview/update.',
     libraryPriority:
       'Tag Folders **Priority** — kai modelis atitinka kelis tagus, laimi didesnis skaičius (▲/▼ praleidžia 0). Vienodos priority: pirmas atitinkantis tag. Priority 0 = fiksuotas auto-route. Rankiniai Library priskyrimai visada laimi.',
     libraryTagBan:
@@ -386,6 +386,8 @@ export const lt: Messages = {
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group arba download order. Tas pats Settings rezultatų rodymas (lazy / puslapiai) kaip Browse.',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
+    libraryTypeFilter:
+      'Šoninė juosta **LoRA** / **Checkpoint** — filtras pagal tipą (metadata arba aplankas). Checkpoint kortelės turi tipų ženkliuką.',
     libraryTags:
       'Dešinis spustelėjimas → **Priskirti modelį tagui**. Spustelėkite tag ant kortelės — atidaromi Tag folders (arba Fast tag popup, jei įjungta). Žali / mapped chip’ai = aplanko taisyklės.',
     libraryFastTag:
@@ -421,7 +423,7 @@ export const lt: Messages = {
     edgeAwaiting: 'Geltona — laukia prieigos / early access',
     edgeBlocked: 'Violetinė — permanent ban-by-tag · amber — paused (Browse exclude)',
     dlStrip:
-      'Siuntimo juosta — Nustatymai → išdėstymas: **Row** (scroll kortelės), **Grid** (tinklelis), **Minimal** (kompaktinis sąrašas). Antraštė: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) išvalo eilę nekeisdama režimo.',
+      'Siuntimo juosta — Nustatymai → išdėstymas: **Row** (scroll kortelės), **Grid** (tinklelis), **Minimal** (kompaktinis sąrašas). Antraštė: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) išvalo eilę nekeisdama režimo. Juosta rodo **version name** šalia pavadinimo.',
     dlStripLayouts:
       '**Minimal** — miniatiūra visada matoma; kairėje stulpelis su eilės/siuntimo tekstu; vertikalus skirtukas; dešinėje pavadinimas. Žalias užpildas auga tik per kairį stulpelį — pasiekus skirtuką, atsisiuntimas baigtas. Dešinis pelės mygtukas, ban ir prioritetas kaip kituose režimuose.',
     dlStripProgress:
@@ -435,7 +437,7 @@ export const lt: Messages = {
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be versijos duomenų; recheck arba įklijuokite download URL',
     dlNewVersions:
-      'Atnaujinimai — **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio; **Skip** slepia tik tą versiją (failų neliesti; lieka skipped iki **Unskip**); **Rodyti skipped** (pagal nutylėjimą off) rodo juos vėl. Jei Early access — eina į Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
+      'Atnaujinimai — **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio; **Skip** = ši versija vėliau (iki **Unskip**); **Mark seen On** kartu įjungia **Hide seen** — spustelėkite kortelę arba išeikite kairėn/dešinėn (slepiasi ir **skipped**); **Forget** = niekada nesiūlyti **šios versijos** (**Show forgotten** → Unforget; kitos versijos lieka). Skipped / forgotten **neįtraukiamos** į Browse Updates. Tipų / rating / sort sidebar kaip Missing. Jei Early access — eina į Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
     dlTabBadges:
       'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
@@ -828,8 +830,30 @@ export const lt: Messages = {
   pending: {
     emptyHint:
       'Nėra laukiančių atnaujinimų. Harvest pats papildo šį sąrašą, kai randa naujesnes versijas modelių, kuriuos jau turite.',
+    emptyForgottenHint:
+      'Nėra užmirštų atnaujinimo versijų. Forget slepia tik vieną versiją (Show forgotten). Jei anksčiau naudojote viso modelio Forget — jie yra Missing → Show forgotten.',
     baseFilterHint:
       'Rodomos visos trūkstamos versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
+    actionsHint:
+      'Skip = ši versija vėliau. Įjunkite Mark seen, tada išeikite kairėn/dešinėn nuo kortelės (Hide seen). Forget = niekada neatnaujinti. Show forgotten = tik forgotten, kuriuos dar turite Library.',
+    searchPlaceholder: 'Ieškoti atnaujinimų…',
+    hideSeen: 'Slėpti seen',
+    hideSeenHint: 'Slėpti atnaujinimus, kuriuos pažymėjote kaip seen (įskaitant skipped)',
+    markSeen: 'Mark seen',
+    markSeenModeOff: 'Mark seen Off',
+    markSeenModeOn: 'Mark seen On',
+    markSeenModeTitle:
+      'Įjungia Mark seen ir Hide seen. Spustelėkite kortelę arba išeikite kairėn/dešinėn — peržiūrėti (ir skipped) pasislepia. Dešinis meniu → Mark seen irgi veikia.',
+    seenBadge: 'Seen',
+    filterUnseen: 'Nematytos',
+    sidebarTitle: 'Filtras',
+    sidebarTypes: 'Modelių tipai',
+    forgetHint: 'Forget tik šią versiją — niekada nebesiūlyti šio atnaujinimo (Show forgotten). Kitos to modelio versijos lieka sąraše.',
+    unforget: 'Unforget',
+    unforgetHint: 'Unforget — vėl rodyti šį atnaujinimo pasiūlymą',
+    forgottenBadge: 'Forgotten',
+    showForgottenHint:
+      'Rodyti užmirštas atnaujinimo versijas (tik versija — ne viso modelio Forget iš Missing)',
     emptyAfterBan: 'Ban’inti įrašai pašalinti.',
     dismissHint: 'Paslėpti tik šį pasiūlymą (bibliotekos failų neliesti).',
     skip: 'Skip',
@@ -1165,6 +1189,8 @@ export const lt: Messages = {
     sidebarHint:
       'Tag remeliai: solid accent = pagrindinis folder · dashed accent = taisyklė yra · dotted pilka = nepriskirta. Spauskite → Tag folders.',
     allModels: 'Visi modeliai',
+    filterLora: 'LoRA',
+    filterCheckpoint: 'Checkpoint',
     untaggedFolder: 'Be aplanko tag',
     unrecognized: 'Neatpažinti',
     unrecognizedHint: 'Custom / vietinis failas be Civitai tapatybės (nėra .swarm.json arba nesutapo hash)',
@@ -1207,7 +1233,7 @@ export const lt: Messages = {
   downloadTab: {
     title: 'Atsisiųsti pagal URL ar ID',
     lead:
-      'LoRA eina į {lora}, checkpoint į {checkpoint}. Routing tag prideda subfolderį (pvz. Krea2). Tag Folders gali pakeisti — arba perkelkite vėliau Bibliotekoje.',
+      'LoRA eina į {lora} (Tag Folders gali pridėti subfolderį). Checkpoint — tik {checkpoint}/{baseModel}/; kitam keliui naudokite Custom folder assignments. Checkpoint į eilę tik rankiniu pasirinkimu (Auto jų nededa).',
     needOutputFolder: 'Pirmiausia nustatykite šio tipo aplanką Nustatymuose.',
     tagHint: 'Tagų slėpimui ar blokavimui nuo auto-download naudokite Browse → blokuojami tagai, arba',
     tagHintSettings: 'Nustatymai → Blokuojami tagai',
@@ -1289,8 +1315,10 @@ export const lt: Messages = {
     noUnassigned: 'Visi matomi tagai jau priskirti',
     noTags: 'Bibliotekoje dar nėra tagų',
     customTitle: 'Custom aplankų priskyrimai',
+    checkpointRoutingHint:
+      'Checkpoint niekada neina į Tag Folders Civitai-tag aplankus — tik `{checkpointRoot}/{baseModel}/`. Kitam keliui naudokite Custom folder assignments (žemiau).',
     customHint:
-      'Asmeniniai tagai lokalams modeliams: tagas + aplankas + tipas/base (nebūtina). Civitai atsisiuntimai su tuo pačiu tagu eina į aplikacijos tag folderį po LoRA/Checkpoint šaknimis — ne į šį custom kelią. Po Save aplankas (su subfolderiais) nuskaitomas į Library. Tuščios eilutės (be tago) Save metu pašalinamos.',
+      'Asmeniniai tagai lokalams: tagas + aplankas + tipas/base (nebūtina). Checkpoint — vienintelis aplanko override (Tag Folders tagai ignoruojami). Civitai LoRA su tuo pačiu tagu eina į app tag folderį po LoRA šaknimi — ne į šį custom kelią. Po Save aplankas (su subfolderiais) nuskaitomas į Library. Tuščios eilutės (be tago) Save metu pašalinamos.',
     customEmpty: 'Nėra custom kelių — pridėkite apačioje, jei reikia.',
     customTagName: 'Tagas',
     customTagPlaceholder: 'mano modeliai',
@@ -1378,7 +1406,11 @@ export const lt: Messages = {
     favoriteOnHint: 'Nuimti favorite — nebekelti į Library viršų',
     favoriteAdd: 'Įtraukti į favorites ★',
     favoriteRemove: 'Nuimti favorite ☆',
-    openTagFoldersHint: 'Atidaryti Tag folders — priskirti aplanką „{tag}“ prieš atsisiuntimą'
+    openTagFoldersHint: 'Atidaryti Tag folders — priskirti aplanką „{tag}“ prieš atsisiuntimą',
+    sidebarTitle: 'Filtrai',
+    filterFavorites: 'Favorites',
+    sessionBannedBadge: 'Banned šią sesiją',
+    policyTagsHint: 'Modeliai, kurių tagai atitinka pause / ban-by-tag politiką.'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1431,6 +1463,7 @@ export const lt: Messages = {
     showForgotten: 'Rodyti forgotten',
     showBanned: 'Rodyti banned / paused',
     sidebarTitle: 'Filtras',
+    sidebarTypes: 'Modelių tipai',
     collapseSidebar: 'Suskleisti filtrų juostą',
     expandSidebar: 'Išskleisti filtrų juostą',
     sidebarAll: 'Visi',

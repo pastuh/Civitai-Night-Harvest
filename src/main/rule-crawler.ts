@@ -209,11 +209,6 @@ export class RuleCrawler {
         upToDate += combined.upToDate
         errors.push(...combined.errors)
 
-        if (peekSkipped && peekSkippedMs) {
-          const min = Math.ceil(peekSkippedMs / 60_000)
-          log('info', `Newest peek skipped — next in ~${min} min (backfill continues)`, rule.id)
-        }
-
         if (peek?.queued) {
           log('info', `Newest peek: queued ${peek.queued}`, rule.id)
           flushPageDownloads(downloadQueue, peek.queued, options.onDownloadsStarted)
@@ -245,15 +240,8 @@ export class RuleCrawler {
             rule.id
           )
           flushPageDownloads(downloadQueue, backfill.queued, options.onDownloadsStarted)
-        } else if (backfill.pageModels > 0) {
-          log(
-            'info',
-            `Backfill page ${catalogPage || pagesProcessed}: all ${backfill.upToDate} on page already owned — next`,
-            rule.id
-          )
-        } else if (!peek?.pageModels) {
-          log('info', `Backfill page ${catalogPage || pagesProcessed}: empty — next`, rule.id)
         }
+        // Skip empty / already-owned page chatter — summary at catalog complete is enough.
 
         if (backfill.nextCursor) {
           cursor = backfill.nextCursor

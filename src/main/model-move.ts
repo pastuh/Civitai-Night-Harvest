@@ -50,6 +50,56 @@ export function moveRecordToTagFolder(
     settings.checkpointOutputFolder
   )
   const lockRouting = options.lockRouting === true
+  const isCheckpoint = modelType.toUpperCase() === 'CHECKPOINT'
+  // Checkpoints: only custom assignment paths (manual Assign). Normal tags → base-model folder.
+  if (isCheckpoint && !(lockRouting && rule.customAssignment)) {
+    const bm = record.baseModel?.trim()
+    const ckptRoot = settings.checkpointOutputFolder.trim()
+    const targetFolder = bm
+      ? join(ckptRoot, bm)
+      : ckptRoot
+    if (!targetFolder) throw new Error('Checkpoint folder is not configured')
+    if (foldersEqual(record.outputFolder, targetFolder)) {
+      if (!record.routingTag && !record.routingLocked) return record
+      const cleared = { ...record, routingTag: '', routingLocked: false }
+      inventory.addVersion(cleared)
+      return cleared
+    }
+    const existingSlugs = inventory.getSlugsInFolder(targetFolder).filter((s) => s !== record.slug)
+    const slug = resolveUniqueSlug(record.slug, existingSlugs)
+    const ext = basename(record.modelPath).includes('.')
+      ? basename(record.modelPath).split('.').pop()
+      : 'safetensors'
+    const newModelPath = join(targetFolder, `${slug}.${ext}`)
+    const newPreviewPath = join(targetFolder, `${slug}.preview.jpg`)
+    const newSwarmPath = join(targetFolder, `${slug}.swarm.json`)
+    ensureDir(targetFolder)
+    const moves: [string, string][] = [
+      [record.modelPath, newModelPath],
+      [record.previewPath, newPreviewPath],
+      [record.swarmPath, newSwarmPath]
+    ]
+    for (const [from, to] of moves) {
+      if (from && existsSync(from) && from !== to) {
+        ensureDir(dirname(to))
+        renameSync(from, to)
+      }
+    }
+    const updated: InventoryRecord = {
+      ...record,
+      slug,
+      routingTag: '',
+      routingLocked: false,
+      outputFolder: targetFolder,
+      modelPath: newModelPath,
+      previewPath: existsSync(newPreviewPath) ? newPreviewPath : record.previewPath,
+      swarmPath: existsSync(newSwarmPath) ? newSwarmPath : record.swarmPath,
+      modelType: record.modelType || 'Checkpoint'
+    }
+    inventory.addVersion(updated)
+    return updated
+  }
+
   const targetFolder = resolveTagRuleFolderPath(
     rule,
     settings.loraOutputFolder,
@@ -162,13 +212,16 @@ export function moveRecordsToTagFolder(
 /**
  * Apply current tag-folder rules to the whole library: pick each model's winning
  * tag and move / fix routingTag when needed. Skips manual (routingLocked) and
- * already-correct placements.
+ * already-correct placements. Yields between chunks so the UI stays responsive.
  */
-export function reconcileLibraryTagFolders(tagRules: TagFolderRule[]): {
+export async function reconcileLibraryTagFolders(
+  tagRules: TagFolderRule[],
+  onProgress?: (p: { current: number; total: number; moved: number; modelName?: string }) => void
+): Promise<{
   moved: number
   skipped: number
   versionIds: number[]
-} {
+}> {
   const settings = getSettings()
   const loraFolder = settings.loraOutputFolder
   const checkpointFolder = settings.checkpointOutputFolder
@@ -176,7 +229,24 @@ export function reconcileLibraryTagFolders(tagRules: TagFolderRule[]): {
   let skipped = 0
   const versionIds: number[] = []
 
-  for (const record of inventory.getAllVersions()) {
+  const records = inventory.getAllVersions()
+  const total = records.length
+  const yieldEvery = 8
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]
+    if (i > 0 && i % yieldEvery === 0) {
+      onProgress?.({ current: i, total, moved, modelName: record.modelName })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+
+    // Checkpoints are never bulk-routed by Civitai tags (base folder or custom only).
+    const mt = (record.modelType || '').toUpperCase()
+    if (mt === 'CHECKPOINT') {
+      skipped++
+      continue
+    }
+
     const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules)
     if (!winner) continue
     if (shouldSkipTagBulkMove(record, tagRules, loraFolder, checkpointFolder)) {
@@ -204,5 +274,6 @@ export function reconcileLibraryTagFolders(tagRules: TagFolderRule[]): {
     }
   }
 
+  onProgress?.({ current: total, total, moved })
   return { moved, skipped, versionIds }
 }

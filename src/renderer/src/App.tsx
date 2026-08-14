@@ -48,9 +48,11 @@ import {
   DEFAULT_BROWSE_VIEW_PREFS,
   DEFAULT_LIBRARY_VIEW_PREFS,
   DEFAULT_MISSING_VIEW_PREFS,
+  DEFAULT_PENDING_VIEW_PREFS,
   type BrowseViewPrefs,
   type LibraryViewPrefs,
-  type MissingViewPrefs
+  type MissingViewPrefs,
+  type PendingViewPrefs
 } from './view-prefs'
 import { I18nProvider, getMessages, translate } from './i18n/context'
 import { hasAllOutputFolders } from '../../shared/utils'
@@ -168,9 +170,11 @@ export default function App() {
   const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
   const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
   const [missingViewPrefs, setMissingViewPrefs] = useState<MissingViewPrefs>(DEFAULT_MISSING_VIEW_PREFS)
+  const [pendingViewPrefs, setPendingViewPrefs] = useState<PendingViewPrefs>(DEFAULT_PENDING_VIEW_PREFS)
   const onLibraryViewPrefsChange = useCallback((prefs: LibraryViewPrefs) => {
     setLibraryViewPrefs((prev) =>
       prev.libraryFilter === prefs.libraryFilter &&
+      prev.modelTypeFilter === prefs.modelTypeFilter &&
       prev.librarySort === prefs.librarySort &&
       prev.nsfwFilter === prefs.nsfwFilter &&
       prev.hideFolderAssigned === prefs.hideFolderAssigned &&
@@ -194,6 +198,22 @@ export default function App() {
       prev.sortMode === prefs.sortMode &&
       prev.search === prefs.search &&
       prev.sidebarExpanded === prefs.sidebarExpanded
+        ? prev
+        : prefs
+    )
+  }, [])
+  const onPendingViewPrefsChange = useCallback((prefs: PendingViewPrefs) => {
+    setPendingViewPrefs((prev) =>
+      prev.hideSeen === prefs.hideSeen &&
+      prev.markSeenMode === prefs.markSeenMode &&
+      prev.showForgotten === prefs.showForgotten &&
+      prev.showSkipped === prefs.showSkipped &&
+      prev.sortMode === prefs.sortMode &&
+      prev.ratingFilter === prefs.ratingFilter &&
+      prev.search === prefs.search &&
+      prev.sidebarExpanded === prefs.sidebarExpanded &&
+      prev.modelTypeFilter === prefs.modelTypeFilter &&
+      JSON.stringify(prev.sideFilter) === JSON.stringify(prefs.sideFilter)
         ? prev
         : prefs
     )
@@ -307,7 +327,11 @@ export default function App() {
   /** Keep existing row order; append newly detected offers at the bottom. */
   const applyPendingVersions = useCallback((pend: PendingVersion[]) => {
     const banned = bannedPendingModelIdsRef.current
-    const filtered = banned.size ? pend.filter((p) => !banned.has(p.modelId)) : pend
+    // Always keep skipped/forgotten offers so Show skipped / Show forgotten stay populated
+    // even if the model was locally hidden after Ban earlier this session.
+    const filtered = banned.size
+      ? pend.filter((p) => p.skipped || p.forgotten || !banned.has(p.modelId))
+      : pend
     setPending((prev) => {
       if (!prev.length) return filtered
       const incoming = new Map(filtered.map((p) => [p.versionId, p]))
@@ -844,6 +868,18 @@ export default function App() {
         }
         setBackgroundStatus(payload.message)
       }),
+      typeof window.api.onTagFoldersReconcileProgress === 'function'
+        ? window.api.onTagFoldersReconcileProgress((payload) => {
+            if (payload.phase === 'done') {
+              setBackgroundStatus(payload.message)
+              window.setTimeout(() => {
+                setBackgroundStatus((prev) => (prev === payload.message ? null : prev))
+              }, 4000)
+              return
+            }
+            setBackgroundStatus(payload.message)
+          })
+        : () => {},
       window.api.onDownloadQueue((q) => {
         const key = queueStructureKey(q)
         if (key !== lastQueueStructureKey) {
@@ -1324,14 +1360,22 @@ export default function App() {
 
   const pendingBadgeCount = useMemo(() => {
     const n = pending.filter(
-      (p) => !p.skipped && !ownedVersionIds.has(p.versionId)
+      (p) => !p.skipped && !p.forgotten && !ownedVersionIds.has(p.versionId)
     ).length
     return n || undefined
   }, [pending, ownedVersionIds])
 
+  const skippedPendingVersionIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const p of pending) {
+      if ((p.skipped || p.forgotten) && p.versionId > 0) ids.add(p.versionId)
+    }
+    return ids
+  }, [pending])
+
   const pendingOwnedInventory = useMemo(() => {
-    if (!pending.length) return [] as InventoryRecord[]
     const ids = new Set(pending.map((p) => p.modelId))
+    if (!ids.size) return [] as InventoryRecord[]
     return inventory.filter((r) => ids.has(r.modelId))
   }, [pending, inventory])
 
@@ -1477,6 +1521,15 @@ export default function App() {
     bannedPendingModelIdsRef.current.add(modelId)
     setPending((prev) => prev.filter((p) => p.modelId !== modelId))
   }, [])
+
+  const patchPendingVersionLocal = useCallback(
+    (versionId: number, patch: Partial<PendingVersion>) => {
+      setPending((prev) =>
+        prev.map((p) => (p.versionId === versionId ? { ...p, ...patch } : p))
+      )
+    },
+    []
+  )
 
   if (loadError) {
     const m = getMessages('en')
@@ -2068,6 +2121,7 @@ export default function App() {
                   : (prefs) => void saveSettings({ hideAwaitingAccess: prefs.hideAwaitingAccess })
               }
               sessionYieldCount={sessionYieldCount}
+              skippedPendingVersionIds={skippedPendingVersionIds}
               isActive={watchInteractive}
             />
           </div>
@@ -2164,10 +2218,15 @@ export default function App() {
             versionScanProgress={versionScanProgress}
             versionScanning={versionScanning}
             inventoryModelCount={inventory.length}
+            resultsDisplayMode={settings.resultsDisplayMode}
+            resultsPageSize={settings.resultsPageSize}
+            viewPrefs={settings.preserveFilters ? pendingViewPrefs : undefined}
+            onViewPrefsChange={settings.preserveFilters ? onPendingViewPrefsChange : undefined}
             onQueueRefresh={refreshQueueOnly}
             onLibraryRefresh={refreshInventory}
             onPendingRemoved={removePendingVersionLocal}
             onPendingModelRemoved={removePendingModelLocal}
+            onPendingPatched={patchPendingVersionLocal}
             onScanLibrary={scanLibraryVersions}
             banFunctionMode={settings.banFunctionMode ?? false}
             onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
@@ -2176,6 +2235,7 @@ export default function App() {
             }}
             onOpenInLibrary={jumpToGallery}
             onOpenModelDetail={openModelDetail}
+            isActive={tab === 'pending'}
           />
         ) : null}
         {!modelDetailTarget && tab === 'awaiting' ? (
@@ -2204,6 +2264,7 @@ export default function App() {
             confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
             onSaveTagRules={saveTagRules}
             onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'awaiting' })}
+            sessionBanModelIds={sessionBanModelIds}
             isActive
           />
         ) : null}

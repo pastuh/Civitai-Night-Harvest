@@ -37,6 +37,7 @@ export function buildBrowseCardFromModel(
     id: m.id,
     versionId,
     name: m.name,
+    versionName: v?.name,
     type: m.type,
     baseModel: v?.baseModel ?? '',
     baseModelType: checkpointTypeLabel(v?.baseModelType) ?? undefined,

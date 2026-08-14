@@ -247,8 +247,18 @@ function DownloadQueueMinimalRow({
               {rating.label}
             </span>
           ) : null}
-          <strong className="active-queue-minimal-title" title={item.modelName}>
+          <strong
+            className="active-queue-minimal-title"
+            title={
+              item.versionName
+                ? `${item.modelName} · ${item.versionName}`
+                : item.modelName
+            }
+          >
             {item.modelName}
+            {item.versionName ? (
+              <span className="active-queue-minimal-version"> · {item.versionName}</span>
+            ) : null}
           </strong>
         </div>
         <div className="active-queue-minimal-actions">
@@ -381,6 +391,11 @@ function DownloadQueueRichCard({
         <div className="gallery-card-title-row">
           <strong title={item.modelName}>{item.modelName}</strong>
         </div>
+        {item.versionName ? (
+          <div className="gallery-card-version-row" title={item.versionName}>
+            {item.versionName}
+          </div>
+        ) : null}
       </div>
     </div>
   )

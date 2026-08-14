@@ -131,6 +131,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.libraryDetails')}</li>
             <li>{t('help.librarySort')}</li>
             <li>{t('help.libraryContent')}</li>
+            <li>{t('help.libraryTypeFilter')}</li>
             <li>{t('help.libraryTags')}</li>
             <li>{t('help.libraryFastTag')}</li>
             <li>{t('help.libraryExcluded')}</li>

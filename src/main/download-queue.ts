@@ -50,6 +50,7 @@ import { checkConfiguredOutputFoldersReachable } from './output-paths'
 
 export interface EnqueueMeta {
   modelName?: string
+  versionName?: string
   previewUrl?: string
   routingTag?: string
   modelType?: string
@@ -172,6 +173,13 @@ export class DownloadQueue {
       this.log?.(
         'info',
         `Cleared ${purgedSession} browse/crawl queue item(s) from previous session`
+      )
+    }
+    const purgedCkpt = this.purgeAutoQueuedCheckpoints()
+    if (purgedCkpt > 0) {
+      this.log?.(
+        'info',
+        `Cleared ${purgedCkpt} auto-queued Checkpoint download(s) from previous session`
       )
     }
 
@@ -616,6 +624,11 @@ export class DownloadQueue {
     if (meta.manual !== true && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
       return ''
     }
+    // Checkpoints must be user-selected — never auto-queue from Harvest.
+    const enqueueType = (meta.modelType ?? 'LORA').toUpperCase()
+    if (meta.manual !== true && enqueueType === 'CHECKPOINT') {
+      return ''
+    }
     const pausedTags = settings.hiddenTags ?? []
     const bannedTags = settings.bannedTags ?? []
     if (
@@ -670,6 +683,7 @@ export class DownloadQueue {
       modelId: request.modelId,
       versionId: request.versionId ?? 0,
       modelName: meta.modelName ?? deferred?.modelName ?? `Model ${request.modelId}`,
+      versionName: meta.versionName ?? deferred?.versionName,
       slug: '',
       previewUrl: meta.previewUrl ?? deferred?.previewUrl,
       routingTag: routingTag || deferred?.routingTag || '',
@@ -791,6 +805,27 @@ export class DownloadQueue {
       removed++
     }
 
+    if (removed) {
+      this.broadcast()
+      this.checkIdle()
+    }
+    return removed
+  }
+
+  /** Drop auto-queued Checkpoint items (manual selections stay). */
+  purgeAutoQueuedCheckpoints(): number {
+    let removed = 0
+    for (const item of [...this.items]) {
+      if (item.manual) continue
+      if ((item.modelType || '').toUpperCase() !== 'CHECKPOINT') continue
+      if (item.status === 'done' || item.status === 'skipped') continue
+      if (item.status === 'downloading') {
+        if (item.versionId) this.downloadService.cancel(item.versionId)
+        else if (item.modelId > 0) this.downloadService.cancelByModelId(item.modelId)
+      }
+      this.items = this.items.filter((i) => i.id !== item.id)
+      removed++
+    }
     if (removed) {
       this.broadcast()
       this.checkIdle()

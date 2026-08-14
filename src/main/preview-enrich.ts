@@ -290,10 +290,8 @@ export function previewsFromModel(
   versionId: number,
   contentFilter: ContentFilter
 ): ResolvedPreview {
-  const strict = toResolved(model.id, versionId, model, contentFilter, true)
-  if (strict.previewUrls.length) return strict
-  // Search/EA payloads often omit images on the latest version — fall back to sibling covers.
-  return toResolved(model.id, versionId, model, contentFilter, false)
+  // Strict per-version only — sibling covers caused wrong preview on version cards.
+  return toResolved(model.id, versionId, model, contentFilter, true)
 }
 
 /**

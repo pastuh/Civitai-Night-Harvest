@@ -454,8 +454,8 @@ function processModel(
       },
       {
         modelName: model.name,
-        previewUrl:
-          resolveVersionPreviewUrl(model, version.id) ?? resolveModelPreviewUrl(model),
+        versionName: version.name,
+        previewUrl: resolveVersionPreviewUrl(model, version.id),
         routingTag,
         modelType: model.type,
         baseModel: version.baseModel,
@@ -619,7 +619,15 @@ function processModel(
       previewUrl:
         resolveVersionPreviewUrl(model, version.id) ?? resolveModelPreviewUrl(model),
       existingFolder: existing.outputFolder,
-      totalVersions: model.modelVersions?.length ?? undefined
+      totalVersions: model.modelVersions?.length ?? undefined,
+      modelType: model.type || undefined,
+      nsfw: model.nsfw,
+      nsfwLevel: model.nsfwLevel,
+      civitaiTags: Array.isArray(model.tags)
+        ? model.tags.filter((t): t is string => typeof t === 'string')
+        : undefined,
+      downloadCount: model.stats?.downloadCount,
+      thumbsUpCount: model.stats?.thumbsUpCount
     }
     inventory.addPendingVersion(pending)
     ctx.pendingVersions.push(pending)

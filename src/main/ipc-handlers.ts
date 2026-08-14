@@ -142,6 +142,11 @@ const IPC_CHANNELS = [
   'pending:dismiss',
   'pending:skip',
   'pending:unskip',
+  'pending:forgetVersion',
+  'pending:unforgetVersion',
+  'pending:getSeen',
+  'pending:markSeen',
+  'pending:clearSeen',
   'deferred:get',
   'deferred:enrich',
   'deferred:retry',
@@ -1316,9 +1321,21 @@ export function initIpc(): void {
     }
   )
 
-  ipcMain.handle('inventory:reconcileTagFolders', () => {
+  ipcMain.handle('inventory:reconcileTagFolders', async () => {
     const tagRules = getTagRules()
-    const result = reconcileLibraryTagFolders(tagRules)
+    const result = await reconcileLibraryTagFolders(tagRules, (p) => {
+      sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+        phase: p.current >= p.total && p.total > 0 ? 'done' : 'moving',
+        current: p.current,
+        total: p.total,
+        moved: p.moved,
+        message:
+          p.total > 0
+            ? `Moving tag folders… ${p.current}/${p.total}` +
+              (p.modelName ? ` · ${p.modelName}` : '')
+            : 'Moving tag folders…'
+      })
+    })
     let queueUpdated = 0
     const seen = new Set<string>()
     for (const rule of tagRules) {
@@ -1329,6 +1346,13 @@ export function initIpc(): void {
         queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
       }
     }
+    sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+      phase: 'done',
+      current: result.moved + result.skipped,
+      total: result.moved + result.skipped,
+      moved: result.moved,
+      message: `Tag folders: moved ${result.moved}, skipped ${result.skipped}`
+    })
     return { ...result, queueUpdated }
   })
 
@@ -1573,6 +1597,33 @@ export function initIpc(): void {
 
   ipcMain.handle('pending:unskip', (_e, versionId: number) => {
     scheduler.unskipPending(versionId)
+  })
+
+  ipcMain.handle('pending:forgetVersion', (_e, versionId: number) => {
+    scheduler.forgetPending(versionId)
+  })
+
+  ipcMain.handle('pending:unforgetVersion', (_e, versionId: number) => {
+    scheduler.unforgetPending(versionId)
+  })
+
+  ipcMain.handle('pending:getSeen', () => ({
+    byVersionId: inventory.getPendingSeenMap()
+  }))
+
+  ipcMain.handle(
+    'pending:markSeen',
+    (_e, payload: { versionIds: number[]; seenDay: string }) => {
+      const marked = inventory.markPendingSeen(payload.versionIds ?? [], payload.seenDay ?? '')
+      return { marked, byVersionId: inventory.getPendingSeenMap() }
+    }
+  )
+
+  ipcMain.handle('pending:clearSeen', (_e, payload?: { versionId?: number }) => {
+    if (payload?.versionId && payload.versionId > 0) {
+      inventory.clearPendingSeen(payload.versionId)
+    }
+    return { byVersionId: inventory.getPendingSeenMap() }
   })
 
   ipcMain.handle('deferred:get', () => inventory.getAllDeferredDownloads())

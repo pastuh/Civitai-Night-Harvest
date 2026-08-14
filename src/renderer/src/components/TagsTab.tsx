@@ -1,5 +1,4 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent as ReactMouseEvent } from 'react'
-import { flushSync } from 'react-dom'
 
 import type { HiddenTagApplyProgress, InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { tagsEqual, fuzzyTagMatch, tagAliasMatch } from '../../../shared/tag-fuzzy'
@@ -305,6 +304,7 @@ export function TagsTab({
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [librarySearch, setLibrarySearch] = useState('')
+  const deferredLibrarySearch = useDeferredValue(librarySearch)
   const [tableHeight, setTableHeight] = useState(() => {
     try {
       const raw = localStorage.getItem('csd:tags-table-height')
@@ -454,10 +454,8 @@ export function TagsTab({
   )
 
   const prepareAssignDraft = useCallback((tags: string[], nextDraft: TagFolderRule[]) => {
-    flushSync(() => {
-      setPinnedAssignLabels(tags)
-      setDraft(nextDraft)
-    })
+    setPinnedAssignLabels(tags)
+    setDraft(nextDraft)
   }, [])
 
   const isHiddenByHideAssigned = useCallback(
@@ -626,7 +624,7 @@ export function TagsTab({
   )
 
   const libraryTags = useMemo(() => {
-    const searchNeedles = parseTagRuleNames(librarySearch).map((n) => n.toLowerCase())
+    const searchNeedles = parseTagRuleNames(deferredLibrarySearch).map((n) => n.toLowerCase())
     const matchesTagSearch = (tag: string) => {
       if (letterFilter && !tag.toLowerCase().startsWith(letterFilter)) return false
       if (!searchNeedles.length) return true
@@ -683,7 +681,7 @@ export function TagsTab({
     return rows
   }, [
     tableTagPool,
-    librarySearch,
+    deferredLibrarySearch,
     folderFilterActive,
     tagMatchesFolderFilter,
     letterFilter,
@@ -1177,7 +1175,7 @@ export function TagsTab({
         return
       }
       const result = await window.api.reconcileTagFolders()
-      await onRefresh?.()
+      if (result.moved > 0) await onRefresh?.()
       setStatusMessage(
         t('tagsTab.assignedMany', {
           tag,
@@ -1805,6 +1803,8 @@ const dirty = useMemo(() => {
         />
         </div>
       </div>
+
+      <p className="muted tags-tab-hint">{t('tagsTab.checkpointRoutingHint')}</p>
 
       <details className="tags-custom-panel" open={customOpen}>
         <summary

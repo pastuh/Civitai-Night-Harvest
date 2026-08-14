@@ -342,32 +342,32 @@ export const en = {
     headerNightModes:
       '🌙 Harvesting — queues every new model that matches your enabled Browse rules (paused / banned tags still skipped). Folder / Tags assignment is separate and can wait until after download.',
     headerDownloads:
-      '**Auto** / **Manual** — separate header toggles: Auto queues eligible models (up to 10 in pipeline); Manual only queues cards you click. **Pause** (red) stops active downloads without switching mode.',
+      '**Auto** / **Manual** — separate header toggles: Auto queues eligible **LoRA** matches (up to 10 in pipeline); Manual queues cards you click. **Checkpoints are never auto-queued** — click to queue. Enabling a Checkpoint Browse rule turns **Pause** on so large downloads do not start until you unpause. **Pause** (red) stops active downloads without switching mode.',
     headerEye: '👁 — hide Browse cards during harvest (quieter UI; downloads continue)',
     headerScan: 'Scan — run all enabled Browse rules once and refresh Results',
     headerBlur: 'Blur — hide preview thumbnails',
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort)',
     browseResults:
-      'Results — search by name, author, or numeric Civitai model/version ID; filters (Hide owned, etc.); Loaded / Owned / Yield stats; Sort and Tags; click a card to queue',
+      'Results — search by name, author, or numeric Civitai model/version ID; filters (Hide owned, etc.); Loaded / Owned / Yield stats; **Updates** count excludes skipped versions; Sort and Tags; click a card to queue',
     browseDetails:
       'ℹ on a card opens **Model details** (full page) — versions on the right, sticky Back/Civitai/Show List/Ban bar, download missing versions, Load/Save preview for owned versions',
     browsePreviews:
-      'Previews are **per version** (not one shared model image). Load previews fetches only that version’s images; Save preview writes `.preview.jpg` for the selected owned version',
+      'Previews are **per version** (not one shared model image). Cards and the download strip show **version name**; Load previews fetches only that version’s images; Save preview writes `.preview.jpg` for the selected owned version',
     browseTags:
       'Tags popover — filter the grid · ⏸ pause tag (temporary Browse exclude) · permanent bans are managed in Tag Folders (purple chips)',
     browsePausedBanned:
       '**Paused** bar — temporary exclude. **Banned** bar — permanent ban-by-tag (read-only here; Ban / Unban in Tag Folders). Amber = pause · purple = permanent on cards',
     browseManualQueue:
-      'Manual — crawl/scan and Auto pipeline do not add models; only your card clicks enter the queue (unlimited)',
+      'Manual — crawl/scan and Auto pipeline do not add models; only your card clicks enter the queue (unlimited). Checkpoints always need a click even when Auto is on.',
     browseSettled:
       'Settings → Browse gallery — optionally send owned/excluded/awaiting cards to the end and dim them (hover restores; search matches stay bright)',
     browseBan: 'Ban On — red × on cards excludes a model from future auto-queue',
     browseContextSkipTag:
       'Right-click a model → pause a tag (temporary). Permanent ban-by-tag: Tag Folders **Ban** column',
     libraryFolders:
-      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path). Check tags to route downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted`.',
+      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path) for **LoRA**. Checkpoints ignore Tag Folders tags and stay in `{checkpoint}/{baseModel}/` unless you use **Custom folder assignments** / manual Assign. Check tags to route LoRA downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted` (LoRA).',
     libraryCustomAssignments:
-      '**Custom folder assignments** (Tag Folders) — personal tag + folder for local-only models (optional type/base). After Save, that folder and its subfolders import into Library. Civitai downloads with the same tag name still use the normal app tag folder — not your custom path. These locals skip Civitai preview/update checks.',
+      '**Custom folder assignments** (Tag Folders) — personal tag + folder for local-only models (optional type/base). For Checkpoints this is the only way to put files outside `{checkpoint}/{baseModel}/`. After Save, that folder and its subfolders import into Library. Civitai LoRA downloads with the same tag name still use the normal app tag folder — not your custom path. These locals skip Civitai preview/update checks.',
     libraryPriority:
       'Tag Folders **Priority** — when a model matches several tags, higher number wins (▲/▼ skip 0). Equal priorities: first matching tag. Priority 0 = fixed auto-route. Manual Library assigns always win.',
     libraryTagBan:
@@ -383,6 +383,8 @@ export const en = {
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
+    libraryTypeFilter:
+      'Sidebar **LoRA** / **Checkpoint** — filter by model type (from metadata or folder). Checkpoint cards show a small type badge.',
     libraryTags:
       'Right-click a card → **Assign model to tag**. Click a card tag opens Tag folders (or Fast tag popup when enabled). Green / mapped chips = folder rules.',
     libraryFastTag:
@@ -418,7 +420,7 @@ export const en = {
     edgeAwaiting: 'Yellow — Early access',
     edgeBlocked: 'Purple — permanent ban-by-tag · amber — paused (Browse exclude)',
     dlStrip:
-      'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode.',
+      'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode. Strip shows **version name** next to the model title.',
     dlStripLayouts:
       '**Minimal** — thumbnail always visible; left column shows queue/download text; vertical separator; model name on the right. Green fill grows across the left column only — when it reaches the separator, the download is complete. Right-click, ban, and priority work like other layouts.',
     dlStripProgress:
@@ -432,7 +434,7 @@ export const en = {
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but version data is empty; recheck or paste a download URL',
     dlNewVersions:
-      'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model; **Skip** hides that version only (keeps your files; stays skipped until **Unskip**); **Show skipped** (off by default) lists them again. If Early access, it moves to Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
+      'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model; **Skip** = this version later (stays until **Unskip**); **Mark seen On** also enables **Hide seen** — click a card or leave left/right to hide reviewed offers (**including skipped**); **Forget** = never suggest **this version** again (**Show forgotten** → Unforget; other versions stay). Skipped / forgotten versions are **not** counted in Browse Updates. Types / rating / sort sidebar like Missing. If Early access, it moves to Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
     dlTabBadges:
       'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
@@ -819,8 +821,30 @@ export const en = {
   },
   pending: {
     emptyHint: 'No updates waiting. Harvest fills this list automatically when it finds newer versions of models you own.',
+    emptyForgottenHint:
+      'No forgotten update versions here. Forget hides one version only — use Show forgotten. If you used whole-model Forget earlier, those are under Missing → Show forgotten.',
     baseFilterHint:
       'Lists every missing version whose base model matches one you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
+    actionsHint:
+      'Skip = this version later. Turn on Mark seen, then leave a card left/right to mark reviewed (Hide seen). Forget = never update this model. Show forgotten = only forgotten models you still own.',
+    searchPlaceholder: 'Search updates…',
+    hideSeen: 'Hide seen',
+    hideSeenHint: 'Hide update offers you marked as seen (including skipped)',
+    markSeen: 'Mark seen',
+    markSeenModeOff: 'Mark seen Off',
+    markSeenModeOn: 'Mark seen On',
+    markSeenModeTitle:
+      'Turns on Mark seen and Hide seen. Click a card or leave left/right to hide reviewed offers (including skipped). Right-click → Mark seen also works.',
+    seenBadge: 'Seen',
+    filterUnseen: 'Unseen',
+    sidebarTitle: 'Filter',
+    sidebarTypes: 'Model types',
+    forgetHint: 'Forget this version only — never suggest this update again (Show forgotten to review). Other versions of the model stay listed.',
+    unforget: 'Unforget',
+    unforgetHint: 'Unforget — show this update offer again',
+    forgottenBadge: 'Forgotten',
+    showForgottenHint:
+      'Show update versions you forgot (this version only — not whole-model Forget from Missing)',
     emptyAfterBan: 'Banned entries removed.',
     dismissHint: 'Hide this offer only (keeps your library files).',
     skip: 'Skip',
@@ -1154,6 +1178,8 @@ export const en = {
     sidebarHint:
       'Tag borders: solid accent = primary folder · dashed accent = rule exists · dotted gray = not assigned. Click → Tag folders.',
     allModels: 'All models',
+    filterLora: 'LoRA',
+    filterCheckpoint: 'Checkpoint',
     untaggedFolder: 'Untagged folder',
     unrecognized: 'Unrecognized',
     unrecognizedHint: 'Custom / local file without Civitai identity (no .swarm.json or unmatched hash)',
@@ -1196,7 +1222,7 @@ export const en = {
   downloadTab: {
     title: 'Download by URL or ID',
     lead:
-      'LoRAs download to {lora}; checkpoints to {checkpoint}. Routing tag adds a subfolder (e.g. Krea2). Tag Folders can override — or move later in Library.',
+      'LoRAs download to {lora} (Tag Folders can add a subfolder). Checkpoints go to {checkpoint}/{baseModel}/ only — use Custom folder assignments for a different path. Queue Checkpoints manually (Auto never queues them).',
     needOutputFolder: 'Set the output folder for this model type in Settings first.',
     tagHint: 'To choose which tags to hide or block from auto-download, use Browse → blocked tags bar, or',
     tagHintSettings: 'Settings → Blocked tags',
@@ -1275,8 +1301,10 @@ export const en = {
     noUnassigned: 'All visible tags are already assigned',
     noTags: 'No tags in library yet',
     customTitle: 'Custom folder assignments',
+    checkpointRoutingHint:
+      'Checkpoints never go into Tag Folders Civitai-tag folders — only `{checkpointRoot}/{baseModel}/`. Use Custom folder assignments (below) for a different path.',
     customHint:
-      'Personal tags for your local models: tag + folder + optional type/base model. Civitai downloads with the same tag name go to the app tag folder under LoRA/Checkpoint roots — not into this custom path. After Save, the folder (including subfolders) is scanned into Library. Incomplete rows (empty tag) are dropped on Save.',
+      'Personal tags for your local models: tag + folder + optional type/base model. For Checkpoints this is the only folder override (Tag Folders tags are ignored). Civitai LoRA downloads with the same tag name go to the app tag folder under LoRA roots — not into this custom path. After Save, the folder (including subfolders) is scanned into Library. Incomplete rows (empty tag) are dropped on Save.',
     customEmpty: 'No custom path overrides — add one below if needed.',
     customTagName: 'Tag name',
     customTagPlaceholder: 'my models',
@@ -1363,7 +1391,11 @@ export const en = {
     favoriteOnHint: 'Remove favorite — stop pinning at top of Library',
     favoriteAdd: 'Add favorite ★',
     favoriteRemove: 'Remove favorite ☆',
-    openTagFoldersHint: 'Open Tag folders — assign folder for “{tag}” before download'
+    openTagFoldersHint: 'Open Tag folders — assign folder for “{tag}” before download',
+    sidebarTitle: 'Filters',
+    filterFavorites: 'Favorites',
+    sessionBannedBadge: 'Banned this session',
+    policyTagsHint: 'Models whose tags match pause / ban-by-tag policy.'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1416,6 +1448,7 @@ export const en = {
     showForgotten: 'Show forgotten',
     showBanned: 'Show banned / paused',
     sidebarTitle: 'Filter',
+    sidebarTypes: 'Model types',
     collapseSidebar: 'Collapse filter sidebar',
     expandSidebar: 'Expand filter sidebar',
     sidebarAll: 'All',

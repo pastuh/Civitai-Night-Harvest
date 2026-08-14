@@ -1,22 +1,25 @@
 import type { RatingFilter } from '../../shared/rating-filter'
-import type { BrowseSort, DeferredSort, LibrarySort, MissingSort } from './list-sort'
+import type { BrowseSort, DeferredSort, LibrarySort, MissingSort, PendingSort } from './list-sort'
 import {
   normalizeBrowseSort,
   normalizeDeferredSort,
   normalizeLibrarySort,
-  normalizeMissingSort
+  normalizeMissingSort,
+  normalizePendingSort
 } from './list-sort'
 
-export type { BrowseSort, DeferredSort, LibrarySort, MissingSort } from './list-sort'
+export type { BrowseSort, DeferredSort, LibrarySort, MissingSort, PendingSort } from './list-sort'
 export {
   BROWSE_SORT_OPTIONS,
   DEFERRED_SORT_OPTIONS,
   LIBRARY_SORT_OPTIONS,
   MISSING_SORT_OPTIONS,
+  PENDING_SORT_OPTIONS,
   normalizeBrowseSort,
   normalizeDeferredSort,
   normalizeLibrarySort,
-  normalizeMissingSort
+  normalizeMissingSort,
+  normalizePendingSort
 } from './list-sort'
 
 /** Library sidebar / toolbar filter (preserve-filters snapshot). */
@@ -35,6 +38,8 @@ export type LibraryFilter =
 
 export interface LibraryViewPrefs {
   libraryFilter: LibraryFilter
+  /** Stacks with main filters; tag/folder filters ignore this (show everything for the tag). */
+  modelTypeFilter: string | null
   librarySort: LibrarySort
   nsfwFilter: RatingFilter
   hideFolderAssigned: boolean
@@ -50,6 +55,7 @@ export interface LibraryViewPrefs {
 
 export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
   libraryFilter: { type: 'all' },
+  modelTypeFilter: null,
   librarySort: 'tagGroup',
   nsfwFilter: 'all',
   hideFolderAssigned: false,
@@ -112,6 +118,41 @@ export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
   sidebarExpanded: true
 }
 
+/** Updates sidebar / toolbar filter (status / base model — model type stacks separately). */
+export type PendingSideFilter =
+  | { type: 'all' }
+  | { type: 'baseModel'; name: string }
+  | { type: 'unseen' }
+  | { type: 'skipped' }
+  | { type: 'forgotten' }
+
+export interface PendingViewPrefs {
+  hideSeen: boolean
+  markSeenMode: boolean
+  showForgotten: boolean
+  showSkipped: boolean
+  sortMode: PendingSort
+  ratingFilter: RatingFilter
+  search: string
+  sideFilter: PendingSideFilter
+  /** Stacks with sideFilter (LoRA ∩ Unseen, etc.). */
+  modelTypeFilter: string | null
+  sidebarExpanded: boolean
+}
+
+export const DEFAULT_PENDING_VIEW_PREFS: PendingViewPrefs = {
+  hideSeen: false,
+  markSeenMode: false,
+  showForgotten: false,
+  showSkipped: false,
+  sortMode: 'recent',
+  ratingFilter: 'all',
+  search: '',
+  sideFilter: { type: 'all' },
+  modelTypeFilter: null,
+  sidebarExpanded: true
+}
+
 /** Early access toolbar (in-session; optional preserve later). */
 export interface DeferredViewPrefs {
   deferredSort: DeferredSort
@@ -124,7 +165,53 @@ export const DEFAULT_DEFERRED_VIEW_PREFS: DeferredViewPrefs = {
 /** Coerce persisted / partial prefs (legacy `default` sort → `recent`). */
 export function coerceLibraryViewPrefs(raw: Partial<LibraryViewPrefs> | null | undefined): LibraryViewPrefs {
   const base = { ...DEFAULT_LIBRARY_VIEW_PREFS, ...(raw ?? {}) }
-  return { ...base, librarySort: normalizeLibrarySort(base.librarySort) }
+  const rawFilter = base.libraryFilter as { type?: string; name?: string } | null | undefined
+  let modelTypeFilter =
+    typeof base.modelTypeFilter === 'string' && base.modelTypeFilter.trim()
+      ? base.modelTypeFilter.trim()
+      : null
+  let libraryFilter: LibraryFilter = { type: 'all' }
+  if (rawFilter && typeof rawFilter === 'object' && typeof rawFilter.type === 'string') {
+    if (rawFilter.type === 'modelType' && typeof rawFilter.name === 'string' && rawFilter.name.trim()) {
+      modelTypeFilter = rawFilter.name.trim().toUpperCase() === 'CHECKPOINT' ? 'CHECKPOINT' : 'LORA'
+      libraryFilter = { type: 'all' }
+    } else if (
+      rawFilter.type === 'all' ||
+      rawFilter.type === 'untagged' ||
+      rawFilter.type === 'unrecognized' ||
+      rawFilter.type === 'session'
+    ) {
+      libraryFilter = { type: rawFilter.type }
+    } else if (
+      (rawFilter.type === 'routing' ||
+        rawFilter.type === 'subfolder' ||
+        rawFilter.type === 'civitai' ||
+        rawFilter.type === 'baseModel') &&
+      typeof rawFilter.name === 'string'
+    ) {
+      libraryFilter = { type: rawFilter.type, name: rawFilter.name } as LibraryFilter
+    } else if (rawFilter.type === 'cluster' && typeof (rawFilter as { key?: string }).key === 'string') {
+      libraryFilter = { type: 'cluster', key: (rawFilter as { key: string }).key }
+    } else if (rawFilter.type === 'byDate' && typeof (rawFilter as { day?: string }).day === 'string') {
+      libraryFilter = { type: 'byDate', day: (rawFilter as { day: string }).day }
+    } else if (
+      rawFilter.type === 'byDateRange' &&
+      typeof (rawFilter as { from?: string }).from === 'string' &&
+      typeof (rawFilter as { to?: string }).to === 'string'
+    ) {
+      libraryFilter = {
+        type: 'byDateRange',
+        from: (rawFilter as { from: string }).from,
+        to: (rawFilter as { to: string }).to
+      }
+    }
+  }
+  return {
+    ...base,
+    librarySort: normalizeLibrarySort(base.librarySort),
+    libraryFilter,
+    modelTypeFilter
+  }
 }
 
 export function coerceBrowseViewPrefs(raw: Partial<BrowseViewPrefs> | null | undefined): BrowseViewPrefs {
@@ -135,4 +222,37 @@ export function coerceBrowseViewPrefs(raw: Partial<BrowseViewPrefs> | null | und
 export function coerceMissingViewPrefs(raw: Partial<MissingViewPrefs> | null | undefined): MissingViewPrefs {
   const base = { ...DEFAULT_MISSING_VIEW_PREFS, ...(raw ?? {}) }
   return { ...base, sortMode: normalizeMissingSort(base.sortMode) }
+}
+
+export function coercePendingViewPrefs(raw: Partial<PendingViewPrefs> | null | undefined): PendingViewPrefs {
+  const base = { ...DEFAULT_PENDING_VIEW_PREFS, ...(raw ?? {}) }
+  const side = base.sideFilter as { type?: string; name?: string } | null | undefined
+  // Legacy: modelType lived inside sideFilter — lift into modelTypeFilter.
+  let modelTypeFilter =
+    typeof base.modelTypeFilter === 'string' && base.modelTypeFilter.trim()
+      ? base.modelTypeFilter.trim()
+      : null
+  let sideFilter: PendingSideFilter = { type: 'all' }
+  if (side && typeof side === 'object' && typeof side.type === 'string') {
+    if (side.type === 'modelType' && typeof side.name === 'string' && side.name.trim()) {
+      modelTypeFilter = side.name.trim()
+      sideFilter = { type: 'all' }
+    } else if (side.type === 'baseModel' && typeof side.name === 'string') {
+      sideFilter = { type: 'baseModel', name: side.name }
+    } else if (
+      side.type === 'all' ||
+      side.type === 'unseen' ||
+      side.type === 'skipped' ||
+      side.type === 'forgotten'
+    ) {
+      sideFilter = { type: side.type }
+    }
+  }
+  return {
+    ...base,
+    sortMode: normalizePendingSort(base.sortMode),
+    ratingFilter: base.ratingFilter ?? 'all',
+    sideFilter,
+    modelTypeFilter
+  }
 }

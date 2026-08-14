@@ -55,6 +55,7 @@ import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
 import {
   DEFAULT_LIBRARY_VIEW_PREFS,
   LIBRARY_SORT_OPTIONS,
+  coerceLibraryViewPrefs,
   normalizeLibrarySort,
   type LibraryFilter,
   type LibrarySort,
@@ -160,6 +161,30 @@ function recordInDownloadRange(r: InventoryRecord, from: string, to: string): bo
   return day >= from && day <= to
 }
 
+function isLibraryTagStyleFilter(f: LibraryFilter): boolean {
+  return (
+    f.type === 'routing' ||
+    f.type === 'subfolder' ||
+    f.type === 'civitai' ||
+    f.type === 'cluster'
+  )
+}
+
+/** LoRA / Checkpoint match for Library model-type filter + sidebar counts. */
+function recordMatchesLibraryModelType(
+  r: InventoryRecord,
+  wantRaw: string,
+  checkpointFolder: string
+): boolean {
+  const want = wantRaw.trim().toUpperCase()
+  const mt = (r.modelType || '').trim().toUpperCase()
+  if (mt) return mt === want || (want === 'LORA' && mt !== 'CHECKPOINT')
+  const folder = r.outputFolder.replace(/\\/g, '/').toLowerCase()
+  const ckpt = checkpointFolder.replace(/\\/g, '/').toLowerCase()
+  const isCkpt = Boolean(ckpt && folder.startsWith(ckpt))
+  return want === 'CHECKPOINT' ? isCkpt : !isCkpt
+}
+
 function aggregateModelTags(inventory: InventoryRecord[]): Array<{ name: string; count: number }> {
   const map = new Map<string, number>()
   for (const r of inventory) {
@@ -225,9 +250,12 @@ function GalleryTabInner({
   const t = useT()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
-  const initial = viewPrefs ?? DEFAULT_LIBRARY_VIEW_PREFS
+  const initial = viewPrefs ? coerceLibraryViewPrefs(viewPrefs) : DEFAULT_LIBRARY_VIEW_PREFS
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>(initial.libraryFilter)
+  const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(
+    initial.modelTypeFilter ?? null
+  )
   /** First click in calendar; second click completes a range. */
   const [dateRangeAnchor, setDateRangeAnchor] = useState<string | null>(null)
   const [librarySort, setLibrarySort] = useState<LibrarySort>(() =>
@@ -302,6 +330,7 @@ function GalleryTabInner({
     if (!onViewPrefsChange) return
     onViewPrefsChange({
       libraryFilter,
+      modelTypeFilter,
       librarySort,
       nsfwFilter,
       hideFolderAssigned,
@@ -313,6 +342,7 @@ function GalleryTabInner({
     })
   }, [
     libraryFilter,
+    modelTypeFilter,
     librarySort,
     nsfwFilter,
     hideFolderAssigned,
@@ -334,17 +364,24 @@ function GalleryTabInner({
   const modelTags = useMemo(() => aggregateModelTags(inventory), [inventory])
   const tagClusters = useMemo(() => buildTagClusters(modelTags), [modelTags])
 
+  const inventoryForMainCounts = useMemo(() => {
+    if (!modelTypeFilter) return inventory
+    return inventory.filter((r) =>
+      recordMatchesLibraryModelType(r, modelTypeFilter, checkpointFolder ?? '')
+    )
+  }, [inventory, modelTypeFilter, checkpointFolder])
+
   const libraryRatingCounts = useMemo(
     () =>
       countModelsByRatingFilter(
-        inventory.map((r) => ({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }))
+        inventoryForMainCounts.map((r) => ({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }))
       ),
-    [inventory]
+    [inventoryForMainCounts]
   )
 
   const baseModelOptions = useMemo(() => {
     const map = new Map<string, number>()
-    for (const r of inventory) {
+    for (const r of inventoryForMainCounts) {
       const name = r.baseModel.trim()
       if (!name) continue
       map.set(name, (map.get(name) ?? 0) + 1)
@@ -352,13 +389,13 @@ function GalleryTabInner({
     return [...map.entries()]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }, [inventory])
+  }, [inventoryForMainCounts])
 
   const hideBaseModelOnCards = libraryFilter.type === 'baseModel'
 
   const downloadDayCounts = useMemo(() => {
     const map = new Map<string, number>()
-    for (const r of inventory) {
+    for (const r of inventoryForMainCounts) {
       const day = inventoryDayKey(r.downloadedAt)
       if (!day) continue
       map.set(day, (map.get(day) ?? 0) + 1)
@@ -366,7 +403,7 @@ function GalleryTabInner({
     return [...map.entries()]
       .map(([day, count]) => ({ day, count }))
       .sort((a, b) => b.day.localeCompare(a.day))
-  }, [inventory])
+  }, [inventoryForMainCounts])
 
   const downloadCountByDay = useMemo(() => {
     const map = new Map<string, number>()
@@ -410,6 +447,24 @@ function GalleryTabInner({
     if (from === to) setLibraryFilter({ type: 'byDate', day: from })
     else setLibraryFilter({ type: 'byDateRange', from, to })
   }, [dateRangeAnchor])
+
+  const applyLibraryFilter = useCallback((next: LibraryFilter) => {
+    setLibraryFilter(next)
+    // Tag/folder filters show everything for that tag — clear model type.
+    if (isLibraryTagStyleFilter(next)) {
+      setModelTypeFilter(null)
+    }
+    if (next.type === 'all') {
+      setModelTypeFilter(null)
+    }
+  }, [])
+
+  const applyModelTypeFilter = useCallback((name: string) => {
+    const want = name.trim().toUpperCase() === 'CHECKPOINT' ? 'CHECKPOINT' : 'LORA'
+    setModelTypeFilter((prev) => (prev && prev.toUpperCase() === want ? null : want))
+    // Leave tag mode if stacking into main filters.
+    setLibraryFilter((prev) => (isLibraryTagStyleFilter(prev) ? { type: 'all' } : prev))
+  }, [])
 
   const applyDatePreset = useCallback((next: LibraryFilter) => {
     setDateRangeAnchor(null)
@@ -682,6 +737,12 @@ function GalleryTabInner({
       default:
         break
     }
+    // Model type stacks with main filters; tag/folder filters ignore it (show all for the tag).
+    if (modelTypeFilter && !isLibraryTagStyleFilter(libraryFilter)) {
+      list = list.filter((r) =>
+        recordMatchesLibraryModelType(r, modelTypeFilter, checkpointFolder ?? '')
+      )
+    }
     // Banned models are removed from disk/inventory on Ban; hide any leftover rows.
     list = list.filter(
       (r) => !hiddenModelIds.has(r.modelId) && !pendingHiddenVersionIds.has(r.versionId)
@@ -714,6 +775,7 @@ function GalleryTabInner({
   }, [
     inventory,
     libraryFilter,
+    modelTypeFilter,
     hiddenModelIds,
     pendingHiddenVersionIds,
     tagClusters,
@@ -813,19 +875,19 @@ function GalleryTabInner({
         libraryFilter.type,
         libraryFilter.type === 'routing' ||
         libraryFilter.type === 'civitai' ||
-        libraryFilter.type === 'folder' ||
-        libraryFilter.type === 'tagSubfolder'
+        libraryFilter.type === 'subfolder'
           ? libraryFilter.name
           : '',
         libraryFilter.type === 'byDate'
           ? libraryFilter.day
           : libraryFilter.type === 'byDateRange'
             ? `${libraryFilter.from}:${libraryFilter.to}`
-            : libraryFilter.type === 'baseModel' || libraryFilter.type === 'subfolder'
+            : libraryFilter.type === 'baseModel'
               ? libraryFilter.name
               : libraryFilter.type === 'cluster'
                 ? libraryFilter.key
                 : '',
+        modelTypeFilter ?? '',
         deferredModelSearch,
         modelLetter ?? '',
         pinModelId ?? '',
@@ -839,6 +901,7 @@ function GalleryTabInner({
       ].join('|'),
     [
       libraryFilter,
+      modelTypeFilter,
       deferredModelSearch,
       modelLetter,
       pinModelId,
@@ -928,7 +991,7 @@ function GalleryTabInner({
         return
       }
       // Always All models — session (and other) filters hide siblings and confuse Show List.
-      setLibraryFilter({ type: 'all' })
+      applyLibraryFilter({ type: 'all' })
       // Pin to this model only — no deferred search, no full-grid render + scroll.
       setPinModelId(modelId)
       setHighlightModelId(modelId)
@@ -938,7 +1001,7 @@ function GalleryTabInner({
         setHighlightModelId(null)
       }, 4500)
     },
-    [inventory, hiddenModelIds, t]
+    [inventory, hiddenModelIds, t, applyLibraryFilter]
   )
 
   useEffect(() => {
@@ -954,18 +1017,22 @@ function GalleryTabInner({
     const rule = findRuleForTag(name, tagRules)
     if (rule?.customAssignment) {
       const tag = parseTagRuleNames(rule.tagName)[0] ?? name
-      setLibraryFilter({ type: 'routing', name: tag })
+      applyLibraryFilter({ type: 'routing', name: tag })
     } else {
-      setLibraryFilter({ type: 'civitai', name })
+      applyLibraryFilter({ type: 'civitai', name })
     }
     setModelSearch('')
     setModelLetter(null)
     onFocusTagHandled?.()
-  }, [focusCivitaiTag, onFocusTagHandled, tagRules])
+  }, [focusCivitaiTag, onFocusTagHandled, tagRules, applyLibraryFilter])
 
   const unrecognizedCount = useMemo(
-    () => inventory.filter((r) => isUnrecognizedInventoryRecord(r)).length,
-    [inventory]
+    () => inventoryForMainCounts.filter((r) => isUnrecognizedInventoryRecord(r)).length,
+    [inventoryForMainCounts]
+  )
+  const sessionFilterCount = useMemo(
+    () => inventoryForMainCounts.filter((r) => sessionSet.has(r.versionId)).length,
+    [inventoryForMainCounts, sessionSet]
   )
   const versionNameById = useMemo(() => {
     const map = new Map<number, string>()
@@ -1312,6 +1379,9 @@ function GalleryTabInner({
     return true
   }
 
+  const modelTypeFilterActive = (name: string) =>
+    Boolean(modelTypeFilter && modelTypeFilter.toUpperCase() === name.trim().toUpperCase())
+
   const toggleClusterExpand = (key: string) => {
     setExpandedClusters((prev) => {
       const next = new Set(prev)
@@ -1355,7 +1425,7 @@ function GalleryTabInner({
         <button
           type="button"
           className={`sidebar-tag ${filterActive({ type: 'civitai', name: tag.name }) ? 'active' : ''}`}
-          onClick={() => setLibraryFilter({ type: 'civitai', name: tag.name })}
+          onClick={() => applyLibraryFilter({ type: 'civitai', name: tag.name })}
         >
           <span className="tag-name">{tag.name}</span>
           <span className="muted tag-count-inline">{tag.count}</span>
@@ -1417,28 +1487,32 @@ function GalleryTabInner({
                   />
                   {t('gallery.ignoreExcluded')}
                 </label>
-                {onBanFunctionModeChange && (
-                  <button
-                    type="button"
-                    className={`btn-sm browse-ban-toggle ${banFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                    onClick={() => onBanFunctionModeChange(!banFunctionMode)}
-                    title={t('browse.banModeTitle')}
-                    aria-pressed={banFunctionMode}
-                  >
-                    {banFunctionMode ? t('browse.banModeOn') : t('browse.banModeOff')}
-                  </button>
-                )}
-                {onFastTagModeChange && (
-                  <button
-                    type="button"
-                    className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                    onClick={() => onFastTagModeChange(!fastTagMode)}
-                    title={t('gallery.fastTagModeTitle')}
-                    aria-pressed={fastTagMode}
-                  >
-                    {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
-                  </button>
-                )}
+                {onBanFunctionModeChange || onFastTagModeChange ? (
+                  <div className="browse-mode-toggles">
+                    {onBanFunctionModeChange && (
+                      <button
+                        type="button"
+                        className={`btn-sm browse-ban-toggle ${banFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                        onClick={() => onBanFunctionModeChange(!banFunctionMode)}
+                        title={t('browse.banModeTitle')}
+                        aria-pressed={banFunctionMode}
+                      >
+                        {banFunctionMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                      </button>
+                    )}
+                    {onFastTagModeChange && (
+                      <button
+                        type="button"
+                        className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                        onClick={() => onFastTagModeChange(!fastTagMode)}
+                        title={t('gallery.fastTagModeTitle')}
+                        aria-pressed={fastTagMode}
+                      >
+                        {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
+                      </button>
+                    )}
+                  </div>
+                ) : null}
                 {onRepairPreviews && inventory.length > 0 && (
                   <button
                     type="button"
@@ -1594,6 +1668,7 @@ function GalleryTabInner({
               (modelSearch ||
                 modelLetter ||
                 libraryFilter.type !== 'all' ||
+                modelTypeFilter ||
                 pinModelId != null)
                 ? t('gallery.emptyFiltered')
                 : t('gallery.emptyNone')}
@@ -1676,16 +1751,32 @@ function GalleryTabInner({
         <div className="tag-sidebar-scroll">
           <button
             type="button"
-            className={`sidebar-tag ${filterActive({ type: 'all' }) ? 'active' : ''}`}
-            onClick={() => setLibraryFilter({ type: 'all' })}
+            className={`sidebar-tag ${
+              filterActive({ type: 'all' }) && !modelTypeFilter ? 'active' : ''
+            }`}
+            onClick={() => applyLibraryFilter({ type: 'all' })}
           >
             <span className="tag-name">{t('gallery.allModels')}</span>
-            <span className="muted tag-count-inline">{inventory.length}</span>
+            <span className="muted tag-count-inline">{inventoryForMainCounts.length}</span>
+          </button>
+          <button
+            type="button"
+            className={`sidebar-tag ${modelTypeFilterActive('LORA') ? 'active' : ''}`}
+            onClick={() => applyModelTypeFilter('LORA')}
+          >
+            <span className="tag-name">{t('gallery.filterLora')}</span>
+          </button>
+          <button
+            type="button"
+            className={`sidebar-tag ${modelTypeFilterActive('CHECKPOINT') ? 'active' : ''}`}
+            onClick={() => applyModelTypeFilter('CHECKPOINT')}
+          >
+            <span className="tag-name">{t('gallery.filterCheckpoint')}</span>
           </button>
           <button
             type="button"
             className={`sidebar-tag ${filterActive({ type: 'untagged' }) ? 'active' : ''}`}
-            onClick={() => setLibraryFilter({ type: 'untagged' })}
+            onClick={() => applyLibraryFilter({ type: 'untagged' })}
           >
             {t('gallery.untaggedFolder')}
           </button>
@@ -1693,20 +1784,20 @@ function GalleryTabInner({
             <button
               type="button"
               className={`sidebar-tag ${filterActive({ type: 'unrecognized' }) ? 'active' : ''}`}
-              onClick={() => setLibraryFilter({ type: 'unrecognized' })}
+              onClick={() => applyLibraryFilter({ type: 'unrecognized' })}
             >
               <span className="tag-name">{t('gallery.unrecognized')}</span>
               <span className="muted tag-count-inline">{unrecognizedCount}</span>
             </button>
           )}
-          {sessionDownloadIds.length > 0 && (
+          {sessionFilterCount > 0 && (
             <button
               type="button"
               className={`sidebar-tag ${filterActive({ type: 'session' }) ? 'active' : ''}`}
-              onClick={() => setLibraryFilter({ type: 'session' })}
+              onClick={() => applyLibraryFilter({ type: 'session' })}
             >
               <span className="tag-name">{t('gallery.sessionDownloads')}</span>
-              <span className="muted tag-count-inline">{sessionDownloadIds.length}</span>
+              <span className="muted tag-count-inline">{sessionFilterCount}</span>
             </button>
           )}
 
@@ -1793,7 +1884,7 @@ function GalleryTabInner({
                     key={name}
                     type="button"
                     className={`sidebar-tag ${filterActive({ type: 'baseModel', name }) ? 'active' : ''}`}
-                    onClick={() => setLibraryFilter({ type: 'baseModel', name })}
+                    onClick={() => applyLibraryFilter({ type: 'baseModel', name })}
                   >
                     <span className="tag-name">{name}</span>
                     <span className="muted tag-count-inline">{count}</span>
@@ -1850,7 +1941,7 @@ function GalleryTabInner({
                             type="button"
                             className={`sidebar-tag ${filterActive({ type: 'subfolder', name: route.name }) ? 'active' : ''}`}
                             onClick={() =>
-                              setLibraryFilter({ type: 'subfolder', name: route.name })
+                              applyLibraryFilter({ type: 'subfolder', name: route.name })
                             }
                             title={route.display}
                           >
@@ -1879,7 +1970,7 @@ function GalleryTabInner({
                                   type="button"
                                   className={`sidebar-tag ${filterActive({ type: 'routing', name: tag }) ? 'active' : ''}`}
                                   onClick={() =>
-                                    setLibraryFilter({ type: 'routing', name: tag })
+                                    applyLibraryFilter({ type: 'routing', name: tag })
                                   }
                                   title={
                                     displayFolderForTag(
@@ -1927,7 +2018,7 @@ function GalleryTabInner({
                         <button
                           type="button"
                           className={`sidebar-tag ${filterActive({ type: 'routing', name: entry.label }) ? 'active' : ''}`}
-                          onClick={() => setLibraryFilter({ type: 'routing', name: entry.label })}
+                          onClick={() => applyLibraryFilter({ type: 'routing', name: entry.label })}
                           title={
                             entry.isRoot
                               ? rule.folderPath || entry.label
@@ -2002,7 +2093,7 @@ function GalleryTabInner({
                     <button
                       type="button"
                       className={`sidebar-tag ${filterActive({ type: 'cluster', key: cluster.key }) ? 'active' : ''}`}
-                      onClick={() => setLibraryFilter({ type: 'cluster', key: cluster.key })}
+                      onClick={() => applyLibraryFilter({ type: 'cluster', key: cluster.key })}
                       title={t('gallery.relatedTags', { count: cluster.variants.length })}
                     >
                       <span className="tag-name">{cluster.label}</span>

@@ -166,6 +166,8 @@ interface Props {
   onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
   /** Session Yield — models that entered the download pipeline (only grows). */
   sessionYieldCount?: number
+  /** Skipped Updates version IDs — exclude from Browse Updates count. */
+  skippedPendingVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause Browse scroll observers. */
   isActive?: boolean
 }
@@ -230,6 +232,7 @@ export function WatchRulesTab({
   browseViewPrefs,
   onBrowseViewPrefsChange,
   sessionYieldCount = 0,
+  skippedPendingVersionIds,
   isActive = true
 }: Props) {
   const { paused: queuePaused } = useQueuedMembership()
@@ -981,6 +984,7 @@ export function WatchRulesTab({
           viewPrefs={browseViewPrefs}
           onViewPrefsChange={onBrowseViewPrefsChange}
           sessionYieldCount={sessionYieldCount}
+          skippedPendingVersionIds={skippedPendingVersionIds}
           isActive={isActive}
         />
       ) : settings.nightMode && !showQuietActions ? (
