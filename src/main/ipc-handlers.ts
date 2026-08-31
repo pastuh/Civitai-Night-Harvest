@@ -14,7 +14,7 @@ import type {
   CivitaiDomain,
   WatchRuleTestModel
 } from '../shared/types'
-import { buildModelSlug, parseModelId, apiNsfwParam, apiEarlyAccessParam, apiTagSearchVariants, matchesContentFilter, resolveSearchDomains, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, domainLabel, civitaiSearchParamsFromRule, parseRuleFilterTags, getDefaultFolderForType } from '../shared/utils'
+import { buildModelSlug, parseModelId, apiNsfwParam, apiEarlyAccessParam, apiTagSearchVariants, matchesContentFilter, resolveSearchDomains, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, domainLabel, civitaiSearchParamsFromRule, parseRuleFilterTags, getDefaultFolderForType, isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import {
   findRuleForTag,
   modelHasPolicyTag,
@@ -31,7 +31,10 @@ import { DownloadService } from './download-service'
 import * as inventory from './inventory'
 import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync, findSuspiciousModelFiles } from './library-sync'
 import { setLibraryPreviewFromUrl } from './library-preview'
-import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, enrichDeferredPreviews } from './preview-enrich'
+import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, resolveVideoPreviewsBatch, enrichDeferredPreviews } from './preview-enrich'
+import { cacheVideoPreviewUrl } from './preview-video-cache'
+import { countVideoPreviewSyncCandidates, syncAllVideoPreviews } from './preview-video-sync'
+import { finalizeBrowseCards } from './browse-cache'
 import { buildSampleModels, buildWatchRuleTestResult, lookupBrowseModelByNumericId } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
@@ -121,6 +124,7 @@ const IPC_CHANNELS = [
   'inventory:deleteVersion',
   'inventory:patchNsfw',
   'inventory:setPreviewFromUrl',
+  'inventory:getPreferredPreviewUrl',
   'model:preview',
   'download:enqueue',
   'download:getQueue',
@@ -129,6 +133,7 @@ const IPC_CHANNELS = [
   'download:cancel',
   'download:dismiss',
   'download:retryFailed',
+  'download:runNow',
   'download:priority',
   'download:setRouting',
   'download:clearQueue',
@@ -155,6 +160,13 @@ const IPC_CHANNELS = [
   'shell:showInFolder',
   'shell:openExternal',
   'preview:resolveBatch',
+  'preview:resolveVideoBatch',
+  'preview:resolveVideoPlayUrl',
+  'preview:getVideoPreview',
+  'preview:markVideoAbsent',
+  'preview:syncVideoAll',
+  'preview:getVideoSyncPending',
+  'browse:getCardCache',
   'model:getDetail',
   'library:verifyHashes',
   'app:rendererReady',
@@ -172,6 +184,74 @@ function clearIpcHandlers(): void {
 
 function ruleContentFilter(rule: WatchRule): ContentFilter {
   return rule.contentFilter ?? getSettings().contentFilter
+}
+
+function persistResolvedVideoPreviews(
+  items: import('../shared/types').PreviewResolveRequest[],
+  results: Array<{
+    versionId: number
+    videoPreviewUrl?: string
+    videoPreviewUrls?: string[]
+  }>
+): void {
+  for (let i = 0; i < results.length; i++) {
+    const req = items[i]
+    const res = results[i]
+    if (!req || !res || res.versionId <= 0 || req.modelId <= 0) continue
+    if (!res.videoPreviewUrl && !res.videoPreviewUrls?.length) continue
+    inventory.upsertVersionVideoPreview({
+      versionId: res.versionId,
+      modelId: req.modelId,
+      videoPreviewUrl: res.videoPreviewUrl,
+      videoPreviewUrls: res.videoPreviewUrls
+    })
+  }
+}
+
+function persistResolvedImagePreviews(
+  items: import('../shared/types').PreviewResolveRequest[],
+  results: Array<{
+    versionId: number
+    previewUrl?: string
+    previewUrls?: string[]
+    videoPreviewUrl?: string
+    videoPreviewUrls?: string[]
+  }>
+): void {
+  for (let i = 0; i < results.length; i++) {
+    const req = items[i]
+    const res = results[i]
+    if (!req || !res || res.versionId <= 0 || req.modelId <= 0) continue
+
+    let imageUrl = normalizePreviewDisplayUrl(res.previewUrl ?? res.previewUrls?.[0] ?? '')
+    if (!isDisplayablePreviewUrl(imageUrl)) {
+      const video = res.videoPreviewUrl ?? res.videoPreviewUrls?.[0]
+      imageUrl = video ? normalizePreviewDisplayUrl(video) : undefined
+    }
+    if (!isDisplayablePreviewUrl(imageUrl)) continue
+
+    const previewUrls = (res.previewUrls?.length ? res.previewUrls : [imageUrl])
+      .map((raw) => normalizePreviewDisplayUrl(raw))
+      .filter((url): url is string => Boolean(url && isDisplayablePreviewUrl(url)))
+    inventory.patchBrowseCardCachePreview(
+      res.versionId,
+      req.modelId,
+      imageUrl,
+      previewUrls.length ? previewUrls : [imageUrl],
+      res.videoPreviewUrl,
+      res.videoPreviewUrls
+    )
+
+    const deferred = inventory.getDeferredDownload(res.versionId)
+    if (deferred) {
+      inventory.upsertDeferredDownload({
+        ...deferred,
+        previewUrl: imageUrl,
+        bumpAttempt: false
+      })
+      downloadQueue.patchItemPreviewUrl(res.versionId, imageUrl)
+    }
+  }
 }
 
 function mergeBrowseSampleModels(lists: WatchRuleTestModel[][]): WatchRuleTestModel[] {
@@ -254,6 +334,15 @@ async function fetchWatchRuleTestPageSafe(
   }
 }
 
+async function finalizeBrowseSampleModels(
+  items: import('../shared/types').CivitaiModel[],
+  client: CivitaiClient,
+  filter: ContentFilter
+): Promise<WatchRuleTestModel[]> {
+  const sampleModels = buildSampleModels(items, client, filter)
+  return finalizeBrowseCards(sampleModels)
+}
+
 async function fetchWatchRuleTestPage(
   domain: CivitaiDomain,
   rule: WatchRule,
@@ -271,10 +360,10 @@ async function fetchWatchRuleTestPage(
   }
 
   if (rule.modelId && rule.modelId > 0) {
-    const model = await client.getModel(rule.modelId)
+    const model = await client.getModel(rule.modelId, { pace: 'interactive' })
     const items = [model].filter((m) => matchesContentFilter(m.nsfw, filter))
     await enrichModelPreviews(items, clientPool, filter, domain)
-    const sampleModels = buildSampleModels(items, client, filter)
+    const sampleModels = await finalizeBrowseSampleModels(items, client, filter)
     return buildWatchRuleTestResult(
       sampleModels,
       {
@@ -315,7 +404,8 @@ async function fetchWatchRuleTestPage(
     sort: searchOpts.sort,
     period: searchOpts.period,
     username: searchOpts.username,
-    checkpointType: searchOpts.checkpointType
+    checkpointType: searchOpts.checkpointType,
+    pace: 'interactive'
   })
 
   let items = result.items.filter((m) => matchesContentFilter(m.nsfw, filter))
@@ -329,10 +419,10 @@ async function fetchWatchRuleTestPage(
   if (!cursor) {
     await enrichModelPreviews(items, clientPool, filter, domain)
   } else {
-    void enrichModelPreviews(items, clientPool, filter, domain)
+    await enrichModelPreviews(items, clientPool, filter, domain)
   }
 
-  const sampleModels = buildSampleModels(items, client, filter)
+  const sampleModels = await finalizeBrowseSampleModels(items, client, filter)
 
   return buildWatchRuleTestResult(
     sampleModels,
@@ -410,6 +500,9 @@ export function initIpc(): void {
     onQueueMutated: () => {
       // Ban / dismiss / finish frees slots — refill up to the auto-queue cap (not only when empty).
       sched?.maybeFillDownloadQueue()
+    },
+    onDownloaded: (info) => {
+      sched?.offerSiblingVersionsAfterDownload(info)
     }
   })
   scheduler = new ScanScheduler(clientPool, downloadQueue, () => mainWindow)
@@ -545,10 +638,59 @@ export function initIpc(): void {
     'preview:resolveBatch',
     async (
       _e,
-      items: { modelId: number; versionId: number }[],
+      items: import('../shared/types').PreviewResolveRequest[],
       contentFilter: ContentFilter = 'all'
-    ) => resolvePreviewsBatch(clientPool, items, contentFilter)
+    ) => {
+      const results = await resolvePreviewsBatch(clientPool, items, contentFilter)
+      persistResolvedImagePreviews(items, results)
+      persistResolvedVideoPreviews(items, results)
+      return results
+    }
   )
+
+  ipcMain.handle(
+    'preview:resolveVideoBatch',
+    async (
+      _e,
+      items: import('../shared/types').PreviewResolveRequest[],
+      contentFilter: ContentFilter = 'all'
+    ) => {
+      const results = await resolveVideoPreviewsBatch(clientPool, items, contentFilter)
+      persistResolvedVideoPreviews(items, results)
+      return results
+    }
+  )
+
+  ipcMain.handle('preview:resolveVideoPlayUrl', async (_e, url: string) => {
+    const path = await cacheVideoPreviewUrl(url)
+    return path ? `media://${encodeURIComponent(path)}` : null
+  })
+
+  ipcMain.handle('preview:getVideoPreview', (_e, versionIds: number[]) => {
+    const map = inventory.getVersionVideoPreviewMap(
+      Array.isArray(versionIds) ? versionIds.filter((id) => id > 0) : []
+    )
+    return Object.fromEntries(map) as Record<number, import('../shared/types').VersionVideoPreviewMeta>
+  })
+
+  ipcMain.handle(
+    'preview:markVideoAbsent',
+    (_e, payload: { versionId: number; modelId: number }) => {
+      if (payload?.versionId > 0 && payload?.modelId > 0) {
+        inventory.markVersionVideoAbsent(payload.versionId, payload.modelId)
+      }
+    }
+  )
+
+  ipcMain.handle('preview:getVideoSyncPending', () => countVideoPreviewSyncCandidates())
+
+  ipcMain.handle('preview:syncVideoAll', async () => {
+    const result = await syncAllVideoPreviews(clientPool, (p) =>
+      sendToRenderer(() => mainWindow, 'preview:videoSyncProgress', p)
+    )
+    sendToRenderer(() => mainWindow, 'preview:videoSyncComplete', result)
+    return result
+  })
 
   ipcMain.handle(
     'watch:test',
@@ -916,7 +1058,8 @@ export function initIpc(): void {
       downloadCount: payload.downloadCount ?? deleted[0]?.downloadCount,
       thumbsUpCount: payload.thumbsUpCount ?? deleted[0]?.thumbsUpCount
     }
-    inventory.banModel(payload.modelId, modelName, stub)
+    inventory.banModelAndMarkSeen(payload.modelId, modelName, stub)
+    inventory.clearBrowseCardCacheForModel(payload.modelId)
     inventory.removePendingForModel(payload.modelId)
     scheduler.dismissPendingForModel(payload.modelId)
     scheduler.markModelBannedInBrowseGallery(payload.modelId, {
@@ -1197,7 +1340,15 @@ export function initIpc(): void {
       const record = deleteVersionFromLibrary(payload.versionId)
       const shouldBan = payload.ban !== false
       if (shouldBan) {
-        inventory.banModel(record.modelId, record.modelName)
+        inventory.banModelAndMarkSeen(record.modelId, record.modelName, {
+          modelName: record.modelName,
+          versionId: record.versionId,
+          baseModel: record.baseModel,
+          author: record.author,
+          sourceDomain: record.civitaiDomain,
+          tags: record.civitaiTags
+        })
+        inventory.clearBrowseCardCacheForModel(record.modelId)
         inventory.removePendingForModel(record.modelId)
         scheduler.dismissPendingForModel(record.modelId)
         scheduler.markModelBannedInBrowseGallery(record.modelId, {
@@ -1240,8 +1391,13 @@ export function initIpc(): void {
   )
 
   ipcMain.handle(
+    'inventory:getPreferredPreviewUrl',
+    (_e, versionId: number) => inventory.getPreferredPreviewUrl(versionId)
+  )
+
+  ipcMain.handle(
     'inventory:setPreviewFromUrl',
-    async (_e, payload: { versionId: number; imageUrl: string }) => {
+    async (_e, payload: { versionId: number; imageUrl: string; modelId?: number }) => {
       const versionId = payload.versionId
       const imageUrl = (payload.imageUrl ?? '').trim()
       if (versionId <= 0 || !imageUrl) {
@@ -1251,7 +1407,19 @@ export function initIpc(): void {
         const record = await setLibraryPreviewFromUrl(versionId, imageUrl)
         return { savedToLibrary: true as const, record }
       }
-      inventory.updatePendingPreviewUrl(versionId, imageUrl)
+      const modelId = payload.modelId ?? 0
+      if (modelId > 0) {
+        inventory.setVersionPreferredPreview(versionId, modelId, imageUrl)
+        scheduler?.patchBrowseModelPreview(modelId, versionId, imageUrl)
+        sendToRenderer(() => mainWindow, 'browse:previewPref', {
+          modelId,
+          versionId,
+          previewUrl: imageUrl
+        })
+      } else {
+        inventory.updatePendingPreviewUrl(versionId, imageUrl)
+      }
+      downloadQueue.patchItemPreviewUrl(versionId, imageUrl)
       return { savedToLibrary: false as const }
     }
   )
@@ -1389,6 +1557,7 @@ export function initIpc(): void {
     nsfwLevel?: number
     confirmTagsAfter?: boolean
     manual?: boolean
+    startNow?: boolean
   }) => {
     const settings = getSettings()
     const folder = getDefaultFolderForType(
@@ -1407,9 +1576,14 @@ export function initIpc(): void {
       return ''
     }
     const id = downloadQueue.enqueue(request, meta)
-    if (id && meta?.manual === true && shouldCrawlAutoDownload()) {
-      downloadQueue.start()
-      scheduler.setStatus('downloading')
+    if (id && meta?.manual === true) {
+      if (meta.startNow) {
+        downloadQueue.runNow(id)
+        scheduler.setStatus('downloading')
+      } else if (shouldCrawlAutoDownload()) {
+        downloadQueue.start()
+        scheduler.setStatus('downloading')
+      }
     }
     return id
   })
@@ -1469,6 +1643,13 @@ export function initIpc(): void {
     return downloadQueue.getState()
   })
 
+  ipcMain.handle('download:runNow', (_e, queueId: string) => {
+    if (downloadQueue.runNow(queueId)) {
+      scheduler.setStatus('downloading')
+    }
+    return downloadQueue.getState()
+  })
+
   ipcMain.handle('download:priority', (_e, queueId: string) => {
     downloadQueue.prioritizeQueueItem(queueId)
     return downloadQueue.getState()
@@ -1506,6 +1687,13 @@ export function initIpc(): void {
   ipcMain.handle('pending:get', () => scheduler.getPendingVersions())
 
   ipcMain.handle('browse:getGallery', () => scheduler.getBrowseGallerySnapshot())
+
+  ipcMain.handle('browse:getCardCache', (_e, versionIds: number[]) => {
+    const map = inventory.getBrowseCardCache(
+      Array.isArray(versionIds) ? versionIds.filter((id) => id > 0) : []
+    )
+    return Object.fromEntries(map) as Record<number, import('../shared/types').WatchRuleTestModel>
+  })
 
   ipcMain.handle('browse:lookupId', async (_e, rawId: number | string) => {
     const numericId = typeof rawId === 'number' ? rawId : Number(String(rawId).trim())
@@ -1553,16 +1741,21 @@ export function initIpc(): void {
         },
         {
           modelName,
+          versionName,
           previewUrl: pending?.previewUrl,
           routingTag: payload.routingTag ?? existing?.routingTag,
-          modelType: 'LORA',
+          modelType: pending?.modelType || existing?.modelType || 'LORA',
+          baseModel: pending?.baseModel ?? existing?.baseModel,
           author: pending?.author ?? existing?.author,
+          civitaiTags: pending?.civitaiTags ?? existing?.civitaiTags,
+          nsfw: pending?.nsfw ?? existing?.isNsfw,
+          nsfwLevel: pending?.nsfwLevel ?? existing?.nsfwLevel,
+          // Stay in Updates until downloaded; strip starts only when Pause is off / Auto on.
           manual: true
         }
       )
-      scheduler.dismissPending(payload.versionId)
+      // Keep the Updates card — user should see queue border until the file lands.
       inventory.removeSkippedPendingVersion(payload.versionId)
-      // Same as manual download:enqueue — otherwise Updates→Queue sits forever while paused.
       if (id && shouldCrawlAutoDownload()) {
         downloadQueue.start()
         scheduler.setStatus('downloading')
@@ -1630,7 +1823,6 @@ export function initIpc(): void {
 
   ipcMain.handle('deferred:enrich', async () => {
     const items = inventory.getAllDeferredDownloads()
-    const unlocked: number[] = []
     await enrichDeferredDownloads(
       clientPool.primary(),
       items,
@@ -1650,26 +1842,46 @@ export function initIpc(): void {
           civitaiTags: item.civitaiTags,
           downloadCount: item.downloadCount,
           thumbsUpCount: item.thumbsUpCount,
+          baseModel: item.baseModel,
           bumpAttempt: false
         })
       },
       80,
-      (versionId) => unlocked.push(versionId)
+      undefined,
+      { allowUnlock: false }
     )
-    // Creator ended EA early — re-queue instead of waiting on a stale unlock clock.
-    for (const versionId of unlocked) {
-      downloadQueue.requeueDeferredVersion(versionId)
+
+    inventory.backfillDeferredBaseModelsFromBrowseCache()
+    inventory.backfillDeferredPreviewsFromInventory()
+    inventory.backfillDeferredPreviewsFromBrowseCache()
+    downloadQueue.reconcileEarlyAccessFromBrowseCache()
+    let baseModelFetches = 0
+    for (const row of inventory.getAllDeferredDownloads()) {
+      if (baseModelFetches >= 80) break
+      if ((row.baseModel || '').trim()) continue
+      if (row.versionId <= 0) continue
+      baseModelFetches++
+      try {
+        const version = await clientPool.primary().getModelVersion(row.versionId)
+        const bm = version.baseModel?.trim()
+        if (!bm) continue
+        inventory.upsertDeferredDownload({ ...row, baseModel: bm, bumpAttempt: false })
+      } catch {
+        /* version may be deleted upstream */
+      }
     }
 
     // EA versions often lack images[] — fill covers from sibling versions / gallery.
-    const afterUnlock = inventory.getAllDeferredDownloads()
+    const afterMeta = inventory.getAllDeferredDownloads()
     await enrichDeferredPreviews(
       clientPool,
-      afterUnlock,
-      getSettings().contentFilter,
-      (versionId, previewUrl) => {
+      afterMeta,
+      'all',
+      (versionId, previewUrl, previewUrls) => {
         const row = inventory.getDeferredDownload(versionId)
         if (!row) return
+        const normalized = normalizePreviewDisplayUrl(previewUrl)
+        if (!isDisplayablePreviewUrl(normalized)) return
         inventory.upsertDeferredDownload({
           modelId: row.modelId,
           versionId: row.versionId,
@@ -1677,16 +1889,17 @@ export function initIpc(): void {
           versionName: row.versionName,
           modelType: row.modelType,
           routingTag: row.routingTag,
-          previewUrl,
+          previewUrl: normalized,
           outputFolder: row.outputFolder,
           reason: row.reason,
           failureKind: row.failureKind,
           lastAttemptAt: row.lastAttemptAt,
           earlyAccessEndsAt: row.earlyAccessEndsAt,
           civitaiTags: row.civitaiTags,
+          baseModel: row.baseModel,
           bumpAttempt: false
         })
-        downloadQueue.patchItemPreviewUrl(versionId, previewUrl)
+        downloadQueue.patchItemPreviewUrl(versionId, normalized)
       }
     )
 

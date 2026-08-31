@@ -29,12 +29,14 @@ import { canWaitForDeferredUnlock } from '../../../shared/early-access'
 import { collectTagSuggestions } from '../../../shared/tag-routing'
 import { BaseModelPicker, parseBaseModelList } from './BaseModelPicker'
 import { SearchBrowsePanel } from './SearchBrowsePanel'
+import { patchBrowseModelPreview } from '../utils/browse-preview-patch'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { NightCrawlQuietPanel } from './NightCrawlQuietPanel'
 import { SkippedTagsPanel } from './SkippedTagsPanel'
 import { useT, type TranslateFn } from '../i18n/context'
 import { FieldHint } from './FieldHint'
 import { watchRulesEqual } from '../utils/watch-rules-equal'
+import { filterBrowseResultForWatchRules } from '../../../shared/watch-rule-crawl'
 import { useQueuedMembership } from '../hooks/useDownloadQueue'
 
 function previewErrorMessage(t: TranslateFn, raw: string): string {
@@ -168,6 +170,8 @@ interface Props {
   sessionYieldCount?: number
   /** Skipped Updates version IDs — exclude from Browse Updates count. */
   skippedPendingVersionIds?: Set<number>
+  /** Active Updates offers — hide on Browse unless Show updates is on. */
+  pendingUpdateVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause Browse scroll observers. */
   isActive?: boolean
 }
@@ -233,6 +237,7 @@ export function WatchRulesTab({
   onBrowseViewPrefsChange,
   sessionYieldCount = 0,
   skippedPendingVersionIds,
+  pendingUpdateVersionIds,
   isActive = true
 }: Props) {
   const { paused: queuePaused } = useQueuedMembership()
@@ -278,13 +283,27 @@ export function WatchRulesTab({
     : settings.updateBrowseOnCrawl === false
       ? effectiveLiveCrawlBrowse
       : effectiveLiveCrawlBrowse ?? testResult
-  const browseResultRef = useRef(browseResult)
-  browseResultRef.current = browseResult
+
+  /** Harvest grid: hide cards that no longer match draft-enabled rules (before Save). */
+  const harvestScopedBrowseResult = useMemo(() => {
+    if (!browseResult?.crawlSource || !browseResult.sampleModels?.length) return browseResult
+    const scopeRules = draft.filter((r) => r.enabled)
+    return filterBrowseResultForWatchRules(browseResult, scopeRules)
+  }, [browseResult, draft])
+
+  const browseResultRef = useRef(harvestScopedBrowseResult)
+  browseResultRef.current = harvestScopedBrowseResult
 
   useEffect(() => {
     if (settings.updateBrowseOnCrawl !== false) return
     setTestResult(null)
   }, [settings.updateBrowseOnCrawl])
+
+  useEffect(() => {
+    return window.api.onBrowsePreviewPref(({ modelId, versionId, previewUrl }) => {
+      setTestResult((prev) => patchBrowseModelPreview(prev, modelId, versionId, previewUrl))
+    })
+  }, [])
 
   const hasEnabledRules = draft.some((r) => r.enabled)
   // Empty gallery loading only while something is actually fetching from Civitai.
@@ -292,7 +311,7 @@ export function WatchRulesTab({
   const showBrowseLoading =
     !quietHideGallery &&
     hasEnabledRules &&
-    !browseResult?.sampleModels?.length &&
+    !harvestScopedBrowseResult?.sampleModels?.length &&
     (browseGalleryAwaiting ||
       status === 'scanning' ||
       status === 'checking' ||
@@ -303,7 +322,14 @@ export function WatchRulesTab({
       status === 'checking' ||
       testingId != null ||
       crawlProgress != null)
-  // Quiet actions strip only — Browse results (and progress bar) stay visible during harvest.
+  // Quiet actions strip — also when harvest runs with cards hidden (not only night mode).
+  const harvestFetching =
+    crawlProgress?.phase === 'fetching' ||
+    crawlProgress?.phase === 'fetching-tags' ||
+    status === 'scanning' ||
+    status === 'checking'
+  const showQuietHarvestHint =
+    quietHideGallery && hasEnabledRules && (harvestFetching || (crawlPageMeta?.galleryTotal ?? 0) > 0)
   const showQuietActions =
     Boolean(settings.nightMode) &&
     hasEnabledRules &&
@@ -312,7 +338,7 @@ export function WatchRulesTab({
 
   const browsePanelResult = quietHideGallery
     ? null
-    : browseResult ??
+    : harvestScopedBrowseResult ??
       (hasEnabledRules &&
       (showBrowseLoading ||
         testingId != null ||
@@ -351,9 +377,9 @@ export function WatchRulesTab({
       collectTagSuggestions({
         inventoryRecords: inventory,
         tagRules,
-        browseModels: browseResult?.sampleModels
+        browseModels: harvestScopedBrowseResult?.sampleModels
       }),
-    [inventory, tagRules, browseResult?.sampleModels]
+    [inventory, tagRules, harvestScopedBrowseResult?.sampleModels]
   )
 
   useEffect(() => {
@@ -915,6 +941,33 @@ export function WatchRulesTab({
         </div>
       )}
 
+      {showQuietHarvestHint && (
+        <div className="panel browse-quiet-harvest-hint" role="status">
+          <p>
+            {harvestFetching && crawlPageMeta?.pageNumber
+              ? t('browse.quietHarvestFetchingPage', {
+                  page: crawlPageMeta.pageNumber,
+                  rule: crawlPageMeta.ruleName ?? browseRule?.name ?? '—'
+                })
+              : t('browse.quietHarvestCardsHidden')}
+          </p>
+          <p className="muted">{t('browse.quietHarvestHint')}</p>
+          {onBrowseSnapshot && (
+            <button
+              type="button"
+              className="btn-sm primary"
+              onClick={() => {
+                void window.api.getBrowseGallery().then((gallery) => {
+                  if (gallery) void onBrowseSnapshot(gallery)
+                })
+              }}
+            >
+              {t('nightQuiet.showBrowseSnapshot')}
+            </button>
+          )}
+        </div>
+      )}
+
       {showQuietActions && (
         <NightCrawlQuietPanel
           settings={settings}
@@ -977,6 +1030,7 @@ export function WatchRulesTab({
           browseGalleryAwaiting={browseGalleryAwaiting && hasEnabledRules}
           browseSettledToEnd={settings.browseSettledToEnd ?? false}
           browseSettledDimPercent={settings.browseSettledDimPercent ?? 50}
+          browseVideoPreviews={settings.browseVideoPreviews ?? false}
           loraFolder={settings.loraOutputFolder}
           checkpointFolder={settings.checkpointOutputFolder}
           resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
@@ -985,6 +1039,7 @@ export function WatchRulesTab({
           onViewPrefsChange={onBrowseViewPrefsChange}
           sessionYieldCount={sessionYieldCount}
           skippedPendingVersionIds={skippedPendingVersionIds}
+          pendingUpdateVersionIds={pendingUpdateVersionIds}
           isActive={isActive}
         />
       ) : settings.nightMode && !showQuietActions ? (

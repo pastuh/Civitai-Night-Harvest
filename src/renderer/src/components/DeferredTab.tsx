@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import type { DeferredDownload, InventoryRecord, TagFolderRule } from '../../../shared/types'
+import type { DeferredDownload, InventoryRecord, TagFolderRule, WatchRule } from '../../../shared/types'
+import { isDeferredVisibleInAwaitingTab } from '../../../shared/deferred-visibility'
 import {
   DEFERRED_KIND_LABELS,
   MAX_AUTO_DEFERRED_ATTEMPTS,
   shouldAutoRetryDeferred
 } from '../../../shared/download-errors'
 import { canWaitForDeferredUnlock } from '../../../shared/early-access'
-import { formatCountdownTo, formatWaitDuration } from '../../../shared/utils'
+import { formatCountdownTo, formatWaitDuration, isDisplayablePreviewUrl } from '../../../shared/utils'
 import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
 import { ConfirmModal } from './ConfirmModal'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
+import { resolveModelCardThumb, deferredCardPreviewSource, inventoryByVersionMap, videoPreviewAvailabilityFor } from '../utils/model-card-preview'
+import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import {
   cardTagFolderRole,
@@ -33,10 +36,11 @@ type SideFilter =
   | { type: 'favorites' }
   | { type: 'sessionBans' }
   | { type: 'sessionPause' }
-  | { type: 'blockedTag'; tag: string }
+  | { type: 'baseModel'; name: string }
 
 interface Props {
   deferred: DeferredDownload[]
+  watchRules?: WatchRule[]
   domain: 'com' | 'red' | 'both'
   hasApiKey: boolean
   onRefresh: () => Promise<void>
@@ -69,6 +73,7 @@ interface Props {
   confirmTagFolderMoves?: boolean
   onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
   onOpenTagFolders?: (tag: string) => void
+  browseVideoPreviews?: boolean
 }
 
 function modelPageUrl(domain: 'com' | 'red' | 'both', modelId: number, versionId: number): string {
@@ -124,11 +129,37 @@ function matchesSearch(item: DeferredDownload, q: string): boolean {
     item.modelName.toLowerCase().includes(q) ||
     (item.versionName?.toLowerCase().includes(q) ?? false) ||
     item.modelType.toLowerCase().includes(q) ||
+    (item.baseModel?.toLowerCase().includes(q) ?? false) ||
     (item.routingTag?.toLowerCase().includes(q) ?? false) ||
     (item.civitaiTags ?? []).some((tag) => tag.toLowerCase().includes(q)) ||
     String(item.modelId).includes(q) ||
     String(item.versionId).includes(q)
   )
+}
+
+function deferredBaseModelLabel(
+  item: DeferredDownload,
+  browseCards: Record<number, import('../../../shared/types').WatchRuleTestModel>,
+  inventoryByVersion: Map<number, InventoryRecord>
+): string {
+  const bm = (
+    item.baseModel?.trim() ||
+    browseCards[item.versionId]?.baseModel?.trim() ||
+    inventoryByVersion.get(item.versionId)?.baseModel?.trim() ||
+    ''
+  )
+  return bm || '—'
+}
+
+function deferredNeedsBaseModelBackfill(
+  item: DeferredDownload,
+  browseCards: Record<number, import('../../../shared/types').WatchRuleTestModel>,
+  inventoryByVersion: Map<number, InventoryRecord>
+): boolean {
+  if ((item.baseModel || '').trim()) return false
+  if (browseCards[item.versionId]?.baseModel?.trim()) return false
+  if (inventoryByVersion.get(item.versionId)?.baseModel?.trim()) return false
+  return true
 }
 
 function resolveDeferredModelType(item: DeferredDownload): string {
@@ -166,29 +197,9 @@ function itemHasPausedTag(
   return false
 }
 
-function itemBlockedPolicyTag(
-  item: DeferredDownload,
-  hiddenTags: string[],
-  bannedTags: string[]
-): string | null {
-  for (const tag of expandCivitaiTagNames(item.civitaiTags)) {
-    if (isPermanentlyBannedModelTag(tag, bannedTags) || isPausedOnlyModelTag(tag, hiddenTags, bannedTags)) {
-      return tag
-    }
-  }
-  const route = item.routingTag?.trim()
-  if (
-    route &&
-    (isPermanentlyBannedModelTag(route, bannedTags) ||
-      isPausedOnlyModelTag(route, hiddenTags, bannedTags))
-  ) {
-    return route
-  }
-  return null
-}
-
 export function DeferredTab({
   deferred,
+  watchRules = [],
   domain,
   hasApiKey,
   onRefresh,
@@ -211,7 +222,8 @@ export function DeferredTab({
   fastTagMode = false,
   confirmTagFolderMoves = true,
   onSaveTagRules,
-  onOpenTagFolders
+  onOpenTagFolders,
+  browseVideoPreviews = false
 }: Props) {
   const t = useT()
   const [, setTick] = useState(0)
@@ -222,6 +234,8 @@ export function DeferredTab({
   const [sideFilter, setSideFilter] = useState<SideFilter>({ type: 'all' })
   const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(null)
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
+  const [sectionOpen, setSectionOpen] = useState({ baseModels: true })
+  const [sidebarSearch, setSidebarSearch] = useState('')
   const [deferredSort, setDeferredSort] = useState<DeferredSort>('unlock')
   const [search, setSearch] = useState('')
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
@@ -239,13 +253,8 @@ export function DeferredTab({
   } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const wasActiveRef = useRef(false)
-  /** Preview overrides for cards whose stored `previewUrl` is empty/stale — fetched lazily
-   *  via the same Civitai fallback the Model Details page uses, so Early-access covers load
-   *  without the user opening each card. */
-  const [previewOverrides, setPreviewOverrides] = useState<
-    Record<number, { previewUrl?: string; previewUrls: string[] }>
-  >({})
-  const previewFetchStartedRef = useRef<Set<number>>(new Set())
+  const deferredVersionSnapshotRef = useRef('')
+  const enrichBusyRef = useRef(false)
   const [banConfirmSkipForSession, setBanConfirmSkipForSession] = useState(false)
 
   useEffect(() => {
@@ -274,55 +283,57 @@ export function DeferredTab({
     [deferred]
   )
 
+  const inventoryByVersion = useMemo(() => inventoryByVersionMap(inventory), [inventory])
+
+  const previewSources = useMemo(
+    () => visibleDeferred.map((d) => deferredCardPreviewSource(d, inventoryByVersion)),
+    [visibleDeferred, inventoryByVersion]
+  )
+
+  const { overrides: previewOverrides, browseCards, markPreviewBroken } =
+    useModelCardPreviewOverrides(previewSources, {
+      enabled: isActive,
+      contentFilter: 'all',
+      fetchVideo: browseVideoPreviews
+    })
+
   useEffect(() => {
-    if (!isActive) return
+    if (!isActive || enrichBusyRef.current) return
+    const versionKey = visibleDeferred
+      .map((d) => d.versionId)
+      .filter((id) => id > 0)
+      .sort((a, b) => a - b)
+      .join(',')
+    const hasNewVersions = versionKey !== deferredVersionSnapshotRef.current
+    deferredVersionSnapshotRef.current = versionKey
+    const needsPreview = visibleDeferred.some((d) => {
+      if (d.versionId <= 0) return false
+      const source = deferredCardPreviewSource(d, inventoryByVersion, browseCards[d.versionId])
+      const thumb = resolveModelCardThumb(
+        source,
+        previewOverrides[d.versionId],
+        browseCards[d.versionId]
+      )
+      return !thumb.urls.length
+    })
+    const needsBaseModel = visibleDeferred.some((d) =>
+      deferredNeedsBaseModelBackfill(d, browseCards, inventoryByVersion)
+    )
+    if (!needsPreview && !hasNewVersions && !needsBaseModel) return
+    enrichBusyRef.current = true
     void window.api
       .enrichDeferred()
       .then(() => onRefreshRef.current())
-      .catch(() => {})
-  }, [isActive])
-
-  useEffect(() => {
-    if (!isActive) return
-    const missing = visibleDeferred.filter((d) => {
-      if (d.versionId <= 0 || d.modelId <= 0) return false
-      if (previewOverrides[d.versionId]?.previewUrl) return false
-      if (d.previewUrl?.trim()) return false
-      if (previewFetchStartedRef.current.has(d.versionId)) return false
-      previewFetchStartedRef.current.add(d.versionId)
-      return true
-    })
-    if (!missing.length) return
-    void (async () => {
-      try {
-        const resolved = await window.api.resolvePreviewBatch(
-          missing.map((d) => ({
-            modelId: d.modelId,
-            versionId: d.versionId,
-            sourceDomain: undefined,
-            strictVersion: true
-          })),
-          'all'
-        )
-        const next: Record<number, { previewUrl?: string; previewUrls: string[] }> = {}
-        for (const r of resolved) {
-          if (!r.previewUrls.length && !r.previewUrl) {
-            previewFetchStartedRef.current.delete(r.versionId)
-            continue
-          }
-          next[r.versionId] = {
-            previewUrl: r.previewUrl,
-            previewUrls: r.previewUrls
-          }
-        }
-        if (Object.keys(next).length) {
-          setPreviewOverrides((prev) => ({ ...prev, ...next }))
-        }
-      } catch {
-        for (const d of missing) previewFetchStartedRef.current.delete(d.versionId)
-      }
-    })()
-  }, [isActive, visibleDeferred, previewOverrides])
+      .finally(() => {
+        enrichBusyRef.current = false
+      })
+  }, [
+    isActive,
+    visibleDeferred,
+    inventoryByVersion,
+    previewOverrides,
+    browseCards
+  ])
 
   useEffect(() => {
     if (!isActive) return
@@ -353,11 +364,25 @@ export function DeferredTab({
     [visibleDeferred, hiddenModelIds, sessionBannedByModelId, pinFavoriteSet, deferredSort]
   )
 
+  /** Harvest rows from disabled / non-matching Browse rules are hidden. */
+  const scopedDeferred = useMemo(
+    () =>
+      activeDeferred.filter((d) =>
+        isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds, {
+          pausedTags: hiddenTags,
+          bannedTags
+        })
+      ),
+    [activeDeferred, watchRules, eaFavoriteIds, hiddenTags, bannedTags]
+  )
+
+  const hiddenByRulesCount = activeDeferred.length - scopedDeferred.length
+
   const itemsForMainCounts = useMemo(() => {
-    if (!modelTypeFilter) return activeDeferred
+    if (!modelTypeFilter) return scopedDeferred
     const want = modelTypeFilter.toUpperCase()
-    return activeDeferred.filter((d) => resolveDeferredModelType(d).toUpperCase() === want)
-  }, [activeDeferred, modelTypeFilter])
+    return scopedDeferred.filter((d) => resolveDeferredModelType(d).toUpperCase() === want)
+  }, [scopedDeferred, modelTypeFilter])
 
   const waitCount = useMemo(
     () => itemsForMainCounts.filter((d) => canWaitForDeferredUnlock(d)).length,
@@ -369,8 +394,8 @@ export function DeferredTab({
     [itemsForMainCounts, liveFavoriteSet]
   )
   const sessionPausePool = useMemo(
-    () => activeDeferred.filter((d) => itemHasPausedTag(d, hiddenTags, bannedTags)),
-    [activeDeferred, hiddenTags, bannedTags]
+    () => scopedDeferred.filter((d) => itemHasPausedTag(d, hiddenTags, bannedTags)),
+    [scopedDeferred, hiddenTags, bannedTags]
   )
   const sessionPauseCount = useMemo(() => {
     if (!modelTypeFilter) return sessionPausePool.length
@@ -399,34 +424,28 @@ export function DeferredTab({
   // Model types: global totals from active queue (don't shrink when a type is selected).
   const typeCounts = useMemo(() => {
     const map = new Map<string, number>()
-    for (const d of activeDeferred) {
+    for (const d of scopedDeferred) {
       const mt = resolveDeferredModelType(d)
       map.set(mt, (map.get(mt) ?? 0) + 1)
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-  }, [activeDeferred])
+  }, [scopedDeferred])
 
-  const policyTagCounts = useMemo(() => {
-    const pool = modelTypeFilter ? itemsForMainCounts : activeDeferred
+  const baseModelCounts = useMemo(() => {
+    const pool = modelTypeFilter ? itemsForMainCounts : scopedDeferred
     const map = new Map<string, number>()
-    for (const tag of bannedTags) {
-      const name = tag.trim()
-      if (name) map.set(name, 0)
-    }
-    for (const tag of hiddenTags) {
-      const name = tag.trim()
-      if (name && !map.has(name)) map.set(name, 0)
-    }
     for (const d of pool) {
-      const hit = itemBlockedPolicyTag(d, hiddenTags, bannedTags)
-      if (!hit) continue
-      map.set(hit, (map.get(hit) ?? 0) + 1)
+      const bm = deferredBaseModelLabel(d, browseCards, inventoryByVersion)
+      map.set(bm, (map.get(bm) ?? 0) + 1)
     }
-    return [...map.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .filter((t) => t.count > 0)
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }, [activeDeferred, itemsForMainCounts, modelTypeFilter, bannedTags, hiddenTags])
+    return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [scopedDeferred, itemsForMainCounts, modelTypeFilter, browseCards, inventoryByVersion])
+
+  const filteredBaseModelCounts = useMemo(() => {
+    const q = sidebarSearch.trim().toLowerCase()
+    if (!q) return baseModelCounts
+    return baseModelCounts.filter(([name]) => name.toLowerCase().includes(q))
+  }, [baseModelCounts, sidebarSearch])
 
   const sorted = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -440,20 +459,17 @@ export function DeferredTab({
     } else if (sideFilter.type === 'sessionPause') {
       list = sessionPausePool
     } else if (sideFilter.type === 'favorites') {
-      list = activeDeferred.filter((d) => liveFavoriteSet.has(d.modelId))
+      list = scopedDeferred.filter((d) => liveFavoriteSet.has(d.modelId))
     } else if (sideFilter.type === 'wait') {
-      list = activeDeferred.filter((d) => canWaitForDeferredUnlock(d))
+      list = scopedDeferred.filter((d) => canWaitForDeferredUnlock(d))
     } else if (sideFilter.type === 'buy') {
-      list = activeDeferred.filter((d) => !canWaitForDeferredUnlock(d))
-    } else if (sideFilter.type === 'blockedTag') {
-      const want = sideFilter.tag.toLowerCase()
-      list = activeDeferred.filter((d) => {
-        const tags = expandCivitaiTagNames(d.civitaiTags).map((x) => x.toLowerCase())
-        if (tags.includes(want)) return true
-        return (d.routingTag || '').toLowerCase() === want
-      })
+      list = scopedDeferred.filter((d) => !canWaitForDeferredUnlock(d))
+    } else if (sideFilter.type === 'baseModel') {
+      list = scopedDeferred.filter(
+        (d) => deferredBaseModelLabel(d, browseCards, inventoryByVersion) === sideFilter.name
+      )
     } else {
-      list = activeDeferred
+      list = scopedDeferred
     }
 
     if (modelTypeFilter) {
@@ -466,13 +482,15 @@ export function DeferredTab({
     search,
     sideFilter,
     modelTypeFilter,
-    activeDeferred,
+    scopedDeferred,
     sessionBannedList,
     sessionBanLive,
     sessionPausePool,
     liveFavoriteSet,
     pinFavoriteSet,
-    deferredSort
+    deferredSort,
+    browseCards,
+    inventoryByVersion
   ])
 
   const applySideFilter = useCallback((next: SideFilter) => {
@@ -490,8 +508,8 @@ export function DeferredTab({
   const sideFilterActive = useCallback(
     (f: SideFilter) => {
       if (f.type !== sideFilter.type) return false
-      if (f.type === 'blockedTag' && sideFilter.type === 'blockedTag') {
-        return f.tag.toLowerCase() === sideFilter.tag.toLowerCase()
+      if (f.type === 'baseModel' && sideFilter.type === 'baseModel') {
+        return f.name === sideFilter.name
       }
       return true
     },
@@ -584,10 +602,14 @@ export function DeferredTab({
     )
   }
 
-  if (!activeDeferred.length && !sessionBannedByModelId.size && !sessionBanLive.length) {
+  if (!scopedDeferred.length && !sessionBannedByModelId.size && !sessionBanLive.length) {
     return (
       <div className="panel status-tab-panel">
-        <p className="muted">{t('deferredTab.emptyAfterBan')}</p>
+        <p className="muted">
+          {hiddenByRulesCount > 0
+            ? t('deferredTab.emptyHiddenByRules', { count: hiddenByRulesCount })
+            : t('deferredTab.emptyAfterBan')}
+        </p>
       </div>
     )
   }
@@ -662,6 +684,9 @@ export function DeferredTab({
           <div className="gallery-main">
             <div className="gallery-panel">
               <div className="gallery-main-scroll missing-main-scroll">
+                {hiddenByRulesCount > 0 ? (
+                  <p className="muted status-inline-msg">{t('deferredTab.hiddenByRulesHint', { count: hiddenByRulesCount })}</p>
+                ) : null}
                 {!sorted.length ? (
                   <p className="muted">{t('deferredTab.emptyFiltered')}</p>
                 ) : (
@@ -694,11 +719,20 @@ export function DeferredTab({
                       const cardTags = expandCivitaiTagNames(item.civitaiTags)
                       const shownTags = cardTags.slice(0, 6)
                       const extraTagCount = cardTags.length - shownTags.length
-                      const previewOverride = previewOverrides[item.versionId]
-                      const cardPreviewUrl =
-                        previewOverride?.previewUrl ??
-                        previewOverride?.previewUrls?.[0] ??
-                        item.previewUrl
+                      const previewSource = deferredCardPreviewSource(
+                        item,
+                        inventoryByVersion,
+                        browseCards[item.versionId]
+                      )
+                      const cardThumb = resolveModelCardThumb(
+                        previewSource,
+                        previewOverrides[item.versionId],
+                        browseCards[item.versionId]
+                      )
+                      const videoAvailability = videoPreviewAvailabilityFor(
+                        previewSource,
+                        previewOverrides[item.versionId]
+                      )
                       return (
                         <StatusModelCard
                           key={item.versionId}
@@ -721,7 +755,9 @@ export function DeferredTab({
                                 </div>
                               ) : null}
                               <div className="muted status-card-detail">
-                                {resolveDeferredModelType(item)} · v{item.versionId}
+                                {resolveDeferredModelType(item)} ·{' '}
+                                {deferredBaseModelLabel(item, browseCards, inventoryByVersion)} · v
+                                {item.versionId}
                                 {item.routingTag ? ` · ${item.routingTag}` : ''}
                                 {sessionBanned ? ` · ${t('deferredTab.sessionBannedBadge')}` : ''}
                               </div>
@@ -817,7 +853,13 @@ export function DeferredTab({
                               )}
                             </>
                           }
-                          previewUrl={cardPreviewUrl}
+                          previewUrl={cardThumb.urls[0]}
+                          previewUrls={cardThumb.urls}
+                          videoUrl={cardThumb.videoUrl}
+                          videoPreviews={browseVideoPreviews}
+                          videoAvailability={videoAvailability}
+                          videoFetch={previewSource}
+                          onPreviewAllFailed={() => markPreviewBroken(item.versionId)}
                           titleActions={
                             <>
                               {onToggleEaFavorite ? (
@@ -846,7 +888,8 @@ export function DeferredTab({
                                     versionId: item.versionId,
                                     name: item.modelName,
                                     previewUrl: item.previewUrl,
-                                    domain: domain === 'both' ? 'com' : domain
+                                    domain: domain === 'both' ? 'com' : domain,
+                                    fromAwaitingAccess: true
                                   })
                                 }
                               >
@@ -902,6 +945,14 @@ export function DeferredTab({
                     »
                   </button>
                 </div>
+                <input
+                  type="search"
+                  className="sidebar-tag-search"
+                  placeholder={t('gallery.sidebarSearchPlaceholder')}
+                  value={sidebarSearch}
+                  onChange={(e) => setSidebarSearch(e.target.value)}
+                  aria-label={t('gallery.sidebarSearchPlaceholder')}
+                />
               </div>
               <div className="tag-sidebar-scroll">
                 <button
@@ -988,33 +1039,44 @@ export function DeferredTab({
                   </>
                 ) : null}
 
-                {policyTagCounts.length > 0 ? (
-                  <>
-                    <h4 className="sidebar-section-title">{t('missingTab.policyTagsSection')}</h4>
-                    <p className="muted sidebar-hint sidebar-hint-compact">
-                      {t('deferredTab.policyTagsHint')}
-                    </p>
-                    {policyTagCounts.map(({ name, count }) => (
-                      <button
-                        key={name}
-                        type="button"
-                        className={`sidebar-tag ${
-                          sideFilterActive({ type: 'blockedTag', tag: name }) ? 'active' : ''
-                        }`}
-                        title={t('missingTab.blockedTagFilter', { tag: name })}
-                        onClick={() => {
-                          if (sideFilterActive({ type: 'blockedTag', tag: name })) {
-                            clearSideFilter()
-                          } else {
-                            applySideFilter({ type: 'blockedTag', tag: name })
-                          }
-                        }}
-                      >
-                        <span className="tag-name">{name}</span>
-                        <span className="muted tag-count-inline">{count}</span>
-                      </button>
-                    ))}
-                  </>
+                {filteredBaseModelCounts.length > 0 ? (
+                  <div className="sidebar-collapsible">
+                    <button
+                      type="button"
+                      className="sidebar-section-toggle"
+                      aria-expanded={sectionOpen.baseModels}
+                      onClick={() =>
+                        setSectionOpen((s) => ({ ...s, baseModels: !s.baseModels }))
+                      }
+                    >
+                      <span className="sidebar-section-chevron" aria-hidden>
+                        {sectionOpen.baseModels ? '▼' : '▶'}
+                      </span>
+                      <span className="sidebar-section-toggle-label">
+                        {t('gallery.baseModels')}
+                      </span>
+                    </button>
+                    {sectionOpen.baseModels &&
+                      filteredBaseModelCounts.slice(0, 48).map(([name, count]) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className={`sidebar-tag ${
+                            sideFilterActive({ type: 'baseModel', name }) ? 'active' : ''
+                          }`}
+                          onClick={() => {
+                            if (sideFilterActive({ type: 'baseModel', name })) {
+                              clearSideFilter()
+                            } else {
+                              applySideFilter({ type: 'baseModel', name })
+                            }
+                          }}
+                        >
+                          <span className="tag-name">{name}</span>
+                          <span className="muted tag-count-inline">{count}</span>
+                        </button>
+                      ))}
+                  </div>
                 ) : null}
               </div>
             </aside>
@@ -1049,7 +1111,8 @@ export function DeferredTab({
                   versionId: contextMenu.item.versionId,
                   name: contextMenu.item.modelName,
                   previewUrl: contextMenu.item.previewUrl,
-                  domain: domain === 'both' ? 'com' : domain
+                  domain: domain === 'both' ? 'com' : domain,
+                  fromAwaitingAccess: true
                 })
               }, () => setContextMenu(null))}
             >

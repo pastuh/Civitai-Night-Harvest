@@ -13,17 +13,20 @@ import type {
   PendingVersion,
   DeferredDownload,
   DeferredFailureKind,
+  DeferredSource,
   IncompleteModel,
   MissingModel,
   MissingModelStatus,
   CivitaiDomain,
   TagFolderRule,
   TagPolicyKind,
-  TagSkipReview
+  TagSkipReview,
+  WatchRuleTestModel
 } from '../shared/types'
 import { MAX_MISSING_CONFIRM_HITS, MAX_TAG_SKIP_REVIEWS } from '../shared/types'
 import { expandCivitaiTagNames, matchingHiddenTags, applyCustomAssignmentDefaultsToRecord } from '../shared/tag-routing'
 import { tagAliasMatch } from '../shared/tag-fuzzy'
+import { isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import { safePathExists } from './output-paths'
 
 let db: Database.Database | null = null
@@ -173,6 +176,14 @@ function migrateInventorySchema(database: Database.Database): void {
   }
   if (!deferredCols.some((c) => c.name === 'thumbs_up_count')) {
     database.exec(`ALTER TABLE deferred_downloads ADD COLUMN thumbs_up_count INTEGER`)
+  }
+  if (!deferredCols.some((c) => c.name === 'base_model')) {
+    database.exec(`ALTER TABLE deferred_downloads ADD COLUMN base_model TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!deferredCols.some((c) => c.name === 'deferred_source')) {
+    database.exec(
+      `ALTER TABLE deferred_downloads ADD COLUMN deferred_source TEXT NOT NULL DEFAULT 'harvest'`
+    )
   }
   const activityCols = database.pragma('table_info(activity_log)') as { name: string }[]
   if (!activityCols.some((c) => c.name === 'source')) {
@@ -436,6 +447,45 @@ function migrateInventorySchema(database: Database.Database): void {
   database.exec(
     `CREATE INDEX IF NOT EXISTS idx_skipped_pending_model ON skipped_pending_versions(model_id)`
   )
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS browse_card_cache (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      model_id INTEGER NOT NULL,
+      card_json TEXT NOT NULL,
+      source_updated TEXT,
+      cached_at TEXT NOT NULL
+    );
+  `)
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_browse_card_cache_model ON browse_card_cache(model_id)`
+  )
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS version_preview_prefs (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      model_id INTEGER NOT NULL,
+      preview_url TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `)
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_version_preview_prefs_model ON version_preview_prefs(model_id)`
+  )
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS version_video_preview (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      model_id INTEGER NOT NULL,
+      video_preview_url TEXT,
+      video_preview_urls_json TEXT,
+      no_video INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+  `)
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_version_video_preview_model ON version_video_preview(model_id)`
+  )
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -540,6 +590,12 @@ export function getVersion(versionId: number): InventoryRecord | null {
   return row ? rowToRecord(row as Record<string, unknown>) : null
 }
 
+/** Fix stale / missing Civitai modelId on an owned version (disk import, old rows). */
+export function repairVersionModelId(versionId: number, modelId: number): void {
+  if (versionId <= 0 || modelId <= 0) return
+  getDb().prepare('UPDATE versions SET model_id = ? WHERE version_id = ?').run(modelId, versionId)
+}
+
 export function getVersionsForModel(modelId: number): InventoryRecord[] {
   const rows = getDb().prepare('SELECT * FROM versions WHERE model_id = ? ORDER BY downloaded_at').all(modelId)
   return rows.map((r) => rowToRecord(r as Record<string, unknown>))
@@ -577,6 +633,14 @@ function optStatCount(v: unknown): number | undefined {
   if (v == null || v === '') return undefined
   const n = typeof v === 'number' ? v : Number(v)
   return Number.isFinite(n) ? n : undefined
+}
+
+/** Ban and mark seen so Missing/Browse treat the exclusion as acknowledged. */
+export function banModelAndMarkSeen(modelId: number, modelName = '', stub?: BanModelStub): void {
+  banModel(modelId, modelName, stub)
+  if (!modelId || modelId <= 0) return
+  const day = new Date().toISOString().slice(0, 10)
+  markMissingBanSeen([modelId], day)
 }
 
 export function banModel(modelId: number, modelName = '', stub?: BanModelStub): void {
@@ -1639,6 +1703,60 @@ export function updatePendingPreviewUrl(versionId: number, previewUrl: string): 
     .run(url, versionId)
 }
 
+/** User-picked cover for a Civitai version (Browse / queue — before library download). */
+export function getPreferredPreviewUrl(versionId: number): string | undefined {
+  if (versionId <= 0) return undefined
+  const row = getDb()
+    .prepare('SELECT preview_url FROM version_preview_prefs WHERE version_id = ?')
+    .get(versionId) as { preview_url?: string } | undefined
+  const url = row?.preview_url?.trim()
+  return url || undefined
+}
+
+export function setVersionPreferredPreview(
+  versionId: number,
+  modelId: number,
+  previewUrl: string
+): void {
+  const url = previewUrl.trim()
+  if (versionId <= 0 || !url) return
+  getDb()
+    .prepare(
+      `INSERT INTO version_preview_prefs (version_id, model_id, preview_url, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(version_id) DO UPDATE SET
+         model_id = excluded.model_id,
+         preview_url = excluded.preview_url,
+         updated_at = excluded.updated_at`
+    )
+    .run(versionId, modelId, url, new Date().toISOString())
+
+  updatePendingPreviewUrl(versionId, url)
+
+  const cached = getBrowseCardCache([versionId]).get(versionId)
+  if (cached) {
+    const previewUrls = [url, ...(cached.previewUrls ?? []).filter((u) => u && u !== url)]
+    upsertBrowseCardCache([
+      {
+        versionId,
+        modelId: modelId > 0 ? modelId : cached.id,
+        card: { ...cached, previewUrl: url, previewUrls },
+        sourceUpdated: cached.publishedAt ?? undefined
+      }
+    ])
+  }
+}
+
+export function applyPreferredPreviewToModel<T extends { versionId?: number; previewUrl?: string; previewUrls?: string[] }>(
+  model: T
+): T {
+  const versionId = model.versionId ?? 0
+  const pref = versionId > 0 ? getPreferredPreviewUrl(versionId) : undefined
+  if (!pref) return model
+  const previewUrls = [pref, ...(model.previewUrls ?? []).filter((u) => u && u !== pref)]
+  return { ...model, previewUrl: pref, previewUrls }
+}
+
 export function isPendingVersionSkipped(versionId: number): boolean {
   const row = getDb()
     .prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ?')
@@ -1795,6 +1913,12 @@ export function markLibraryVersionChecked(modelId: number, atIso: string = new D
     .run(modelId, atIso)
 }
 
+/** After a new version is saved — force the next library sweep to re-poll siblings. */
+export function clearLibraryVersionChecked(modelId: number): void {
+  if (modelId <= 0) return
+  getDb().prepare('DELETE FROM library_version_checks WHERE model_id = ?').run(modelId)
+}
+
 /** modelIds whose last check is missing or older than cooldownMs. */
 export function filterModelsDueForVersionCheck(modelIds: number[], cooldownMs: number): number[] {
   if (!modelIds.length) return []
@@ -1829,8 +1953,15 @@ function rowToDeferred(row: Record<string, unknown>): DeferredDownload {
     earlyAccessEndsAt: endsAt || undefined,
     civitaiTags: parseCivitaiTags(row.civitai_tags),
     downloadCount: optStatCount(row.download_count),
-    thumbsUpCount: optStatCount(row.thumbs_up_count)
+    thumbsUpCount: optStatCount(row.thumbs_up_count),
+    baseModel: ((row.base_model as string) || '').trim() || undefined,
+    deferredSource: normalizeDeferredSource(row.deferred_source as string | undefined)
   }
+}
+
+function normalizeDeferredSource(raw: string | undefined): DeferredSource | undefined {
+  if (raw === 'manual' || raw === 'harvest' || raw === 'download') return raw
+  return undefined
 }
 
 export function getAllDeferredDownloads(): DeferredDownload[] {
@@ -1893,8 +2024,8 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       `INSERT INTO deferred_downloads (
         version_id, model_id, model_name, version_name, model_type, routing_tag, preview_url,
         output_folder, reason, failure_kind, deferred_at, last_attempt_at, attempt_count,
-        early_access_ends_at, civitai_tags, download_count, thumbs_up_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        early_access_ends_at, civitai_tags, download_count, thumbs_up_count, base_model, deferred_source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(version_id) DO UPDATE SET
         model_name = excluded.model_name,
         version_name = CASE
@@ -1915,7 +2046,16 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
           ELSE deferred_downloads.civitai_tags
         END,
         download_count = COALESCE(excluded.download_count, deferred_downloads.download_count),
-        thumbs_up_count = COALESCE(excluded.thumbs_up_count, deferred_downloads.thumbs_up_count)`
+        thumbs_up_count = COALESCE(excluded.thumbs_up_count, deferred_downloads.thumbs_up_count),
+        base_model = CASE
+          WHEN excluded.base_model != '' THEN excluded.base_model
+          ELSE deferred_downloads.base_model
+        END,
+        deferred_source = CASE
+          WHEN excluded.deferred_source = 'manual' OR deferred_downloads.deferred_source = 'manual' THEN 'manual'
+          WHEN excluded.deferred_source != '' THEN excluded.deferred_source
+          ELSE deferred_downloads.deferred_source
+        END`
     )
     .run(
       entry.versionId,
@@ -1934,8 +2074,82 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       entry.earlyAccessEndsAt ?? null,
       tagsJson,
       downloadCount,
-      thumbsUpCount
+      thumbsUpCount,
+      entry.baseModel?.trim() || '',
+      entry.deferredSource ?? 'harvest'
     )
+}
+
+/** Fill missing base_model on deferred rows from Browse cache (and optional API in caller). */
+export function backfillDeferredBaseModelsFromBrowseCache(): number {
+  const missing = getAllDeferredDownloads().filter((d) => !(d.baseModel || '').trim())
+  if (!missing.length) return 0
+  const cache = getBrowseCardCache(missing.map((d) => d.versionId))
+  let patched = 0
+  for (const item of missing) {
+    const bm = cache.get(item.versionId)?.baseModel?.trim()
+    if (!bm) continue
+    upsertDeferredDownload({ ...item, baseModel: bm, bumpAttempt: false })
+    patched++
+  }
+  return patched
+}
+
+function coalesceDeferredPreviewUrl(
+  ...candidates: Array<string | undefined>
+): string | undefined {
+  for (const raw of candidates) {
+    const trimmed = raw?.trim()
+    if (!trimmed) continue
+    const url = normalizePreviewDisplayUrl(trimmed)
+    if (url && isDisplayablePreviewUrl(url)) return url
+  }
+  return undefined
+}
+
+/** Copy preview URL from browse_card_cache when the deferred row has none (Browse enrich runs first). */
+export function backfillDeferredPreviewForVersion(versionId: number): string | undefined {
+  if (versionId <= 0) return undefined
+  const row = getDeferredDownload(versionId)
+  if (!row) return undefined
+
+  const card = getBrowseCardCache([versionId]).get(versionId)
+  const url = coalesceDeferredPreviewUrl(
+    row.previewUrl,
+    card?.previewUrl,
+    card?.previewUrls?.[0],
+    card?.videoPreviewUrl,
+    card?.videoPreviewUrls?.[0]
+  )
+  if (!url) return undefined
+  if (url !== row.previewUrl?.trim()) {
+    upsertDeferredDownload({ ...row, previewUrl: url, bumpAttempt: false })
+  }
+  return url
+}
+
+export function backfillDeferredPreviewsFromBrowseCache(): number {
+  let patched = 0
+  for (const item of getAllDeferredDownloads()) {
+    const before = item.previewUrl?.trim()
+    const after = backfillDeferredPreviewForVersion(item.versionId)
+    if (after && after !== before) patched++
+  }
+  return patched
+}
+
+/** Use on-disk library thumbnail when the deferred row lacks a displayable Civitai URL. */
+export function backfillDeferredPreviewsFromInventory(): number {
+  let patched = 0
+  for (const item of getAllDeferredDownloads()) {
+    if (isDisplayablePreviewUrl(item.previewUrl)) continue
+    const rec = getVersion(item.versionId)
+    const path = rec?.previewPath?.trim()
+    if (!path) continue
+    upsertDeferredDownload({ ...item, previewUrl: path, bumpAttempt: false })
+    patched++
+  }
+  return patched
 }
 
 export function removeDeferredDownload(versionId: number): void {
@@ -2462,4 +2676,310 @@ export function clearPendingSeenForModel(modelId: number): void {
       )`
     )
     .run(modelId, modelId)
+}
+
+export function upsertBrowseCardCache(
+  rows: { versionId: number; modelId: number; card: WatchRuleTestModel; sourceUpdated?: string }[]
+): void {
+  if (!rows.length) return
+  const now = new Date().toISOString()
+  const stmt = getDb().prepare(
+    `INSERT INTO browse_card_cache (version_id, model_id, card_json, source_updated, cached_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(version_id) DO UPDATE SET
+       model_id = excluded.model_id,
+       card_json = excluded.card_json,
+       source_updated = COALESCE(excluded.source_updated, browse_card_cache.source_updated),
+       cached_at = excluded.cached_at`
+  )
+  const tx = getDb().transaction((items: typeof rows) => {
+    for (const row of items) {
+      if (!row.versionId || row.versionId <= 0) continue
+      stmt.run(
+        row.versionId,
+        row.modelId,
+        JSON.stringify(row.card),
+        row.sourceUpdated ?? null,
+        now
+      )
+    }
+  })
+  tx(rows)
+}
+
+export function getBrowseCardCache(versionIds: number[]): Map<number, WatchRuleTestModel> {
+  const out = new Map<number, WatchRuleTestModel>()
+  const ids = versionIds.filter((id) => id > 0)
+  if (!ids.length) return out
+  const placeholders = ids.map(() => '?').join(',')
+  const rows = getDb()
+    .prepare(
+      `SELECT version_id, card_json FROM browse_card_cache WHERE version_id IN (${placeholders})`
+    )
+    .all(...ids) as Array<{ version_id: number; card_json: string }>
+  for (const row of rows) {
+    try {
+      const card = JSON.parse(row.card_json) as WatchRuleTestModel
+      if (card?.versionId) out.set(row.version_id, card)
+    } catch {
+      /* skip corrupt row */
+    }
+  }
+  return out
+}
+
+export function getAllBrowseCardCacheCards(): WatchRuleTestModel[] {
+  const rows = getDb()
+    .prepare('SELECT card_json FROM browse_card_cache')
+    .all() as Array<{ card_json: string }>
+  const out: WatchRuleTestModel[] = []
+  for (const row of rows) {
+    try {
+      const card = JSON.parse(row.card_json) as WatchRuleTestModel
+      if (card?.versionId && card.versionId > 0) out.push(card)
+    } catch {
+      /* skip corrupt row */
+    }
+  }
+  return out
+}
+
+export function patchBrowseCardCachePreview(
+  versionId: number,
+  modelId: number,
+  previewUrl: string,
+  previewUrls?: string[],
+  videoPreviewUrl?: string,
+  videoPreviewUrls?: string[]
+): void {
+  const normalized = coalesceDeferredPreviewUrl(previewUrl, ...(previewUrls ?? []))
+  if (!normalized) return
+  const normalizedUrls = (previewUrls?.length ? previewUrls : [normalized])
+    .map((raw) => coalesceDeferredPreviewUrl(raw))
+    .filter((url): url is string => Boolean(url))
+  const urls = normalizedUrls.length ? normalizedUrls : [normalized]
+
+  const hit = getBrowseCardCache([versionId]).get(versionId)
+  upsertBrowseCardCache([
+    {
+      versionId,
+      modelId: hit?.id || modelId,
+      card: {
+        ...(hit ?? {
+          id: modelId,
+          versionId,
+          name: '',
+          type: 'LORA',
+          baseModel: '',
+          tags: [],
+          pageUrl: '',
+          inInventory: false,
+          isBanned: false,
+          isEarlyAccess: true
+        }),
+        previewUrl: normalized,
+        previewUrls: urls,
+        videoPreviewUrl: videoPreviewUrl ?? hit?.videoPreviewUrl,
+        videoPreviewUrls: videoPreviewUrls?.length ? videoPreviewUrls : hit?.videoPreviewUrls
+      }
+    }
+  ])
+}
+
+function patchBrowseCardCacheVideo(
+  versionId: number,
+  modelId: number,
+  videoPreviewUrl?: string,
+  videoPreviewUrls?: string[]
+): void {
+  if (!videoPreviewUrl && !videoPreviewUrls?.length) return
+  const hit = getBrowseCardCache([versionId]).get(versionId)
+  if (!hit) return
+  upsertBrowseCardCache([
+    {
+      versionId,
+      modelId: hit.id || modelId,
+      card: {
+        ...hit,
+        videoPreviewUrl: videoPreviewUrl ?? hit.videoPreviewUrl,
+        videoPreviewUrls: videoPreviewUrls?.length ? videoPreviewUrls : hit.videoPreviewUrls
+      }
+    }
+  ])
+}
+
+export function getVersionVideoPreviewMap(
+  versionIds: number[]
+): Map<number, import('../shared/types').VersionVideoPreviewMeta> {
+  const out = new Map<number, import('../shared/types').VersionVideoPreviewMeta>()
+  const ids = versionIds.filter((id) => id > 0)
+  if (!ids.length) return out
+  const placeholders = ids.map(() => '?').join(',')
+  const rows = getDb()
+    .prepare(
+      `SELECT version_id, model_id, video_preview_url, video_preview_urls_json, no_video
+       FROM version_video_preview WHERE version_id IN (${placeholders})`
+    )
+    .all(...ids) as Array<{
+    version_id: number
+    model_id: number
+    video_preview_url: string | null
+    video_preview_urls_json: string | null
+    no_video: number
+  }>
+  for (const row of rows) {
+    let videoPreviewUrls: string[] | undefined
+    if (row.video_preview_urls_json) {
+      try {
+        const parsed = JSON.parse(row.video_preview_urls_json) as unknown
+        if (Array.isArray(parsed)) {
+          videoPreviewUrls = parsed.filter((u): u is string => typeof u === 'string' && Boolean(u.trim()))
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    out.set(row.version_id, {
+      versionId: row.version_id,
+      modelId: row.model_id,
+      videoPreviewUrl: row.video_preview_url?.trim() || videoPreviewUrls?.[0],
+      videoPreviewUrls,
+      noVideo: row.no_video === 1
+    })
+  }
+  return out
+}
+
+export function upsertVersionVideoPreview(input: {
+  versionId: number
+  modelId: number
+  videoPreviewUrl?: string
+  videoPreviewUrls?: string[]
+}): void {
+  if (input.versionId <= 0 || input.modelId <= 0) return
+  const urls = (input.videoPreviewUrls ?? []).filter((u) => u?.trim())
+  const primary = input.videoPreviewUrl?.trim() || urls[0]
+  if (!primary && !urls.length) return
+  const now = new Date().toISOString()
+  getDb()
+    .prepare(
+      `INSERT INTO version_video_preview (version_id, model_id, video_preview_url, video_preview_urls_json, no_video, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?)
+       ON CONFLICT(version_id) DO UPDATE SET
+         model_id = excluded.model_id,
+         video_preview_url = excluded.video_preview_url,
+         video_preview_urls_json = excluded.video_preview_urls_json,
+         no_video = 0,
+         updated_at = excluded.updated_at`
+    )
+    .run(
+      input.versionId,
+      input.modelId,
+      primary ?? null,
+      urls.length ? JSON.stringify(urls) : null,
+      now
+    )
+  patchBrowseCardCacheVideo(input.versionId, input.modelId, primary, urls.length ? urls : undefined)
+}
+
+export function markVersionVideoAbsent(versionId: number, modelId: number): void {
+  if (versionId <= 0 || modelId <= 0) return
+  const now = new Date().toISOString()
+  getDb()
+    .prepare(
+      `INSERT INTO version_video_preview (version_id, model_id, video_preview_url, video_preview_urls_json, no_video, updated_at)
+       VALUES (?, ?, NULL, NULL, 1, ?)
+       ON CONFLICT(version_id) DO UPDATE SET
+         model_id = excluded.model_id,
+         video_preview_url = NULL,
+         video_preview_urls_json = NULL,
+         no_video = 1,
+         updated_at = excluded.updated_at`
+    )
+    .run(versionId, modelId, now)
+}
+
+/** Versions in library / EA / browse cache without a persisted video-preview check. */
+export function listVideoPreviewSyncCandidates(): import('../shared/types').VideoPreviewSyncCandidate[] {
+  const checked = new Set<number>(
+    (
+      getDb()
+        .prepare('SELECT version_id FROM version_video_preview')
+        .all() as Array<{ version_id: number }>
+    ).map((row) => row.version_id)
+  )
+  const seen = new Set<number>()
+  const out: import('../shared/types').VideoPreviewSyncCandidate[] = []
+
+  const add = (candidate: import('../shared/types').VideoPreviewSyncCandidate) => {
+    const { versionId, modelId } = candidate
+    if (versionId <= 0 || modelId <= 0 || seen.has(versionId) || checked.has(versionId)) return
+    seen.add(versionId)
+    out.push(candidate)
+  }
+
+  for (const row of getAllVersions()) {
+    add({
+      versionId: row.versionId,
+      modelId: row.modelId,
+      modelName: row.modelName,
+      sourceDomain: row.civitaiDomain,
+      nsfw: row.isNsfw,
+      nsfwLevel: row.nsfwLevel
+    })
+  }
+
+  for (const row of getAllDeferredDownloads()) {
+    add({
+      versionId: row.versionId,
+      modelId: row.modelId,
+      modelName: row.modelName,
+      nsfw: undefined,
+      nsfwLevel: undefined
+    })
+  }
+
+  for (const row of getAllPendingVersions()) {
+    add({
+      versionId: row.versionId,
+      modelId: row.modelId,
+      modelName: row.modelName,
+      sourceDomain: row.sourceDomain,
+      nsfw: undefined,
+      nsfwLevel: undefined
+    })
+  }
+
+  for (const card of getAllBrowseCardCacheCards()) {
+    add({
+      versionId: card.versionId,
+      modelId: card.id,
+      modelName: card.name,
+      sourceDomain: card.sourceDomain,
+      nsfw: card.nsfw,
+      nsfwLevel: card.nsfwLevel
+    })
+  }
+
+  for (const item of getExclusionReviewItems()) {
+    const versionId = item.versionId ?? 0
+    if (versionId <= 0) continue
+    add({
+      versionId,
+      modelId: item.modelId,
+      modelName: item.modelName,
+      sourceDomain: item.sourceDomain
+    })
+  }
+
+  return out
+}
+
+export function countVideoPreviewSyncCandidates(): number {
+  return listVideoPreviewSyncCandidates().length
+}
+
+export function clearBrowseCardCacheForModel(modelId: number): void {
+  if (!modelId || modelId <= 0) return
+  getDb().prepare('DELETE FROM browse_card_cache WHERE model_id = ?').run(modelId)
 }

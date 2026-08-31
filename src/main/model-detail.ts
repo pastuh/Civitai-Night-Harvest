@@ -6,7 +6,7 @@ import {
   modelStatsFromSearch,
   pickVersionStats
 } from '../shared/civitai-meta'
-import { collectPreviewCandidates, getModelPageUrl } from '../shared/utils'
+import { collectPreviewCandidates, collectVideoPreviewCandidates, getModelPageUrl } from '../shared/utils'
 import { expandCivitaiTagNames } from '../shared/tag-routing'
 import { trainedWordsFromSwarm } from './library-hash-verify'
 import * as inventory from './inventory'
@@ -63,6 +63,7 @@ function buildDetailFromModel(
   const versions = (model.modelVersions ?? []).map((v) => {
     const vStats = pickVersionStats(v)
     const previewUrls = collectPreviewCandidates(v.images)
+    const videoPreviewUrls = collectVideoPreviewCandidates(v.images)
     return {
       id: v.id,
       name: v.name,
@@ -73,6 +74,8 @@ function buildDetailFromModel(
       thumbsUpCount: vStats.thumbsUpCount,
       previewUrl: previewUrls[0],
       previewUrls: previewUrls.length ? previewUrls : undefined,
+      videoPreviewUrl: videoPreviewUrls[0],
+      videoPreviewUrls: videoPreviewUrls.length ? videoPreviewUrls : undefined,
       availability: v.availability,
       earlyAccessEndsAt: v.earlyAccessEndsAt ?? null
     }
@@ -110,18 +113,19 @@ async function loadModelOnDomain(
   versionId: number
 ): Promise<{ model: CivitaiModel; versionId: number } | null> {
   const client = pool.forDomain(domain)
+  const pace = { pace: 'interactive' as const }
   try {
-    const model = await client.getModel(modelId)
+    const model = await client.getModel(modelId, pace)
     return { model, versionId }
   } catch (err) {
     if (!isNotFoundError(err)) throw err
   }
 
   try {
-    const version = await client.getModelVersion(versionId)
+    const version = await client.getModelVersion(versionId, pace)
     const mid = version.modelId && version.modelId > 0 ? version.modelId : modelId
     try {
-      const model = await client.getModel(mid)
+      const model = await client.getModel(mid, pace)
       return { model, versionId: version.id }
     } catch (err) {
       if (!isNotFoundError(err)) throw err

@@ -227,9 +227,11 @@ app.whenReady().then(() => {
   }
 
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['*://image.civitai.com/*'] },
+    { urls: ['*://image.civitai.com/*', '*://image.civitai.red/*'] },
     (details, callback) => {
-      details.requestHeaders.Referer = 'https://civitai.com/'
+      details.requestHeaders.Referer = /civitai\.red/i.test(details.url)
+        ? 'https://civitai.red/'
+        : 'https://civitai.com/'
       callback({ requestHeaders: details.requestHeaders })
     }
   )

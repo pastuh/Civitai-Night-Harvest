@@ -20,6 +20,7 @@
   --browse-cat-owned: #4ecb7a;
   --browse-cat-new: #5ec8e8;
   --browse-cat-awaiting: #ffca24;
+  --browse-cat-awaiting-confirm: #7c6cf0;
   --browse-cat-blocked: #c4a0f0;
   --browse-cat-banned: #f08088;
   --strip-interrupted: #e879a8;
@@ -76,6 +77,7 @@
   --browse-cat-owned: #2f9e52;
   --browse-cat-new: #0e7490;
   --browse-cat-awaiting: #c99600;
+  --browse-cat-awaiting-confirm: #6d5bd0;
   --browse-cat-blocked: #7c3aed;
   --browse-cat-banned: #c73e48;
   --strip-interrupted: #db7093;
@@ -109,6 +111,7 @@
   /* Keep New clearly cyan — was too close to gray queued accents */
   --browse-cat-new: #6eb8d4;
   --browse-cat-awaiting: #a67c52;
+  --browse-cat-awaiting-confirm: #8b7cc8;
   --browse-cat-blocked: #8b6b9a;
   --browse-cat-banned: #c45a62;
   --strip-interrupted: #b86b82;
@@ -160,6 +163,7 @@
   --browse-cat-owned: #86efac;
   --browse-cat-new: #c4b5fd;
   --browse-cat-awaiting: #fbcfe8;
+  --browse-cat-awaiting-confirm: #a78bfa;
   --browse-cat-blocked: #99f6e4;
   --browse-cat-banned: #fb7185;
   --strip-interrupted: #f472b6;
@@ -227,12 +231,13 @@
   /* Browse palette kept coherent */
   --browse-cat-loaded: #9aa3ba;
   --browse-cat-owned: #00d7ff;
-  /* Requested: New=green (distinct from cyan Owned and red Banned), Awaiting=amber (standby), Banned=forbidden red */
+  /* New=green, Awaiting=amber, Banned=forbidden red; Updates≠Blocked (were both violet). */
   --browse-cat-new: #2fa856;
   --browse-cat-awaiting: #ffc24d;
-  --browse-cat-blocked: #b38cff;
-  /* Bright "forbidden" red — pulled far from the amber Awaiting and the violet
-     Updates/Blocked cluster so permanent exclusion ("banned") reads distinctly. */
+  /* Cool indigo — Updates (confirm) */
+  --browse-cat-awaiting-confirm: #6f78f5;
+  /* Soft rose-magenta — Blocked / skip-tag (not violet, not accent pink, not banned red) */
+  --browse-cat-blocked: #e07aad;
   --browse-cat-banned: #ff3b3b;
   --strip-interrupted: #ff6bb2;
   --strip-queued: #c8cdd8;
@@ -909,6 +914,10 @@ label.field-label {
   --card-accent: var(--browse-cat-new);
 }
 
+.gallery-card[data-state='awaiting-confirm'] {
+  --card-accent: var(--browse-cat-awaiting-confirm, #7c6cf0);
+}
+
 .browse-show-owned .gallery-card.owned,
 .browse-show-owned .gallery-card[data-state='owned'] {
   opacity: 1;
@@ -921,6 +930,16 @@ label.field-label {
 .badge-owned {
   background: color-mix(in srgb, var(--browse-cat-owned) 25%, var(--surface2));
   color: var(--browse-cat-owned);
+}
+
+.badge-update {
+  background: color-mix(in srgb, var(--browse-cat-awaiting-confirm, #7c6cf0) 28%, var(--surface2));
+  color: color-mix(in srgb, var(--browse-cat-awaiting-confirm, #7c6cf0) 85%, white);
+}
+
+.badge-pack {
+  background: color-mix(in srgb, var(--browse-cat-new, #22c55e) 22%, var(--surface2));
+  color: color-mix(in srgb, var(--browse-cat-new, #22c55e) 85%, white);
 }
 
 .badge-skipped {

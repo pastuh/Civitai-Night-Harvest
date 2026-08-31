@@ -132,6 +132,14 @@ export function getSettings(): AppSettings {
   if (raw.hideAwaitingAccess === undefined) {
     raw.hideAwaitingAccess = false
   }
+  if (raw.browseVideoPreviews === undefined) {
+    raw.browseVideoPreviews = false
+  }
+  if (raw.mediaCacheFolder === undefined) {
+    raw.mediaCacheFolder = ''
+  } else {
+    raw.mediaCacheFolder = String(raw.mediaCacheFolder).trim()
+  }
   if (!raw.downloadStreams || raw.downloadStreams < 1) {
     raw.downloadStreams = 16
   }
@@ -277,6 +285,9 @@ export function saveSettings(partial: Partial<AppSettings>): AppSettings {
   )
   if (partial.libraryExcludedTags !== undefined) {
     next.libraryExcludedTags = normalizeHiddenTags(partial.libraryExcludedTags)
+  }
+  if (partial.mediaCacheFolder !== undefined) {
+    next.mediaCacheFolder = String(partial.mediaCacheFolder).trim()
   }
   store.set('settings', next)
   return next

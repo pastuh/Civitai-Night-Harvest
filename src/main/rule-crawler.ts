@@ -214,6 +214,17 @@ export class RuleCrawler {
           flushPageDownloads(downloadQueue, peek.queued, options.onDownloadsStarted)
         }
 
+        // Clear "Fetching page N" as soon as the API returns — gallery merge / preview
+        // enrich must not keep the status stuck for seconds.
+        options.onCrawlFetchDone?.({
+          rule,
+          pageNumber: skipBackfill ? pagesProcessed : catalogPage,
+          page: backfill,
+          errors: combined.errors,
+          catalogComplete: !backfill.nextCursor,
+          domain: crawlDomain
+        })
+
         await Promise.resolve(
           options.onCrawlPage?.({
             rule,
@@ -223,15 +234,6 @@ export class RuleCrawler {
             catalogComplete: !skipBackfill && !combined.nextCursor && combined.pageModels > 0
           })
         )
-
-        options.onCrawlFetchDone?.({
-          rule,
-          pageNumber: skipBackfill ? pagesProcessed : catalogPage,
-          page: backfill,
-          errors: combined.errors,
-          catalogComplete: !backfill.nextCursor,
-          domain: crawlDomain
-        })
 
         if (backfill.queued > 0) {
           log(

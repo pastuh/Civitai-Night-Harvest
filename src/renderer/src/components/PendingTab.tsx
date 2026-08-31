@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import type {
+  DownloadQueueItem,
   InventoryRecord,
   LibraryVersionScanProgress,
   PendingVersion
@@ -25,6 +26,13 @@ import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
 import { ConfirmModal } from './ConfirmModal'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
+import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
+import { useDownloadQueue } from '../hooks/useDownloadQueue'
+import {
+  pendingCardPreviewSource,
+  resolveModelCardThumb,
+  videoPreviewAvailabilityFor
+} from '../utils/model-card-preview'
 import {
   PENDING_SORT_OPTIONS,
   normalizePendingSort,
@@ -79,6 +87,7 @@ interface Props {
   banFunctionMode?: boolean
   onBanFunctionModeChange?: (enabled: boolean) => void
   isActive?: boolean
+  browseVideoPreviews?: boolean
 }
 
 function resolveModelType(
@@ -139,9 +148,32 @@ export const PendingTab = memo(function PendingTab({
   onBrowseModelBanned,
   banFunctionMode = false,
   onBanFunctionModeChange,
-  isActive = true
+  isActive = true,
+  browseVideoPreviews = false
 }: Props) {
   const t = useT()
+  const { items: queueItems, paused: queuePaused } = useDownloadQueue()
+  const queueByVersionId = useMemo(() => {
+    const map = new Map<number, DownloadQueueItem>()
+    for (const item of queueItems) {
+      if (item.status !== 'queued' && item.status !== 'downloading' && item.status !== 'failed') {
+        continue
+      }
+      if (item.versionId > 0) map.set(item.versionId, item)
+    }
+    return map
+  }, [queueItems])
+  const [autoUpdateModelIds, setAutoUpdateModelIds] = useState<Set<number>>(() => new Set())
+  useEffect(() => {
+    let cancelled = false
+    void window.api.getAutoUpdateModels().then((rows) => {
+      if (cancelled) return
+      setAutoUpdateModelIds(new Set(rows.map((r) => r.modelId).filter((id) => id > 0)))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [pending])
   const initial = viewPrefs ? coercePendingViewPrefs(viewPrefs) : DEFAULT_PENDING_VIEW_PREFS
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   const [busyVersionIds, setBusyVersionIds] = useState<Set<number>>(() => new Set())
@@ -333,8 +365,8 @@ export const PendingTab = memo(function PendingTab({
 
   const approve = async (item: PendingVersion) => {
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
+    if (queueByVersionId.has(item.versionId)) return
     markBusy(item.versionId, true)
-    onPendingRemoved?.(item.versionId)
     try {
       await window.api.approvePending({
         modelId: item.modelId,
@@ -349,13 +381,15 @@ export const PendingTab = memo(function PendingTab({
   const alwaysUpdate = async (item: PendingVersion) => {
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
     markBusy(item.versionId, true)
-    onPendingRemoved?.(item.versionId)
     try {
       await window.api.setModelAutoUpdate(item.modelId, true, item.modelName)
-      await window.api.approvePending({
-        modelId: item.modelId,
-        versionId: item.versionId
-      })
+      setAutoUpdateModelIds((prev) => new Set(prev).add(item.modelId))
+      if (!queueByVersionId.has(item.versionId)) {
+        await window.api.approvePending({
+          modelId: item.modelId,
+          versionId: item.versionId
+        })
+      }
       await onQueueRefresh?.()
     } finally {
       markBusy(item.versionId, false)
@@ -675,6 +709,21 @@ export const PendingTab = memo(function PendingTab({
   )
   const visibleRows = resultsWindow.visible
 
+  const previewSources = useMemo(
+    () =>
+      filtered.map((row) =>
+        pendingCardPreviewSource(row.item, ownedPrimaryByModel.get(row.item.modelId))
+      ),
+    [filtered, ownedPrimaryByModel]
+  )
+
+  const { overrides: previewOverrides, browseCards, markPreviewBroken } =
+    useModelCardPreviewOverrides(previewSources, {
+      enabled: isActive,
+      contentFilter: 'all',
+      fetchVideo: browseVideoPreviews
+    })
+
   const versionsLabel = (item: PendingVersion) => {
     const owned = ownedByModel.get(item.modelId)?.length ?? 0
     const pendingForModel = pending.filter((p) => p.modelId === item.modelId).length
@@ -920,11 +969,52 @@ export const PendingTab = memo(function PendingTab({
                         nsfw.nsfw != null || nsfw.nsfwLevel
                           ? describeNsfwRating(nsfw.nsfw, nsfw.nsfwLevel)
                           : null
+                      const queueItem = queueByVersionId.get(item.versionId)
+                      const isDownloading = queueItem?.status === 'downloading'
+                      const isQueued = queueItem?.status === 'queued'
+                      const isFailed = queueItem?.status === 'failed'
+                      const inQueue = isDownloading || isQueued
+                      const autoUpdate = autoUpdateModelIds.has(item.modelId)
+                      const queueFoot = isDownloading
+                        ? ''
+                        : isQueued
+                          ? queuePaused
+                            ? t('pending.queuedPaused')
+                            : t('pending.queuedReady')
+                          : isFailed
+                            ? t('downloadsStrip.statusFailed')
+                            : ''
+                      const cardClass = [
+                        forgotten ? 'status-forgotten' : '',
+                        skipped ? 'status-skipped' : '',
+                        inQueue ? 'in-queue' : '',
+                        inQueue && queueItem?.manual === true ? 'queue-manual' : '',
+                        inQueue && queueItem?.manual !== true ? 'queue-auto' : '',
+                        isDownloading ? 'status-downloading' : '',
+                        isQueued ? 'status-queued' : ''
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                      const previewSource = pendingCardPreviewSource(
+                        item,
+                        owned,
+                        browseCards[item.versionId]
+                      )
+                      const cardThumb = resolveModelCardThumb(
+                        previewSource,
+                        previewOverrides[item.versionId],
+                        browseCards[item.versionId]
+                      )
+                      const videoAvailability = videoPreviewAvailabilityFor(
+                        previewSource,
+                        previewOverrides[item.versionId]
+                      )
 
                       return (
                         <StatusModelCard
                           key={item.versionId}
                           className={[
+                            cardClass,
                             skipped ? 'pending-card-skipped' : '',
                             forgotten ? 'missing-card-forgotten' : '',
                             isSeen ? 'is-ban-seen' : '',
@@ -954,6 +1044,12 @@ export const PendingTab = memo(function PendingTab({
                                 <span className="status-card-version-name">{item.versionName}</span>
                                 <span className="status-card-version-base"> · {item.baseModel}</span>
                                 <span className="status-card-version-base"> · {mt}</span>
+                                {autoUpdate ? (
+                                  <span className="status-card-skipped-badge">
+                                    {' '}
+                                    · {t('pending.alwaysUpdateBadge')}
+                                  </span>
+                                ) : null}
                                 {forgotten ? (
                                   <span className="status-card-skipped-badge">
                                     {' '}
@@ -985,6 +1081,7 @@ export const PendingTab = memo(function PendingTab({
                               ) : null}
                             </>
                           }
+                          statusFoot={queueFoot || undefined}
                           badges={
                             ratingInfo ? (
                               <span
@@ -995,11 +1092,13 @@ export const PendingTab = memo(function PendingTab({
                               </span>
                             ) : null
                           }
-                          previewUrl={
-                            owned?.previewPath?.trim() && forgotten
-                              ? window.api.toMediaUrl(owned.previewPath)
-                              : item.previewUrl
-                          }
+                          previewUrl={cardThumb.urls[0]}
+                          previewUrls={cardThumb.urls}
+                          videoUrl={cardThumb.videoUrl}
+                          videoPreviews={browseVideoPreviews}
+                          videoAvailability={videoAvailability}
+                          videoFetch={previewSource}
+                          onPreviewAllFailed={() => markPreviewBroken(item.versionId)}
                           titleActions={
                             <>
                               <button
@@ -1092,6 +1191,24 @@ export const PendingTab = memo(function PendingTab({
                                   </button>
                                 ) : null}
                               </>
+                            ) : inQueue ? (
+                              <>
+                                <button type="button" className="primary" disabled>
+                                  {isDownloading
+                                    ? t('pending.downloadingNow')
+                                    : queuePaused
+                                      ? t('pending.queuedPaused')
+                                      : t('pending.queuedReady')}
+                                </button>
+                                {onOpenInLibrary ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenInLibrary(item.modelId, item.modelName)}
+                                  >
+                                    {t('pending.openInLibrary')}
+                                  </button>
+                                ) : null}
+                              </>
                             ) : (
                               <>
                                 <button
@@ -1105,11 +1222,17 @@ export const PendingTab = memo(function PendingTab({
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={busy}
-                                  title={t('pending.alwaysUpdateHint')}
+                                  disabled={busy || autoUpdate}
+                                  title={
+                                    autoUpdate
+                                      ? t('pending.alwaysUpdateOnHint')
+                                      : t('pending.alwaysUpdateHint')
+                                  }
                                   onClick={() => void alwaysUpdate(item)}
                                 >
-                                  {t('pending.alwaysUpdate')}
+                                  {autoUpdate
+                                    ? t('pending.alwaysUpdateOn')
+                                    : t('pending.alwaysUpdate')}
                                 </button>
                                 <button
                                   type="button"
@@ -1326,17 +1449,19 @@ export const PendingTab = memo(function PendingTab({
                 </button>
                 {!contextMenu.row.item.skipped ? (
                   <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      {...contextMenuButtonProps}
-                      onClick={() => {
-                        void approve(contextMenu.row.item)
-                        setContextMenu(null)
-                      }}
-                    >
-                      {t('pending.queueDownload')}
-                    </button>
+                    {!queueByVersionId.has(contextMenu.versionId) ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        {...contextMenuButtonProps}
+                        onClick={() => {
+                          void approve(contextMenu.row.item)
+                          setContextMenu(null)
+                        }}
+                      >
+                        {t('pending.queueDownload')}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       role="menuitem"

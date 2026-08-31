@@ -14,6 +14,8 @@ import {
 } from './gallery-card-utils'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
+import { PreviewThumb } from './PreviewThumb'
+import { resolveModelCardThumb, libraryCardPreviewSource, videoPreviewAvailabilityFor, type ModelCardPreviewOverride } from '../utils/model-card-preview'
 
 export type LibraryModelCardProps = {
   record: InventoryRecord
@@ -51,6 +53,10 @@ export type LibraryModelCardProps = {
   /** Early-access favorite — pin at top of Library until cleared. */
   eaFavorited?: boolean
   onToggleEaFavorite?: (modelId: number) => void
+  /** Bust browser cache when the on-disk preview file was replaced in-place. */
+  previewCacheBust?: number
+  browseVideoPreviews?: boolean
+  previewOverride?: ModelCardPreviewOverride
 }
 
 function LibraryModelCardInner({
@@ -77,9 +83,22 @@ function LibraryModelCardInner({
   onOpenDetails,
   onCivitaiTagClick,
   eaFavorited = false,
-  onToggleEaFavorite
+  onToggleEaFavorite,
+  previewCacheBust,
+  browseVideoPreviews = false,
+  previewOverride
 }: LibraryModelCardProps) {
   const t = useT()
+  const localPreviewPath =
+    record.previewPath && previewCacheBust
+      ? `${record.previewPath}?v=${previewCacheBust}`
+      : record.previewPath
+  const previewSource = {
+    ...libraryCardPreviewSource(record),
+    previewUrl: localPreviewPath || record.previewPath?.trim() || undefined
+  }
+  const cardThumb = resolveModelCardThumb(previewSource, previewOverride)
+  const videoAvailability = videoPreviewAvailabilityFor(previewSource, previewOverride)
   const metaExtra = inventoryMetaExtra(record)
   const ratingInfo =
     record.isNsfw != null || record.nsfwLevel
@@ -169,16 +188,15 @@ function LibraryModelCardInner({
         </span>
       )}
       <div className="gallery-thumb-wrap" aria-hidden="true">
-        {record.previewPath ? (
-          <img
-            src={window.api.toMediaUrl(record.previewPath)}
-            alt=""
-            className="gallery-thumb"
-            decoding="async"
-          />
-        ) : (
-          <div className="gallery-thumb placeholder" />
-        )}
+        <PreviewThumb
+          urls={cardThumb.urls}
+          videoUrl={cardThumb.videoUrl}
+          videoPreviews={browseVideoPreviews}
+          videoAvailability={videoAvailability}
+          videoFetch={libraryCardPreviewSource(record)}
+          className="gallery-thumb"
+          loading="lazy"
+        />
       </div>
       <div className="gallery-card-body">
         <div className="gallery-card-title-row">

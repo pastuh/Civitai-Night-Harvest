@@ -498,6 +498,11 @@ export function ActiveDownloadsStrip({
     await window.api.dismissDownload(item.id)
   }
 
+  const runNowItem = async (item: DownloadQueueItem) => {
+    setContextMenu(null)
+    await window.api.runDownloadNow(item.id)
+  }
+
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSED_KEY) === '1'
@@ -725,7 +730,16 @@ export function ActiveDownloadsStrip({
                 {t('downloadsStrip.removeFromQueue')}
               </button>
             )}
+            {queuePaused &&
+              (contextMenu.item.status === 'queued' ||
+                contextMenu.item.status === 'failed' ||
+                contextMenu.item.status === 'deferred') && (
+                <button {...contextMenuButtonProps(() => void runNowItem(contextMenu.item))}>
+                  {t('downloadsStrip.downloadNow')}
+                </button>
+              )}
             {onPrioritizeDownload &&
+              !queuePaused &&
               (contextMenu.item.status === 'queued' ||
                 contextMenu.item.status === 'failed' ||
                 contextMenu.item.status === 'deferred') && (
@@ -737,7 +751,7 @@ export function ActiveDownloadsStrip({
                   {t('downloadsStrip.priorityDownload')}
                 </button>
               )}
-            {contextMenu.item.status === 'failed' && onRetryFailed && (
+            {contextMenu.item.status === 'failed' && onRetryFailed && !queuePaused && (
               <button
                 {...contextMenuButtonProps(() => void onRetryFailed(contextMenu.item.id))}
               >

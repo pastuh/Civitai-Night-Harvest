@@ -226,8 +226,11 @@ export async function enrichDeferredDownloads(
   persist: (item: DeferredDownload) => void,
   maxChecks = 80,
   /** Called when live API says early access / auth gate is gone (creator ended EA early). */
-  onUnlocked?: (versionId: number) => void
+  onUnlocked?: (versionId: number) => void,
+  /** UI enrich must not drop rows — only the background watcher may unlock/re-queue. */
+  options?: { allowUnlock?: boolean }
 ): Promise<DeferredDownload[]> {
+  const allowUnlock = options?.allowUnlock !== false
   // Prefer rows missing unlock time — browse/search often omits earlyAccessEndsAt.
   const ordered = [...items].sort((a, b) => {
     const aMiss =
@@ -271,15 +274,22 @@ export async function enrichDeferredDownloads(
         // watcher re-queues a doomed 401/403 download attempt. Falling back to the full
         // version endpoint for these rows keeps them in Awaiting access (matching the initial
         // classify path) until the user pays or the creator removes the paywall.
-        if (!ea.isEarlyAccess && paidAccessProbes < maxPaidAccessProbes) {
+        const needsFullVersion =
+          (!ea.isEarlyAccess && paidAccessProbes < maxPaidAccessProbes) ||
+          !(item.baseModel || '').trim()
+        if (needsFullVersion) {
           try {
             const fullVersion = await client.getModelVersion(item.versionId)
-            if (fullVersion.paidAccess) {
+            if (!ea.isEarlyAccess && fullVersion.paidAccess && paidAccessProbes < maxPaidAccessProbes) {
               paidAccessProbes++
               ea = earlyAccessFromMini({ ...mini, paidAccess: fullVersion.paidAccess })
             }
+            const bm = fullVersion.baseModel?.trim()
+            if (bm && !(item.baseModel || '').trim()) {
+              patch.baseModel = bm
+            }
           } catch {
-            /* paidAccess lookup failed — keep mini classification (likely deleted upstream) */
+            /* full version lookup failed — keep mini classification (likely deleted upstream) */
           }
         }
         if (ea.isEarlyAccess) {
@@ -292,10 +302,15 @@ export async function enrichDeferredDownloads(
           }
           persist(next)
           byVersion.set(item.versionId, next)
-        } else {
+        } else if (allowUnlock) {
           // Public again (or never gated) — drop stale Waiting row; caller may re-queue.
           byVersion.delete(item.versionId)
           onUnlocked?.(item.versionId)
+        } else {
+          // Metadata-only (Awaiting tab / startup) — mini can falsely look "public".
+          const next = { ...item, ...patch }
+          persist(next)
+          byVersion.set(item.versionId, next)
         }
       } catch {
         /* skip */

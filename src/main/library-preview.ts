@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import type { InventoryRecord } from '../shared/types'
 import * as inventory from './inventory'
-import { fetchFirstWorkingPreview, type FetchedPreview } from './preview-fetch'
+import type { FetchedPreview } from './preview-fetch'
 
 function stripUrlExtras(pathOrUrl: string): string {
   let s = pathOrUrl
@@ -13,27 +13,66 @@ function stripUrlExtras(pathOrUrl: string): string {
   return s
 }
 
+function previewMimeFromPath(filePath: string): string {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  return 'image/jpeg'
+}
+
+function bufferToPreview(url: string, buffer: Buffer, mime?: string): FetchedPreview | null {
+  if (buffer.length < 128) return null
+  const resolvedMime = mime ?? previewMimeFromPath(url)
+  return {
+    url,
+    base64: buffer.toString('base64'),
+    mime: resolvedMime,
+    buffer
+  }
+}
+
 function previewFromLocalMediaUrl(url: string): FetchedPreview | null {
   if (!url.startsWith('media://')) return null
   try {
     const filePath = stripUrlExtras(decodeURIComponent(url.replace(/^media:\/\//, '')))
     if (!filePath || !existsSync(filePath)) return null
-    const buffer = readFileSync(filePath)
-    if (buffer.length < 128) return null
-    const lower = filePath.toLowerCase()
-    const mime = lower.endsWith('.png')
-      ? 'image/png'
-      : lower.endsWith('.webp')
-        ? 'image/webp'
-        : 'image/jpeg'
-    return {
-      url,
-      base64: buffer.toString('base64'),
-      mime,
-      buffer
-    }
+    return bufferToPreview(url, readFileSync(filePath))
   } catch {
     return null
+  }
+}
+
+function previewFromLocalFilePath(filePath: string): FetchedPreview | null {
+  const trimmed = filePath.trim()
+  if (!trimmed || trimmed.startsWith('http://') || trimmed.startsWith('https://')) return null
+  try {
+    if (!existsSync(trimmed)) return null
+    return bufferToPreview(trimmed, readFileSync(trimmed))
+  } catch {
+    return null
+  }
+}
+
+function resolveLocalPreview(url: string): FetchedPreview | null {
+  return previewFromLocalMediaUrl(url) ?? previewFromLocalFilePath(url)
+}
+
+async function downloadPreviewUrl(url: string, timeoutMs = 45_000): Promise<FetchedPreview | null> {
+  const trimmed = url.trim()
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(trimmed, { signal: controller.signal })
+    if (!res.ok) return null
+    const mime = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim()
+    if (mime && !mime.startsWith('image/')) return null
+    const buffer = Buffer.from(await res.arrayBuffer())
+    return bufferToPreview(trimmed, buffer, mime || 'image/jpeg')
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -56,8 +95,7 @@ export async function setLibraryPreviewFromUrl(
   const url = imageUrl.trim()
   if (!url) throw new Error('No preview URL selected')
 
-  const preview =
-    previewFromLocalMediaUrl(url) ?? (await fetchFirstWorkingPreview([url]))
+  const preview = resolveLocalPreview(url) ?? (await downloadPreviewUrl(url))
   if (!preview) {
     throw new Error('Could not download the selected preview image')
   }
@@ -82,6 +120,6 @@ export async function setLibraryPreviewFromUrl(
 
   const updated: InventoryRecord = { ...record, previewPath }
   inventory.addVersion(updated)
-  inventory.updatePendingPreviewUrl(versionId, url)
+  inventory.setVersionPreferredPreview(versionId, record.modelId, url)
   return updated
 }

@@ -37,6 +37,8 @@ import type {
   LibraryHashVerifyResult,
   LibrarySyncProgress,
   LibraryHashVerifyProgress,
+  VideoPreviewSyncProgress,
+  VideoPreviewSyncResult,
   ContentFilter,
   SlugFormat,
   PreviewResolveRequest,
@@ -90,6 +92,29 @@ const api = {
   ): Promise<PreviewResolveResult[]> =>
     ipcRenderer.invoke('preview:resolveBatch', items, contentFilter),
 
+  resolveVideoPreviewBatch: (
+    items: PreviewResolveRequest[],
+    contentFilter?: ContentFilter
+  ): Promise<Array<Pick<PreviewResolveResult, 'versionId' | 'videoPreviewUrl' | 'videoPreviewUrls'>>> =>
+    ipcRenderer.invoke('preview:resolveVideoBatch', items, contentFilter),
+
+  resolveVideoPlayUrl: (url: string): Promise<string | null> =>
+    ipcRenderer.invoke('preview:resolveVideoPlayUrl', url),
+
+  getVersionVideoPreview: (
+    versionIds: number[]
+  ): Promise<Record<number, import('../shared/types').VersionVideoPreviewMeta>> =>
+    ipcRenderer.invoke('preview:getVideoPreview', versionIds),
+
+  markVersionVideoAbsent: (versionId: number, modelId: number): Promise<void> =>
+    ipcRenderer.invoke('preview:markVideoAbsent', { versionId, modelId }),
+
+  getVideoPreviewSyncPending: (): Promise<number> =>
+    ipcRenderer.invoke('preview:getVideoSyncPending'),
+
+  syncVideoPreviews: (): Promise<VideoPreviewSyncResult> =>
+    ipcRenderer.invoke('preview:syncVideoAll'),
+
   getInventory: (options?: InventoryGetOptions): Promise<InventoryGetResult> =>
     ipcRenderer.invoke('inventory:getAll', options),
   notifyRendererReady: (): Promise<void> => ipcRenderer.invoke('app:rendererReady'),
@@ -126,9 +151,13 @@ const api = {
 
   setPreviewFromUrl: (
     versionId: number,
-    imageUrl: string
+    imageUrl: string,
+    modelId?: number
   ): Promise<{ savedToLibrary: boolean; record?: InventoryRecord }> =>
-    ipcRenderer.invoke('inventory:setPreviewFromUrl', { versionId, imageUrl }),
+    ipcRenderer.invoke('inventory:setPreviewFromUrl', { versionId, imageUrl, modelId }),
+
+  getPreferredPreviewUrl: (versionId: number): Promise<string | undefined> =>
+    ipcRenderer.invoke('inventory:getPreferredPreviewUrl', versionId),
 
   previewModel: (input: string) => ipcRenderer.invoke('model:preview', input),
 
@@ -188,6 +217,18 @@ const api = {
     return () => ipcRenderer.removeListener('library:hashProgress', handler)
   },
 
+  onVideoPreviewSyncProgress: (cb: (p: VideoPreviewSyncProgress) => void) => {
+    const handler = (_: unknown, p: VideoPreviewSyncProgress) => cb(p)
+    ipcRenderer.on('preview:videoSyncProgress', handler)
+    return () => ipcRenderer.removeListener('preview:videoSyncProgress', handler)
+  },
+
+  onVideoPreviewSyncComplete: (cb: (result: VideoPreviewSyncResult) => void) => {
+    const handler = (_: unknown, result: VideoPreviewSyncResult) => cb(result)
+    ipcRenderer.on('preview:videoSyncComplete', handler)
+    return () => ipcRenderer.removeListener('preview:videoSyncComplete', handler)
+  },
+
   enqueueDownload: (
     request: DownloadRequest,
     meta?: {
@@ -202,6 +243,7 @@ const api = {
       nsfwLevel?: number
       confirmTagsAfter?: boolean
       manual?: boolean
+      startNow?: boolean
     }
   ): Promise<string> => ipcRenderer.invoke('download:enqueue', request, meta),
 
@@ -214,6 +256,8 @@ const api = {
     ipcRenderer.invoke('download:dismiss', queueId),
   retryFailedDownload: (queueId: string): Promise<DownloadQueueState> =>
     ipcRenderer.invoke('download:retryFailed', queueId),
+  runDownloadNow: (queueId: string): Promise<DownloadQueueState> =>
+    ipcRenderer.invoke('download:runNow', queueId),
   prioritizeDownload: (queueId: string): Promise<DownloadQueueState> =>
     ipcRenderer.invoke('download:priority', queueId),
   setDownloadRouting: (versionId: number, routingTag: string): Promise<DownloadQueueState> =>
@@ -231,6 +275,10 @@ const api = {
   getPending: (): Promise<PendingVersion[]> => ipcRenderer.invoke('pending:get'),
   getBrowseGallery: (): Promise<WatchRuleTestResult | null> =>
     ipcRenderer.invoke('browse:getGallery'),
+  getBrowseCardCache: (
+    versionIds: number[]
+  ): Promise<Record<number, WatchRuleTestModel>> =>
+    ipcRenderer.invoke('browse:getCardCache', versionIds),
   lookupBrowseId: (id: number | string): Promise<WatchRuleTestModel | null> =>
     ipcRenderer.invoke('browse:lookupId', id),
   approvePending: (payload: {
@@ -453,8 +501,8 @@ const api = {
     ipcRenderer.on('crawl:page', handler)
     return () => ipcRenderer.removeListener('crawl:page', handler)
   },
-  onCrawlBrowseReset: (cb: () => void) => {
-    const handler = () => cb()
+  onCrawlBrowseReset: (cb: (payload?: { galleryGeneration?: number }) => void) => {
+    const handler = (_: unknown, payload?: { galleryGeneration?: number }) => cb(payload)
     ipcRenderer.on('crawl:browseReset', handler)
     return () => ipcRenderer.removeListener('crawl:browseReset', handler)
   },
@@ -468,6 +516,16 @@ const api = {
     const handler = (_: unknown, full: boolean) => cb(full)
     ipcRenderer.on('window:fullscreenChanged', handler)
     return () => ipcRenderer.removeListener('window:fullscreenChanged', handler)
+  },
+  onBrowsePreviewPref: (
+    cb: (payload: { modelId: number; versionId: number; previewUrl: string }) => void
+  ) => {
+    const handler = (
+      _: unknown,
+      payload: { modelId: number; versionId: number; previewUrl: string }
+    ) => cb(payload)
+    ipcRenderer.on('browse:previewPref', handler)
+    return () => ipcRenderer.removeListener('browse:previewPref', handler)
   }
 }
 

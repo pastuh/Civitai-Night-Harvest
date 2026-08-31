@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppLocale } from '../../../shared/locale'
-import type { AppSettingsPublic, AppSettingsSave, ContentFilter, LibraryHashVerifyProgress } from '../../../shared/types'
+import type { AppSettingsPublic, AppSettingsSave, ContentFilter, LibraryHashVerifyProgress, VideoPreviewSyncProgress } from '../../../shared/types'
 import { DEFAULT_ACTIVITY_LOG_TOPICS, resolveActivityLogTopics, type ActivityLogTopic } from '../../../shared/activity-log-policy'
 import { GRID_SIZE_MAX_PX, GRID_SIZE_MIN_PX, clampGridSizePx } from '../../../shared/grid-size'
 import {
@@ -41,6 +41,10 @@ export function SettingsTab({
   const [hashBusy, setHashBusy] = useState(false)
   const [hashResult, setHashResult] = useState<string | null>(null)
   const [hashProgress, setHashProgress] = useState<LibraryHashVerifyProgress | null>(null)
+  const [videoSyncBusy, setVideoSyncBusy] = useState(false)
+  const [videoSyncResult, setVideoSyncResult] = useState<string | null>(null)
+  const [videoSyncProgress, setVideoSyncProgress] = useState<VideoPreviewSyncProgress | null>(null)
+  const [videoSyncPending, setVideoSyncPending] = useState<number | null>(null)
   const [slugSyncBusy, setSlugSyncBusy] = useState(false)
   const [slugSyncResult, setSlugSyncResult] = useState<string | null>(null)
   const [diskSyncBusy, setDiskSyncBusy] = useState(false)
@@ -54,6 +58,24 @@ export function SettingsTab({
   useEffect(() => {
     return window.api.onLibraryHashProgress((p) => setHashProgress(p))
   }, [])
+
+  useEffect(() => {
+    return window.api.onVideoPreviewSyncProgress((p) => setVideoSyncProgress(p))
+  }, [])
+
+  useEffect(() => {
+    if (!(draft.browseVideoPreviews ?? settings.browseVideoPreviews)) {
+      setVideoSyncPending(null)
+      return
+    }
+    let cancelled = false
+    void window.api.getVideoPreviewSyncPending().then((pending) => {
+      if (!cancelled) setVideoSyncPending(pending)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [draft.browseVideoPreviews, settings.browseVideoPreviews, videoSyncBusy, videoSyncResult])
 
   useEffect(() => {
     setDraft(settings)
@@ -109,6 +131,11 @@ export function SettingsTab({
   const pickCheckpointFolder = async () => {
     const path = await window.api.pickFolder()
     if (path) update('checkpointOutputFolder', path)
+  }
+
+  const pickMediaCacheFolder = async () => {
+    const path = await window.api.pickFolder()
+    if (path) update('mediaCacheFolder', path)
   }
 
   const hasAnyScanFolder = Boolean(
@@ -814,6 +841,109 @@ export function SettingsTab({
           onChange={(v) => update('browseSettledDimPercent', v)}
         />
         <p className="muted settings-field-note">{t('settings.notes.browseSettledDimPercent')}</p>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.browseVideoPreviews ?? false}
+              onChange={(e) => update('browseVideoPreviews', e.target.checked)}
+            />
+            {t('settings.fields.browseVideoPreviews')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.browseVideoPreviews')}</p>
+        </div>
+        {(draft.browseVideoPreviews ?? settings.browseVideoPreviews) ? (
+          <div className="field">
+            <label className="field-label">{t('settings.fields.videoPreviewSync')}</label>
+            <p className="muted settings-field-note">{t('settings.notes.videoPreviewSync')}</p>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <button
+                type="button"
+                disabled={videoSyncBusy}
+                onClick={() => {
+                  setVideoSyncBusy(true)
+                  setVideoSyncResult(null)
+                  setVideoSyncProgress(null)
+                  void window.api
+                    .syncVideoPreviews()
+                    .then((r) => {
+                      let msg = t('settings.notes.videoPreviewSyncDone', {
+                        checked: r.checked,
+                        withVideo: r.withVideo,
+                        withoutVideo: r.withoutVideo
+                      })
+                      if (r.pending > 0) {
+                        msg += ` · ${t('settings.notes.videoPreviewSyncPending', { count: r.pending })}`
+                      }
+                      if (r.errors.length) {
+                        msg += ` · ${r.errors.length} error(s)`
+                      }
+                      setVideoSyncResult(msg)
+                      setVideoSyncPending(r.pending)
+                    })
+                    .catch((err) => {
+                      setVideoSyncResult(err instanceof Error ? err.message : String(err))
+                    })
+                    .finally(() => {
+                      setVideoSyncBusy(false)
+                      setVideoSyncProgress(null)
+                    })
+                }}
+              >
+                {videoSyncBusy
+                  ? t('settings.notes.videoPreviewSyncRunning')
+                  : t('settings.notes.videoPreviewSyncRun')}
+              </button>
+              {videoSyncPending != null && videoSyncPending > 0 && !videoSyncBusy ? (
+                <span className="muted settings-field-note">
+                  {t('settings.notes.videoPreviewSyncPending', { count: videoSyncPending })}
+                </span>
+              ) : null}
+            </div>
+            {videoSyncBusy && videoSyncProgress ? (
+              <div className="hash-verify-progress">
+                <div className="hash-verify-progress-head">
+                  <span>
+                    {t('settings.notes.videoPreviewSyncProgress', {
+                      current: videoSyncProgress.current,
+                      total: videoSyncProgress.total
+                    })}
+                  </span>
+                </div>
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${
+                        videoSyncProgress.total > 0
+                          ? Math.round((videoSyncProgress.current / videoSyncProgress.total) * 100)
+                          : 0
+                      }%`
+                    }}
+                  />
+                </div>
+                <p className="muted hash-verify-current-file" title={videoSyncProgress.modelName}>
+                  {videoSyncProgress.modelName}
+                </p>
+              </div>
+            ) : null}
+            {videoSyncResult ? <p className="muted settings-field-note">{videoSyncResult}</p> : null}
+          </div>
+        ) : null}
+        <div className="field">
+          <label className="field-label">{t('settings.fields.mediaCacheFolder')}</label>
+          <div className="row">
+            <input
+              value={draft.mediaCacheFolder ?? ''}
+              onChange={(e) => update('mediaCacheFolder', e.target.value)}
+              placeholder={t('settings.placeholders.mediaCacheFolder')}
+            />
+            <button type="button" onClick={() => void pickMediaCacheFolder()} style={{ flex: 'none' }}>
+              {t('common.browse')}
+            </button>
+          </div>
+          <p className="muted settings-field-note">{t('settings.notes.mediaCacheFolder')}</p>
+        </div>
         <div className="field field-checkbox">
           <label>
             <input

@@ -139,8 +139,17 @@ export interface AppSettings {
   resultsDisplayMode: import('./results-display').ResultsDisplayMode
   /** Items per page / lazy chunk (60 or 100) */
   resultsPageSize: import('./results-display').ResultsPageSize
-  /** Browse panel: hide early-access / deferred models in the card grid */
+  /** Hide early-access / deferred models in the Browse card grid */
   hideAwaitingAccess: boolean
+  /** Browse cards: play video preview on hover (muted). Off = image stills only. */
+  browseVideoPreviews: boolean
+  /**
+   * Folder for preview + video preview disk cache (subfolders previews/, video-previews/).
+   * Empty = userData/cache.
+   */
+  mediaCacheFolder: string
+  /** Synced from renderer — Early access favorites kept when Browse rules are off. */
+  eaFavoriteModelIds?: number[]
 }
 
 export type CivitaiSort = 'Newest' | 'Most Downloaded' | 'Highest Rated'
@@ -213,6 +222,9 @@ export interface AppSettingsPublic {
   browseSettledDimPercent: number
   resultsDisplayMode: import('./results-display').ResultsDisplayMode
   resultsPageSize: import('./results-display').ResultsPageSize
+  hideAwaitingAccess: boolean
+  browseVideoPreviews: boolean
+  mediaCacheFolder: string
 }
 
 /** Partial save from renderer; omit apiKey or send empty to keep existing */
@@ -262,7 +274,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   browseSettledToEnd: false,
   browseSettledDimPercent: 50,
   resultsDisplayMode: 'autoAdvance',
-  resultsPageSize: 100
+  resultsPageSize: 100,
+  hideAwaitingAccess: false,
+  browseVideoPreviews: false,
+  mediaCacheFolder: ''
 }
 
 export interface ScanScheduleInfo {
@@ -508,6 +523,8 @@ export interface DownloadQueueItem {
   confirmTagsAfter?: boolean
   /** True when the user explicitly queued from Browse/Library — affects gallery highlighting. */
   manual?: boolean
+  /** When set, pump may run this row even while the global queue is paused (Download now). */
+  runImmediate?: boolean
   /** Civitai version title (shown in strip / cards). */
   versionName?: string
   /** Set on restore when this row was actively downloading before shutdown (do not treat as stale auto-queue). */
@@ -536,6 +553,8 @@ export type DeferredFailureKind =
   | 'interrupted'
   | 'early_access'
 
+export type DeferredSource = 'manual' | 'harvest' | 'download'
+
 export interface DeferredDownload {
   modelId: number
   versionId: number
@@ -560,6 +579,10 @@ export interface DeferredDownload {
   /** From Civitai mini API — extra Buzz beyond base workflow cost */
   additionalResourceCharge?: boolean
   freeTrialLimit?: number | null
+  /** Civitai base model (e.g. Krea 2) — for Early access sidebar filter. */
+  baseModel?: string
+  /** manual = user queued from Browse; harvest = Watch rule crawl; download = auto pipeline defer. */
+  deferredSource?: DeferredSource
 }
 
 export interface PendingVersion {
@@ -728,6 +751,10 @@ export interface PreviewResolveRequest {
    * Used by Model details “Load previews”.
    */
   strictVersion?: boolean
+  /** Re-download disk cache when broken preview retry runs in Browse. */
+  refreshCache?: boolean
+  /** User-visible fetch — bypass background harvest pacing queue. */
+  interactive?: boolean
 }
 
 export interface PreviewResolveResult {
@@ -735,6 +762,18 @@ export interface PreviewResolveResult {
   versionId: number
   previewUrl?: string
   previewUrls: string[]
+  videoPreviewUrl?: string
+  videoPreviewUrls?: string[]
+}
+
+/** Persisted Civitai video preview metadata per version (survives app restart). */
+export interface VersionVideoPreviewMeta {
+  versionId: number
+  modelId: number
+  videoPreviewUrl?: string
+  videoPreviewUrls?: string[]
+  /** Confirmed after API/hover check — this version has no Civitai video preview. */
+  noVideo?: boolean
 }
 
 export interface WatchRuleTestModel {
@@ -747,6 +786,9 @@ export interface WatchRuleTestModel {
   baseModel: string
   previewUrl?: string
   previewUrls?: string[]
+  /** Raw Civitai video URLs for hover preview when browseVideoPreviews is enabled. */
+  videoPreviewUrl?: string
+  videoPreviewUrls?: string[]
   pageUrl?: string
   tags: string[]
   creator?: string
@@ -768,6 +810,11 @@ export interface WatchRuleTestModel {
   trainedWords?: string[]
   /** Primary model file size from Civitai API */
   fileSizeBytes?: number
+  /**
+   * Same Civitai model page has multiple versions on the same base (LoRA packs).
+   * Browse shows each as its own card. Unowned siblings of an owned model are Updates.
+   */
+  packSibling?: boolean
 }
 
 export interface BannedModel {
@@ -933,6 +980,12 @@ export interface CrawlPagePayload {
    * `full` — replace live gallery (snapshots / quiet empty / resets).
    */
   galleryMode?: 'delta' | 'full'
+  /**
+   * Bumped whenever the Browse gallery is cleared (rule change, Harvest toggle, domain change).
+   * Renderer ignores pages with an older generation so late pages from a stopped crawl
+   * cannot re-seed the previous base-model results.
+   */
+  galleryGeneration?: number
   result: WatchRuleTestResult
 }
 
@@ -1150,6 +1203,8 @@ export interface CivitaiModelDetailVersion {
   previewUrl?: string
   /** All candidate preview URLs for this version (when API provides them). */
   previewUrls?: string[]
+  videoPreviewUrl?: string
+  videoPreviewUrls?: string[]
   availability?: string
   earlyAccessEndsAt?: string | null
 }
@@ -1226,4 +1281,30 @@ export interface LibraryHashVerifyResult {
   mismatches: Array<{ modelName: string; versionId: number; expected: number; actual: number }>
   /** Civitai API sites used during verification */
   apiDomains: CivitaiDomain[]
+}
+
+export interface VideoPreviewSyncProgress {
+  phase: 'checking'
+  current: number
+  total: number
+  modelName: string
+}
+
+export interface VideoPreviewSyncResult {
+  /** Versions checked in this run (API calls). */
+  checked: number
+  withVideo: number
+  withoutVideo: number
+  /** Still unchecked after run (0 when finished). */
+  pending: number
+  errors: string[]
+}
+
+export interface VideoPreviewSyncCandidate {
+  versionId: number
+  modelId: number
+  modelName?: string
+  sourceDomain?: CivitaiDomain
+  nsfw?: boolean
+  nsfwLevel?: number
 }

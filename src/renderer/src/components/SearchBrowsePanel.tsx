@@ -19,7 +19,8 @@ import {
   browseModelDedupeKey,
   preferBrowseModel,
   modelMatchesRuleBrowseFilter,
-  parseRuleFilterTags
+  parseRuleFilterTags,
+  isDisplayablePreviewUrl
 } from '../../../shared/utils'
 import { describeNsfwRating, nsfwRatingCardClass } from '../../../shared/nsfw-rating'
 import {
@@ -34,6 +35,7 @@ import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPau
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
+import { videoPreviewAvailabilityFor, videoPreviewOverrideFromDbMeta, type ModelCardPreviewOverride } from '../utils/model-card-preview'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { useT } from '../i18n/context'
@@ -55,10 +57,16 @@ import {
   type BrowseViewPrefs
 } from '../view-prefs'
 import { compareOptionalCount } from '../list-sort'
+import { mapPreviewSrcs } from '../utils/preview-src'
 
 function previewUrlsFor(model: WatchRuleTestModel): string[] {
   if (model.previewUrls?.length) return model.previewUrls
   return model.previewUrl ? [model.previewUrl] : []
+}
+
+function videoPreviewUrlFor(model: WatchRuleTestModel): string | undefined {
+  if (model.videoPreviewUrls?.length) return model.videoPreviewUrls[0]
+  return model.videoPreviewUrl
 }
 
 function isOrphanQueueStatus(status: DownloadQueueItem['status']): boolean {
@@ -185,8 +193,12 @@ interface Props {
   sessionYieldCount?: number
   /** Pending Updates version IDs the user skipped — exclude from Browse Updates count. */
   skippedPendingVersionIds?: Set<number>
+  /** Active Updates offers — Browse hides these unless Show updates is on. */
+  pendingUpdateVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause scroll observers so inactive tabs do not expand mid-scroll. */
   isActive?: boolean
+  /** Browse cards: play video preview on hover (Settings). */
+  browseVideoPreviews?: boolean
 }
 
 interface ContextMenuState {
@@ -250,7 +262,9 @@ export function SearchBrowsePanel({
   onViewPrefsChange,
   sessionYieldCount = 0,
   skippedPendingVersionIds,
-  isActive = true
+  pendingUpdateVersionIds,
+  isActive = true,
+  browseVideoPreviews = false
 }: Props) {
   const t = useT()
   // Structure-only: byte progress must not re-render the whole gallery while scrolling.
@@ -322,6 +336,11 @@ export function SearchBrowsePanel({
     Record<number, { previewUrl?: string; previewUrls: string[] }>
   >({})
   const previewFetchStarted = useRef<Set<number>>(new Set())
+  const [brokenPreviewIds, setBrokenPreviewIds] = useState<Set<number>>(() => new Set())
+  const [videoDbOverrides, setVideoDbOverrides] = useState<
+    Record<number, ModelCardPreviewOverride>
+  >({})
+  const [videoDbReloadKey, setVideoDbReloadKey] = useState(0)
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
   const loadingMoreRef = useRef(loadingMore)
   const hasMoreRef = useRef(false)
@@ -449,24 +468,57 @@ export function SearchBrowsePanel({
   useEffect(() => {
     if (result.crawlSource && !updateBrowseOnCrawl) return
     setPreviewOverrides({})
+    setBrokenPreviewIds(new Set())
     previewFetchStarted.current = new Set()
   }, [result, updateBrowseOnCrawl])
+
+  useEffect(() => {
+    return window.api.onBrowsePreviewPref(({ versionId, previewUrl }) => {
+      setPreviewOverrides((prev) => {
+        const existing = prev[versionId]
+        const baseUrls = existing?.previewUrls?.length ? existing.previewUrls : []
+        const reordered = [previewUrl, ...baseUrls.filter((u) => u !== previewUrl)]
+        return {
+          ...prev,
+          [versionId]: {
+            previewUrl: reordered[0],
+            previewUrls: mapPreviewSrcs(reordered)
+          }
+        }
+      })
+    })
+  }, [])
 
   const resolvePreviewUrls = useCallback(
     (model: WatchRuleTestModel) => {
       const override = previewOverrides[model.versionId]
-      if (override?.previewUrls?.length) return override.previewUrls
-      return previewUrlsFor(model)
+      const urls = override?.previewUrls?.length
+        ? override.previewUrls
+        : previewUrlsFor(model)
+      return mapPreviewSrcs(urls)
     },
     [previewOverrides]
   )
+
+  const markPreviewBroken = useCallback((versionId: number) => {
+    setBrokenPreviewIds((prev) => {
+      if (prev.has(versionId)) return prev
+      const next = new Set(prev)
+      next.add(versionId)
+      return next
+    })
+    previewFetchStarted.current.delete(versionId)
+  }, [])
 
   const fetchMissingPreviews = useCallback(
     async (models: WatchRuleTestModel[], options?: { force?: boolean }) => {
       const force = options?.force ?? false
       const missing = models.filter((m) => {
         if (m.inInventory) return false
-        if (!force && resolvePreviewUrls(m).length) return false
+        const resolved = resolvePreviewUrls(m)
+        const hasUrls = resolved.some((u) => isDisplayablePreviewUrl(u))
+        const broken = brokenPreviewIds.has(m.versionId)
+        if (!force && hasUrls && !broken) return false
         if (!force && previewFetchStarted.current.has(m.versionId)) return false
         previewFetchStarted.current.add(m.versionId)
         return true
@@ -481,7 +533,8 @@ export function SearchBrowsePanel({
             sourceDomain: m.sourceDomain,
             nsfw: m.nsfw,
             nsfwLevel: m.nsfwLevel,
-            strictVersion: true
+            strictVersion: true,
+            refreshCache: brokenPreviewIds.has(m.versionId) || force
           })),
           ratingFilterToApiContent(ratingFilter)
         )
@@ -493,8 +546,17 @@ export function SearchBrowsePanel({
             for (const r of resolved) {
               resolvedIds.add(r.versionId)
               if (r.previewUrls.length) {
-                next[r.versionId] = { previewUrl: r.previewUrl, previewUrls: r.previewUrls }
+                next[r.versionId] = {
+                  previewUrl: r.previewUrl,
+                  previewUrls: mapPreviewSrcs(r.previewUrls)
+                }
                 filled++
+                setBrokenPreviewIds((broken) => {
+                  if (!broken.has(r.versionId)) return broken
+                  const cleared = new Set(broken)
+                  cleared.delete(r.versionId)
+                  return cleared
+                })
               } else {
                 previewFetchStarted.current.delete(r.versionId)
               }
@@ -513,7 +575,7 @@ export function SearchBrowsePanel({
         return 0
       }
     },
-    [ratingFilter, resolvePreviewUrls]
+    [ratingFilter, resolvePreviewUrls, brokenPreviewIds]
   )
 
   useEffect(() => {
@@ -653,19 +715,9 @@ export function SearchBrowsePanel({
     [inventory]
   )
   const ownedVersionIds = ownedVersionIdsProp ?? ownedVersionIdsFromInventory
-  const ownedModelIds = useMemo(
+  const ownedModelIdsFromInventory = useMemo(
     () => new Set(inventory.map((r) => r.modelId).filter((id) => id > 0)),
     [inventory]
-  )
-
-  const isAwaitingConfirmModel = useCallback(
-    (m: WatchRuleTestModel) =>
-      !m.inInventory &&
-      !ownedVersionIds.has(m.versionId) &&
-      ownedModelIds.has(m.id) &&
-      !isBanned(m) &&
-      !(m.versionId > 0 && skippedPendingVersionIds?.has(m.versionId)),
-    [ownedModelIds, ownedVersionIds, isBanned, skippedPendingVersionIds]
   )
 
   /** Stable key for queue membership (not byte progress) — avoids refiltering gallery on every download tick. */
@@ -831,6 +883,29 @@ export function SearchBrowsePanel({
     return list
   }, [enrichedModels, browseRule, ruleKeywordExtras, result.crawlSource, idLookupModel])
 
+  const ownedModelIds = useMemo(() => {
+    const ids = new Set(ownedModelIdsFromInventory)
+    // Pack pages: owning any versionId on a Browse card marks that modelId as owned,
+    // even if the library row still has a stale/missing modelId.
+    for (const m of ruleScopedModels) {
+      if (m.id > 0 && m.versionId > 0 && ownedVersionIds.has(m.versionId)) {
+        ids.add(m.id)
+      }
+    }
+    return ids
+  }, [ownedModelIdsFromInventory, ruleScopedModels, ownedVersionIds])
+
+  const isAwaitingConfirmModel = useCallback(
+    (m: WatchRuleTestModel) =>
+      !m.inInventory &&
+      !ownedVersionIds.has(m.versionId) &&
+      !isBanned(m) &&
+      !(m.versionId > 0 && skippedPendingVersionIds?.has(m.versionId)) &&
+      (ownedModelIds.has(m.id) ||
+        (m.versionId > 0 && Boolean(pendingUpdateVersionIds?.has(m.versionId)))),
+    [ownedModelIds, ownedVersionIds, isBanned, skippedPendingVersionIds, pendingUpdateVersionIds]
+  )
+
   const browseRatingCounts = useMemo(
     () =>
       countModelsByRatingFilter(
@@ -904,10 +979,14 @@ export function SearchBrowsePanel({
       if (searchActive && !modelMatchesBrowseSearch(m, deferredSearchQuery)) continue
 
       const inActiveQueue =
-        (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
-        queueActiveForFilter.byModel.has(m.id)
+        m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)
 
-      // Exact id search keeps the card visible; queue no longer bypasses text/id search.
+      // Updates of owned models stay on the Updates tab unless “Show updates” is on —
+      // including when already queued (queue accent must not bypass this gate).
+      if (!idHit && !showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
+
+      // Exact id search keeps the card visible. Active queue only keeps THAT version visible —
+      // do not bypass Hide owned via another version of the same modelId.
       if (!idHit && !inActiveQueue) {
         if (forgottenModelIds?.has(m.id)) continue
         if (hideBanned && m.isBanned) continue
@@ -918,9 +997,11 @@ export function SearchBrowsePanel({
         ) {
           continue
         }
-        if (!showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
+      } else if (!idHit && inActiveQueue) {
+        // Queued version: still honor Hide owned for already-downloaded files.
+        if (onlyMissing && m.inInventory) continue
       }
 
       const key = browseModelDedupeKey(m)
@@ -1145,6 +1226,33 @@ export function SearchBrowsePanel({
     resultsResetKey
   )
   const gridModels = resultsWindow.visible
+
+  useEffect(() => {
+    if (!browseVideoPreviews) return
+    const versionIds = [...new Set(gridModels.map((m) => m.versionId).filter((id) => id > 0))]
+    if (!versionIds.length) return
+    let cancelled = false
+    void window.api.getVersionVideoPreview(versionIds).then((map) => {
+      if (cancelled) return
+      const next: Record<number, ModelCardPreviewOverride> = {}
+      for (const [vid, meta] of Object.entries(map)) {
+        const patch = videoPreviewOverrideFromDbMeta(meta)
+        if (patch) next[Number(vid)] = patch
+      }
+      if (Object.keys(next).length) {
+        setVideoDbOverrides((prev) => ({ ...prev, ...next }))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [browseVideoPreviews, gridModels, videoDbReloadKey])
+
+  useEffect(() => {
+    return window.api.onVideoPreviewSyncComplete(() => {
+      setVideoDbReloadKey((k) => k + 1)
+    })
+  }, [])
 
   useEffect(() => {
     if (resultsDisplayMode !== 'pages') {
@@ -1587,7 +1695,7 @@ export function SearchBrowsePanel({
   )
 
   const enqueueModel = useCallback(
-    async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean }) => {
+    async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean; startNow?: boolean }) => {
       if (model.inInventory) return
       if (!opts?.allowAfterUnban && isBanned(model)) return
 
@@ -1644,7 +1752,8 @@ export function SearchBrowsePanel({
             nsfw: model.nsfw,
             nsfwLevel: model.nsfwLevel,
             confirmTagsAfter: needsConfirmation,
-            manual: true
+            manual: true,
+            startNow: opts?.startNow
           }
         )
         setMessage('')
@@ -1655,6 +1764,36 @@ export function SearchBrowsePanel({
       }
     },
     [isBanned, queueItemFor, routingTag, routingOverrides, tagRules]
+  )
+
+  const downloadNowModel = useCallback(
+    async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean }) => {
+      if (model.inInventory) return
+      if (!opts?.allowAfterUnban && isBanned(model)) return
+
+      const existing = queueItemFor(model)
+      if (
+        existing &&
+        (existing.status === 'queued' ||
+          existing.status === 'failed' ||
+          existing.status === 'deferred')
+      ) {
+        setMessage('')
+        try {
+          await window.api.runDownloadNow(existing.id)
+        } catch (err) {
+          setMessage(err instanceof Error ? err.message : String(err))
+        }
+        return
+      }
+      if (existing?.status === 'downloading') {
+        setMessage(`Already downloading: ${model.name}`)
+        return
+      }
+
+      await enqueueModel(model, { ...opts, startNow: true })
+    },
+    [enqueueModel, isBanned, queueItemFor]
   )
 
   const enqueueModelRef = useRef(enqueueModel)
@@ -2572,6 +2711,12 @@ export function SearchBrowsePanel({
             onUnbanModel={unbanModelById}
             onContextMenu={onCardContextMenu}
             showOwned={!onlyMissing}
+            browseVideoPreviews={browseVideoPreviews}
+            videoDbOverrides={videoDbOverrides}
+            resolvePreviewUrls={resolvePreviewUrls}
+            onPreviewBroken={markPreviewBroken}
+            isAwaitingConfirmModel={isAwaitingConfirmModel}
+            ownedModelIds={ownedModelIds}
           />
 
           {!gridModels.length && showEmptyHint && (
@@ -2734,6 +2879,19 @@ export function SearchBrowsePanel({
                 </button>
               )
             )}
+            {queuePaused &&
+              !contextMenu.model.inInventory &&
+              !isBanned(contextMenu.model) &&
+              queueItemFor(contextMenu.model)?.status !== 'downloading' && (
+                <button
+                  {...contextMenuButtonProps(
+                    () => void downloadNowModel(contextMenu.model),
+                    closeContextMenu
+                  )}
+                >
+                  {t('browse.downloadNow')}
+                </button>
+              )}
             {isBanned(contextMenu.model) ? (
               <button
                 {...contextMenuButtonProps(
@@ -2988,7 +3146,13 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   onBanModel,
   onUnbanModel,
   onContextMenu,
-  showOwned
+  showOwned,
+  browseVideoPreviews = false,
+  videoDbOverrides = {},
+  resolvePreviewUrls,
+  onPreviewBroken,
+  isAwaitingConfirmModel,
+  ownedModelIds
 }: {
   models: WatchRuleTestModel[]
   searchQuery: string
@@ -3014,6 +3178,12 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   onUnbanModel?: (modelId: number, modelName: string) => void
   onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
   showOwned: boolean
+  browseVideoPreviews?: boolean
+  videoDbOverrides?: Record<number, ModelCardPreviewOverride>
+  resolvePreviewUrls: (model: WatchRuleTestModel) => string[]
+  onPreviewBroken: (versionId: number) => void
+  isAwaitingConfirmModel?: (model: WatchRuleTestModel) => boolean
+  ownedModelIds?: Set<number>
 }) {
   const searchActive = searchQuery.trim().length > 0
   return (
@@ -3026,6 +3196,12 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             ? 1 - browseSettledDimPercent / 100
             : undefined
         const awaitingAccess = m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)
+        const awaitingConfirm = Boolean(isAwaitingConfirmModel?.(m))
+        const packExtraFile =
+          Boolean(m.packSibling) &&
+          !m.inInventory &&
+          !awaitingConfirm &&
+          Boolean(ownedModelIds?.has(m.id))
         return (
           <ModelCard
             key={browseModelDedupeKey(m)}
@@ -3035,6 +3211,8 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             queueItem={queueItemFor(m)}
             queuePaused={queuePaused}
             awaitingAccess={awaitingAccess}
+            awaitingConfirm={awaitingConfirm}
+            packExtraFile={packExtraFile}
             waitAccessVersionIds={waitAccessVersionIds}
             queuing={queuingId === m.versionId}
             routingTag={routingTag}
@@ -3055,6 +3233,10 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             onBanModel={onBanModel}
             onUnbanModel={onUnbanModel}
             onContextMenu={onContextMenu}
+            browseVideoPreviews={browseVideoPreviews}
+            videoDbOverride={videoDbOverrides[m.versionId]}
+            previewUrls={resolvePreviewUrls(m)}
+            onPreviewBroken={onPreviewBroken}
           />
         )
       })}
@@ -3068,6 +3250,8 @@ const ModelCard = memo(function ModelCard({
   queueItem,
   queuePaused = false,
   awaitingAccess = false,
+  awaitingConfirm = false,
+  packExtraFile = false,
   waitAccessVersionIds,
   queuing,
   routingTag,
@@ -3086,7 +3270,11 @@ const ModelCard = memo(function ModelCard({
   banFunctionMode = false,
   onBanModel,
   onUnbanModel,
-  settledDimOpacity
+  settledDimOpacity,
+  browseVideoPreviews = false,
+  videoDbOverride,
+  previewUrls,
+  onPreviewBroken
 }: {
   model: WatchRuleTestModel
   showRating?: boolean
@@ -3094,6 +3282,10 @@ const ModelCard = memo(function ModelCard({
   queueItem?: DownloadQueueItem
   queuePaused?: boolean
   awaitingAccess?: boolean
+  /** Unowned version of a model you already own (incl. pack siblings) — confirm on Updates. */
+  awaitingConfirm?: boolean
+  /** Extra pack file when you do not own this model yet (Browse multi-card packs). */
+  packExtraFile?: boolean
   waitAccessVersionIds?: Set<number>
   queuing: boolean
   routingTag: string
@@ -3113,6 +3305,10 @@ const ModelCard = memo(function ModelCard({
   banFunctionMode?: boolean
   onBanModel?: (modelId: number, modelName: string) => void
   onUnbanModel?: (modelId: number, modelName: string) => void
+  browseVideoPreviews?: boolean
+  videoDbOverride?: ModelCardPreviewOverride
+  previewUrls: string[]
+  onPreviewBroken: (versionId: number) => void
 }) {
   const t = useT()
   const accessGate = accessGateBadgeKind(model, {
@@ -3183,6 +3379,12 @@ const ModelCard = memo(function ModelCard({
   } else if (model.inInventory) {
     badge = 'Owned'
     badgeClass = 'badge-owned'
+  } else if (awaitingConfirm) {
+    badge = 'Update'
+    badgeClass = 'badge-update'
+  } else if (packExtraFile) {
+    badge = 'Pack'
+    badgeClass = 'badge-pack'
   } else if (model.isBanned && accessGate) {
     badge = accessGate === 'paid' ? 'Paid' : 'Early'
     badgeClass = accessGate === 'paid' ? 'badge-paid' : 'badge-early'
@@ -3212,6 +3414,8 @@ const ModelCard = memo(function ModelCard({
     Boolean(badge) &&
     (model.inInventory ||
       badgeClass === 'badge-new' ||
+      badgeClass === 'badge-update' ||
+      badgeClass === 'badge-pack' ||
       badgeClass === 'badge-queued-pending' ||
       badgeClass === 'badge-soon' ||
       badgeClass === 'badge-early' ||
@@ -3222,14 +3426,18 @@ const ModelCard = memo(function ModelCard({
   const isInventoryFootBadge =
     badgeClass === 'badge-owned' ||
     badgeClass === 'badge-new' ||
+    badgeClass === 'badge-update' ||
+    badgeClass === 'badge-pack' ||
     badgeClass === 'badge-queued-pending' ||
-    badgeClass === 'badge-soon'
+    badgeClass === 'badge-soon' ||
+    badgeClass === 'badge-skipped'
 
   const rating = describeNsfwRating(model.nsfw, model.nsfwLevel)
   const ratingClass = showRating ? nsfwRatingCardClass(rating.tier) : ''
 
   let cardState = 'new'
   if (model.inInventory) cardState = 'owned'
+  else if (awaitingConfirm) cardState = 'awaiting-confirm'
   else if (isEarlyAccessCard || isDeferred) cardState = 'deferred'
   else if (isDownloading) cardState = 'downloading'
   else if (isQueued) cardState = 'queued-auto'
@@ -3319,7 +3527,32 @@ const ModelCard = memo(function ModelCard({
         </button>
       )}
       <div className="gallery-thumb-wrap">
-        <PreviewThumb urls={previewUrlsFor(model)} />
+        <PreviewThumb
+          urls={previewUrls}
+          videoUrl={
+            videoDbOverride?.videoPreviewUrl ??
+            videoDbOverride?.videoPreviewUrls?.[0] ??
+            videoPreviewUrlFor(model)
+          }
+          videoPreviews={browseVideoPreviews}
+          videoAvailability={videoPreviewAvailabilityFor(
+            {
+              modelId: model.id,
+              versionId: model.versionId,
+              videoPreviewUrl: model.videoPreviewUrl,
+              videoPreviewUrls: model.videoPreviewUrls
+            },
+            videoDbOverride
+          )}
+          videoFetch={{
+            modelId: model.id,
+            versionId: model.versionId,
+            sourceDomain: model.sourceDomain,
+            nsfw: model.nsfw,
+            nsfwLevel: model.nsfwLevel
+          }}
+          onAllFailed={() => onPreviewBroken(model.versionId)}
+        />
         {isDownloading ? (
           <LiveCardDownloadProgress versionId={model.versionId} modelId={model.id} />
         ) : null}
@@ -3329,11 +3562,17 @@ const ModelCard = memo(function ModelCard({
             title={
               badgeClass === 'badge-owned'
                 ? t('browse.badgeOwnedTitle')
-                : badgeClass === 'badge-queued-pending'
-                  ? t('browse.badgeQueuedTitle')
-                  : badgeClass === 'badge-new'
-                    ? t('browse.badgeNewTitle')
-                    : t('browse.badgeSoonTitle')
+                : badgeClass === 'badge-update'
+                  ? t('browse.badgeUpdateTitle')
+                  : badgeClass === 'badge-pack'
+                    ? t('browse.badgePackTitle')
+                    : badgeClass === 'badge-queued-pending'
+                      ? t('browse.badgeQueuedTitle')
+                      : badgeClass === 'badge-new'
+                        ? t('browse.badgeNewTitle')
+                        : badgeClass === 'badge-skipped'
+                          ? t('browse.badgeSkipTagTitle')
+                          : t('browse.badgeSoonTitle')
             }
           >
             {badge}

@@ -29,6 +29,12 @@ import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import type { ModelDetailTarget } from './ModelDetailPage'
 import { formatCompactCount } from '../../../shared/civitai-meta'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
+import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
+import {
+  exclusionCardPreviewSource,
+  resolveModelCardThumb,
+  videoPreviewAvailabilityFor
+} from '../utils/model-card-preview'
 
 type KindFilter = 'all' | ExclusionKind
 type SortMode = MissingSort
@@ -63,22 +69,8 @@ interface Props {
   onOpenModelDetail?: (target: ModelDetailTarget) => void
   /** Open Tag Folders for a Civitai tag (same behavior as Browse / Library). */
   onOpenTagFolders?: (tag: string) => void
-}
-
-function previewSrc(previewUrl?: string): string | undefined {
-  if (!previewUrl) return undefined
-  if (/^https?:\/\//i.test(previewUrl) || previewUrl.startsWith('media://')) return previewUrl
-  return window.api.toMediaUrl(previewUrl)
-}
-
-/** Prefer local Library preview (stable) over remote Civitai URLs that often break. */
-function resolveExclusionPreview(
-  item: ExclusionReviewItem,
-  localPreviewByModelId: Map<number, string>
-): string | undefined {
-  const localPath = localPreviewByModelId.get(item.modelId)
-  if (localPath) return window.api.toMediaUrl(localPath)
-  return previewSrc(item.previewUrl)
+  isActive?: boolean
+  browseVideoPreviews?: boolean
 }
 
 /** Normalize Civitai / inventory model types for Missing sidebar (same labels as Updates). */
@@ -180,7 +172,8 @@ export const MissingTab = memo(function MissingTab({
   onRefresh,
   isActive = false,
   onOpenModelDetail,
-  onOpenTagFolders
+  onOpenTagFolders,
+  browseVideoPreviews = false
 }: Props) {
   const t = useT()
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
@@ -803,6 +796,24 @@ export const MissingTab = memo(function MissingTab({
   const resultsWindow = useResultsWindow(filtered, displayMode, resultsPageSize, resultsResetKey)
   const visibleItems = resultsWindow.visible
 
+  const previewSources = useMemo(
+    () =>
+      filtered.map((item) =>
+        exclusionCardPreviewSource(item, {
+          localPreviewPath: localPreviewByModelId.get(item.modelId),
+          owned: ownedPrimaryByModel.get(item.modelId)
+        })
+      ),
+    [filtered, localPreviewByModelId, ownedPrimaryByModel]
+  )
+
+  const { overrides: previewOverrides, browseCards, markPreviewBroken } =
+    useModelCardPreviewOverrides(previewSources, {
+      enabled: isActive,
+      contentFilter: 'all',
+      fetchVideo: browseVideoPreviews
+    })
+
   const flushPendingSeen = useCallback(() => {
     const ids = [...pendingSeenRef.current]
     pendingSeenRef.current.clear()
@@ -1221,6 +1232,22 @@ export const MissingTab = memo(function MissingTab({
             ]
               .filter(Boolean)
               .join(' ')
+            const owned = ownedPrimaryByModel.get(item.modelId)
+            const versionId = item.versionId ?? owned?.versionId ?? 0
+            const previewSource = exclusionCardPreviewSource(item, {
+              localPreviewPath: localPreviewByModelId.get(item.modelId),
+              owned,
+              browseCard: versionId > 0 ? browseCards[versionId] : undefined
+            })
+            const cardThumb = resolveModelCardThumb(
+              previewSource,
+              versionId > 0 ? previewOverrides[versionId] : undefined,
+              versionId > 0 ? browseCards[versionId] : undefined
+            )
+            const videoAvailability = videoPreviewAvailabilityFor(
+              previewSource,
+              versionId > 0 ? previewOverrides[versionId] : undefined
+            )
             return (
               <StatusModelCard
                 key={`${item.kind}:${item.modelId}`}
@@ -1236,7 +1263,15 @@ export const MissingTab = memo(function MissingTab({
                 }
                 onContextMenu={(e) => openContextMenu(e, item)}
                 title={item.modelName}
-                previewUrl={resolveExclusionPreview(item, localPreviewByModelId)}
+                previewUrl={cardThumb.urls[0]}
+                previewUrls={cardThumb.urls}
+                videoUrl={cardThumb.videoUrl}
+                videoPreviews={browseVideoPreviews}
+                videoAvailability={videoAvailability}
+                videoFetch={previewSource}
+                onPreviewAllFailed={
+                  versionId > 0 ? () => markPreviewBroken(versionId) : undefined
+                }
                 onOpen={onOpenModelDetail ? () => openDetails(item) : undefined}
                 titleActions={
                   <>

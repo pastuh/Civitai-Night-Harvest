@@ -36,6 +36,7 @@ import { MissingTab } from './components/MissingTab'
 import { GalleryTab } from './components/GalleryTab'
 import { HelpTab } from './components/HelpTab'
 import { loadEaFavoriteIds, toggleEaFavoriteId } from './ea-favorites'
+import { isDeferredVisibleInAwaitingTab } from '../../shared/deferred-visibility'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
@@ -58,6 +59,7 @@ import { I18nProvider, getMessages, translate } from './i18n/context'
 import { hasAllOutputFolders } from '../../shared/utils'
 import { formatLibrarySyncSummary } from './utils/library-sync-summary'
 import { mergeInventoryPreserveIdentity } from './utils/inventory-merge'
+import { patchBrowseModelPreview } from './utils/browse-preview-patch'
 import { applyCrawlPageToLiveGallery } from './utils/crawl-gallery-merge'
 import { countBrowsePlannedDownloads } from './utils/browse-planned-count'
 import {
@@ -150,6 +152,7 @@ export default function App() {
   const [galleryFocusModelName, setGalleryFocusModelName] = useState<string | null>(null)
   const [galleryFocusCivitaiTag, setGalleryFocusCivitaiTag] = useState<string | null>(null)
   const [modelDetailTarget, setModelDetailTarget] = useState<ModelDetailTarget | null>(null)
+  const [libraryPreviewCacheBust, setLibraryPreviewCacheBust] = useState<Record<number, number>>({})
   const [tagsFocusSearch, setTagsFocusSearch] = useState<string | null>(null)
   const [tagFoldersReturnTo, setTagFoldersReturnTo] = useState<TagFoldersReturnTo | null>(null)
   const [scheduleInfo, setScheduleInfo] = useState<ScanScheduleInfo | null>(null)
@@ -246,6 +249,9 @@ export default function App() {
   updateBrowseOnCrawlRef.current = settings?.updateBrowseOnCrawl ?? false
   const hasEnabledWatchRulesRef = useRef(false)
   hasEnabledWatchRulesRef.current = watchRules.some((r) => r.enabled)
+  const browseGalleryGenerationRef = useRef(0)
+  const enabledWatchRuleIdsRef = useRef<Set<string>>(new Set())
+  enabledWatchRuleIdsRef.current = new Set(watchRules.filter((r) => r.enabled).map((r) => r.id))
 
   // Quiet (👁 pressed): drop mounted Browse cards for a lighter renderer.
   useEffect(() => {
@@ -739,6 +745,25 @@ export default function App() {
       }),
       window.api.onAppStatus(setStatus),
       window.api.onCrawlPage((payload) => {
+        const gen = payload.galleryGeneration
+        if (
+          typeof gen === 'number' &&
+          gen < browseGalleryGenerationRef.current
+        ) {
+          return
+        }
+        if (typeof gen === 'number' && gen > browseGalleryGenerationRef.current) {
+          browseGalleryGenerationRef.current = gen
+        }
+        // Ignore late pages from a rule that is no longer enabled (except system stubs).
+        if (
+          payload.ruleId &&
+          !payload.ruleId.startsWith('__') &&
+          enabledWatchRuleIdsRef.current.size > 0 &&
+          !enabledWatchRuleIdsRef.current.has(payload.ruleId)
+        ) {
+          return
+        }
         setBrowseGalleryAwaiting(false)
         setCrawlPageMeta((prev) => {
           const catalogComplete =
@@ -777,10 +802,21 @@ export default function App() {
         startTransition(() => {
           if (!updateBrowseOnCrawlRef.current) return
           if (tabRef.current !== 'watch') return
+          if (
+            typeof normalized.galleryGeneration === 'number' &&
+            normalized.galleryGeneration < browseGalleryGenerationRef.current
+          ) {
+            return
+          }
           setLiveCrawlBrowse((prev) => applyCrawlPageToLiveGallery(prev, normalized))
         })
       }),
-      window.api.onCrawlBrowseReset(() => {
+      window.api.onCrawlBrowseReset((payload) => {
+        if (typeof payload?.galleryGeneration === 'number') {
+          browseGalleryGenerationRef.current = payload.galleryGeneration
+        } else {
+          browseGalleryGenerationRef.current += 1
+        }
         setLiveCrawlBrowse(null)
         setCrawlPageMeta(null)
         setCrawlProgress(null)
@@ -917,6 +953,9 @@ export default function App() {
           if (gallery && updateBrowseOnCrawlRef.current) setLiveCrawlBrowse(gallery)
         })
         void refreshAfterScan()
+      }),
+      window.api.onBrowsePreviewPref(({ modelId, versionId, previewUrl }) => {
+        setLiveCrawlBrowse((prev) => patchBrowseModelPreview(prev, modelId, versionId, previewUrl))
       })
     ]
     return () => {
@@ -977,6 +1016,11 @@ export default function App() {
     [deferred]
   )
 
+  const awaitingVersionIds = useMemo(
+    () => new Set(deferred.map((d) => d.versionId)),
+    [deferred]
+  )
+
   const newLibraryCount = useMemo(() => {
     if (tab === 'gallery' || !startupReady) return 0
     const seen = libraryBadgeSeenRef.current
@@ -1013,6 +1057,10 @@ export default function App() {
       setActionError(null)
     }
   }, [settings?.updateBrowseOnCrawl])
+
+  useEffect(() => {
+    void saveSettings({ eaFavoriteModelIds: eaFavoriteIds })
+  }, [eaFavoriteIds, saveSettings])
 
   const onBanFunctionModeChange = useCallback(
     (enabled: boolean) => {
@@ -1267,7 +1315,15 @@ export default function App() {
 
   const openModelDetail = useCallback((target: ModelDetailTarget) => {
     // Save scroll position so the back button returns to the exact spot, not the top.
-    if (contentRef.current) savedScrollRef.current = contentRef.current.scrollTop
+    const el = contentRef.current
+    if (el) {
+      savedScrollRef.current = el.scrollTop
+      // Overlay is positioned at the top of the scrollable content — scroll there first.
+      el.scrollTop = 0
+      window.requestAnimationFrame(() => {
+        el.scrollTop = 0
+      })
+    }
     setModelDetailTarget(target)
   }, [])
 
@@ -1372,6 +1428,17 @@ export default function App() {
     }
     return ids
   }, [pending])
+
+  /** Active Updates offers — Browse hides these unless Show updates is on. */
+  const pendingUpdateVersionIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const p of pending) {
+      if (!p.skipped && !p.forgotten && p.versionId > 0 && !ownedVersionIds.has(p.versionId)) {
+        ids.add(p.versionId)
+      }
+    }
+    return ids
+  }, [pending, ownedVersionIds])
 
   const pendingOwnedInventory = useMemo(() => {
     const ids = new Set(pending.map((p) => p.modelId))
@@ -1617,6 +1684,19 @@ export default function App() {
     ]
   )
 
+  const awaitingBadgeCount = useMemo(
+    () =>
+      deferred.filter(
+        (d) =>
+          d.failureKind !== 'not_found' &&
+          isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds, {
+            pausedTags: settings?.hiddenTags,
+            bannedTags: settings?.bannedTags
+          })
+      ).length,
+    [deferred, watchRules, eaFavoriteIds, settings?.hiddenTags, settings?.bannedTags]
+  )
+
   const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
     {
       id: 'watch',
@@ -1626,7 +1706,7 @@ export default function App() {
     },
     { id: 'gallery', label: m.tabs.library, badge: newLibraryCount || undefined, badgePrefix: '+' },
     { id: 'pending', label: m.tabs.newVersions, badge: pendingBadgeCount },
-    { id: 'awaiting', label: m.tabs.awaitingAccess, badge: deferred.length || undefined },
+    { id: 'awaiting', label: m.tabs.awaitingAccess, badge: awaitingBadgeCount || undefined },
     { id: 'missing', label: m.tabs.missing, badge: missing.filter((x) => !x.acknowledged).length || undefined },
     { id: 'incomplete', label: m.tabs.incomplete, badge: incomplete.length || undefined },
     { id: 'tags', label: m.tabs.tagFolders }
@@ -1649,6 +1729,8 @@ export default function App() {
       tagFoldersReturnTo.target.kind === 'browse')
   const keepMissingMounted =
     tab === 'missing' || tagFoldersReturnTo?.kind === 'missing'
+  const keepAwaitingMounted =
+    tab === 'awaiting' || tagFoldersReturnTo?.kind === 'awaiting'
   /** Tag folders opened from Library — show as overlay, keep grid laid out underneath. */
   const tagsCoveringLibrary =
     tab === 'tags' && tagFoldersReturnTo?.kind === 'gallery'
@@ -1656,9 +1738,11 @@ export default function App() {
   const galleryOnTab = tab === 'gallery'
   const watchOnTab = tab === 'watch'
   const missingOnTab = tab === 'missing'
+  const awaitingOnTab = tab === 'awaiting'
   const galleryInteractive = galleryOnTab && !modelDetailTarget
   const watchInteractive = watchOnTab && !modelDetailTarget
   const missingInteractive = missingOnTab && !modelDetailTarget && !tagsCoveringMissing
+  const awaitingInteractive = awaitingOnTab && !modelDetailTarget
 
   // Shared `.content` scroller across keep-alive tabs. Open a tab at the top —
   // unless returning from Tag Folders / Model Details where we restore the saved position.
@@ -2006,12 +2090,13 @@ export default function App() {
           missingOnTab ||
           tagsCoveringMissing ||
           (keepLibraryMounted && modelDetailTarget?.kind === 'library') ||
-          (keepMissingMounted && Boolean(modelDetailTarget))
+          (keepMissingMounted && Boolean(modelDetailTarget)) ||
+          (keepAwaitingMounted && Boolean(modelDetailTarget))
             ? ' content-gallery'
             : ''
         }${modelDetailTarget || tagsCoveringLibrary || tagsCoveringMissing ? ' content-with-overlay' : ''}${
-          keepLibraryMounted || keepWatchMounted || keepMissingMounted ? ' content-stack' : ''
-        }`}
+          modelDetailTarget ? ' content-detail-open' : ''
+        }${keepLibraryMounted || keepWatchMounted || keepMissingMounted || keepAwaitingMounted ? ' content-stack' : ''}`}
       >
         {keepLibraryMounted ? (
           <div
@@ -2069,6 +2154,8 @@ export default function App() {
               onOpenModelDetail={openModelDetail}
               eaFavoriteIds={eaFavoriteIds}
               onToggleEaFavorite={toggleEaFavorite}
+              libraryPreviewCacheBust={libraryPreviewCacheBust}
+              browseVideoPreviews={settings.browseVideoPreviews ?? false}
             />
           </div>
         ) : null}
@@ -2122,6 +2209,7 @@ export default function App() {
               }
               sessionYieldCount={sessionYieldCount}
               skippedPendingVersionIds={skippedPendingVersionIds}
+              pendingUpdateVersionIds={pendingUpdateVersionIds}
               isActive={watchInteractive}
             />
           </div>
@@ -2156,6 +2244,11 @@ export default function App() {
               fastTagMode={settings.fastTagMode ?? false}
               onFastTagModeChange={(enabled) => void saveSettings({ fastTagMode: enabled })}
               onSaveTagRules={saveTagRules}
+              browseVideoPreviews={settings.browseVideoPreviews ?? false}
+              onLibraryPreviewSaved={(versionId) => {
+                setLibraryPreviewCacheBust((prev) => ({ ...prev, [versionId]: Date.now() }))
+              }}
+              awaitingVersionIds={awaitingVersionIds}
               onSelectLibraryRecord={(rec) => {
                 setModelDetailTarget((prev) =>
                   prev?.kind === 'library'
@@ -2236,37 +2329,51 @@ export default function App() {
             onOpenInLibrary={jumpToGallery}
             onOpenModelDetail={openModelDetail}
             isActive={tab === 'pending'}
+            browseVideoPreviews={settings.browseVideoPreviews ?? false}
           />
         ) : null}
-        {!modelDetailTarget && tab === 'awaiting' ? (
-          <DeferredTab
-            deferred={deferred}
-            domain="red"
-            hasApiKey={settings.hasApiKey}
-            onRefresh={refresh}
-            onBrowseModelBanned={(modelId, stub) => {
-              markBrowseModelBan(modelId, true, stub)
-            }}
-            banFunctionMode={settings.banFunctionMode ?? false}
-            onBanFunctionModeChange={onBanFunctionModeChange}
-            onShowInLibrary={jumpToGallery}
-            onOpenModelDetail={openModelDetail}
-            eaFavoriteIds={eaFavoriteIds}
-            onToggleEaFavorite={toggleEaFavorite}
-            tagRules={tagRules}
-            tagSuggestions={tagSuggestions}
-            inventory={inventory}
-            loraFolder={settings.loraOutputFolder}
-            checkpointFolder={settings.checkpointOutputFolder}
-            hiddenTags={settings.hiddenTags ?? EMPTY_STRING_LIST}
-            bannedTags={settings.bannedTags ?? EMPTY_STRING_LIST}
-            fastTagMode={settings.fastTagMode ?? false}
-            confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
-            onSaveTagRules={saveTagRules}
-            onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'awaiting' })}
-            sessionBanModelIds={sessionBanModelIds}
-            isActive
-          />
+        {keepAwaitingMounted ? (
+          <div
+            className={`gallery-layout-host${
+              awaitingOnTab
+                ? modelDetailTarget
+                  ? ' tab-panel-under-overlay'
+                  : ''
+                : ' tab-keepalive-offscreen'
+            }`}
+            aria-hidden={!awaitingInteractive}
+          >
+            <DeferredTab
+              deferred={deferred}
+              watchRules={watchRules}
+              domain="red"
+              hasApiKey={settings.hasApiKey}
+              onRefresh={refresh}
+              onBrowseModelBanned={(modelId, stub) => {
+                markBrowseModelBan(modelId, true, stub)
+              }}
+              banFunctionMode={settings.banFunctionMode ?? false}
+              onBanFunctionModeChange={onBanFunctionModeChange}
+              onShowInLibrary={jumpToGallery}
+              onOpenModelDetail={openModelDetail}
+              eaFavoriteIds={eaFavoriteIds}
+              onToggleEaFavorite={toggleEaFavorite}
+              tagRules={tagRules}
+              tagSuggestions={tagSuggestions}
+              inventory={inventory}
+              loraFolder={settings.loraOutputFolder}
+              checkpointFolder={settings.checkpointOutputFolder}
+              hiddenTags={settings.hiddenTags ?? EMPTY_STRING_LIST}
+              bannedTags={settings.bannedTags ?? EMPTY_STRING_LIST}
+              fastTagMode={settings.fastTagMode ?? false}
+              confirmTagFolderMoves={settings.confirmTagFolderMoves !== false}
+              onSaveTagRules={saveTagRules}
+              onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'awaiting' })}
+              sessionBanModelIds={sessionBanModelIds}
+              isActive={awaitingInteractive}
+              browseVideoPreviews={settings.browseVideoPreviews ?? false}
+            />
+          </div>
         ) : null}
         {!modelDetailTarget && tab === 'incomplete' ? (
           <IncompleteTab
@@ -2306,6 +2413,7 @@ export default function App() {
               onOpenModelDetail={openModelDetail}
               onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'missing' })}
               isActive={missingInteractive}
+              browseVideoPreviews={settings.browseVideoPreviews ?? false}
             />
           </div>
         ) : null}

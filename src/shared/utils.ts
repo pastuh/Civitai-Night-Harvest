@@ -190,6 +190,8 @@ function browseModelRichness(m: WatchRuleTestModel): number {
   if (m.previewUrls?.length) score += m.previewUrls.length
   if (m.pageUrl) score += 1
   if (m.creator) score += 1
+  if (m.versionName) score += 1
+  if (m.baseModel) score += 1
   if (m.downloadCount != null) score += 1
   if (m.fileSizeBytes != null) score += 1
   return score
@@ -205,6 +207,11 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
   const nsfwLevel = Math.max(a.nsfwLevel ?? 0, b.nsfwLevel ?? 0)
   return {
     ...primary,
+    name: primary.name || secondary.name,
+    versionName: primary.versionName || secondary.versionName,
+    type: primary.type || secondary.type,
+    baseModel: primary.baseModel || secondary.baseModel,
+    baseModelType: primary.baseModelType || secondary.baseModelType,
     nsfw: a.nsfw || b.nsfw,
     nsfwLevel: nsfwLevel > 0 ? nsfwLevel : undefined,
     previewUrl: primary.previewUrl || secondary.previewUrl,
@@ -220,7 +227,8 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
     downloadCount: Math.max(a.downloadCount ?? 0, b.downloadCount ?? 0) || undefined,
     thumbsUpCount: Math.max(a.thumbsUpCount ?? 0, b.thumbsUpCount ?? 0) || undefined,
     fileSizeBytes: primary.fileSizeBytes ?? secondary.fileSizeBytes,
-    trainedWords: primary.trainedWords?.length ? primary.trainedWords : secondary.trainedWords
+    trainedWords: primary.trainedWords?.length ? primary.trainedWords : secondary.trainedWords,
+    packSibling: primary.packSibling || secondary.packSibling
   }
 }
 
@@ -482,6 +490,83 @@ export function civitaiImageToPreviewUrl(img: CivitaiImage): string | undefined 
   return url
 }
 
+/** Original Civitai video URL for hover playback (not the transcode still-frame). */
+export function civitaiImageToRawVideoUrl(img: CivitaiImage): string | undefined {
+  if (!img.url) return undefined
+  const url = normalizeCivitaiUrl(img.url)
+  const type = img.type?.toLowerCase()
+  if (type === 'video' || VIDEO_EXTENSIONS.test(url)) return url
+  return undefined
+}
+
+/** Ranked playable video URLs for a version gallery. */
+export function collectVideoPreviewCandidates(
+  images?: CivitaiImage[],
+  contentFilter?: ContentFilter
+): string[] {
+  if (!images?.length) return []
+
+  const ranked = images
+    .map((img, index) => ({ img, index, url: civitaiImageToRawVideoUrl(img) }))
+    .filter((entry): entry is { img: CivitaiImage; index: number; url: string } => Boolean(entry.url))
+    .sort((a, b) => {
+      const nsfwDiff = previewNsfwRank(a.img, contentFilter) - previewNsfwRank(b.img, contentFilter)
+      if (nsfwDiff !== 0) return nsfwDiff
+      return a.index - b.index
+    })
+
+  const seen = new Set<string>()
+  const urls: string[] = []
+  for (const { url } of ranked) {
+    if (!seen.has(url)) {
+      seen.add(url)
+      urls.push(url)
+    }
+  }
+  return urls
+}
+
+/** True when the URL points at a Civitai video asset. */
+export function isCivitaiVideoPreviewUrl(url: string): boolean {
+  return VIDEO_EXTENSIONS.test(normalizeCivitaiUrl(url))
+}
+
+/** True when a card/detail can show this URL in an img tag (not a raw .mp4/.webm). */
+export function isDisplayablePreviewUrl(url?: string | null): boolean {
+  const trimmed = url?.trim()
+  if (!trimmed) return false
+  if (isCivitaiVideoPreviewUrl(trimmed)) return false
+  if (/^media:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return true
+  if (/^https?:\/\//i.test(trimmed)) return true
+  if (trimmed.includes('\\') || trimmed.startsWith('/')) return true
+  return false
+}
+
+/** Map stored preview URLs to displayable still-frame / image URLs (video → JPEG transcode). */
+export function normalizePreviewDisplayUrl(url: string): string | undefined {
+  const trimmed = url?.trim()
+  if (!trimmed) return undefined
+  if (isCivitaiVideoPreviewUrl(trimmed)) {
+    return (
+      civitaiVideoToStillFrameUrl(trimmed) ??
+      trimmed.replace(/\.(mp4|webm|mov|avi|mkv|m4v)(\?.*)?$/i, '.jpeg$2')
+    )
+  }
+  return optimizePreviewUrlForDisplay(trimmed)
+}
+
+export function normalizePreviewDisplayUrls(urls: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of urls) {
+    const url = normalizePreviewDisplayUrl(raw)
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    out.push(url)
+  }
+  return out
+}
+
 function previewNsfwRank(img: CivitaiImage, contentFilter?: ContentFilter): number {
   const level =
     typeof img.nsfwLevel === 'number'
@@ -549,16 +634,7 @@ export function optimizePreviewUrlForDisplay(url: string): string {
 }
 
 export function toDisplayPreviewUrls(urls: string[]): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const raw of urls) {
-    const url = optimizePreviewUrlForDisplay(raw)
-    if (!seen.has(url)) {
-      seen.add(url)
-      out.push(url)
-    }
-  }
-  return out
+  return normalizePreviewDisplayUrls(urls)
 }
 
 /** Prefer selected version images; optionally fall back to other versions on the model. */

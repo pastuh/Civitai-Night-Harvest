@@ -141,6 +141,9 @@ export const lt: Messages = {
       showCustomAssignmentSubfolders: 'Rodyti custom folderio subkelius Library',
       browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
       browseSettledDimPercent: 'Pritemdyti settled Browse korteles',
+      browseVideoPreviews: 'Video peržiūros ant hover (Browse, Library, EA)',
+      videoPreviewSync: 'Video ženklelių sync',
+      mediaCacheFolder: 'Peržiūrų cache aplankas',
       resultsDisplayMode: 'Rezultatų rodymas (Browse ir Library)',
       resultsPageSize: 'Rezultatų puslapio / bloko dydis',
       launchAtLogin: 'Paleisti su Windows (tray)',
@@ -201,7 +204,8 @@ export const lt: Messages = {
       apiKeyEmpty: 'Įklijuokite API raktą NSFW / restricted',
       modelsRoot: 'pvz. F:\\AI files\\Models',
       loraFolder: 'pvz. F:\\AI files\\Models\\Lora',
-      checkpointFolder: 'pvz. F:\\AI files\\Models\\Checkpoints'
+      checkpointFolder: 'pvz. F:\\AI files\\Models\\Checkpoints',
+      mediaCacheFolder: 'pvz. D:\\CivitaiDwnl\\cache'
     },
     notes: {
       keySaved: 'Raktas išsaugotas',
@@ -241,6 +245,18 @@ export const lt: Messages = {
         'Turimi, excluded (banned) ir awaiting-access kortelės perkeliamos į Browse Results galą. Paieškos atitikmenys lieka savo vietoje.',
       browseSettledDimPercent:
         'Kiek stipriai pritemdomos settled kortelės (0% = išjungta, 100% = labiausiai). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.',
+      browseVideoPreviews:
+        'Įjungus modelių kortelėse (Browse, Library, Early access) ant hover groja Civitai video (muted). Modelio detaliuose — Videos skirtukas. Išjungus — tik nuotraukos.',
+      videoPreviewSync:
+        'Patikrina Library, Early access ir Browse cache modelius, kurie dar netikrinti. Išsaugo, kurios versijos turi Civitai video — ▶ ženklelis lieka ir po perkrovimo be hover ant kiekvienos kortelės.',
+      videoPreviewSyncRun: 'Sync video ženkleliai',
+      videoPreviewSyncRunning: 'Tikrinama…',
+      videoPreviewSyncPending: '{count} dar nepatikrinta',
+      videoPreviewSyncProgress: 'Tikrinama {current}/{total}',
+      videoPreviewSyncDone:
+        'Baigta: patikrinta {checked}, {withVideo} su video, {withoutVideo} be video.',
+      mediaCacheFolder:
+        'Disko aplankas cache nuotraukoms ir hover video (subaplankai previews/ ir video-previews/). Tuščia = programos userData/cache. Pakeitus kelią senas cache neperkeliamas — jei reikia, nukopijuokite rankiniu būdu.',
       resultsDisplayMode:
         'Browse ir Library naudoja tą patį režimą jau įkrautiems rezultatams. Lazy = infinite scroll blokais. Puslapiai = Ankstesnis/Kitas. Auto-advance = lazy, o kai Hide owned palieka Browse tuščią — gali krauti kitą Civitai puslapį, jei jis prieinamas (Library Auto-advance = Lazy).',
       resultsPageSize: 'Kiek kortelių puslapyje (Pages) arba scroll bloke (Lazy / Auto-advance).',
@@ -518,6 +534,11 @@ export const lt: Messages = {
   },
   browse: {
     results: 'Rezultatai',
+    quietHarvestFetchingPage:
+      'Harvest krauna puslapį {page} ({rule}) — Browse kortelės paslėptos.',
+    quietHarvestCardsHidden: 'Browse kortelės paslėptos harvest metu.',
+    quietHarvestHint:
+      'Modeliai jau renkami atmintyje puslapiais — nereikia laukti visų puslapių. Spauskite „Show Browse snapshot“ arba įjunkite 👁 Live gallery antraštėje, kad matytumėte dabar.',
     stats: {
       loaded: 'Įkelta',
       downloaded: 'Atsiųsta',
@@ -663,12 +684,17 @@ export const lt: Messages = {
     hideOwned: 'Slėpti turimus',
     hideOwnedTitle: 'Slėpti modelius, kurie jau bibliotekoje',
     badgeOwnedTitle: 'Jau bibliotekoje',
+    badgeUpdateTitle:
+      'Kita to paties modelio versija (pack arba naujesnė) — patvirtinkite Updates skirtuke',
+    badgePackTitle:
+      'Kitas failas tame pačiame Civitai modelio puslapyje (pack). Versijos pavadinimas skiriasi — atsisiųskite kiekvieną norimą',
     openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti aplanką',
     tagRoleUnmappedHint:
       'Nepriskirta — 1px dotted pilkas remelis. „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
     tagBlockedOnCardHint: 'Blokuotas tagas — „{tag}" yra permanent ban-by-tag sąraše',
     tagPausedOnCardHint: 'Paused tagas — „{tag}" yra Browse exclude (laikinas)',
     badgeNewTitle: 'Dar neturite',
+    badgeSkipTagTitle: 'Blokuotas pause arba ban-by-tag — matosi, nes įjungta Show blocked',
     badgeQueuedShort: 'Eilė',
     badgeQueuedTitle: 'Automatiškai eilėje siuntimui — laukia pipeline',
     badgeSoonTitle: 'Early access — dar negalima siųsti',
@@ -686,6 +712,7 @@ export const lt: Messages = {
     routingNoFolder: 'Nėra aplanko — pasirinkite 📁 ant tag arba pridėkite Tag Folders',
     shownCount: 'Rodoma {shown}{total}',
     startDownloads: 'Pradėti atsisiuntimus ({count})',
+    downloadNow: 'Siųsti dabar',
     emptyNoResults:
       'Modelių dar nėra. Įjunkite Harvest antraštėje — eis per įjungtas Browse taisykles.',
     galleryAwaiting: 'Kraunama galerija…',
@@ -723,6 +750,7 @@ export const lt: Messages = {
     removeFromQueue: 'Pašalinti ir exclude (be auto re-queue)',
     retryDownload: 'Bandyti atsisiųsti dar',
     priorityDownload: 'Prioritetinis atsisiuntimas',
+    downloadNow: 'Siųsti dabar',
     row: 'Eilė',
     hide: 'Slėpti ▴',
     failed: '{count} nepavyko',
@@ -872,7 +900,13 @@ export const lt: Messages = {
     queueHint: 'Atsisiųsti šią naujesnę versiją; jau turimas palikti',
     alwaysUpdate: 'Visada atnaujinti',
     alwaysUpdateHint:
-      'Į eilę šią versiją (arba Early access laukimą) ir ateityje automatiškai siųsti naujas šio modelio versijas (net jei Settings auto-download išjungtas)',
+      'Į eilę šią versiją ir ateityje automatiškai siųsti naujas šio modelio versijas (net jei Settings auto-download išjungtas). Lieka Updates su eilės borderiu, kol atsisiunčiama.',
+    alwaysUpdateOn: 'Visada įjungta',
+    alwaysUpdateOnHint: 'Šiam modeliui auto-update jau įjungtas',
+    alwaysUpdateBadge: 'Visada atnaujinti',
+    queuedReady: 'Eilėje',
+    queuedPaused: 'Eilėje · pause',
+    downloadingNow: 'Siunčiama…',
     openInLibrary: 'Show List',
     offeredVersion: 'Nauja versija:',
     ownedVersions: 'Turite {count}: {list}',
@@ -895,6 +929,11 @@ export const lt: Messages = {
     openInExplorer: 'Atidaryti Explorer',
     deleteFiles: 'Ištrinti failus ir exclude',
     loading: 'Kraunama Civitai informacija…',
+    loadingRemote: 'Kraunama iš {domain}…',
+    loadingElapsed: '{seconds}s',
+    loadingSlowHint:
+      'Vis dar laukiama Civitai — patikrinkite ryšį. Fono harvest nebeblokuoja šio fetch.',
+    versionsLoadingMore: '(kraunamas pilnas sąrašas…)',
     retryLoad: 'Bandyti dar kartą',
     loadFailed: 'Nepavyko užkrauti iš Civitai',
     notFoundHint:
@@ -956,6 +995,8 @@ export const lt: Messages = {
     queueEarlyAccess: 'Į eilę (Early access)',
     awaitingAccess: 'Laukia prieigos',
     inQueue: 'Eilėje',
+    downloadNow: 'Siųsti dabar',
+    downloadNowHint: 'Pradėti atsisiuntimą net kai įjungta Pause',
     downloadHint: 'Atsisiųsti šią versiją',
     downloadEarlyHint: 'Įdėti early-access versiją į eilę (lauks Early access, kol atrakins)',
     loadPreviews: 'Įkelti preview',
@@ -964,16 +1005,27 @@ export const lt: Messages = {
       'Gauti tik šios versijos nuotraukas iš Civitai (be kitų versijų)',
     noVersionPreviews: 'Šiai versijai Civitai nerasta nuotraukų.',
     previewOf: '{current} / {total}',
+    previewTabImages: 'Nuotraukos',
+    previewTabVideos: 'Video',
+    noVersionVideos: 'Šiai versijai Civitai nerasta video.',
     openTagFoldersHint: 'Atidaryti Tag folders — rasti ar priskirti „{tag}“',
     fastTagHint: 'Fast tag — priskirti aplanką tagui „{tag}“',
     tags: 'Tagai',
     tagLegend:
       'Rėmeliai: solid accent = pagrindinis kelias · dashed accent = mapped aplanko taisyklė · dotted pilkas = laukia priskyrimo',
     savePreview: 'Išsaugoti preview',
+    useAsPreview: 'Naudoti kaip preview',
     savingPreview: 'Saugoma…',
     savePreviewHint:
       'Atsisiųsti pasirinktą paveikslėlį ir nustatyti kaip šios versijos bibliotekos thumbnail (.preview.jpg)',
+    useAsPreviewHint:
+      'Nustatyti dabar rodomą paveikslėlį kaip šios versijos bibliotekos thumbnail (.preview.jpg)',
+    useAsPreviewBrowseHint:
+      'Atsiminti šį paveikslėlį kaip versijos viršelį — Browse ir atsisiunčiant',
     previewSaved: 'Preview išsaugotas bibliotekoje.',
+    previewSavedOk: 'Išsaugota ✓',
+    previewPreferenceSaved:
+      'Preview pasirinkimas išsaugotas — naudojamas Browse ir atsisiunčiant modelį.',
     previewSavedPending: 'Preview URL atnaujintas Updates sąraše (dar nėra bibliotekoje).'
   },
   load: {
@@ -1056,6 +1108,12 @@ export const lt: Messages = {
     suspiciousSamples: 'pvz. {list}',
     allOk: 'Bibliotekos sync: patikrinta {count} modelių — viskas gerai.',
     summary: 'Bibliotekos sync ({count} bibliotekoje): {parts}.'
+  },
+  previewThumb: {
+    videoBadge: 'Video',
+    videoBadgeTitle: 'Video peržiūra užvedus pelę',
+    videoChecking: 'Tikrinama…',
+    videoLoading: 'Kraunama video…'
   },
   gallery: {
     titleHeading: 'Biblioteka',
@@ -1399,6 +1457,9 @@ export const lt: Messages = {
     filterWait: 'Atrakinama (laukti)',
     filterBuy: 'Be atrakinimo datos',
     emptyFiltered: 'Šiam filtrui modelių nėra.',
+    emptyHiddenByRules:
+      'Paslėpta {count} harvest modelių — Browse taisyklės išjungtos arba nebetinka. Favorites ir rankiniai atsisiuntimai lieka matomi.',
+    hiddenByRulesHint: 'Paslėpta {count} senų harvest modelių (Browse taisyklės išjungtos arba pasikeitė).',
     extraBuzz: 'Papildoma Buzz kaina atsisiųsti dabar',
     freeTrial: 'Nemokamų generacijų: {count}',
     searchPlaceholder: 'Ieškoti vardo, autoriaus, ID…',

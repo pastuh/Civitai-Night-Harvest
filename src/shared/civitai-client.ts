@@ -8,6 +8,7 @@ import type {
 } from './types'
 import { getApiBase, getSiteBase } from './utils'
 import { formatCivitaiHttpError, withNetworkRetry } from './network-retry'
+import { paceCivitaiRequest, type CivitaiPacePriority } from './civitai-pace'
 import type { CivitaiVersionMini } from './early-access'
 import { expandCivitaiTagNames } from './tag-routing'
 
@@ -27,6 +28,12 @@ function normalizeSearchResult(result: CivitaiSearchResult): CivitaiSearchResult
 export interface CivitaiClientOptions {
   domain: CivitaiDomain
   apiKey?: string
+}
+
+export type CivitaiFetchOptions = {
+  method?: string
+  body?: string
+  pace?: CivitaiPacePriority
 }
 
 export class CivitaiClient {
@@ -59,7 +66,7 @@ export class CivitaiClient {
   private async fetchJson<T>(
     path: string,
     params?: Record<string, string | number | undefined>,
-    init?: { method?: string; body?: string }
+    init?: CivitaiFetchOptions
   ): Promise<T> {
     const url = new URL(`${getApiBase(this.domain)}${path}`)
     if (params) {
@@ -71,16 +78,21 @@ export class CivitaiClient {
     const headers = this.headers()
     if (init?.body) headers['Content-Type'] = 'application/json'
 
-    const res = await withNetworkRetry(
-      'Civitai API',
+    const pace = init?.pace ?? 'background'
+    const res = await paceCivitaiRequest(
       () =>
-        fetch(url.toString(), {
-          headers,
-          method: init?.method ?? 'GET',
-          body: init?.body,
-          signal: AbortSignal.timeout(90_000)
-        }),
-      { attempts: 5, baseDelayMs: 2500 }
+        withNetworkRetry(
+          'Civitai API',
+          () =>
+            fetch(url.toString(), {
+              headers,
+              method: init?.method ?? 'GET',
+              body: init?.body,
+              signal: AbortSignal.timeout(90_000)
+            }),
+          { attempts: 5, baseDelayMs: 2500 }
+        ),
+      pace
     )
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -106,12 +118,19 @@ export class CivitaiClient {
     })
   }
 
-  async getModel(modelId: number): Promise<CivitaiModel> {
-    return withNormalizedTags(await this.fetchJson<CivitaiModel>(`/models/${modelId}`))
+  async getModel(modelId: number, opts?: { pace?: CivitaiPacePriority }): Promise<CivitaiModel> {
+    return withNormalizedTags(
+      await this.fetchJson<CivitaiModel>(`/models/${modelId}`, undefined, { pace: opts?.pace })
+    )
   }
 
-  async getModelVersion(versionId: number): Promise<CivitaiModelVersion> {
-    return this.fetchJson<CivitaiModelVersion>(`/model-versions/${versionId}`)
+  async getModelVersion(
+    versionId: number,
+    opts?: { pace?: CivitaiPacePriority }
+  ): Promise<CivitaiModelVersion> {
+    return this.fetchJson<CivitaiModelVersion>(`/model-versions/${versionId}`, undefined, {
+      pace: opts?.pace
+    })
   }
 
   async getVersionMini(versionId: number): Promise<CivitaiVersionMini> {
@@ -119,12 +138,20 @@ export class CivitaiClient {
   }
 
   /** Gallery images for a version — works when modelVersions[].images is empty in search results. */
-  async searchImagesForVersion(versionId: number, limit = 12): Promise<CivitaiImage[]> {
-    const result = await this.fetchJson<{ items?: CivitaiImage[] }>('/images', {
-      modelVersionId: versionId,
-      limit,
-      nsfw: 'true'
-    })
+  async searchImagesForVersion(
+    versionId: number,
+    limit = 12,
+    opts?: { pace?: CivitaiPacePriority }
+  ): Promise<CivitaiImage[]> {
+    const result = await this.fetchJson<{ items?: CivitaiImage[] }>(
+      '/images',
+      {
+        modelVersionId: versionId,
+        limit,
+        nsfw: 'true'
+      },
+      { pace: opts?.pace }
+    )
     return result.items ?? []
   }
 
@@ -142,6 +169,7 @@ export class CivitaiClient {
     checkpointType?: string
     nsfw?: boolean
     earlyAccess?: boolean
+    pace?: CivitaiPacePriority
   }): Promise<CivitaiSearchResult> {
     const queryParams: Record<string, string | number | undefined> = {
       types: params.types ?? 'LORA',
@@ -166,7 +194,9 @@ export class CivitaiClient {
       queryParams.page = params.page ?? 1
     }
 
-    return normalizeSearchResult(await this.fetchJson<CivitaiSearchResult>('/models', queryParams))
+    return normalizeSearchResult(
+      await this.fetchJson<CivitaiSearchResult>('/models', queryParams, { pace: params.pace })
+    )
   }
 
   async searchAllModels(params: {

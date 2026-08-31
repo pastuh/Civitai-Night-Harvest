@@ -139,6 +139,9 @@ export const en = {
       showCustomAssignmentSubfolders: 'Show custom folder subpaths in Library',
       browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
       browseSettledDimPercent: 'Dim settled Browse cards',
+      browseVideoPreviews: 'Video previews on hover (Browse, Library, EA)',
+      videoPreviewSync: 'Video badge sync',
+      mediaCacheFolder: 'Preview cache folder',
       resultsDisplayMode: 'Results display (Browse & Library)',
       resultsPageSize: 'Results page / chunk size',
       launchAtLogin: 'Start with Windows (tray)',
@@ -199,7 +202,8 @@ export const en = {
       apiKeyEmpty: 'Paste API key for NSFW / restricted',
       modelsRoot: 'e.g. F:\\AI files\\Models',
       loraFolder: 'e.g. F:\\AI files\\Models\\Lora',
-      checkpointFolder: 'e.g. F:\\AI files\\Models\\Checkpoints'
+      checkpointFolder: 'e.g. F:\\AI files\\Models\\Checkpoints',
+      mediaCacheFolder: 'e.g. D:\\CivitaiDwnl\\cache'
     },
     notes: {
       keySaved: 'Key saved',
@@ -239,6 +243,18 @@ export const en = {
         'Owned, excluded (banned), and awaiting-access cards move to the bottom of Browse Results. Search matches keep their normal position.',
       browseSettledDimPercent:
         'How strongly settled cards are dimmed (0% = off, 100% = most dim). Hover restores full brightness. Search matches stay fully visible.',
+      browseVideoPreviews:
+        'When enabled, model cards play Civitai video previews on hover (muted) in Browse, Library, and Early access. Model details get a Videos tab. Off = image stills only.',
+      videoPreviewSync:
+        'Scan models in Library, Early access, and Browse cache that have not been checked yet. Saves which versions have Civitai video previews to the database — the ▶ badge stays after restart without hovering each card.',
+      videoPreviewSyncRun: 'Sync video badges',
+      videoPreviewSyncRunning: 'Syncing…',
+      videoPreviewSyncPending: '{count} unchecked',
+      videoPreviewSyncProgress: 'Checking {current}/{total}',
+      videoPreviewSyncDone:
+        'Done: checked {checked}, {withVideo} with video, {withoutVideo} without.',
+      mediaCacheFolder:
+        'Disk folder for cached preview images and hover videos (subfolders previews/ and video-previews/). Empty = app userData/cache. Changing this does not move existing cache — copy old files manually if needed.',
       resultsDisplayMode:
         'Browse and Library use the same mode on already-loaded results. Lazy = infinite scroll in chunks. Pages = classic Prev/Next. Auto-advance = lazy, and when Hide owned leaves Browse empty it can load the next Civitai page if more pages are available (Library treats Auto-advance as Lazy).',
       resultsPageSize: 'How many cards per page (Pages) or per scroll chunk (Lazy / Auto-advance).',
@@ -513,6 +529,11 @@ export const en = {
   },
   browse: {
     results: 'Results',
+    quietHarvestFetchingPage:
+      'Harvest fetching page {page} ({rule}) — Browse cards are hidden.',
+    quietHarvestCardsHidden: 'Browse cards are hidden while harvest runs.',
+    quietHarvestHint:
+      'Models are already collecting in memory page by page — you do not need to wait for all pages. Click “Show Browse snapshot” or enable 👁 Live gallery in the header to see them now.',
     stats: {
       loaded: 'Loaded',
       downloaded: 'Downloaded',
@@ -657,12 +678,17 @@ export const en = {
     hideOwned: 'Hide owned',
     hideOwnedTitle: 'Hide models already in your library',
     badgeOwnedTitle: 'Already in library',
+    badgeUpdateTitle:
+      'Another version of a model you already own (same page / pack or newer) — confirm on Updates',
+    badgePackTitle:
+      'Another file on the same Civitai model page (pack). Version name differs — download each file you want',
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a folder',
     tagRoleUnmappedHint:
       'Not assigned — 1px dotted gray border. “{tag}” has no Tag folders rule yet (click to assign)',
     tagBlockedOnCardHint: 'Blocked tag — “{tag}” is on the permanent ban-by-tag list',
     tagPausedOnCardHint: 'Paused tag — “{tag}” is on Browse exclude (temporary)',
     badgeNewTitle: 'Not in library yet',
+    badgeSkipTagTitle: 'Blocked by a pause or ban-by-tag — shown because Show blocked is on',
     badgeQueuedShort: 'Queue',
     badgeQueuedTitle: 'Auto-queued for download — waiting in pipeline',
     badgeSoonTitle: 'Early access — not downloadable yet',
@@ -678,6 +704,7 @@ export const en = {
     routingNoFolder: 'No folder mapped — pick 📁 on a tag or add rule in Tag Folders',
     shownCount: '{shown}{total} shown',
     startDownloads: 'Start downloads ({count})',
+    downloadNow: 'Download now',
     emptyNoResults:
       'No models loaded yet. Turn on Harvest in the header to walk your enabled Browse rules.',
     galleryAwaiting: 'Reloading gallery…',
@@ -715,6 +742,7 @@ export const en = {
     removeFromQueue: 'Remove & exclude (no auto re-queue)',
     retryDownload: 'Retry download',
     priorityDownload: 'Priority download',
+    downloadNow: 'Download now',
     row: 'Row',
     hide: 'Hide ▴',
     failed: '{count} failed',
@@ -862,7 +890,13 @@ export const en = {
     queueHint: 'Download this newer version; keep versions you already own',
     alwaysUpdate: 'Always update',
     alwaysUpdateHint:
-      'Queue this version (or wait in Early access) and auto-download future new versions of this model (even if Settings auto-download is off)',
+      'Queue this version and auto-download future new versions of this model (even if Settings auto-download is off). Stays on Updates with a queue border until downloaded.',
+    alwaysUpdateOn: 'Always on',
+    alwaysUpdateOnHint: 'Auto-update is enabled for this model',
+    alwaysUpdateBadge: 'Always update',
+    queuedReady: 'In queue',
+    queuedPaused: 'In queue · paused',
+    downloadingNow: 'Downloading…',
     openInLibrary: 'Show List',
     offeredVersion: 'New version:',
     ownedVersions: 'You own {count}: {list}',
@@ -885,6 +919,11 @@ export const en = {
     openInExplorer: 'Open in Explorer',
     deleteFiles: 'Delete files & exclude',
     loading: 'Loading Civitai details…',
+    loadingRemote: 'Fetching from {domain}…',
+    loadingElapsed: '{seconds}s',
+    loadingSlowHint:
+      'Still waiting on Civitai — check your connection. Background harvest does not block this fetch anymore.',
+    versionsLoadingMore: '(loading full list…)',
     retryLoad: 'Retry',
     loadFailed: 'Could not load details from Civitai',
     notFoundHint:
@@ -946,6 +985,8 @@ export const en = {
     queueEarlyAccess: 'Queue (Early access)',
     awaitingAccess: 'Awaiting access',
     inQueue: 'In queue',
+    downloadNow: 'Download now',
+    downloadNowHint: 'Start this download even while Pause is on',
     downloadHint: 'Download this version',
     downloadEarlyHint: 'Queue this early-access version (Awaiting access until unlock)',
     loadPreviews: 'Load previews',
@@ -954,16 +995,27 @@ export const en = {
       'Fetch only this version’s images from Civitai (no other versions)',
     noVersionPreviews: 'No images found for this version on Civitai.',
     previewOf: '{current} / {total}',
+    previewTabImages: 'Images',
+    previewTabVideos: 'Videos',
+    noVersionVideos: 'No videos found for this version on Civitai.',
     openTagFoldersHint: 'Open Tag folders — find or assign “{tag}”',
     fastTagHint: 'Fast tag — assign folder for “{tag}”',
     tags: 'Tags',
     tagLegend:
       'Borders: solid accent = final route · dashed accent = mapped folder rule · dotted gray = not assigned',
     savePreview: 'Save preview',
+    useAsPreview: 'Use as preview',
     savingPreview: 'Saving…',
     savePreviewHint:
       'Download the selected image and set it as this version’s library thumbnail (.preview.jpg)',
+    useAsPreviewHint:
+      'Set the currently shown image as this version’s library thumbnail (.preview.jpg)',
+    useAsPreviewBrowseHint:
+      'Remember this image as the cover for this version — used in Browse and when you download',
     previewSaved: 'Preview saved to library.',
+    previewSavedOk: 'Saved ✓',
+    previewPreferenceSaved:
+      'Preview choice saved — will be used in Browse and when this model is downloaded.',
     previewSavedPending: 'Preview URL updated for Updates list (not in library yet).'
   },
   load: {
@@ -1046,6 +1098,12 @@ export const en = {
     suspiciousSamples: 'e.g. {list}',
     allOk: 'Library sync: checked {count} model(s) in library — all OK.',
     summary: 'Library sync ({count} in library): {parts}.'
+  },
+  previewThumb: {
+    videoBadge: 'Video',
+    videoBadgeTitle: 'Video preview on hover',
+    videoChecking: 'Checking…',
+    videoLoading: 'Loading video…'
   },
   gallery: {
     titleHeading: 'Library',
@@ -1384,6 +1442,9 @@ export const en = {
     filterWait: 'Unlock soon (wait)',
     filterBuy: 'No unlock date yet',
     emptyFiltered: 'No models match this filter.',
+    emptyHiddenByRules:
+      '{count} harvest model(s) hidden — Browse rules are off or no longer match. Favorites and manual downloads stay visible.',
+    hiddenByRulesHint: '{count} older harvest model(s) hidden (Browse rules off or changed).',
     extraBuzz: 'Extra Buzz cost to download now',
     freeTrial: 'Free trial generations: {count}',
     searchPlaceholder: 'Search name, author, ID…',

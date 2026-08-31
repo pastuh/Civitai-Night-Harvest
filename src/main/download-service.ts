@@ -336,6 +336,11 @@ export class DownloadService {
         }
       }
 
+      const preferredPreview = inventory.getPreferredPreviewUrl(versionId)
+      if (preferredPreview && !request.previewUrl?.trim()) {
+        request.previewUrl = preferredPreview
+      }
+
       let previewCandidates = resolveVersionPreviewCandidates(model, versionId, undefined, {
         strictVersion: true
       })
@@ -709,6 +714,7 @@ export class DownloadService {
         civitaiMode: model.mode ?? undefined,
         fileHashSha256
       })
+      inventory.clearLibraryVersionChecked(model.id)
 
       emitProgress({
         modelId: model.id,

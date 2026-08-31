@@ -99,7 +99,8 @@ export async function supplementRuleSearchWithTagVariants(
         sort: searchOpts.sort,
         period: searchOpts.period,
         username: searchOpts.username,
-        checkpointType: searchOpts.checkpointType
+        checkpointType: searchOpts.checkpointType,
+        pace: 'crawl'
       })
       const items = result.items.filter((m) => matchesContentFilter(m.nsfw, filter))
       fetchLoaded += items.length

@@ -15,7 +15,7 @@ import {
   modelModeLabel
 } from '../../../shared/civitai-meta'
 import { isVersionEarlyAccess } from '../../../shared/early-access'
-import { formatCountdownTo } from '../../../shared/utils'
+import { formatCountdownTo, domainLabel, isDisplayablePreviewUrl } from '../../../shared/utils'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
 import { isUnsortedRoutingTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
@@ -28,6 +28,7 @@ import {
 } from './gallery-card-utils'
 import { useT } from '../i18n/context'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
+import { mapPreviewSrcs, previewSrcSame, toPreviewSrc } from '../utils/preview-src'
 
 export type ModelDetailTarget =
   | {
@@ -40,6 +41,8 @@ export type ModelDetailTarget =
       domain?: CivitaiDomain
       /** Open with local data only — Civitai fetch waits for Retry. */
       deferRemote?: boolean
+      /** Opened from Early access tab — do not auto-promote deferred rows on detail load. */
+      fromAwaitingAccess?: boolean
     }
   | {
       kind: 'library'
@@ -79,14 +82,21 @@ interface Props {
   fastTagMode?: boolean
   onFastTagModeChange?: (enabled: boolean) => void
   onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
+  /** When true, show a Videos tab for Civitai video previews (Browse setting). */
+  browseVideoPreviews?: boolean
+  /** Bust Library grid thumbnail cache after saving a new on-disk preview. */
+  onLibraryPreviewSaved?: (versionId: number) => void
+  /** Version ids in the Awaiting access inventory (not only download-queue deferred rows). */
+  awaitingVersionIds?: Set<number>
 }
 
 type VersionSort = 'default' | 'downloads' | 'likes'
+type PreviewMediaTab = 'images' | 'videos'
 
 function fallbackPreviewUrls(target: ModelDetailTarget, libraryRecord: InventoryRecord | null): string[] {
   if (target.kind === 'library') {
     const path = libraryRecord?.previewPath ?? target.record.previewPath
-    return path ? [window.api.toMediaUrl(path)] : []
+    return path ? [path] : []
   }
   if (target.previewUrls?.length) return target.previewUrls
   return target.previewUrl ? [target.previewUrl] : []
@@ -118,6 +128,70 @@ function sortVersions(
   return list
 }
 
+/** Immediate shell from browse/library target while Civitai detail loads. */
+function stubDetailFromTarget(
+  target: ModelDetailTarget,
+  modelId: number
+): CivitaiModelDetail | null {
+  if (target.kind === 'library') {
+    const rows = [
+      target.record,
+      ...(target.siblingRecords ?? [])
+    ].filter((r) => r.versionId > 0)
+    const byVersion = new Map<number, InventoryRecord>()
+    for (const row of rows) byVersion.set(row.versionId, row)
+    if (!byVersion.size) return null
+    const primary = byVersion.get(target.record.versionId) ?? target.record
+    return {
+      modelId,
+      versionId: primary.versionId,
+      name: primary.modelName,
+      versionName: primary.versionName,
+      type: primary.modelType,
+      baseModel: primary.baseModel,
+      creator: primary.author,
+      tags: expandCivitaiTagNames(primary.civitaiTags ?? []),
+      license: { commercialUse: '—' },
+      sourceDomain: primary.civitaiDomain ?? target.domain ?? 'red',
+      versions: [...byVersion.values()].map((r) => ({
+        id: r.versionId,
+        name: r.versionName || r.modelName,
+        baseModel: r.baseModel || '—',
+        downloadCount: r.downloadCount,
+        thumbsUpCount: r.thumbsUpCount,
+        previewUrl: r.previewPath || undefined,
+        previewUrls: r.previewPath ? [r.previewPath] : undefined
+      }))
+    }
+  }
+  if (target.versionId <= 0) return null
+  const previewUrls = target.previewUrls?.length
+    ? target.previewUrls
+    : target.previewUrl
+      ? [target.previewUrl]
+      : undefined
+  return {
+    modelId,
+    versionId: target.versionId,
+    name: target.name?.trim() || `Model #${modelId}`,
+    versionName: target.name?.trim(),
+    type: 'LORA',
+    baseModel: '',
+    tags: [],
+    license: { commercialUse: '—' },
+    sourceDomain: target.domain ?? 'red',
+    versions: [
+      {
+        id: target.versionId,
+        name: target.name?.trim() || `#${target.versionId}`,
+        baseModel: '—',
+        previewUrl: previewUrls?.[0],
+        previewUrls
+      }
+    ]
+  }
+}
+
 export function ModelDetailPage({
   target,
   onClose,
@@ -141,7 +215,10 @@ export function ModelDetailPage({
   checkpointFolder = '',
   fastTagMode = false,
   onFastTagModeChange,
-  onSaveTagRules
+  onSaveTagRules,
+  browseVideoPreviews = false,
+  onLibraryPreviewSaved,
+  awaitingVersionIds
 }: Props) {
   const t = useT()
   const queue = useDownloadQueue()
@@ -166,16 +243,48 @@ export function ModelDetailPage({
       navigate freely (no auto-skip trap when a dead URL sits between two valid ones). */
   const [brokenIndexes, setBrokenIndexes] = useState<Set<number>>(() => new Set())
   const [previewFetchBusy, setPreviewFetchBusy] = useState(false)
+  const [previewsFetchedVersions, setPreviewsFetchedVersions] = useState<Set<number>>(
+    () => new Set()
+  )
   const [previewSaveBusy, setPreviewSaveBusy] = useState(false)
   const [previewSaveMessage, setPreviewSaveMessage] = useState<string | null>(null)
+  const [previewSaveOk, setPreviewSaveOk] = useState(false)
+  const [preferredPreviewByVersion, setPreferredPreviewByVersion] = useState<Record<number, string>>(
+    {}
+  )
   const [previewEpoch, setPreviewEpoch] = useState(0)
+  const [previewMediaTab, setPreviewMediaTab] = useState<PreviewMediaTab>('images')
+  const [videoPreviewIndex, setVideoPreviewIndex] = useState(0)
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [fastTagMessage, setFastTagMessage] = useState<string | null>(null)
   const [unavailableConfirmed, setUnavailableConfirmed] = useState(false)
   const [missingHitCount, setMissingHitCount] = useState<number | null>(null)
   const [allowRemote, setAllowRemote] = useState(() => !target.deferRemote)
+  const [loadElapsed, setLoadElapsed] = useState(0)
 
   const modelId = target.kind === 'library' ? target.record.modelId : target.modelId
+  const fetchVersionId =
+    target.kind === 'library' ? target.record.versionId : target.versionId
+
+  /** Reset preview/detail state only when opening a different model or version — not on record patches. */
+  const targetIdentity = useMemo(() => {
+    if (target.kind === 'library') {
+      return `library:${target.record.modelId}:${target.record.versionId}`
+    }
+    return `browse:${target.modelId}:${target.versionId}:${target.deferRemote ? 'defer' : 'live'}`
+  }, [
+    target.kind,
+    target.kind === 'library' ? target.record.modelId : target.modelId,
+    target.kind === 'library' ? target.record.versionId : target.versionId,
+    target.kind === 'browse' ? target.deferRemote : false
+  ])
+
+  const stubDetail = useMemo(
+    () => stubDetailFromTarget(target, modelId),
+    [target, modelId]
+  )
+  const displayDetail = detail ?? stubDetail
+
   const swarmPath =
     libraryRecord?.swarmPath ?? (target.kind === 'library' ? target.record.swarmPath : undefined)
   const domain =
@@ -223,8 +332,16 @@ export function ModelDetailPage({
     return ids
   }, [queue.items])
 
+  const promoteDeferredVersionIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const versionId of awaitingVersionIds ?? []) ids.add(versionId)
+    for (const versionId of deferredVersionIds) ids.add(versionId)
+    return ids
+  }, [awaitingVersionIds, deferredVersionIds])
+
   /** Once per model detail load — promote deferred versions that Civitai already opened. */
   const unlockedPromoteKeyRef = useRef<string | null>(null)
+  const videoBackfillStartedRef = useRef(new Set<number>())
 
   useEffect(() => {
     unlockedPromoteKeyRef.current = null
@@ -232,11 +349,15 @@ export function ModelDetailPage({
 
   useEffect(() => {
     if (!detail || banned || !allowRemote || loading) return
+    if (target.kind === 'browse' && target.fromAwaitingAccess) return
     const key = `${detail.modelId}:${detail.versions.map((v) => `${v.id}:${v.availability ?? ''}:${v.earlyAccessEndsAt ?? ''}`).join('|')}`
     if (unlockedPromoteKeyRef.current === key) return
 
     const candidates = detail.versions.filter(
-      (v) => !ownedSet.has(v.id) && !isVersionEarlyAccess(v)
+      (v) =>
+        promoteDeferredVersionIds.has(v.id) &&
+        !ownedSet.has(v.id) &&
+        !isVersionEarlyAccess(v)
     )
     if (!candidates.length) {
       unlockedPromoteKeyRef.current = key
@@ -257,16 +378,32 @@ export function ModelDetailPage({
     return () => {
       cancelled = true
     }
-  }, [detail, banned, allowRemote, loading, ownedSet, onQueueRefresh])
+  }, [detail, banned, allowRemote, loading, ownedSet, onQueueRefresh, target, promoteDeferredVersionIds])
 
   useEffect(() => {
+    setDetail(null)
     setActiveVersionId(target.kind === 'library' ? target.record.versionId : target.versionId)
     if (target.kind === 'library') setLibraryRecord(target.record)
     setVersionSort('default')
     setAllowRemote(!target.deferRemote)
     setReloadToken(0)
     setBrokenIndexes(new Set())
-  }, [target])
+    setPreviewOverrides({})
+    setPreviewsFetchedVersions(new Set())
+    setPreferredPreviewByVersion({})
+    setPreviewSaveMessage(null)
+    setPreviewSaveOk(false)
+  }, [targetIdentity])
+
+  useEffect(() => {
+    if (target.kind !== 'library') return
+    setLibraryRecord(target.record)
+  }, [
+    target.kind,
+    target.kind === 'library' ? target.record.versionId : 0,
+    target.kind === 'library' ? target.record.previewPath : '',
+    target.kind === 'library' ? target.record.modelPath : ''
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -300,7 +437,7 @@ export function ModelDetailPage({
     void window.api
       .getModelDetail({
         modelId,
-        versionId: activeVersionId,
+        versionId: fetchVersionId,
         domain,
         swarmPath,
         localOnly,
@@ -340,7 +477,20 @@ export function ModelDetailPage({
     return () => {
       cancelled = true
     }
-  }, [modelId, activeVersionId, domain, swarmPath, reloadToken, target, allowRemote])
+  }, [modelId, fetchVersionId, domain, swarmPath, reloadToken, allowRemote, targetIdentity])
+
+  useEffect(() => {
+    if (!loading || !allowRemote) {
+      setLoadElapsed(0)
+      return
+    }
+    const started = Date.now()
+    setLoadElapsed(0)
+    const timer = window.setInterval(() => {
+      setLoadElapsed(Math.floor((Date.now() - started) / 1000))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [loading, allowRemote, modelId, reloadToken])
 
   const retryLoad = useCallback(() => {
     setAllowRemote(true)
@@ -368,24 +518,24 @@ export function ModelDetailPage({
         detail.license.differentLicense != null)
   )
 
-  const activeVersionMeta = detail?.versions.find((v) => v.id === activeVersionId)
+  const activeVersionMeta = displayDetail?.versions.find((v) => v.id === activeVersionId)
 
   const title =
-    detail?.name ??
+    displayDetail?.name ??
     (target.kind === 'library' ? target.record.modelName : target.name) ??
     `Model #${modelId}`
   const versionLabel =
     activeVersionMeta?.name ??
-    detail?.versionName ??
+    displayDetail?.versionName ??
     libraryRecord?.versionName ??
     (target.kind === 'library' ? target.record.versionName : undefined)
   const baseModelLabel =
     activeVersionMeta?.baseModel ||
-    detail?.baseModel ||
+    displayDetail?.baseModel ||
     libraryRecord?.baseModel ||
     (target.kind === 'library' ? target.record.baseModel : undefined)
   const creatorLabel =
-    detail?.creator ||
+    displayDetail?.creator ||
     (target.kind === 'library' ? target.record.author : undefined) ||
     undefined
 
@@ -399,7 +549,7 @@ export function ModelDetailPage({
     if (override?.length) return override
     // Prefer on-disk library thumbnail over shared Civitai list images.
     if (ownedRecordForActive?.previewPath) {
-      return [window.api.toMediaUrl(ownedRecordForActive.previewPath)]
+      return [ownedRecordForActive.previewPath]
     }
     // For a browsed model, keep the preview the user actually clicked as the first
     // entry, then append Civitai's full set — otherwise a dead first URL from the
@@ -433,8 +583,174 @@ export function ModelDetailPage({
 
   useEffect(() => {
     setPreviewIndex(0)
+    setVideoPreviewIndex(0)
+    setPreviewMediaTab('images')
     setBrokenIndexes(new Set())
   }, [activeVersionId, previewUrls.join('|'), previewEpoch])
+
+  useEffect(() => {
+    setPreviewSaveMessage(null)
+    setPreviewSaveOk(false)
+  }, [activeVersionId])
+
+  /** Search/crawl often omits version images[] — fetch gallery covers on open when detail lacks them. */
+  useEffect(() => {
+    if (!displayDetail || activeVersionId <= 0 || previewFetchBusy || loading) return
+    if (previewsFetchedVersions.has(activeVersionId)) return
+
+    const isOwnedLibrary =
+      ownedSet.has(activeVersionId) ||
+      (target.kind === 'library' &&
+        (libraryRecord?.versionId === activeVersionId || target.record.versionId === activeVersionId))
+
+    // Library rows keep the on-disk thumbnail until the user loads the Civitai gallery.
+    if (isOwnedLibrary) return
+
+    const meta = displayDetail.versions.find((v) => v.id === activeVersionId)
+    const embedded = meta?.previewUrls?.length
+      ? meta.previewUrls
+      : meta?.previewUrl
+        ? [meta.previewUrl]
+        : []
+    const hasDisplayableImage = embedded.some((u) => isDisplayablePreviewUrl(u))
+    const hasVideo = Boolean(meta?.videoPreviewUrls?.length || meta?.videoPreviewUrl)
+    if (hasDisplayableImage && (!browseVideoPreviews || hasVideo)) {
+      setPreviewsFetchedVersions((prev) => new Set(prev).add(activeVersionId))
+      return
+    }
+    void loadVersionPreviews(activeVersionId)
+  }, [
+    displayDetail,
+    activeVersionId,
+    previewFetchBusy,
+    loading,
+    previewsFetchedVersions,
+    ownedSet,
+    target,
+    libraryRecord,
+    browseVideoPreviews
+  ])
+
+  useEffect(() => {
+    if (activeVersionId <= 0) return
+    let cancelled = false
+
+    const remember = (url: string) => {
+      if (cancelled || !url.trim()) return
+      setPreferredPreviewByVersion((prev) => ({
+        ...prev,
+        [activeVersionId]: toPreviewSrc(url)
+      }))
+    }
+
+    if (ownedSet.has(activeVersionId)) {
+      const rec =
+        ownedRecords.find((r) => r.versionId === activeVersionId) ??
+        (libraryRecord?.versionId === activeVersionId ? libraryRecord : null)
+      if (rec?.previewPath) remember(rec.previewPath)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void window.api.getPreferredPreviewUrl(activeVersionId).then((url) => {
+      if (url) remember(url)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeVersionId, ownedRecords, libraryRecord, ownedSet])
+
+  const videoPreviewUrls = useMemo(() => {
+    const raw =
+      activeVersionMeta?.videoPreviewUrls?.length
+        ? activeVersionMeta.videoPreviewUrls
+        : activeVersionMeta?.videoPreviewUrl
+          ? [activeVersionMeta.videoPreviewUrl]
+          : []
+    return mapPreviewSrcs(raw)
+  }, [activeVersionMeta])
+
+  const showVideoTab = browseVideoPreviews && videoPreviewUrls.length > 0
+  const safeVideoIndex = Math.min(videoPreviewIndex, Math.max(0, videoPreviewUrls.length - 1))
+  const selectedVideoUrl = videoPreviewUrls[safeVideoIndex]
+  const [detailVideoPlaySrc, setDetailVideoPlaySrc] = useState('')
+
+  useEffect(() => {
+    videoBackfillStartedRef.current.clear()
+  }, [activeVersionId])
+
+  useEffect(() => {
+    if (!selectedVideoUrl) {
+      setDetailVideoPlaySrc('')
+      return
+    }
+    let cancelled = false
+    void window.api.resolveVideoPlayUrl(selectedVideoUrl).then((src) => {
+      if (!cancelled) setDetailVideoPlaySrc(src ?? selectedVideoUrl)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedVideoUrl])
+
+  /** Versions marked image-complete before video fetch existed — backfill video URLs. */
+  useEffect(() => {
+    if (!browseVideoPreviews || !displayDetail || activeVersionId <= 0 || loading || previewFetchBusy) {
+      return
+    }
+    const meta = displayDetail.versions.find((v) => v.id === activeVersionId)
+    if (meta?.videoPreviewUrls?.length || meta?.videoPreviewUrl) return
+    if (videoBackfillStartedRef.current.has(activeVersionId)) return
+    videoBackfillStartedRef.current.add(activeVersionId)
+
+    void (async () => {
+      try {
+        const [resolved] = await window.api.resolvePreviewBatch(
+          [
+            {
+              modelId,
+              versionId: activeVersionId,
+              sourceDomain: domain,
+              nsfw: detail?.nsfw ?? meta?.nsfw,
+              nsfwLevel: detail?.nsfwLevel ?? meta?.nsfwLevel,
+              strictVersion: true,
+              interactive: true
+            }
+          ],
+          'all'
+        )
+        if (!resolved?.videoPreviewUrl && !resolved?.videoPreviewUrls?.length) return
+        setDetail((d) => {
+          if (!d) return d
+          return {
+            ...d,
+            versions: d.versions.map((v) =>
+              v.id === activeVersionId
+                ? {
+                    ...v,
+                    videoPreviewUrl: resolved.videoPreviewUrl ?? v.videoPreviewUrl,
+                    videoPreviewUrls: resolved.videoPreviewUrls ?? v.videoPreviewUrls
+                  }
+                : v
+            )
+          }
+        })
+      } catch {
+        videoBackfillStartedRef.current.delete(activeVersionId)
+      }
+    })()
+  }, [
+    browseVideoPreviews,
+    displayDetail,
+    activeVersionId,
+    loading,
+    previewFetchBusy,
+    modelId,
+    domain,
+    detail?.nsfw,
+    detail?.nsfwLevel
+  ])
 
   const formatVersionDate = (iso?: string) => {
     if (!iso) return null
@@ -508,22 +824,22 @@ export function ModelDetailPage({
   }, [detail?.tags, libraryRecord?.civitaiTags, ownedRecordForActive?.civitaiTags, routingForTags])
 
   const sortedVersions = useMemo(
-    () => (detail ? sortVersions(detail.versions, versionSort) : []),
-    [detail, versionSort]
+    () => (displayDetail ? sortVersions(displayDetail.versions, versionSort) : []),
+    [displayDetail, versionSort]
   )
 
   const versionsHaveMixedBaseModels = useMemo(() => {
-    if (!detail || detail.versions.length < 2) return false
+    if (!displayDetail || displayDetail.versions.length < 2) return false
     const bases = new Set(
-      detail.versions.map((v) => v.baseModel.trim().toLowerCase()).filter(Boolean)
+      displayDetail.versions.map((v) => v.baseModel.trim().toLowerCase()).filter(Boolean)
     )
     return bases.size > 1
-  }, [detail])
+  }, [displayDetail])
 
   const ownedCount = useMemo(() => {
-    if (!detail) return ownedSet.size
-    return detail.versions.filter((v) => ownedSet.has(v.id)).length
-  }, [detail, ownedSet])
+    if (!displayDetail) return ownedSet.size
+    return displayDetail.versions.filter((v) => ownedSet.has(v.id)).length
+  }, [displayDetail, ownedSet])
 
   const switchVersion = (versionId: number) => {
     if (versionId === activeVersionId) return
@@ -578,7 +894,12 @@ export function ModelDetailPage({
             modelId,
             versionId,
             sourceDomain: domain,
-            strictVersion: true
+            nsfw: detail?.nsfw ?? displayDetail?.versions.find((v) => v.id === versionId)?.nsfw,
+            nsfwLevel:
+              detail?.nsfwLevel ??
+              displayDetail?.versions.find((v) => v.id === versionId)?.nsfwLevel,
+            strictVersion: true,
+            interactive: true
           }
         ],
         'all'
@@ -589,11 +910,54 @@ export function ModelDetailPage({
           : resolved?.previewUrl
             ? [resolved.previewUrl]
             : []
-      applyVersionPreviews(versionId, urls)
+      let ordered = urls
+      const ownedRec =
+        ownedSet.has(versionId)
+          ? ownedRecords.find((r) => r.versionId === versionId) ??
+            (libraryRecord?.versionId === versionId ? libraryRecord : null)
+          : null
+      const savedPref =
+        preferredPreviewByVersion[versionId] ??
+        (ownedRec?.previewPath
+          ? toPreviewSrc(ownedRec.previewPath)
+          : undefined) ??
+        (await window.api.getPreferredPreviewUrl(versionId))
+      if (savedPref?.trim()) {
+        setPreferredPreviewByVersion((prev) => ({
+          ...prev,
+          [versionId]: toPreviewSrc(savedPref)
+        }))
+        ordered = [savedPref, ...urls.filter((u) => !previewSrcSame(u, savedPref))]
+      }
+      applyVersionPreviews(versionId, ordered)
+      if (resolved?.videoPreviewUrl || resolved?.videoPreviewUrls?.length) {
+        setDetail((d) => {
+          if (!d) return d
+          return {
+            ...d,
+            versions: d.versions.map((v) =>
+              v.id === versionId
+                ? {
+                    ...v,
+                    videoPreviewUrl: resolved.videoPreviewUrl ?? v.videoPreviewUrl,
+                    videoPreviewUrls: resolved.videoPreviewUrls ?? v.videoPreviewUrls
+                  }
+                : v
+            )
+          }
+        })
+      }
+      setBrokenIndexes(new Set())
+      setPreviewEpoch((n) => n + 1)
       if (!urls.length) {
         setPreviewSaveMessage(t('modelDetail.noVersionPreviews'))
       }
+    } catch (err) {
+      setPreviewSaveMessage(err instanceof Error ? err.message : String(err))
     } finally {
+      if (versionId > 0) {
+        setPreviewsFetchedVersions((prev) => new Set(prev).add(versionId))
+      }
       setPreviewFetchBusy(false)
     }
   }
@@ -608,7 +972,41 @@ export function ModelDetailPage({
   const previewCount = validPreviewUrls.length
   const safeIndex = Math.min(previewIndex, Math.max(0, previewCount - 1))
   const selectedPreviewUrl = validPreviewUrls[safeIndex]
-  const canSavePreview = ownedSet.has(activeVersionId) && Boolean(selectedPreviewUrl)
+  const canSavePreview = Boolean(selectedPreviewUrl)
+  const versionGalleryLoaded = previewsFetchedVersions.has(activeVersionId)
+  const civitaiGalleryLoaded = Boolean(previewOverrides[activeVersionId]?.length)
+  const showLoadPreviews =
+    previewMediaTab === 'images' &&
+    activeVersionId > 0 &&
+    !previewFetchBusy &&
+    !versionGalleryLoaded
+  const showPreviewCounter =
+    previewMediaTab === 'images' &&
+    previewCount >= 1 &&
+    versionGalleryLoaded &&
+    civitaiGalleryLoaded
+  const savePreviewLabel =
+    !ownedSet.has(activeVersionId)
+      ? t('modelDetail.useAsPreview')
+      : previewCount > 1 && safeIndex > 0
+        ? t('modelDetail.useAsPreview')
+        : t('modelDetail.savePreview')
+  const savePreviewHint =
+    !ownedSet.has(activeVersionId)
+      ? t('modelDetail.useAsPreviewBrowseHint')
+      : previewCount > 1
+        ? t('modelDetail.useAsPreviewHint')
+        : t('modelDetail.savePreviewHint')
+  const savedPreferredUrl = preferredPreviewByVersion[activeVersionId]
+  const isCurrentPreviewPreferred = Boolean(
+    savedPreferredUrl && selectedPreviewUrl && previewSrcSame(selectedPreviewUrl, savedPreferredUrl)
+  )
+  const showSavePreviewButton =
+    versionGalleryLoaded && previewCount > 0 && !isCurrentPreviewPreferred
+
+  useEffect(() => {
+    if (!isCurrentPreviewPreferred) setPreviewSaveOk(false)
+  }, [isCurrentPreviewPreferred])
 
   /** A preview URL failed to load — drop it from the carousel. The next valid image
       shifts into the current slot, so we keep showing something instead of "No image". */
@@ -634,31 +1032,65 @@ export function ModelDetailPage({
   }, [previewUrls, brokenIndexes, safeIndex, previewCount])
 
   const saveSelectedPreview = async () => {
-    if (!canSavePreview || !selectedPreviewUrl || previewSaveBusy) return
+    if (!canSavePreview || previewSaveBusy) return
     setPreviewSaveBusy(true)
     setPreviewSaveMessage(null)
+    setPreviewSaveOk(false)
     try {
-      const result = await window.api.setPreviewFromUrl(activeVersionId, selectedPreviewUrl)
+      const result = await window.api.setPreviewFromUrl(
+        activeVersionId,
+        selectedPreviewUrl as string,
+        modelId
+      )
       if (result.savedToLibrary && result.record) {
         setLibraryRecord(result.record)
         onSelectLibraryRecord?.(result.record)
-        setPreviewOverrides((prev) => {
-          const next = { ...prev }
-          delete next[activeVersionId]
-          return next
-        })
-        setPreviewEpoch((n) => n + 1)
+        const diskSrc = result.record.previewPath
+          ? window.api.toMediaUrl(result.record.previewPath)
+          : (selectedPreviewUrl as string)
+        if (result.record.previewPath) {
+          setPreferredPreviewByVersion((prev) => ({
+            ...prev,
+            [activeVersionId]: toPreviewSrc(result.record.previewPath as string)
+          }))
+        }
+        const all = validPreviewUrls.length
+          ? [...validPreviewUrls]
+          : [selectedPreviewUrl as string]
+        const reordered = [
+          diskSrc,
+          ...all.filter(
+            (u) => !previewSrcSame(u, selectedPreviewUrl as string) && !previewSrcSame(u, diskSrc)
+          )
+        ]
+        applyVersionPreviews(activeVersionId, reordered)
         setPreviewIndex(0)
+        setPreviewSaveOk(true)
         setPreviewSaveMessage(t('modelDetail.previewSaved'))
+        onLibraryPreviewSaved?.(activeVersionId)
       } else {
-        setPreviewSaveMessage(t('modelDetail.previewSavedPending'))
+        const all = validPreviewUrls.length
+          ? [...validPreviewUrls]
+          : [selectedPreviewUrl as string]
+        const reordered = [
+          selectedPreviewUrl as string,
+          ...all.filter((u) => u !== selectedPreviewUrl)
+        ]
+        applyVersionPreviews(activeVersionId, reordered)
+        setPreferredPreviewByVersion((prev) => ({
+          ...prev,
+          [activeVersionId]: toPreviewSrc(selectedPreviewUrl as string)
+        }))
+        setPreviewIndex(0)
+        setPreviewSaveOk(true)
+        setPreviewSaveMessage(t('modelDetail.previewPreferenceSaved'))
       }
-      await onInventoryRefresh?.()
     } catch (err) {
       setPreviewSaveMessage(err instanceof Error ? err.message : String(err))
     } finally {
       setPreviewSaveBusy(false)
     }
+    void onInventoryRefresh?.()
   }
 
   const markDownloadBusy = (versionId: number, busy: boolean) => {
@@ -671,7 +1103,7 @@ export function ModelDetailPage({
   }
 
   const downloadVersion = async (v: CivitaiModelDetailVersion) => {
-    if (ownedSet.has(v.id) || downloadBusyIds.has(v.id) || queuedVersionIds.has(v.id) || banned) {
+    if (ownedSet.has(v.id) || downloadBusyIds.has(v.id) || banned) {
       return
     }
     // On Missing list (404) — Download only loops; Retry above rechecks Civitai first.
@@ -679,11 +1111,29 @@ export function ModelDetailPage({
     // Live API still gated — leave on Awaiting access.
     if (isVersionEarlyAccess(v)) return
 
+    const queuedItem = queue.items.find(
+      (item) => item.versionId === v.id && item.status === 'queued'
+    )
+    if (queuedItem) {
+      if (queue.paused) {
+        markDownloadBusy(v.id, true)
+        try {
+          await window.api.runDownloadNow(queuedItem.id)
+          await onQueueRefresh?.()
+        } finally {
+          markDownloadBusy(v.id, false)
+        }
+      }
+      return
+    }
+    if (queuedVersionIds.has(v.id)) return
+
     const failedId = failedQueueByVersionId.get(v.id)
     if (failedId) {
       markDownloadBusy(v.id, true)
       try {
-        await window.api.retryFailedDownload(failedId)
+        if (queue.paused) await window.api.runDownloadNow(failedId)
+        else await window.api.retryFailedDownload(failedId)
         await onQueueRefresh?.()
       } finally {
         markDownloadBusy(v.id, false)
@@ -695,8 +1145,14 @@ export function ModelDetailPage({
     try {
       // Stale deferred row (creator ended EA early) — promote to real queue.
       if (deferredVersionIds.has(v.id)) {
-        const { ok } = await window.api.retryDeferred(v.id)
+        const { ok, queue: nextQueue } = await window.api.retryDeferred(v.id)
         if (ok) {
+          if (queue.paused) {
+            const item = nextQueue.items.find(
+              (row) => row.versionId === v.id && row.status === 'queued'
+            )
+            if (item) await window.api.runDownloadNow(item.id)
+          }
           await onQueueRefresh?.()
           return
         }
@@ -716,7 +1172,8 @@ export function ModelDetailPage({
           previewUrl: v.previewUrl,
           modelType: detail?.type,
           author: creatorLabel,
-          manual: true
+          manual: true,
+          startNow: queue.paused
         }
       )
       await onQueueRefresh?.()
@@ -858,77 +1315,187 @@ export function ModelDetailPage({
         </div>
       </div>
 
+      {loading && allowRemote && (
+        <div className="model-detail-remote-load-banner" role="status" aria-live="polite">
+          <span className="app-busy-spinner small" aria-hidden />
+          <span>
+            {t('modelDetail.loadingRemote', { domain: domainLabel(domain) })}
+          </span>
+          {loadElapsed > 0 && (
+            <span className="muted model-detail-remote-load-elapsed">
+              {t('modelDetail.loadingElapsed', { seconds: loadElapsed })}
+            </span>
+          )}
+          {loadElapsed >= 4 && (
+            <p className="muted model-detail-remote-load-hint">{t('modelDetail.loadingSlowHint')}</p>
+          )}
+        </div>
+      )}
+
       <div className="model-detail-page-scroll">
         <div className="model-detail-page-layout">
           <div className="model-detail-page-main">
             <div className="model-detail-page-preview">
+              {showVideoTab && (
+                <div className="model-detail-preview-tabs" role="tablist" aria-label="Preview media">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={previewMediaTab === 'images'}
+                    className={`btn-sm model-detail-preview-tab${previewMediaTab === 'images' ? ' active' : ''}`}
+                    onClick={() => setPreviewMediaTab('images')}
+                  >
+                    {t('modelDetail.previewTabImages')}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={previewMediaTab === 'videos'}
+                    className={`btn-sm model-detail-preview-tab${previewMediaTab === 'videos' ? ' active' : ''}`}
+                    onClick={() => setPreviewMediaTab('videos')}
+                  >
+                    {t('modelDetail.previewTabVideos')}
+                  </button>
+                </div>
+              )}
               <div className="model-detail-preview-wrap">
-                <PreviewThumb
-                  key={`detail-preview-${activeVersionId}-${previewEpoch}-${ownedRecordForActive?.previewPath ?? ''}`}
-                  urls={previewCount ? [selectedPreviewUrl as string] : []}
-                  className="preview-modal-img model-detail-preview-img"
-                  loading="eager"
-                  onError={handlePreviewError}
-                />
+                {previewMediaTab === 'videos' && showVideoTab ? (
+                  selectedVideoUrl ? (
+                    <video
+                      key={`detail-video-${activeVersionId}-${safeVideoIndex}`}
+                      className="preview-modal-img model-detail-preview-img model-detail-preview-video"
+                      src={detailVideoPlaySrc || selectedVideoUrl}
+                      muted
+                      loop
+                      playsInline
+                      controls
+                      preload="metadata"
+                    />
+                  ) : (
+                    <div className="gallery-thumb placeholder preview-empty model-detail-preview-img">
+                      <span className="preview-empty-label">{t('modelDetail.noVersionVideos')}</span>
+                    </div>
+                  )
+                ) : (
+                  <PreviewThumb
+                    key={`detail-preview-${activeVersionId}-${previewEpoch}-${ownedRecordForActive?.previewPath ?? ''}`}
+                    urls={previewCount ? [selectedPreviewUrl as string] : []}
+                    className="preview-modal-img model-detail-preview-img"
+                    loading="eager"
+                    onError={handlePreviewError}
+                  />
+                )}
               </div>
               <div className="model-detail-preview-controls">
-                {previewCount > 1 && (
+                {previewMediaTab === 'videos' && showVideoTab && videoPreviewUrls.length > 1 && (
                   <div className="model-detail-preview-nav">
                     <button
                       type="button"
                       className="btn-sm"
-                      disabled={previewIndex <= 0}
-                      onClick={() => {
-                        setPreviewIndex((i) => Math.max(0, i - 1))
-                        setPreviewSaveMessage(null)
-                      }}
+                      disabled={safeVideoIndex <= 0}
+                      onClick={() => setVideoPreviewIndex((i) => Math.max(0, i - 1))}
                     >
                       ←
                     </button>
+                    <span className="muted model-detail-preview-count">
+                      {t('modelDetail.previewOf', {
+                        current: safeVideoIndex + 1,
+                        total: videoPreviewUrls.length
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn-sm"
+                      disabled={safeVideoIndex >= videoPreviewUrls.length - 1}
+                      onClick={() =>
+                        setVideoPreviewIndex((i) => Math.min(videoPreviewUrls.length - 1, i + 1))
+                      }
+                    >
+                      →
+                    </button>
+                  </div>
+                )}
+                {previewMediaTab === 'images' && showPreviewCounter && (
+                  <div className="model-detail-preview-nav">
+                    {previewCount > 1 && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-sm"
+                          disabled={previewIndex <= 0}
+                          onClick={() => {
+                            setPreviewIndex((i) => Math.max(0, i - 1))
+                            setPreviewSaveMessage(null)
+                          }}
+                        >
+                          ←
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-sm"
+                          disabled={previewIndex >= previewCount - 1}
+                          onClick={() => {
+                            setPreviewIndex((i) => Math.min(previewCount - 1, i + 1))
+                            setPreviewSaveMessage(null)
+                          }}
+                        >
+                          →
+                        </button>
+                      </>
+                    )}
                     <span className="muted model-detail-preview-count">
                       {t('modelDetail.previewOf', {
                         current: safeIndex + 1,
                         total: previewCount
                       })}
                     </span>
+                  </div>
+                )}
+                {previewMediaTab === 'images' && (
+                <div className="model-detail-preview-actions">
+                  {showLoadPreviews && (
                     <button
                       type="button"
                       className="btn-sm"
-                      disabled={previewIndex >= previewCount - 1}
-                      onClick={() => {
-                        setPreviewIndex((i) => Math.min(previewCount - 1, i + 1))
-                        setPreviewSaveMessage(null)
-                      }}
+                      disabled={previewFetchBusy || activeVersionId <= 0}
+                      title={t('modelDetail.loadPreviewsHint')}
+                      onClick={() => void loadVersionPreviews(activeVersionId)}
                     >
-                      →
+                      {t('modelDetail.loadPreviews')}
                     </button>
-                  </div>
-                )}
-                <div className="model-detail-preview-actions">
-                  <button
-                    type="button"
-                    className="btn-sm"
-                    disabled={previewFetchBusy || activeVersionId <= 0}
-                    title={t('modelDetail.loadPreviewsHint')}
-                    onClick={() => void loadVersionPreviews(activeVersionId)}
-                  >
-                    {previewFetchBusy ? t('modelDetail.loadingPreviews') : t('modelDetail.loadPreviews')}
-                  </button>
-                  {ownedSet.has(activeVersionId) && (
+                  )}
+                  {previewFetchBusy && (
+                    <span className="muted model-detail-preview-loading">
+                      {t('modelDetail.loadingPreviews')}
+                    </span>
+                  )}
+                  {showSavePreviewButton && (
                     <button
                       type="button"
-                      className="btn-sm primary"
+                      className={`btn-sm primary${previewSaveOk ? ' model-detail-preview-save-ok' : ''}`}
                       disabled={!canSavePreview || previewSaveBusy}
-                      title={t('modelDetail.savePreviewHint')}
+                      title={savePreviewHint}
                       onClick={() => void saveSelectedPreview()}
                     >
-                      {previewSaveBusy ? t('modelDetail.savingPreview') : t('modelDetail.savePreview')}
+                      {previewSaveBusy
+                        ? t('modelDetail.savingPreview')
+                        : previewSaveOk
+                          ? t('modelDetail.previewSavedOk')
+                          : savePreviewLabel}
                     </button>
                   )}
                 </div>
+                )}
               </div>
               {previewSaveMessage && (
-                <p className="muted model-detail-preview-save-msg">{previewSaveMessage}</p>
+                <p
+                  className={`model-detail-preview-save-msg${
+                    previewSaveOk ? ' model-detail-preview-save-msg-ok' : ''
+                  }`}
+                  role="status"
+                >
+                  {previewSaveMessage}
+                </p>
               )}
               {displayTags.length > 0 && (
                 <div className="model-detail-preview-tags">
@@ -988,7 +1555,6 @@ export function ModelDetailPage({
                       )
                     })}
                   </div>
-                  <p className="muted model-detail-tag-legend">{t('modelDetail.tagLegend')}</p>
                   {fastTagMessage && (
                     <p className="muted model-detail-preview-save-msg">{fastTagMessage}</p>
                   )}
@@ -1018,7 +1584,6 @@ export function ModelDetailPage({
 
               {creatorLabel ? <p className="model-detail-author">{creatorLabel}</p> : null}
 
-              {loading && <p className="muted">{t('modelDetail.loading')}</p>}
               {!loading && (detail?.loadedOffline || (!allowRemote && detail)) ? (
                 <div className="model-detail-load-banner is-compact">
                   <span className="muted model-detail-load-banner-text">
@@ -1188,11 +1753,17 @@ export function ModelDetailPage({
             </div>
           </div>
 
-          {detail && detail.versions.length > 0 && (
+          {displayDetail && displayDetail.versions.length > 0 && (
             <aside className="model-detail-versions-panel">
               <div className="model-detail-versions-head">
                 <h3>
-                  {t('modelDetail.versionsHeading', { count: detail.versions.length })}
+                  {t('modelDetail.versionsHeading', { count: displayDetail.versions.length })}
+                  {loading && !detail ? (
+                    <span className="muted model-detail-versions-loading">
+                      {' '}
+                      {t('modelDetail.versionsLoadingMore')}
+                    </span>
+                  ) : null}
                 </h3>
                 <label className="model-detail-version-sort">
                   {t('modelDetail.sort')}
@@ -1213,6 +1784,11 @@ export function ModelDetailPage({
                   const ea = isVersionEarlyAccess(v)
                   const onMissingList = missingHitCount != null
                   const inQueue = queuedVersionIds.has(v.id)
+                  const isDownloading = queue.items.some(
+                    (item) => item.versionId === v.id && item.status === 'downloading'
+                  )
+                  const isQueuedOnly = inQueue && !isDownloading
+                  const queuedPaused = isQueuedOnly && queue.paused
                   const isFailed = failedQueueByVersionId.has(v.id)
                   // Trust live Civitai fields from model detail — not a stale deferred queue flag.
                   const awaiting = ea
@@ -1271,7 +1847,8 @@ export function ModelDetailPage({
                             className="btn-sm primary"
                             disabled={
                               busy ||
-                              inQueue ||
+                              isDownloading ||
+                              (isQueuedOnly && !queue.paused) ||
                               awaiting ||
                               banned ||
                               unavailableConfirmed ||
@@ -1282,11 +1859,15 @@ export function ModelDetailPage({
                                 ? t('modelDetail.unavailableHint')
                                 : onMissingList
                                   ? t('modelDetail.onMissingListHint')
-                                  : awaiting
-                                    ? t('modelDetail.downloadEarlyHint')
-                                    : isFailed
-                                      ? t('modelDetail.retryDownloadHint')
-                                      : t('modelDetail.downloadHint')
+                                  : queuedPaused
+                                    ? t('modelDetail.downloadNowHint')
+                                    : awaiting
+                                      ? t('modelDetail.downloadEarlyHint')
+                                      : isFailed
+                                        ? queue.paused
+                                          ? t('modelDetail.downloadNowHint')
+                                          : t('modelDetail.retryDownloadHint')
+                                        : t('modelDetail.downloadHint')
                             }
                             onClick={() => void downloadVersion(v)}
                           >
@@ -1294,13 +1875,17 @@ export function ModelDetailPage({
                               ? t('modelDetail.unavailable')
                               : onMissingList
                                 ? t('modelDetail.onMissingList')
-                                : inQueue
-                                  ? t('modelDetail.inQueue')
-                                  : awaiting
-                                    ? t('modelDetail.awaitingAccess')
-                                    : isFailed
-                                      ? t('modelDetail.retryDownload')
-                                      : t('modelDetail.download')}
+                                : queuedPaused
+                                  ? t('modelDetail.downloadNow')
+                                  : inQueue
+                                    ? t('modelDetail.inQueue')
+                                    : awaiting
+                                      ? t('modelDetail.awaitingAccess')
+                                      : isFailed
+                                        ? queue.paused
+                                          ? t('modelDetail.downloadNow')
+                                          : t('modelDetail.retryDownload')
+                                        : t('modelDetail.download')}
                           </button>
                         </div>
                       )}

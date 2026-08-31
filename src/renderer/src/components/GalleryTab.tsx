@@ -6,6 +6,9 @@ import type {
 } from '../../../shared/types'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { LibraryModelCard } from './LibraryModelCard'
+import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
+import type { ModelCardPreviewOverride } from '../utils/model-card-preview'
+import { libraryCardPreviewSource } from '../utils/model-card-preview'
 import { aggregateResultTags, domainLabel, getModelPageUrl } from '../../../shared/utils'
 import type { CivitaiDomain, CivitaiDomainSetting } from '../../../shared/types'
 import {
@@ -121,6 +124,8 @@ interface Props {
   /** Early-access favorites — pin matching models to the top of Library. */
   eaFavoriteIds?: number[]
   onToggleEaFavorite?: (modelId: number) => void
+  /** Per-version cache buster for library thumbnail `<img>` after preview save. */
+  libraryPreviewCacheBust?: Record<number, number>
 }
 
 interface ContextMenuState {
@@ -245,7 +250,9 @@ function GalleryTabInner({
   resultsPageSize: resultsPageSizeProp = 100,
   onOpenModelDetail,
   eaFavoriteIds = [],
-  onToggleEaFavorite
+  onToggleEaFavorite,
+  libraryPreviewCacheBust,
+  browseVideoPreviews = false
 }: Props) {
   const t = useT()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
@@ -921,6 +928,15 @@ function GalleryTabInner({
     libraryResetKey
   )
   const gridRecords = resultsWindow.visible
+  const libraryPreviewSources = useMemo(
+    () => gridRecords.map((r) => libraryCardPreviewSource(r)),
+    [gridRecords]
+  )
+  const { overrides: libraryPreviewOverrides } = useModelCardPreviewOverrides(libraryPreviewSources, {
+    enabled: isActive,
+    contentFilter: 'all',
+    fetchVideo: browseVideoPreviews
+  })
   const gridSentinelRef = useRef<HTMLDivElement>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
   const pageScrollReadyRef = useRef(false)
@@ -1702,6 +1718,9 @@ function GalleryTabInner({
               pausedTags={pausedTags}
               eaFavoriteSet={liveEaFavoriteSet}
               onToggleEaFavorite={onToggleEaFavorite}
+              libraryPreviewCacheBust={libraryPreviewCacheBust}
+              libraryPreviewOverrides={libraryPreviewOverrides}
+              browseVideoPreviews={browseVideoPreviews}
             />
             <ResultsPager
               mode={libraryDisplayMode}
@@ -2374,6 +2393,9 @@ type LibraryCardGridProps = {
   onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
   eaFavoriteSet?: Set<number>
   onToggleEaFavorite?: (modelId: number) => void
+  libraryPreviewCacheBust?: Record<number, number>
+  libraryPreviewOverrides?: Record<number, ModelCardPreviewOverride>
+  browseVideoPreviews?: boolean
 }
 
 /** Isolates card renders from search-input keystrokes until deferred filter catches up. */
@@ -2402,7 +2424,10 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   onOpenDetails,
   onCivitaiTagClick,
   eaFavoriteSet,
-  onToggleEaFavorite
+  onToggleEaFavorite,
+  libraryPreviewCacheBust,
+  libraryPreviewOverrides = {},
+  browseVideoPreviews = false
 }: LibraryCardGridProps) {
   return (
     <div className="gallery-grid">
@@ -2410,6 +2435,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
         <LibraryModelCard
           key={record.versionId}
           record={record}
+          previewOverride={libraryPreviewOverrides[record.versionId]}
+          browseVideoPreviews={browseVideoPreviews}
           selected={selected.has(record.versionId)}
           banned={hiddenModelIds.has(record.modelId)}
           highlight={
@@ -2440,6 +2467,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
           onCivitaiTagClick={onCivitaiTagClick}
           eaFavorited={eaFavoriteSet?.has(record.modelId) ?? false}
           onToggleEaFavorite={onToggleEaFavorite}
+          previewCacheBust={libraryPreviewCacheBust?.[record.versionId]}
         />
       ))}
     </div>

@@ -3,6 +3,7 @@ import type { AppSettingsPublic, TagFolderRule } from '../../../shared/types'
 import { getDefaultFolderForType, pickPreviewImage, resolveVersionPreviewCandidates } from '../../../shared/utils'
 import { findRuleForTag, parseTagRuleNames, resolveFolderForTag, UNSORTED_FOLDER_NAME } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
+import { useDownloadQueue } from '../hooks/useDownloadQueue'
 
 interface Props {
   settings: AppSettingsPublic
@@ -13,6 +14,7 @@ interface Props {
 
 export function DownloadTab({ settings, tagRules, onRefresh, onOpenTagSettings }: Props) {
   const t = useT()
+  const { paused: queuePaused } = useDownloadQueue()
   const [input, setInput] = useState('')
   const [routingTag, setRoutingTag] = useState('')
   const [preview, setPreview] = useState<{
@@ -88,7 +90,9 @@ export function DownloadTab({ settings, tagRules, onRefresh, onOpenTagSettings }
           modelName: preview.name,
           previewUrl: preview.imageUrl,
           routingTag: routingTag.trim() || UNSORTED_FOLDER_NAME,
-          modelType: preview.modelType
+          modelType: preview.modelType,
+          manual: true,
+          startNow: queuePaused
         }
       )
       setMessage(t('downloadTab.queued', { name: preview.name }))

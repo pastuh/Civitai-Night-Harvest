@@ -8,12 +8,18 @@ import * as inventory from './inventory'
 import { previewsFromModel } from './preview-enrich'
 import { registerIncompleteFromModel } from './incomplete-resolve'
 
+type BrowseCardInventory = {
+  ownedVersionIds: Set<number>
+  bannedIds: Set<number>
+}
+
 /** Build one Browse card from a Civitai model (optional preferred version). */
 export function buildBrowseCardFromModel(
   m: CivitaiModel,
   client: CivitaiClient,
   filter: ContentFilter,
-  preferredVersionId?: number
+  preferredVersionId?: number,
+  options?: { packSibling?: boolean; inventory?: BrowseCardInventory }
 ): WatchRuleTestModel | null {
   if (!matchesContentFilter(m.nsfw, filter)) return null
   const versions = m.modelVersions ?? []
@@ -26,8 +32,10 @@ export function buildBrowseCardFromModel(
     registerIncompleteFromModel(m, client.getDomain())
     return null
   }
-  const ownedVersions = new Set(inventory.getAllVersions().map((row) => row.versionId))
-  const bannedIds = inventory.getBannedModelIds()
+  const ownedVersions =
+    options?.inventory?.ownedVersionIds ??
+    new Set(inventory.getAllVersions().map((row) => row.versionId))
+  const bannedIds = options?.inventory?.bannedIds ?? inventory.getBannedModelIds()
   const ea = isVersionEarlyAccess(v)
   const resolved = previewsFromModel(m, versionId, filter)
   const stats = modelStatsFromSearch(m, versionId)
@@ -43,6 +51,8 @@ export function buildBrowseCardFromModel(
     baseModelType: checkpointTypeLabel(v?.baseModelType) ?? undefined,
     previewUrl: resolved.previewUrl,
     previewUrls: resolved.previewUrls,
+    videoPreviewUrl: resolved.videoPreviewUrl,
+    videoPreviewUrls: resolved.videoPreviewUrls,
     pageUrl: client.getModelPageUrl(m.id, versionId),
     tags: expandCivitaiTagNames(m.tags),
     creator: m.creator?.username,
@@ -57,8 +67,17 @@ export function buildBrowseCardFromModel(
     downloadCount: stats.downloadCount,
     thumbsUpCount: stats.thumbsUpCount,
     civitaiMode: m.mode ?? null,
-    fileSizeBytes: fileMeta.fileSizeBytes
+    fileSizeBytes: fileMeta.fileSizeBytes,
+    packSibling: options?.packSibling
   }
+}
+
+function sameBaseVersions(m: CivitaiModel): NonNullable<CivitaiModel['modelVersions']> {
+  const versions = m.modelVersions ?? []
+  if (versions.length <= 1) return versions
+  const primaryBase = (versions[0]?.baseModel ?? '').trim().toLowerCase()
+  if (!primaryBase) return versions
+  return versions.filter((v) => (v.baseModel ?? '').trim().toLowerCase() === primaryBase)
 }
 
 export function buildSampleModels(
@@ -66,8 +85,23 @@ export function buildSampleModels(
   client: CivitaiClient,
   filter: ContentFilter
 ): WatchRuleTestModel[] {
+  // One inventory snapshot per page — pack expansion used to re-scan the whole library per card.
+  const inv: BrowseCardInventory = {
+    ownedVersionIds: new Set(inventory.getAllVersions().map((row) => row.versionId)),
+    bannedIds: inventory.getBannedModelIds()
+  }
   return items.flatMap((m) => {
-    const card = buildBrowseCardFromModel(m, client, filter)
+    const sameBase = sameBaseVersions(m)
+    // Small same-base packs (e.g. Gold + Red LoRAs): one card per file so Hide owned /
+    // version titles stay accurate. Large histories stay on the primary version only.
+    if (sameBase.length >= 2 && sameBase.length <= 6) {
+      return sameBase
+        .map((v) =>
+          buildBrowseCardFromModel(m, client, filter, v.id, { packSibling: true, inventory: inv })
+        )
+        .filter((c): c is WatchRuleTestModel => Boolean(c))
+    }
+    const card = buildBrowseCardFromModel(m, client, filter, undefined, { inventory: inv })
     return card ? [card] : []
   })
 }
@@ -88,7 +122,7 @@ export async function lookupBrowseModelByNumericId(
   for (const domain of domains) {
     const client = pool.forDomain(domain)
     try {
-      const model = await client.getModel(numericId)
+      const model = await client.getModel(numericId, { pace: 'interactive' })
       const card = buildBrowseCardFromModel(model, client, filter)
       if (card) return card
     } catch {
@@ -99,10 +133,10 @@ export async function lookupBrowseModelByNumericId(
   for (const domain of domains) {
     const client = pool.forDomain(domain)
     try {
-      const version = await client.getModelVersion(numericId)
+      const version = await client.getModelVersion(numericId, { pace: 'interactive' })
       const modelId = version.modelId
       if (!modelId || modelId <= 0) continue
-      const model = await client.getModel(modelId)
+      const model = await client.getModel(modelId, { pace: 'interactive' })
       const card = buildBrowseCardFromModel(model, client, filter, numericId)
       if (card) return card
     } catch {
