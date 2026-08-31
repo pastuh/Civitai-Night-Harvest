@@ -11,6 +11,8 @@ const DEFAULT_STREAMS = 8
 const MAX_STREAMS = 32
 /** Cap progress callbacks so UI/IPC stays light during fast single-stream transfers. */
 const PROGRESS_REPORT_MS = 250
+/** Multipart probe / range requests must not hang forever (queue stall used to be the only backstop). */
+const NET_GET_TIMEOUT_MS = 60_000
 
 /**
  * Multipart-specific failures (server returned a non-matching range length, short read, or
@@ -103,39 +105,55 @@ function netGet(
       if (value) req.setHeader(key, value)
     }
 
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
+
     const onAbort = () => {
       try {
         req.abort()
       } catch {
         /* ignore */
       }
-      reject(new DOMException('Aborted', 'AbortError'))
+      settle(() => reject(new DOMException('Aborted', 'AbortError')))
     }
     signal?.addEventListener('abort', onAbort, { once: true })
 
+    const timer = setTimeout(() => {
+      try {
+        req.abort()
+      } catch {
+        /* ignore */
+      }
+      settle(() => reject(new Error(`Download request timed out after ${NET_GET_TIMEOUT_MS / 1000}s`)))
+    }, NET_GET_TIMEOUT_MS)
+
     req.on('error', (err) => {
-      signal?.removeEventListener('abort', onAbort)
-      reject(err instanceof Error ? err : new Error(String(err)))
+      settle(() => reject(err instanceof Error ? err : new Error(String(err))))
     })
 
     req.on('response', (res) => {
       const chunks: Buffer[] = []
       res.on('data', (chunk: Buffer) => chunks.push(chunk))
       res.on('error', (err) => {
-        signal?.removeEventListener('abort', onAbort)
-        reject(err instanceof Error ? err : new Error(String(err)))
+        settle(() => reject(err instanceof Error ? err : new Error(String(err))))
       })
       res.on('aborted', () => {
-        signal?.removeEventListener('abort', onAbort)
-        reject(new Error('Response aborted'))
+        settle(() => reject(new Error('Response aborted')))
       })
       res.on('end', () => {
-        signal?.removeEventListener('abort', onAbort)
-        resolve({
-          status: res.statusCode ?? 0,
-          headers: res.headers,
-          body: Buffer.concat(chunks)
-        })
+        settle(() =>
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: res.headers,
+            body: Buffer.concat(chunks)
+          })
+        )
       })
     })
 

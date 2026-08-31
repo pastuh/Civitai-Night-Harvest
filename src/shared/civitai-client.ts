@@ -133,8 +133,13 @@ export class CivitaiClient {
     })
   }
 
-  async getVersionMini(versionId: number): Promise<CivitaiVersionMini> {
-    return this.fetchJson<CivitaiVersionMini>(`/model-versions/mini/${versionId}`)
+  async getVersionMini(
+    versionId: number,
+    opts?: { pace?: CivitaiPacePriority }
+  ): Promise<CivitaiVersionMini> {
+    return this.fetchJson<CivitaiVersionMini>(`/model-versions/mini/${versionId}`, undefined, {
+      pace: opts?.pace
+    })
   }
 
   /** Gallery images for a version — works when modelVersions[].images is empty in search results. */

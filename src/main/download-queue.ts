@@ -47,7 +47,7 @@ function countAutoPipelineItems(items: DownloadQueueItem[]): number {
 import * as inventory from './inventory'
 import { clearMissingModel, noteMissingModel404 } from './missing-models'
 import { deleteModelFromLibrary } from './model-delete'
-import { getSettings, getTagRules, getWatchRules } from './settings-store'
+import { getSettings, getTagRules, getWatchRules, shouldCrawlAutoDownload } from './settings-store'
 import { sendToRenderer } from './window-notify'
 import { repairBrokenInventoryPaths } from './library-sync'
 import { checkConfiguredOutputFoldersReachable } from './output-paths'
@@ -333,7 +333,11 @@ export class DownloadQueue {
     }
 
     if (resumed > 0) {
-      this.paused = true
+      // Auto-download / night harvest must resume immediately. Manual Start only when
+      // crawl auto-download is off (user intentionally paused the pump).
+      if (!shouldCrawlAutoDownload()) {
+        this.paused = true
+      }
     }
 
     let normalizedInterrupted = 0
@@ -387,10 +391,17 @@ export class DownloadQueue {
     }
 
     if (resumed > 0) {
-      this.log?.(
-        'info',
-        `Restored ${resumed} interrupted download(s) — reset to queued (press Start downloads)`
-      )
+      if (this.paused) {
+        this.log?.(
+          'info',
+          `Restored ${resumed} interrupted download(s) — reset to queued (press Start downloads)`
+        )
+      } else {
+        this.log?.(
+          'info',
+          `Restored ${resumed} interrupted download(s) — reset to queued (auto-download on)`
+        )
+      }
       this.flushPersist()
     }
     if (normalizedInterrupted > 0) {
@@ -539,7 +550,15 @@ export class DownloadQueue {
       }
       if (!canRetry(item.versionId)) continue
       const deferredRow = inventory.getDeferredDownload(item.versionId)
-      if (!manual && deferredRow && !this.shouldKeepAwaitingDeferred(deferredRow)) continue
+      // Interrupted stalls stay on the download strip — not the EA awaiting tab filter.
+      if (
+        !manual &&
+        deferredRow &&
+        deferredRow.failureKind !== 'interrupted' &&
+        !this.shouldKeepAwaitingDeferred(deferredRow)
+      ) {
+        continue
+      }
       inventory.removeDeferredDownload(item.versionId)
       item.status = 'queued'
       item.reason = undefined
@@ -573,7 +592,7 @@ export class DownloadQueue {
         continue
       }
       if (!manual && !shouldAutoRetryDeferred(d, hasApiKey)) continue
-      if (!manual && !this.shouldKeepAwaitingDeferred(d)) continue
+      if (!manual && d.failureKind !== 'interrupted' && !this.shouldKeepAwaitingDeferred(d)) continue
       const active = this.items.find(
         (i) =>
           i.versionId === d.versionId &&
@@ -1509,9 +1528,11 @@ export class DownloadQueue {
     for (const item of this.items) {
       if (item.status !== 'downloading') continue
       const started = item.startedAt ? Date.parse(item.startedAt) : 0
-      if (!started || now - started < 120_000) continue
+      // Align with zero-byte stall window (4 min) + buffer — avoid racing the interval watchdog.
+      if (!started || now - started < 5 * 60 * 1000) continue
       if (item.bytesReceived > 0) continue
       if (item.versionId) this.downloadService.cancel(item.versionId)
+      this.downloadService.cancelByModelId(item.modelId)
       this.markDeferredForRetry(item, 'Timed out waiting for download to start')
     }
   }
@@ -1748,12 +1769,42 @@ export class DownloadQueue {
     this.scheduleQuickRetry()
   }
 
+  /** Re-queue stalled/interrupted rows only (never gated by Early-access auto-retry setting). */
+  private requeueInterruptedDownloads(): number {
+    let count = 0
+    for (const item of this.items) {
+      if (item.status !== 'deferred' || item.failureKind !== 'interrupted') continue
+      if (inventory.isModelBanned(item.modelId)) {
+        this.items = this.items.filter((i) => i.id !== item.id)
+        if (item.versionId) inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
+      if (item.versionId && inventory.hasVersion(item.versionId)) {
+        this.items = this.items.filter((i) => i.id !== item.id)
+        inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
+      if (item.versionId) inventory.removeDeferredDownload(item.versionId)
+      item.status = 'queued'
+      item.reason = undefined
+      item.failureKind = undefined
+      item.bytesReceived = 0
+      item.totalBytes = 0
+      item.phase = 'model'
+      item.speedBps = 0
+      item.completedAt = undefined
+      item.startedAt = undefined
+      count++
+    }
+    return count
+  }
+
   private scheduleQuickRetry(): void {
-    if (getSettings().autoRetryDeferred === false) return
+    // Interrupted/stalled transfers must retry even when "auto-retry Early access" is off.
     if (this.quickRetryTimer) return
     this.quickRetryTimer = setTimeout(() => {
       this.quickRetryTimer = null
-      const n = this.requeueDeferred()
+      const n = this.requeueInterruptedDownloads()
       const extra = this.requeueRetryableFailed()
       const total = n + extra
       if (total > 0) {
@@ -1916,11 +1967,15 @@ export class DownloadQueue {
 
       let loggedMode = false
 
+      // Zero-byte window must cover API resolve + CDN redirect under crawl load (was 90s —
+      // false "stalled" while still fetching metadata). After bytes flow, 10 min idle = hung.
       stallCheck = setInterval(() => {
         if (item.status !== 'downloading') return
         const idleMs = Date.now() - lastProgressAt
         const limitMs =
-          item.bytesReceived === 0 && (item.phase === 'model' || !item.phase) ? 90_000 : 10 * 60 * 1000
+          item.bytesReceived === 0 && (item.phase === 'model' || !item.phase)
+            ? 4 * 60 * 1000
+            : 10 * 60 * 1000
         if (idleMs < limitMs) return
         logItem('warn', `${itemLabel()}: no progress — will retry`)
         if (item.versionId) this.downloadService.cancel(item.versionId)

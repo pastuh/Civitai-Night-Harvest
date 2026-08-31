@@ -114,19 +114,21 @@ async function probeDomain(
   modelId: number
 ): Promise<DomainProbe | null> {
   const client = pool.forDomain(domain)
+  // Download resolve must not sit behind library/enrich background pacing while crawl pages fly.
+  const pace = { pace: 'interactive' as const }
   try {
-    const version = await client.getModelVersion(versionId)
+    const version = await client.getModelVersion(versionId, pace)
     const primaryFile = pickPrimaryFile(version.files) as CivitaiFile | null
     if (!primaryFile) return null
 
     let mini: CivitaiVersionMini | null = null
     try {
-      mini = await client.getVersionMini(versionId)
+      mini = await client.getVersionMini(versionId, pace)
     } catch {
       /* optional */
     }
 
-    const model = await client.getModel(modelId).catch(() => null)
+    const model = await client.getModel(modelId, pace).catch(() => null)
     const downloadUrls = collectDownloadUrls(client, versionId, version, primaryFile, mini)
 
     return {

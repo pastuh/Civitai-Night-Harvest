@@ -15,9 +15,19 @@ function flushPageDownloads(
   queued: number,
   onDownloadsStarted?: () => void
 ): void {
-  if (queued <= 0) return
   if (!shouldCrawlAutoDownload()) return
-  startDownloadsIfQueued(downloadQueue, queued, onDownloadsStarted)
+  if (queued > 0) {
+    startDownloadsIfQueued(downloadQueue, queued, onDownloadsStarted)
+    return
+  }
+  // Page found nothing new, but prior queue rows may still be waiting after a paused restore.
+  if (
+    downloadQueue.isPaused() &&
+    downloadQueue.getItems().some((i) => i.status === 'queued')
+  ) {
+    downloadQueue.start()
+    onDownloadsStarted?.()
+  }
 }
 
 export interface CrawlLog {

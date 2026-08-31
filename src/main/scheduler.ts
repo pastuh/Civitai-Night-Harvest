@@ -1262,6 +1262,8 @@ export class ScanScheduler {
     this.ensureContinuousCrawl()
     // New Versions poll: only if due (persisted 30 min cooldown). Skips while Harvest is walking catalogs.
     this.scheduleBackgroundLibraryVersionScan(20_000)
+    // Do not wait for the first crawl page — resume the pump immediately when auto-download is on.
+    this.maybeStartAutoDownloads()
   }
 
   private maybeStartAutoDownloads(logMessage?: string): void {

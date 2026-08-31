@@ -160,7 +160,7 @@ export async function checkVersionEarlyAccess(
     setTimeout(() => resolve({ isEarlyAccess: false }), timeoutMs)
   })
   const check = (async () => {
-    const mini = await client.getVersionMini(versionId)
+    const mini = await client.getVersionMini(versionId, { pace: 'interactive' })
     return earlyAccessFromMini(mini)
   })()
   try {
@@ -179,7 +179,7 @@ export async function refineDeferredFailure(
   if (classified.kind !== 'auth' && classified.kind !== 'forbidden') return classified
 
   try {
-    const mini = await client.getVersionMini(versionId)
+    const mini = await client.getVersionMini(versionId, { pace: 'interactive' })
     let ea = earlyAccessFromMini(mini)
     // The mini endpoint omits `paidAccess`, so a 401/403 with an API key set often hides
     // behind a `paidAccess.permanent=true` flag that only the full GET /model-versions/{id}
@@ -190,7 +190,7 @@ export async function refineDeferredFailure(
     // sits in Awaiting access until the user pays and clicks Retry / the API clears the gate.
     if (!ea.isEarlyAccess) {
       try {
-        const version = await client.getModelVersion(versionId)
+        const version = await client.getModelVersion(versionId, { pace: 'interactive' })
         if (version.paidAccess) {
           ea = earlyAccessFromMini({ ...mini, paidAccess: version.paidAccess })
         }

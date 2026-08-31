@@ -245,6 +245,9 @@ export class DownloadService {
     let previewPath: string | undefined
     let swarmPath: string | undefined
 
+    // Register abort early so queue stall/cancel can stop metadata resolve, not only the byte stream.
+    this.trackDownload(trackKey, request.modelId, versionId, abort)
+
     try {
       if (request.modelId <= 0 || (request.versionId != null && request.versionId <= 0)) {
         return {
@@ -314,7 +317,7 @@ export class DownloadService {
           downloadFallbackDomain = resolved.fallback.domain
         }
       } else {
-        model = await client.getModel(request.modelId)
+        model = await client.getModel(request.modelId, { pace: 'interactive' })
         if (!client.isDownloadableType(model)) {
           return {
             status: 'failed',
@@ -360,6 +363,19 @@ export class DownloadService {
       }
 
       this.trackDownload(trackKey, model.id, versionId, abort)
+
+      // Keep stall watchdog alive during metadata / early-access probes (0 bytes yet).
+      emitProgress({
+        modelId: model.id,
+        versionId,
+        modelName: model.name || request.modelName || '',
+        slug: '',
+        previewUrl: request.previewUrl,
+        routingTag: request.routingTag ?? '',
+        bytesReceived: 0,
+        totalBytes: 0,
+        phase: 'model'
+      })
 
       if (inventory.isModelIgnored(model.id) && !request.force) {
         return {
