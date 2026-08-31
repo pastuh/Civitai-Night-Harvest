@@ -139,6 +139,7 @@ export const en = {
       showCustomAssignmentSubfolders: 'Show custom folder subpaths in Library',
       browseSettledToEnd: 'Send owned / excluded / awaiting to gallery end',
       browseSettledDimPercent: 'Dim settled Browse cards',
+      showTemporaryUpdates: 'Show temporary (Updates)',
       browseVideoPreviews: 'Video previews on hover (Browse, Library, EA)',
       videoPreviewSync: 'Video badge sync',
       mediaCacheFolder: 'Preview cache folder',
@@ -243,6 +244,8 @@ export const en = {
         'Owned, excluded (banned), and awaiting-access cards move to the bottom of Browse Results. Search matches keep their normal position.',
       browseSettledDimPercent:
         'How strongly settled cards are dimmed (0% = off, 100% = most dim). Hover restores full brightness. Search matches stay fully visible.',
+      showTemporaryUpdates:
+        'Updates tab: after you confirm, ban, or a download finishes, keep that card in place (dimmed) so the grid does not jump. Cards clear when you leave Updates. Default on.',
       browseVideoPreviews:
         'When enabled, model cards play Civitai video previews on hover (muted) in Browse, Library, and Early access. Model details get a Videos tab. Off = image stills only.',
       videoPreviewSync:
@@ -389,9 +392,11 @@ export const en = {
     libraryTagBan:
       'Tag Folders **Ban** — permanent ban-by-tag (skip auto-download). Temporary pause lives only on Browse → Paused. Skipped models appear under Missing for per-model Allow.',
     libraryBadge:
-      'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Show List** from Updates still opens All models pinned to that model',
+      'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Always update** sidebar filter lists models with per-model auto-update (right-click to turn off). **Show List** from Updates still opens All models pinned to that model',
     librarySession:
       '**Session downloads** — sidebar filter for models actually downloaded this app run (queue completions only — not disk sync / import)',
+    libraryAlwaysUpdate:
+      '**Always update** — Library sidebar filter for models with Updates → Always update on; right-click a card to turn it off',
     libraryByDate:
       '**Downloaded by date** — Today / Yesterday / Last 7 days, or the calendar: click one day, or two days for a from–to range. Shows how many downloads match the selection.',
     libraryDetails:
@@ -451,7 +456,7 @@ export const en = {
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but version data is empty; recheck or paste a download URL',
     dlNewVersions:
-      'Updates — other versions of models you already own (**newer** release or another file on the **same Civitai page** / pack) — not treated as brand-new Browse Yield. **Download** queues once; **Always update** also auto-queues future versions of that model; both keep the Updates card with a queue status until the download finishes. **Skip** = this version later (until **Unskip**); **Mark seen On** also enables **Hide seen** — click a card or leave left/right to hide reviewed offers (**including skipped**); **Forget** = never suggest **this version** again (**Show forgotten** → Unforget; other versions stay). Skipped / forgotten are **not** counted in Browse Updates. Types / rating / sort sidebar like Missing. Early access → Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
+      'Updates — other versions of models you already own (**newer** release or another file on the **same Civitai page** / pack) — not treated as brand-new Browse Yield. **Download** queues once; **Always update** queues **all** current Updates offers for that model and auto-queues future versions; both keep the Updates card with a queue status until the download finishes. Click **Always on** again to turn off, or manage under Library → **Always update**. **Skip** = this version later (until **Unskip**); **Mark seen On** also enables **Hide seen** — click a card or leave left/right to hide reviewed offers (**including skipped**); **Forget** = never suggest **this version** again (**Show forgotten** → Unforget; other versions stay). Skipped / forgotten are **not** counted in Browse Updates. Types / rating / sort sidebar like Missing. Early access → Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
     dlTabBadges:
       'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
@@ -466,7 +471,7 @@ export const en = {
       autoStart:
         'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
       autoDownloadNewVersions:
-        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Download / Always update / Skip / Ban — or use Always update on a card for that model only. Brand-new Browse models are always eligible separately.',
+        'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Download / Always update / Skip / Ban — or use Always update on a card (queues all current offers for that model + future ones). Turn off via Always on again or Library → Always update. Brand-new Browse models are always eligible separately.',
       scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
       parallelDownloads: 'How many models download at once. Use 1 for one file at full speed.',
       domain:
@@ -497,6 +502,8 @@ export const en = {
         'Browse Results — move owned, excluded, and awaiting-access cards to the end of the gallery. Search matches keep normal order.',
       browseSettledDimPercent:
         'Browse Results — dim settled cards (0% = off). Hover restores brightness; search matches stay fully visible.',
+      showTemporaryUpdates:
+        'Updates — keep just-handled cards dimmed in place until you leave the tab (avoids mis-clicks when the grid shrinks). Default on.',
       queueGridSize:
         'Download strip card width (thumbnail size) for Row and Grid layouts. Taller cards need a taller strip — increase if titles are clipped (strip height scales with card width up to a screen limit).',
       downloadStripVisibility:
@@ -867,6 +874,7 @@ export const en = {
     markSeenModeTitle:
       'Turns on Mark seen and Hide seen. Click a card or leave left/right to hide reviewed offers (including skipped). Right-click → Mark seen also works.',
     seenBadge: 'Seen',
+    temporaryBadge: 'Done',
     filterUnseen: 'Unseen',
     sidebarTitle: 'Filter',
     sidebarTypes: 'Model types',
@@ -893,9 +901,10 @@ export const en = {
     queueHint: 'Download this newer version; keep versions you already own',
     alwaysUpdate: 'Always update',
     alwaysUpdateHint:
-      'Queue this version and auto-download future new versions of this model (even if Settings auto-download is off). Stays on Updates with a queue border until downloaded.',
+      'Queue all Updates offers for this model and auto-download future versions (even if Settings auto-download is off). Cards stay with a queue border until downloaded. Manage / turn off under Library → Always update.',
     alwaysUpdateOn: 'Always on',
-    alwaysUpdateOnHint: 'Auto-update is enabled for this model',
+    alwaysUpdateOnHint:
+      'Auto-update is on for this model — click to turn off. Future versions will stop auto-queuing.',
     alwaysUpdateBadge: 'Always update',
     queuedReady: 'In queue',
     queuedPaused: 'In queue · paused',
@@ -1247,6 +1256,13 @@ export const en = {
     duplicateOf: 'Duplicate of {name}',
     deleteLocal: 'Delete local files',
     sessionDownloads: 'Session downloads',
+    alwaysUpdateFilter: 'Always update',
+    alwaysUpdateFilterHint:
+      'Owned versions whose model has Always update on — right-click a card to turn it off',
+    alwaysUpdateBadge: 'Always update',
+    alwaysUpdateBadgeHint: 'Future versions of this model auto-queue',
+    turnOffAlwaysUpdate: 'Turn off Always update',
+    alwaysUpdateTurnedOff: 'Always update off: {name}',
     downloadedByDate: 'Downloaded by date',
     downloadedToday: 'Today',
     downloadedYesterday: 'Yesterday',

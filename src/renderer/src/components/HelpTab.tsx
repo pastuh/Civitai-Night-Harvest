@@ -30,6 +30,7 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'galleryGridSize', fieldKey: 'settings.fields.galleryGridSize' },
   { refKey: 'browseSettledToEnd', fieldKey: 'settings.fields.browseSettledToEnd' },
   { refKey: 'browseSettledDimPercent', fieldKey: 'settings.fields.browseSettledDimPercent' },
+  { refKey: 'showTemporaryUpdates', fieldKey: 'settings.fields.showTemporaryUpdates' },
   { refKey: 'queueGridSize', fieldKey: 'settings.fields.queueGridSize' },
   { refKey: 'downloadStripVisibility', fieldKey: 'settings.fields.downloadStripVisibility' },
   { refKey: 'downloadStripLayout', fieldKey: 'settings.fields.downloadStripLayout' },
@@ -127,6 +128,7 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.libraryTagBan')}</li>
             <li>{t('help.libraryBadge')}</li>
             <li>{t('help.librarySession')}</li>
+            <li>{t('help.libraryAlwaysUpdate')}</li>
             <li>{t('help.libraryByDate')}</li>
             <li>{t('help.libraryDetails')}</li>
             <li>{t('help.librarySort')}</li>

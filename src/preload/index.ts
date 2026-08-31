@@ -287,6 +287,11 @@ const api = {
     routingTag?: string
   }): Promise<{ status: string; modelId: number; versionId: number }> =>
     ipcRenderer.invoke('pending:approve', payload),
+  enablePendingAutoUpdate: (payload: {
+    modelId: number
+    modelName?: string
+  }): Promise<{ modelId: number; enabled: true; queued: number; versionIds: number[] }> =>
+    ipcRenderer.invoke('pending:enableAutoUpdate', payload),
   ignoreModel: (modelId: number): Promise<void> => ipcRenderer.invoke('pending:ignore', modelId),
   banModel: (
     modelId: number,

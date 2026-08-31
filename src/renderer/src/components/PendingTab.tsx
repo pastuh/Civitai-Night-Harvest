@@ -53,7 +53,7 @@ function localDayKey(d = new Date()): string {
   return `${y}-${m}-${day}`
 }
 
-type DisplayRow = { item: PendingVersion }
+type DisplayRow = { item: PendingVersion; temporary?: boolean }
 
 interface Props {
   pending: PendingVersion[]
@@ -88,6 +88,8 @@ interface Props {
   onBanFunctionModeChange?: (enabled: boolean) => void
   isActive?: boolean
   browseVideoPreviews?: boolean
+  /** Keep just-handled cards dimmed in place until leaving Updates (default on). */
+  showTemporaryUpdates?: boolean
 }
 
 function resolveModelType(
@@ -127,6 +129,17 @@ function resolveNsfw(
   }
 }
 
+function isOwnedPendingOffer(
+  item: PendingVersion,
+  ownedByModel: Map<number, InventoryRecord[]>
+): boolean {
+  return (
+    !item.skipped &&
+    !item.forgotten &&
+    Boolean(ownedByModel.get(item.modelId)?.some((r) => r.versionId === item.versionId))
+  )
+}
+
 export const PendingTab = memo(function PendingTab({
   pending,
   inventory,
@@ -149,7 +162,8 @@ export const PendingTab = memo(function PendingTab({
   banFunctionMode = false,
   onBanFunctionModeChange,
   isActive = true,
-  browseVideoPreviews = false
+  browseVideoPreviews = false,
+  showTemporaryUpdates = true
 }: Props) {
   const t = useT()
   const { items: queueItems, paused: queuePaused } = useDownloadQueue()
@@ -280,6 +294,18 @@ export const PendingTab = memo(function PendingTab({
     return map
   }, [ownedByModel])
 
+  /** Session hold for Show temporary — updated synchronously in baseRows (no post-paint lag). */
+  const tempHoldRef = useRef<{
+    order: number[]
+    snaps: Map<number, PendingVersion>
+    everActive: Set<number>
+  }>({ order: [], snaps: new Map(), everActive: new Set() })
+
+  useEffect(() => {
+    if (showTemporaryUpdates) return
+    tempHoldRef.current = { order: [], snaps: new Map(), everActive: new Set() }
+  }, [showTemporaryUpdates])
+
   const openContextMenu = useCallback((e: React.MouseEvent, row: DisplayRow) => {
     e.preventDefault()
     e.stopPropagation()
@@ -366,6 +392,14 @@ export const PendingTab = memo(function PendingTab({
   const approve = async (item: PendingVersion) => {
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
     if (queueByVersionId.has(item.versionId)) return
+    if (showTemporaryUpdates) {
+      const hold = tempHoldRef.current
+      hold.snaps.set(item.versionId, item)
+      hold.everActive.add(item.versionId)
+      if (!hold.order.includes(item.versionId)) {
+        hold.order.push(item.versionId)
+      }
+    }
     markBusy(item.versionId, true)
     try {
       await window.api.approvePending({
@@ -382,15 +416,28 @@ export const PendingTab = memo(function PendingTab({
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
     markBusy(item.versionId, true)
     try {
-      await window.api.setModelAutoUpdate(item.modelId, true, item.modelName)
+      const result = await window.api.enablePendingAutoUpdate({
+        modelId: item.modelId,
+        modelName: item.modelName
+      })
       setAutoUpdateModelIds((prev) => new Set(prev).add(item.modelId))
-      if (!queueByVersionId.has(item.versionId)) {
-        await window.api.approvePending({
-          modelId: item.modelId,
-          versionId: item.versionId
-        })
-      }
       await onQueueRefresh?.()
+      void result.queued
+    } finally {
+      markBusy(item.versionId, false)
+    }
+  }
+
+  const turnOffAlwaysUpdate = async (item: PendingVersion) => {
+    if (busyVersionIds.has(item.versionId)) return
+    markBusy(item.versionId, true)
+    try {
+      await window.api.setModelAutoUpdate(item.modelId, false, item.modelName)
+      setAutoUpdateModelIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.modelId)
+        return next
+      })
     } finally {
       markBusy(item.versionId, false)
     }
@@ -512,24 +559,73 @@ export const PendingTab = memo(function PendingTab({
   )
 
   const baseRows = useMemo((): DisplayRow[] => {
-    const rows: DisplayRow[] = []
+    const pendingById = new Map(pending.map((p) => [p.versionId, p]))
+
+    if (!showTemporaryUpdates) {
+      const rows: DisplayRow[] = []
+      for (const p of pending) {
+        if (hiddenModelIds.has(p.modelId)) continue
+        if (isOwnedPendingOffer(p, ownedByModel)) continue
+        rows.push({ item: p })
+      }
+      return rows
+    }
+
+    const hold = tempHoldRef.current
+
     for (const p of pending) {
+      hold.snaps.set(p.versionId, p)
       if (hiddenModelIds.has(p.modelId)) continue
-      if (
-        !p.skipped &&
-        !p.forgotten &&
-        ownedByModel.get(p.modelId)?.some((r) => r.versionId === p.versionId)
-      ) {
+      if (isOwnedPendingOffer(p, ownedByModel)) continue
+      hold.everActive.add(p.versionId)
+      if (!hold.order.includes(p.versionId)) {
+        hold.order.push(p.versionId)
+      }
+    }
+
+    const rows: DisplayRow[] = []
+    const used = new Set<number>()
+
+    for (const vid of hold.order) {
+      const live = pendingById.get(vid)
+      const snap = live ?? hold.snaps.get(vid)
+      if (!snap) continue
+
+      const hidden = hiddenModelIds.has(snap.modelId)
+      const owned = live ? isOwnedPendingOffer(live, ownedByModel) : false
+      const settled = !live || hidden || owned
+
+      if (settled) {
+        if (hold.everActive.has(vid)) {
+          rows.push({ item: snap, temporary: true })
+          used.add(vid)
+        }
         continue
       }
-      rows.push({ item: p })
+
+      rows.push({ item: live })
+      used.add(vid)
     }
+
+    for (const p of pending) {
+      if (used.has(p.versionId)) continue
+      if (hiddenModelIds.has(p.modelId)) continue
+      if (isOwnedPendingOffer(p, ownedByModel)) continue
+      hold.everActive.add(p.versionId)
+      if (!hold.order.includes(p.versionId)) {
+        hold.order.push(p.versionId)
+      }
+      rows.push({ item: p })
+      used.add(p.versionId)
+    }
+
     return rows
-  }, [pending, hiddenModelIds, ownedByModel])
+  }, [pending, hiddenModelIds, ownedByModel, showTemporaryUpdates])
 
   const typeCounts = useMemo(() => {
     const map = new Map<string, number>()
     for (const row of baseRows) {
+      if (row.temporary) continue
       if (row.item.forgotten && !showForgotten) continue
       if (row.item.skipped && !showSkipped) continue
       const mt = resolveModelType(row.item, ownedPrimaryByModel.get(row.item.modelId))
@@ -542,10 +638,11 @@ export const PendingTab = memo(function PendingTab({
     const map = new Map<string, number>()
     const rows = modelTypeFilter
       ? baseRows.filter((row) => {
+          if (row.temporary) return false
           const mt = resolveModelType(row.item, ownedPrimaryByModel.get(row.item.modelId))
           return mt.toUpperCase() === modelTypeFilter.toUpperCase()
         })
-      : baseRows
+      : baseRows.filter((row) => !row.temporary)
     for (const row of rows) {
       if (row.item.forgotten || row.item.skipped) continue
       const bm = (row.item.baseModel || '').trim() || '—'
@@ -555,12 +652,13 @@ export const PendingTab = memo(function PendingTab({
   }, [baseRows, modelTypeFilter, ownedPrimaryByModel])
 
   const rowsForMainCounts = useMemo(() => {
-    if (!modelTypeFilter) return baseRows
-    const want = modelTypeFilter.toUpperCase()
-    return baseRows.filter((row) => {
-      const mt = resolveModelType(row.item, ownedPrimaryByModel.get(row.item.modelId))
-      return mt.toUpperCase() === want
-    })
+    const source = !modelTypeFilter
+      ? baseRows
+      : baseRows.filter((row) => {
+          const mt = resolveModelType(row.item, ownedPrimaryByModel.get(row.item.modelId))
+          return mt.toUpperCase() === modelTypeFilter.toUpperCase()
+        })
+    return source.filter((row) => !row.temporary)
   }, [baseRows, modelTypeFilter, ownedPrimaryByModel])
 
   const skippedCount = useMemo(
@@ -589,29 +687,34 @@ export const PendingTab = memo(function PendingTab({
       const item = row.item
       const forgotten = Boolean(item.forgotten)
       const skipped = Boolean(item.skipped) && !forgotten
+      const temporary = Boolean(row.temporary)
 
-      if (sideFilter.type === 'forgotten') {
-        if (!forgotten) return false
-      } else if (forgotten) {
-        if (!showForgotten) return false
-      }
-
-      if (skipped && !showSkipped && sideFilter.type !== 'skipped' && sideFilter.type !== 'unseen') {
-        return false
-      }
-
-      if (sideFilter.type === 'skipped' && !skipped) return false
-      if (sideFilter.type === 'unseen' && (skipped || forgotten)) return false
-
-      const isSeen = Boolean(pendingSeenByVersionId[item.versionId])
-
-      if (sideFilter.type === 'unseen') {
-        if (isSeen) {
-          if (hideSeen) return false
-          if (!unseenSnapshotRef.current.has(item.versionId)) return false
+      // Temporary settled cards stay in the grid for layout stability — ignore
+      // status side-filters / Hide seen (still respect type, base, rating, search).
+      if (!temporary) {
+        if (sideFilter.type === 'forgotten') {
+          if (!forgotten) return false
+        } else if (forgotten) {
+          if (!showForgotten) return false
         }
-      } else if (!forgotten && hideSeen && isSeen) {
-        return false
+
+        if (skipped && !showSkipped && sideFilter.type !== 'skipped' && sideFilter.type !== 'unseen') {
+          return false
+        }
+
+        if (sideFilter.type === 'skipped' && !skipped) return false
+        if (sideFilter.type === 'unseen' && (skipped || forgotten)) return false
+
+        const isSeen = Boolean(pendingSeenByVersionId[item.versionId])
+
+        if (sideFilter.type === 'unseen') {
+          if (isSeen) {
+            if (hideSeen) return false
+            if (!unseenSnapshotRef.current.has(item.versionId)) return false
+          }
+        } else if (!forgotten && hideSeen && isSeen) {
+          return false
+        }
       }
 
       const owned = ownedPrimaryByModel.get(item.modelId)
@@ -637,6 +740,15 @@ export const PendingTab = memo(function PendingTab({
     })
 
     list = [...list].sort((a, b) => {
+      // Keep session card order so settled (temporary) slots do not reshuffle.
+      if (showTemporaryUpdates) {
+        const order = tempHoldRef.current.order
+        const ai = order.indexOf(a.item.versionId)
+        const bi = order.indexOf(b.item.versionId)
+        if (ai >= 0 && bi >= 0 && ai !== bi) return ai - bi
+        if (ai >= 0 && bi < 0) return -1
+        if (bi >= 0 && ai < 0) return 1
+      }
       const ao = ownedPrimaryByModel.get(a.item.modelId)
       const bo = ownedPrimaryByModel.get(b.item.modelId)
       switch (sortMode) {
@@ -672,7 +784,8 @@ export const PendingTab = memo(function PendingTab({
     ratingFilter,
     sideFilter,
     modelTypeFilter,
-    sortMode
+    sortMode,
+    showTemporaryUpdates
   ])
 
   const resultsResetKey = useMemo(
@@ -686,7 +799,7 @@ export const PendingTab = memo(function PendingTab({
         sortMode,
         JSON.stringify(sideFilter),
         modelTypeFilter ?? '',
-        filtered.length
+        showTemporaryUpdates ? 1 : 0
       ].join('|'),
     [
       deferredSearch,
@@ -697,7 +810,7 @@ export const PendingTab = memo(function PendingTab({
       sortMode,
       sideFilter,
       modelTypeFilter,
-      filtered.length
+      showTemporaryUpdates
     ]
   )
 
@@ -954,6 +1067,7 @@ export const PendingTab = memo(function PendingTab({
                   <div className="gallery-grid status-card-grid">
                     {visibleRows.map((row) => {
                       const item = row.item
+                      const temporary = Boolean(row.temporary)
                       const busy = busyVersionIds.has(item.versionId)
                       const owned = ownedPrimaryByModel.get(item.modelId)
                       const tags = item.civitaiTags?.length
@@ -962,7 +1076,8 @@ export const PendingTab = memo(function PendingTab({
                       const forgotten = Boolean(item.forgotten)
                       const skipped = Boolean(item.skipped) && !forgotten
                       const isSeen = Boolean(pendingSeenByVersionId[item.versionId])
-                      const canMarkSeen = markSeenMode && !isSeen && !forgotten && !skipped
+                      const canMarkSeen =
+                        !temporary && markSeenMode && !isSeen && !forgotten && !skipped
                       const mt = resolveModelType(item, owned)
                       const nsfw = resolveNsfw(item, owned)
                       const ratingInfo =
@@ -975,23 +1090,26 @@ export const PendingTab = memo(function PendingTab({
                       const isFailed = queueItem?.status === 'failed'
                       const inQueue = isDownloading || isQueued
                       const autoUpdate = autoUpdateModelIds.has(item.modelId)
-                      const queueFoot = isDownloading
+                      const queueFoot = temporary
                         ? ''
-                        : isQueued
-                          ? queuePaused
-                            ? t('pending.queuedPaused')
-                            : t('pending.queuedReady')
-                          : isFailed
-                            ? t('downloadsStrip.statusFailed')
-                            : ''
+                        : isDownloading
+                          ? ''
+                          : isQueued
+                            ? queuePaused
+                              ? t('pending.queuedPaused')
+                              : t('pending.queuedReady')
+                            : isFailed
+                              ? t('downloadsStrip.statusFailed')
+                              : ''
                       const cardClass = [
+                        temporary ? 'pending-card-temporary' : '',
                         forgotten ? 'status-forgotten' : '',
                         skipped ? 'status-skipped' : '',
-                        inQueue ? 'in-queue' : '',
-                        inQueue && queueItem?.manual === true ? 'queue-manual' : '',
-                        inQueue && queueItem?.manual !== true ? 'queue-auto' : '',
-                        isDownloading ? 'status-downloading' : '',
-                        isQueued ? 'status-queued' : ''
+                        !temporary && inQueue ? 'in-queue' : '',
+                        !temporary && inQueue && queueItem?.manual === true ? 'queue-manual' : '',
+                        !temporary && inQueue && queueItem?.manual !== true ? 'queue-auto' : '',
+                        !temporary && isDownloading ? 'status-downloading' : '',
+                        !temporary && isQueued ? 'status-queued' : ''
                       ]
                         .filter(Boolean)
                         .join(' ')
@@ -1024,7 +1142,7 @@ export const PendingTab = memo(function PendingTab({
                             .join(' ')}
                           dataBanSeenPending={canMarkSeen ? item.versionId : undefined}
                           title={item.modelName}
-                          onContextMenu={(e) => openContextMenu(e, row)}
+                          onContextMenu={temporary ? undefined : (e) => openContextMenu(e, row)}
                           onOpen={
                             canMarkSeen
                               ? () => queuePendingSeen(item.versionId)
@@ -1044,7 +1162,13 @@ export const PendingTab = memo(function PendingTab({
                                 <span className="status-card-version-name">{item.versionName}</span>
                                 <span className="status-card-version-base"> · {item.baseModel}</span>
                                 <span className="status-card-version-base"> · {mt}</span>
-                                {autoUpdate ? (
+                                {temporary ? (
+                                  <span className="status-card-skipped-badge">
+                                    {' '}
+                                    · {t('pending.temporaryBadge')}
+                                  </span>
+                                ) : null}
+                                {!temporary && autoUpdate ? (
                                   <span className="status-card-skipped-badge">
                                     {' '}
                                     · {t('pending.alwaysUpdateBadge')}
@@ -1062,7 +1186,7 @@ export const PendingTab = memo(function PendingTab({
                                     · {t('pending.skippedBadge')}
                                   </span>
                                 ) : null}
-                                {isSeen && !forgotten ? (
+                                {isSeen && !forgotten && !temporary ? (
                                   <span className="status-card-skipped-badge">
                                     {' '}
                                     · {t('pending.seenBadge')}
@@ -1130,7 +1254,7 @@ export const PendingTab = memo(function PendingTab({
                               >
                                 ↗
                               </button>
-                              {forgetFunctionMode && (
+                              {!temporary && forgetFunctionMode && (
                                 <button
                                   type="button"
                                   className={`gallery-ban-inline-btn electron-no-drag${forgotten ? ' is-unban' : ''}`}
@@ -1149,7 +1273,7 @@ export const PendingTab = memo(function PendingTab({
                                   ×
                                 </button>
                               )}
-                              {banMode && !skipped && !forgotten && !forgetFunctionMode && (
+                              {!temporary && banMode && !skipped && !forgotten && !forgetFunctionMode && (
                                 <button
                                   type="button"
                                   className="gallery-ban-inline-btn electron-no-drag"
@@ -1163,7 +1287,16 @@ export const PendingTab = memo(function PendingTab({
                             </>
                           }
                           actions={
-                            forgotten ? (
+                            temporary ? (
+                              onOpenInLibrary ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenInLibrary(item.modelId, item.modelName)}
+                                >
+                                  {t('pending.openInLibrary')}
+                                </button>
+                              ) : null
+                            ) : forgotten ? (
                               <button
                                 type="button"
                                 className="primary"
@@ -1222,13 +1355,15 @@ export const PendingTab = memo(function PendingTab({
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={busy || autoUpdate}
+                                  disabled={busy}
                                   title={
                                     autoUpdate
                                       ? t('pending.alwaysUpdateOnHint')
                                       : t('pending.alwaysUpdateHint')
                                   }
-                                  onClick={() => void alwaysUpdate(item)}
+                                  onClick={() =>
+                                    void (autoUpdate ? turnOffAlwaysUpdate(item) : alwaysUpdate(item))
+                                  }
                                 >
                                   {autoUpdate
                                     ? t('pending.alwaysUpdateOn')

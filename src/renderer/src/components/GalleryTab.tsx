@@ -297,6 +297,17 @@ function GalleryTabInner({
   const [pendingHiddenVersionIds, setPendingHiddenVersionIds] = useState<Set<number>>(
     () => new Set()
   )
+  const [autoUpdateModelIds, setAutoUpdateModelIds] = useState<Set<number>>(() => new Set())
+  useEffect(() => {
+    let cancelled = false
+    void window.api.getAutoUpdateModels().then((rows) => {
+      if (cancelled) return
+      setAutoUpdateModelIds(new Set(rows.map((r) => r.modelId).filter((id) => id > 0)))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [inventory])
   const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [assignFolderOpen, setAssignFolderOpen] = useState(false)
@@ -733,6 +744,9 @@ function GalleryTabInner({
       case 'session':
         list = list.filter((r) => sessionSet.has(r.versionId))
         break
+      case 'alwaysUpdate':
+        list = list.filter((r) => autoUpdateModelIds.has(r.modelId))
+        break
       case 'byDate':
         list = list.filter((r) => recordInDownloadDay(r, libraryFilter.day))
         break
@@ -793,6 +807,7 @@ function GalleryTabInner({
     ignoreExcludedTags,
     libraryExcludedTags,
     sessionSet,
+    autoUpdateModelIds,
     pinModelId,
     loraFolder,
     checkpointFolder
@@ -893,7 +908,9 @@ function GalleryTabInner({
               ? libraryFilter.name
               : libraryFilter.type === 'cluster'
                 ? libraryFilter.key
-                : '',
+                : libraryFilter.type === 'alwaysUpdate' || libraryFilter.type === 'session'
+                  ? libraryFilter.type
+                  : '',
         modelTypeFilter ?? '',
         deferredModelSearch,
         modelLetter ?? '',
@@ -1050,11 +1067,33 @@ function GalleryTabInner({
     () => inventoryForMainCounts.filter((r) => sessionSet.has(r.versionId)).length,
     [inventoryForMainCounts, sessionSet]
   )
+  const alwaysUpdateFilterCount = useMemo(
+    () => inventoryForMainCounts.filter((r) => autoUpdateModelIds.has(r.modelId)).length,
+    [inventoryForMainCounts, autoUpdateModelIds]
+  )
   const versionNameById = useMemo(() => {
     const map = new Map<number, string>()
     for (const r of inventory) map.set(r.versionId, r.modelName)
     return map
   }, [inventory])
+
+  const turnOffAlwaysUpdate = useCallback(
+    async (modelId: number, modelName: string) => {
+      if (modelId <= 0) return
+      try {
+        await window.api.setModelAutoUpdate(modelId, false, modelName)
+        setAutoUpdateModelIds((prev) => {
+          const next = new Set(prev)
+          next.delete(modelId)
+          return next
+        })
+        setMessage(t('gallery.alwaysUpdateTurnedOff', { name: modelName }))
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [t]
+  )
 
   const scheduleLibraryRefresh = useCallback(() => {
     if (libraryRefreshTimerRef.current) clearTimeout(libraryRefreshTimerRef.current)
@@ -1386,6 +1425,7 @@ function GalleryTabInner({
       return libraryFilter.name.toLowerCase() === f.name.toLowerCase()
     }
     if (f.type === 'session' && libraryFilter.type === 'session') return true
+    if (f.type === 'alwaysUpdate' && libraryFilter.type === 'alwaysUpdate') return true
     if (f.type === 'byDate' && libraryFilter.type === 'byDate') {
       return libraryFilter.day === f.day
     }
@@ -1699,6 +1739,7 @@ function GalleryTabInner({
               highlightVersionId={highlightVersionId}
               highlightModelId={highlightModelId}
               highlightSet={highlightSet}
+              autoUpdateModelIds={autoUpdateModelIds}
               hideBaseModelOnCards={hideBaseModelOnCards}
               defaultLinkDomain={defaultLinkDomain}
               tagRules={tagRules}
@@ -1817,6 +1858,17 @@ function GalleryTabInner({
             >
               <span className="tag-name">{t('gallery.sessionDownloads')}</span>
               <span className="muted tag-count-inline">{sessionFilterCount}</span>
+            </button>
+          )}
+          {alwaysUpdateFilterCount > 0 && (
+            <button
+              type="button"
+              className={`sidebar-tag ${filterActive({ type: 'alwaysUpdate' }) ? 'active' : ''}`}
+              onClick={() => applyLibraryFilter({ type: 'alwaysUpdate' })}
+              title={t('gallery.alwaysUpdateFilterHint')}
+            >
+              <span className="tag-name">{t('gallery.alwaysUpdateFilter')}</span>
+              <span className="muted tag-count-inline">{alwaysUpdateFilterCount}</span>
             </button>
           )}
 
@@ -2163,6 +2215,16 @@ function GalleryTabInner({
           onClose={() => setContextMenu(null)}
         >
           <div className="context-menu-title">{contextMenu.modelName}</div>
+            {contextMenu.modelId > 0 && autoUpdateModelIds.has(contextMenu.modelId) && (
+              <button
+                {...contextMenuButtonProps(() => {
+                  setContextMenu(null)
+                  void turnOffAlwaysUpdate(contextMenu.modelId, contextMenu.modelName)
+                })}
+              >
+                {t('gallery.turnOffAlwaysUpdate')}
+              </button>
+            )}
             {contextMenu.versionId != null && !menuLocal && contextMenu.modelId > 0 && (
               <button
                 {...contextMenuButtonProps(() => {
@@ -2369,6 +2431,7 @@ type LibraryCardGridProps = {
   highlightVersionId: number | null
   highlightModelId: number | null
   highlightSet: Set<number>
+  autoUpdateModelIds?: Set<number>
   hideBaseModelOnCards: boolean
   defaultLinkDomain: CivitaiDomain
   tagRules: TagFolderRule[]
@@ -2406,6 +2469,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   highlightVersionId,
   highlightModelId,
   highlightSet,
+  autoUpdateModelIds,
   hideBaseModelOnCards,
   defaultLinkDomain,
   tagRules,
@@ -2443,6 +2507,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             highlightVersionId === record.versionId || highlightModelId === record.modelId
           }
           sessionNew={highlightSet.has(record.versionId)}
+          alwaysUpdate={autoUpdateModelIds?.has(record.modelId) ?? false}
           hideBaseModelOnCards={hideBaseModelOnCards}
           defaultLinkDomain={defaultLinkDomain}
           tagRules={tagRules}

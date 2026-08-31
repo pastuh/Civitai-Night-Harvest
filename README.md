@@ -21,11 +21,11 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Tag Folders** — map Civitai tags to `\*\name` folders (**LoRA**); **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; **Custom folder assignments** for your own local-only folders (also the only Checkpoint folder override); unmatched LoRA downloads go to `\*\Unsorted`
 - **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; **Mark seen** / **Hide seen** / **Unseen bans** filter; per-model **Allow**; **Forget** (hide everywhere); right-click context menu; click a policy tag to filter that skip list
 - **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL
-- **Updates** — other versions of models you already own (newer release or another file on the same page / pack): Download / Always update / Skip / Mark seen / Forget / Ban; Missing-like sidebar; **Show skipped** / **Show forgotten**
+- **Updates** — other versions of models you already own (newer release or another file on the same page / pack): Download / Always update / Skip / Mark seen / Forget / Ban; Missing-like sidebar; **Show skipped** / **Show forgotten**; Settings **Show temporary** keeps handled cards dimmed in place until you leave the tab
 - **Download strip** — progress, priority, retries; shows **version name**; Early access when a model is gated
 - **Activity** — crawl and download history
 - **Status bar** — fetch, wait, and queue summary at the bottom
-- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters, confirm tag moves, custom-folder subpaths in Library
+- **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters, confirm tag moves, custom-folder subpaths in Library, Updates **Show temporary**
 
 Open the in-app **Help** tab for a short UI guide.
 
@@ -63,7 +63,7 @@ For models you already own, when another matching version appears (a **newer** r
 These stay on **Updates** for confirm — they are **not** treated as brand-new Browse Yield (use Browse **Show updates** to see them in Results too).
 
 Use **Download**, **Always update**, **Skip**, **Ban**, or **Show List** (opens Library on that model).  
-**Download** / **Always update** queue the version; the Updates card stays with a queue status until the download finishes. **Always update** also auto-queues future versions of that model.  
+**Download** queues that version; **Always update** queues **all** current Updates offers for that Civitai model and auto-queues future versions. Cards stay with a queue status until the download finishes. Click **Always on** again to turn off, or manage under Library → **Always update** (sidebar filter + right-click → Turn off).  
 **Skip** hides that version only (keeps your files; maybe later) until **Unskip**.  
 **Mark seen** / **Hide seen** — reviewed offers without skipping forever (same gesture as Missing).  
 **Forget** — never suggest **this version** again; review with **Show forgotten** / Unforget (other versions of the model can still appear).  
@@ -71,6 +71,8 @@ Use **Download**, **Always update**, **Skip**, **Ban**, or **Show List** (opens 
 Sidebar filters: model type (LoRA / Checkpoint / VAE / …), base model, unseen, skipped, forgotten; plus rating filter and sort like Library/Missing.  
 Skipped / forgotten versions are **not** counted in Browse **Updates**.  
 **Right-click** a card for the context menu. Cards show **tags** from the pending metadata or your library copies.
+
+**Show temporary** (Settings, default on) — after Download / Ban / a finished download, keep that card in place (dimmed) so the grid does not jump while you review the rest. Cards clear when you leave Updates (e.g. open Library and return).
 
 Local-only models under **Custom folder assignments** are not checked for Civitai updates.
 
@@ -89,6 +91,7 @@ Local-only models under **Custom folder assignments** are not checked for Civita
 
 - **+N** — new downloads since you last opened Library (opens **Session downloads**)
 - **Session downloads** — everything added this app run
+- **Always update** — models with per-model auto-update on (from Updates); right-click → **Turn off Always update**
 - **Downloaded by date** — Today / Yesterday / 7 days, or a calendar (one day, or click two days for a range); shows download count for the selection
 - **LoRA / Checkpoint** — type filter in the sidebar
 - **Excluded** — tags ignored when **Hide folder-assigned** + **Ignore excluded** are on (e.g. keep `concept` models visible)

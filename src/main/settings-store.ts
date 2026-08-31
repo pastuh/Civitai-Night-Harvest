@@ -250,6 +250,9 @@ export function getSettings(): AppSettings {
   if (raw.showCustomAssignmentSubfolders === undefined) {
     raw.showCustomAssignmentSubfolders = true
   }
+  if (raw.showTemporaryUpdates === undefined) {
+    raw.showTemporaryUpdates = true
+  }
   if (raw.slugFormat !== 'compact' && raw.slugFormat !== 'versionName' && raw.slugFormat !== 'modelTitle') {
     raw.slugFormat = 'compact'
   }

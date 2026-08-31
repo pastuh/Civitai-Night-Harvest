@@ -141,6 +141,7 @@ export const lt: Messages = {
       showCustomAssignmentSubfolders: 'Rodyti custom folderio subkelius Library',
       browseSettledToEnd: 'Owned / excluded / awaiting — į galerijos galą',
       browseSettledDimPercent: 'Pritemdyti settled Browse korteles',
+      showTemporaryUpdates: 'Rodyti laikinus (Updates)',
       browseVideoPreviews: 'Video peržiūros ant hover (Browse, Library, EA)',
       videoPreviewSync: 'Video ženklelių sync',
       mediaCacheFolder: 'Peržiūrų cache aplankas',
@@ -245,6 +246,8 @@ export const lt: Messages = {
         'Turimi, excluded (banned) ir awaiting-access kortelės perkeliamos į Browse Results galą. Paieškos atitikmenys lieka savo vietoje.',
       browseSettledDimPercent:
         'Kiek stipriai pritemdomos settled kortelės (0% = išjungta, 100% = labiausiai). Užvedus pelę — pilnas ryškumas. Paieškos atitikmenys lieka ryškūs.',
+      showTemporaryUpdates:
+        'Updates skirtukas: po confirm, ban ar baigto download kortelė lieka vietoje (pritemdyta), kad tinklelis nešokinėtų. Išėjus iš Updates — dingsta. Pagal nutylėjimą įjungta.',
       browseVideoPreviews:
         'Įjungus modelių kortelėse (Browse, Library, Early access) ant hover groja Civitai video (muted). Modelio detaliuose — Videos skirtukas. Išjungus — tik nuotraukos.',
       videoPreviewSync:
@@ -392,9 +395,11 @@ export const lt: Messages = {
     libraryTagBan:
       'Tag Folders **Ban** — permanent ban-by-tag (skip auto-download). Laikina pause — tik Browse → Paused. Praleisti modeliai — Missing (Allow vienam modeliui).',
     libraryBadge:
-      'Library skilties **+N** — nauji atsisiuntimai nuo paskutinio apsilankymo; atidarius Library su ženkliuku įsijungia **Session downloads**. **Show List** iš Updates vis tiek atidaro All models su pin’intu modeliu',
+      'Library skilties **+N** — nauji atsisiuntimai nuo paskutinio apsilankymo; atidarius Library su ženkliuku įsijungia **Session downloads**. **Visada atnaujinti** šoninis filtras — modeliai su Always update (dešiniu pelės → išjungti). **Show List** iš Updates vis tiek atidaro All models su pin’intu modeliu',
     librarySession:
       '**Session downloads** — šoninis filtras modeliams, realiai atsisiųstiems šį paleidimą (tik queue — ne disk sync / import)',
+    libraryAlwaysUpdate:
+      '**Visada atnaujinti** — Library šoninis filtras modeliams su Updates → Always update; dešiniu pelės mygtuku kortelėje galima išjungti',
     libraryByDate:
       '**Atsisiųsta pagal datą** — Šiandien / Vakar / 7 dienos, arba kalendorius: viena diena, arba dvi dienos nuo–iki intervalui. Rodo, kiek atsisiuntimų atitinka pasirinkimą.',
     libraryDetails:
@@ -456,7 +461,7 @@ export const lt: Messages = {
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be versijos duomenų; recheck arba įklijuokite download URL',
     dlNewVersions:
-      'Atnaujinimai — kitos versijos modelių, kuriuos jau turite (**naujesnė** arba kitas failas tame pačiame Civitai puslapyje / pack) — ne kaip naujas Browse Yield. **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio; abu palieka Updates kortelę su eilės statusu, kol baigiasi siuntimas. **Skip** = ši versija vėliau (iki **Unskip**); **Mark seen On** kartu įjungia **Hide seen** — spustelėkite kortelę arba išeikite kairėn/dešinėn (slepiasi ir **skipped**); **Forget** = niekada nesiūlyti **šios versijos** (**Show forgotten** → Unforget; kitos versijos lieka). Skipped / forgotten **neįtraukiamos** į Browse Updates. Tipų / rating / sort sidebar kaip Missing. Early access → Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
+      'Atnaujinimai — kitos versijos modelių, kuriuos jau turite (**naujesnė** arba kitas failas tame pačiame Civitai puslapyje / pack) — ne kaip naujas Browse Yield. **Download** vieną kartą į eilę; **Visada atnaujinti** į eilę deda **visus** dabartinius to modelio Updates pasiūlymus ir ateities versijas; abu palieka Updates kortelę su eilės statusu, kol baigiasi siuntimas. **Visada įjungta** dar kartą — išjungti, arba Library → **Visada atnaujinti**. **Skip** = ši versija vėliau (iki **Unskip**); **Mark seen On** kartu įjungia **Hide seen** — spustelėkite kortelę arba išeikite kairėn/dešinėn (slepiasi ir **skipped**); **Forget** = niekada nesiūlyti **šios versijos** (**Show forgotten** → Unforget; kitos versijos lieka). Skipped / forgotten **neįtraukiamos** į Browse Updates. Tipų / rating / sort sidebar kaip Missing. Early access → Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
     dlTabBadges:
       'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
@@ -504,6 +509,8 @@ export const lt: Messages = {
         'Browse Results — owned, excluded ir awaiting-access kortelės į galerijos galą. Paieškos atitikmenys lieka savo vietoje.',
       browseSettledDimPercent:
         'Browse Results — pritemdyti settled korteles (0% = išjungta). Hover atstatyti ryškumą; paieška lieka ryški.',
+      showTemporaryUpdates:
+        'Updates — ką tik apdorotas korteles laikyti vietoje pritemdytas, kol neišeinate iš skirtuko (mažiau klaidingų paspaudimų). Pagal nutylėjimą įjungta.',
       queueGridSize:
         'Download juostos kortelės plotis (miniatiūra) Row ir Grid režimams. Didesnėms kortelėms reikia aukštesnės juostos.',
       downloadStripVisibility:
@@ -878,6 +885,7 @@ export const lt: Messages = {
     markSeenModeTitle:
       'Įjungia Mark seen ir Hide seen. Spustelėkite kortelę arba išeikite kairėn/dešinėn — peržiūrėti (ir skipped) pasislepia. Dešinis meniu → Mark seen irgi veikia.',
     seenBadge: 'Seen',
+    temporaryBadge: 'Done',
     filterUnseen: 'Nematytos',
     sidebarTitle: 'Filtras',
     sidebarTypes: 'Modelių tipai',
@@ -905,9 +913,10 @@ export const lt: Messages = {
     queueHint: 'Atsisiųsti šią naujesnę versiją; jau turimas palikti',
     alwaysUpdate: 'Visada atnaujinti',
     alwaysUpdateHint:
-      'Į eilę šią versiją ir ateityje automatiškai siųsti naujas šio modelio versijas (net jei Settings auto-download išjungtas). Lieka Updates su eilės borderiu, kol atsisiunčiama.',
+      'Į eilę visus šio modelio Updates pasiūlymus ir ateityje automatiškai siųsti naujas versijas (net jei Settings auto-download išjungtas). Kortelės lieka su eilės borderiu, kol atsisiunčiama. Valdyti / išjungti: Library → Visada atnaujinti.',
     alwaysUpdateOn: 'Visada įjungta',
-    alwaysUpdateOnHint: 'Šiam modeliui auto-update jau įjungtas',
+    alwaysUpdateOnHint:
+      'Auto-update įjungtas šiam modeliui — spustelėkite, kad išjungtumėte. Ateities versijos nebebus auto-queue.',
     alwaysUpdateBadge: 'Visada atnaujinti',
     queuedReady: 'Eilėje',
     queuedPaused: 'Eilėje · pause',
@@ -1260,6 +1269,13 @@ export const lt: Messages = {
     duplicateOf: 'Dublikatas: {name}',
     deleteLocal: 'Ištrinti vietinius failus',
     sessionDownloads: 'Sesijos atsisiuntimai',
+    alwaysUpdateFilter: 'Visada atnaujinti',
+    alwaysUpdateFilterHint:
+      'Turimos versijos, kurių modeliui įjungtas Always update — dešiniu pelės mygtuku kortelėje galima išjungti',
+    alwaysUpdateBadge: 'Visada atnaujinti',
+    alwaysUpdateBadgeHint: 'Ateities šio modelio versijos automatiškai į eilę',
+    turnOffAlwaysUpdate: 'Išjungti Always update',
+    alwaysUpdateTurnedOff: 'Always update išjungta: {name}',
     downloadedByDate: 'Atsisiųsta pagal datą',
     downloadedToday: 'Šiandien',
     downloadedYesterday: 'Vakar',

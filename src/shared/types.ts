@@ -131,6 +131,11 @@ export interface AppSettings {
   /** Dim settled Browse cards (0 = off, 1–100 = opacity %) */
   browseSettledDimPercent: number
   /**
+   * Updates tab: keep just-handled cards in place (dimmed) until you leave the tab.
+   * Default on — avoids grid jump when confirming, banning, or finishing a download.
+   */
+  showTemporaryUpdates: boolean
+  /**
    * How Browse & Library present large lists:
    * - lazy: infinite / chunked scroll
    * - pages: classic Prev/Next pages
@@ -220,6 +225,7 @@ export interface AppSettingsPublic {
   activityLogTopics?: Partial<ActivityLogTopicFlags>
   browseSettledToEnd: boolean
   browseSettledDimPercent: number
+  showTemporaryUpdates: boolean
   resultsDisplayMode: import('./results-display').ResultsDisplayMode
   resultsPageSize: import('./results-display').ResultsPageSize
   hideAwaitingAccess: boolean
@@ -273,6 +279,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   activityLogVerbosity: 'minimal',
   browseSettledToEnd: false,
   browseSettledDimPercent: 50,
+  showTemporaryUpdates: true,
   resultsDisplayMode: 'autoAdvance',
   resultsPageSize: 100,
   hideAwaitingAccess: false,

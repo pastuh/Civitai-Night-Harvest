@@ -33,6 +33,7 @@ export type LibraryFilter =
   | { type: 'cluster'; key: string }
   | { type: 'baseModel'; name: string }
   | { type: 'session' }
+  | { type: 'alwaysUpdate' }
   | { type: 'byDate'; day: string }
   | { type: 'byDateRange'; from: string; to: string }
 
@@ -179,7 +180,8 @@ export function coerceLibraryViewPrefs(raw: Partial<LibraryViewPrefs> | null | u
       rawFilter.type === 'all' ||
       rawFilter.type === 'untagged' ||
       rawFilter.type === 'unrecognized' ||
-      rawFilter.type === 'session'
+      rawFilter.type === 'session' ||
+      rawFilter.type === 'alwaysUpdate'
     ) {
       libraryFilter = { type: rawFilter.type }
     } else if (

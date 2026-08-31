@@ -845,6 +845,21 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
+              checked={draft.showTemporaryUpdates !== false}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                update('showTemporaryUpdates', enabled)
+                void onSave({ showTemporaryUpdates: enabled })
+              }}
+            />
+            {t('settings.fields.showTemporaryUpdates')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.showTemporaryUpdates')}</p>
+        </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
               checked={draft.browseVideoPreviews ?? false}
               onChange={(e) => update('browseVideoPreviews', e.target.checked)}
             />

@@ -1684,6 +1684,15 @@ th {
   opacity: 0.62;
 }
 
+.status-gallery-card.pending-card-temporary {
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+
+.status-gallery-card.pending-card-temporary:hover {
+  opacity: 1;
+}
+
 .status-gallery-card.pending-card-skipped .status-card-skipped-badge {
   font-weight: 600;
 }
@@ -4165,7 +4174,8 @@ code {
 }
 
 .library-unrecognized-badge,
-.library-duplicate-badge {
+.library-duplicate-badge,
+.library-always-update-badge {
   position: absolute;
   z-index: 4;
   left: 6px;
@@ -4186,6 +4196,12 @@ code {
   color: #1a1508;
 }
 
+.library-always-update-badge {
+  top: 6px;
+  background: color-mix(in srgb, var(--accent, #5b8def) 82%, #000);
+  color: #fff;
+}
+
 .library-duplicate-badge {
   top: 28px;
   background: color-mix(in srgb, var(--accent, #5b8def) 80%, #000);
@@ -4193,6 +4209,7 @@ code {
 }
 
 .gallery-card.library-unrecognized .library-unrecognized-badge + .nsfw-rating-badge,
+.gallery-card .library-always-update-badge + .nsfw-rating-badge,
 .gallery-card .library-duplicate-badge + .nsfw-rating-badge {
   top: 50px;
 }

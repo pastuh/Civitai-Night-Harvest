@@ -865,6 +865,11 @@ export default function App() {
         }, 500)
       }),
       window.api.onPendingVersions((pend) => {
+        // Updates tab needs the drop immediately so Show-temporary can keep the card in place.
+        if (tabRef.current === 'pending') {
+          applyPendingVersions(pend)
+          return
+        }
         startTransition(() => applyPendingVersions(pend))
       }),
       window.api.onDeferredVersions((def) => {
@@ -2304,33 +2309,39 @@ export default function App() {
             tagsTab
           )
         ) : null}
-        {!modelDetailTarget && tab === 'pending' ? (
-          <PendingTab
-            pending={pending}
-            inventory={pendingOwnedInventory}
-            versionScanProgress={versionScanProgress}
-            versionScanning={versionScanning}
-            inventoryModelCount={inventory.length}
-            resultsDisplayMode={settings.resultsDisplayMode}
-            resultsPageSize={settings.resultsPageSize}
-            viewPrefs={settings.preserveFilters ? pendingViewPrefs : undefined}
-            onViewPrefsChange={settings.preserveFilters ? onPendingViewPrefsChange : undefined}
-            onQueueRefresh={refreshQueueOnly}
-            onLibraryRefresh={refreshInventory}
-            onPendingRemoved={removePendingVersionLocal}
-            onPendingModelRemoved={removePendingModelLocal}
-            onPendingPatched={patchPendingVersionLocal}
-            onScanLibrary={scanLibraryVersions}
-            banFunctionMode={settings.banFunctionMode ?? false}
-            onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
-            onBrowseModelBanned={(modelId, stub) => {
-              markBrowseModelBan(modelId, true, stub)
-            }}
-            onOpenInLibrary={jumpToGallery}
-            onOpenModelDetail={openModelDetail}
-            isActive={tab === 'pending'}
-            browseVideoPreviews={settings.browseVideoPreviews ?? false}
-          />
+        {tab === 'pending' ? (
+          <div
+            className={modelDetailTarget ? 'tab-panel-under-overlay' : undefined}
+            aria-hidden={Boolean(modelDetailTarget)}
+          >
+            <PendingTab
+              pending={pending}
+              inventory={pendingOwnedInventory}
+              versionScanProgress={versionScanProgress}
+              versionScanning={versionScanning}
+              inventoryModelCount={inventory.length}
+              resultsDisplayMode={settings.resultsDisplayMode}
+              resultsPageSize={settings.resultsPageSize}
+              viewPrefs={settings.preserveFilters ? pendingViewPrefs : undefined}
+              onViewPrefsChange={settings.preserveFilters ? onPendingViewPrefsChange : undefined}
+              onQueueRefresh={refreshQueueOnly}
+              onLibraryRefresh={refreshInventory}
+              onPendingRemoved={removePendingVersionLocal}
+              onPendingModelRemoved={removePendingModelLocal}
+              onPendingPatched={patchPendingVersionLocal}
+              onScanLibrary={scanLibraryVersions}
+              banFunctionMode={settings.banFunctionMode ?? false}
+              onBanFunctionModeChange={(enabled) => void saveSettings({ banFunctionMode: enabled })}
+              onBrowseModelBanned={(modelId, stub) => {
+                markBrowseModelBan(modelId, true, stub)
+              }}
+              onOpenInLibrary={jumpToGallery}
+              onOpenModelDetail={openModelDetail}
+              isActive={!modelDetailTarget}
+              browseVideoPreviews={settings.browseVideoPreviews ?? false}
+              showTemporaryUpdates={settings.showTemporaryUpdates !== false}
+            />
+          </div>
         ) : null}
         {keepAwaitingMounted ? (
           <div

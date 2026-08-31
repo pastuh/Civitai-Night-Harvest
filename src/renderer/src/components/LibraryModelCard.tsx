@@ -23,6 +23,8 @@ export type LibraryModelCardProps = {
   banned: boolean
   highlight: boolean
   sessionNew: boolean
+  /** Model has Always update enabled (per modelId). */
+  alwaysUpdate?: boolean
   hideBaseModelOnCards: boolean
   defaultLinkDomain: CivitaiDomain
   tagRules: TagFolderRule[]
@@ -65,6 +67,7 @@ function LibraryModelCardInner({
   banned,
   highlight,
   sessionNew,
+  alwaysUpdate = false,
   hideBaseModelOnCards,
   defaultLinkDomain,
   tagRules,
@@ -155,6 +158,11 @@ function LibraryModelCardInner({
       {unrecognized ? (
         <span className="library-unrecognized-badge" title={t('gallery.unrecognizedHint')}>
           {t('gallery.unrecognized')}
+        </span>
+      ) : null}
+      {alwaysUpdate ? (
+        <span className="library-always-update-badge" title={t('gallery.alwaysUpdateBadgeHint')}>
+          {t('gallery.alwaysUpdateBadge')}
         </span>
       ) : null}
       {duplicateOfName ? (

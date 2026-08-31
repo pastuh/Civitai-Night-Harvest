@@ -143,6 +143,7 @@ const IPC_CHANNELS = [
   'activity:get',
   'pending:get',
   'pending:approve',
+  'pending:enableAutoUpdate',
   'pending:ignore',
   'pending:dismiss',
   'pending:skip',
@@ -1326,7 +1327,7 @@ export function initIpc(): void {
           ? `Auto-update on: model #${payload.modelId}${payload.modelName ? ` (${payload.modelName})` : ''}`
           : `Auto-update off: model #${payload.modelId}`,
         undefined,
-        { modelId: payload.modelId, source: 'auto-update' }
+        { modelId: payload.modelId, source: 'download' }
       )
       return { modelId: payload.modelId, enabled: payload.enabled }
     }
@@ -1724,38 +1725,50 @@ export function initIpc(): void {
     return mainWindow.isFullScreen()
   })
 
+  function enqueuePendingVersion(payload: {
+    modelId: number
+    versionId: number
+    routingTag?: string
+  }): { id: string | null; modelName: string; versionName: string } {
+    const pending =
+      inventory.getAllPendingVersions().find((p) => p.versionId === payload.versionId) ??
+      inventory.getAllSkippedPendingVersions().find((p) => p.versionId === payload.versionId)
+    const existing = inventory.getVersionsForModel(payload.modelId)[0]
+    const modelName = pending?.modelName ?? existing?.modelName ?? `Model #${payload.modelId}`
+    const versionName = pending?.versionName ?? existing?.versionName ?? 'new version'
+    if (inventory.hasVersion(payload.versionId) || downloadQueue.hasActiveItem(payload.versionId)) {
+      return { id: null, modelName, versionName }
+    }
+    const id = downloadQueue.enqueue(
+      {
+        modelId: payload.modelId,
+        versionId: payload.versionId,
+        routingTag: payload.routingTag ?? existing?.routingTag
+      },
+      {
+        modelName,
+        versionName,
+        previewUrl: pending?.previewUrl,
+        routingTag: payload.routingTag ?? existing?.routingTag,
+        modelType: pending?.modelType || existing?.modelType || 'LORA',
+        baseModel: pending?.baseModel ?? existing?.baseModel,
+        author: pending?.author ?? existing?.author,
+        civitaiTags: pending?.civitaiTags ?? existing?.civitaiTags,
+        nsfw: pending?.nsfw ?? existing?.isNsfw,
+        nsfwLevel: pending?.nsfwLevel ?? existing?.nsfwLevel,
+        // Stay in Updates until downloaded; strip starts only when Pause is off / Auto on.
+        manual: true
+      }
+    )
+    // Keep the Updates card — user should see queue border until the file lands.
+    inventory.removeSkippedPendingVersion(payload.versionId)
+    return { id, modelName, versionName }
+  }
+
   ipcMain.handle(
     'pending:approve',
     async (_e, payload: { modelId: number; versionId: number; routingTag?: string }) => {
-      const pending =
-        inventory.getAllPendingVersions().find((p) => p.versionId === payload.versionId) ??
-        inventory.getAllSkippedPendingVersions().find((p) => p.versionId === payload.versionId)
-      const existing = inventory.getVersionsForModel(payload.modelId)[0]
-      const modelName = pending?.modelName ?? existing?.modelName ?? `Model #${payload.modelId}`
-      const versionName = pending?.versionName ?? existing?.versionName ?? 'new version'
-      const id = downloadQueue.enqueue(
-        {
-          modelId: payload.modelId,
-          versionId: payload.versionId,
-          routingTag: payload.routingTag ?? existing?.routingTag
-        },
-        {
-          modelName,
-          versionName,
-          previewUrl: pending?.previewUrl,
-          routingTag: payload.routingTag ?? existing?.routingTag,
-          modelType: pending?.modelType || existing?.modelType || 'LORA',
-          baseModel: pending?.baseModel ?? existing?.baseModel,
-          author: pending?.author ?? existing?.author,
-          civitaiTags: pending?.civitaiTags ?? existing?.civitaiTags,
-          nsfw: pending?.nsfw ?? existing?.isNsfw,
-          nsfwLevel: pending?.nsfwLevel ?? existing?.nsfwLevel,
-          // Stay in Updates until downloaded; strip starts only when Pause is off / Auto on.
-          manual: true
-        }
-      )
-      // Keep the Updates card — user should see queue border until the file lands.
-      inventory.removeSkippedPendingVersion(payload.versionId)
+      const { id, modelName, versionName } = enqueuePendingVersion(payload)
       if (id && shouldCrawlAutoDownload()) {
         downloadQueue.start()
         scheduler.setStatus('downloading')
@@ -1773,6 +1786,51 @@ export function initIpc(): void {
         modelId: payload.modelId,
         versionId: payload.versionId
       }
+    }
+  )
+
+  /** Enable Always update for a model and queue every active Updates offer for that modelId. */
+  ipcMain.handle(
+    'pending:enableAutoUpdate',
+    async (
+      _e,
+      payload: { modelId: number; modelName?: string }
+    ): Promise<{ modelId: number; enabled: true; queued: number; versionIds: number[] }> => {
+      const modelId = payload.modelId
+      if (modelId <= 0) {
+        throw new Error('Invalid model id')
+      }
+      if (inventory.isModelBanned(modelId)) {
+        throw new Error('Cannot auto-update a banned model')
+      }
+      const modelName =
+        payload.modelName?.trim() ||
+        inventory.getVersionsForModel(modelId)[0]?.modelName ||
+        `Model #${modelId}`
+      inventory.setModelAutoUpdate(modelId, true, modelName)
+      const versionIds: number[] = []
+      for (const pending of inventory.getAllPendingVersions()) {
+        if (pending.modelId !== modelId) continue
+        if (pending.forgotten) continue
+        const { id } = enqueuePendingVersion({
+          modelId,
+          versionId: pending.versionId
+        })
+        if (id) versionIds.push(pending.versionId)
+      }
+      if (versionIds.length && shouldCrawlAutoDownload()) {
+        downloadQueue.start()
+        scheduler.setStatus('downloading')
+      }
+      scheduler.log(
+        'info',
+        versionIds.length
+          ? `Auto-update on: ${modelName} — queued ${versionIds.length} Updates offer(s)`
+          : `Auto-update on: ${modelName}`,
+        undefined,
+        { modelId, source: 'download' }
+      )
+      return { modelId, enabled: true, queued: versionIds.length, versionIds }
     }
   )
 
