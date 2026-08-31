@@ -184,6 +184,10 @@ export function HelpTab({ onOpenSettings }: Props) {
               <span className="help-swatch help-swatch-awaiting" aria-hidden /> {t('help.edgeAwaiting')}
             </li>
             <li>
+              <span className="help-swatch help-swatch-awaiting-confirm" aria-hidden />{' '}
+              {t('help.edgeAwaitingConfirm')}
+            </li>
+            <li>
               <span className="help-swatch help-swatch-blocked" aria-hidden /> {t('help.edgeBlocked')}
             </li>
           </ul>
@@ -219,8 +223,8 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.progressBar')}
           </h3>
           <p className="muted">
-            {t('help.progressBar.green')} · {t('help.progressBar.red')} · {t('help.progressBar.yellow')} ·{' '}
-            {t('help.progressBar.gray')} · {t('help.progressBar.teal')}
+            {t('help.progressBar.owned')} · {t('help.progressBar.banned')} · {t('help.progressBar.blocked')} ·{' '}
+            {t('help.progressBar.awaiting')} · {t('help.progressBar.updates')} · {t('help.progressBar.yield')}
           </p>
           <p className="muted">{t('help.progressBar.yieldNote')}</p>
         </section>

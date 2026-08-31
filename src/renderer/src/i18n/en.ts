@@ -364,7 +364,7 @@ export const en = {
     headerBlur: 'Blur — hide preview thumbnails',
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort)',
     browseResults:
-      'Results — search by name, author, or numeric Civitai model/version ID; filters (Hide owned, etc.); Loaded / Owned / Yield stats; **Updates** count excludes skipped versions; Sort and Tags; click a card to queue',
+      'Results — search by name, author, or numeric Civitai model/version ID; **Hide owned**, **Show updates** (same offers as the Updates tab — off by default), **Show blocked** (pause / ban-by-tag cards; still no auto-download); Loaded / Owned / Yield / Updates / … stats; **Updates** count excludes skipped versions; Sort and Tags; click a card to queue',
     browseDetails:
       'ℹ on a card opens **Model details** (full page) — versions on the right, sticky Back/Civitai/Show List/Ban bar, download missing versions, Load/Save preview for owned versions',
     browsePreviews:
@@ -433,8 +433,9 @@ export const en = {
     edgeQueued: 'Queue accent top border — in download queue',
     edgeDownloading: 'Green bar on thumbnail — actively downloading',
     edgeNew: 'Teal top border — new, not queued',
-    edgeAwaiting: 'Yellow — Early access',
-    edgeBlocked: 'Purple — permanent ban-by-tag · amber — paused (Browse exclude)',
+    edgeAwaiting: 'Yellow / amber — Early access',
+    edgeAwaitingConfirm: 'Updates accent — owned-model update / pack sibling (confirm on Updates; Browse with Show updates)',
+    edgeBlocked: 'Blocked accent — pause or ban-by-tag (Show blocked); amber chips = pause · purple chips = permanent ban',
     dlStrip:
       'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode. Strip shows **version name** next to the model title.',
     dlStripLayouts:
@@ -450,7 +451,7 @@ export const en = {
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but version data is empty; recheck or paste a download URL',
     dlNewVersions:
-      'Updates — **Download** queues that version once; **Always update** also auto-queues future versions of that model; **Skip** = this version later (stays until **Unskip**); **Mark seen On** also enables **Hide seen** — click a card or leave left/right to hide reviewed offers (**including skipped**); **Forget** = never suggest **this version** again (**Show forgotten** → Unforget; other versions stay). Skipped / forgotten versions are **not** counted in Browse Updates. Types / rating / sort sidebar like Missing. If Early access, it moves to Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
+      'Updates — other versions of models you already own (**newer** release or another file on the **same Civitai page** / pack) — not treated as brand-new Browse Yield. **Download** queues once; **Always update** also auto-queues future versions of that model; both keep the Updates card with a queue status until the download finishes. **Skip** = this version later (until **Unskip**); **Mark seen On** also enables **Hide seen** — click a card or leave left/right to hide reviewed offers (**including skipped**); **Forget** = never suggest **this version** again (**Show forgotten** → Unforget; other versions stay). Skipped / forgotten are **not** counted in Browse Updates. Types / rating / sort sidebar like Missing. Early access → Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
     dlTabBadges:
       'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
@@ -504,12 +505,14 @@ export const en = {
         'Row = horizontal scroll cards · Grid = wrapped card grid · Minimal = vertical list with thumbnail, status column, separator, and name; progress fill stops at the separator when complete.'
     },
     progressBar: {
-      green: 'Green = owned',
-      red: 'Red = banned',
-      yellow: 'Yellow = blocked tag',
-      gray: 'Gray = Early access',
-      teal: 'Teal = Yield (this session)',
-      yieldNote: 'Yield — models sent to the download strip this session (grows as you queue or Auto sends).'
+      owned: 'Owned',
+      banned: 'Banned',
+      blocked: 'Blocked (pause / ban-by-tag)',
+      awaiting: 'Awaiting (Early access)',
+      updates: 'Updates (confirm on Updates tab)',
+      yield: 'Yield (queued this session)',
+      yieldNote:
+        'Yield — models sent to the download strip this session (grows as you queue or Auto sends). Segment colors follow the active theme.'
     }
   },
   resultsPager: {

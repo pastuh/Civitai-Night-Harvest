@@ -367,7 +367,7 @@ export const lt: Messages = {
     headerBlur: 'Blur — slėpti preview miniatiūras',
     browseRules: 'Rules — Civitai filtrai (tipas, base model, keywords, sort)',
     browseResults:
-      'Results — paieška pagal vardą, autorių ar skaitinį Civitai modelio/versijos ID; filtrai (Hide owned ir kt.); Loaded / Owned / Yield; **Updates** neskaičiuoja skipped versijų; Sort ir Tags; spustelėkite kortelę į eilę',
+      'Results — paieška pagal vardą, autorių ar skaitinį Civitai modelio/versijos ID; **Hide owned**, **Show updates** (tie patys pasiūlymai kaip Updates skirtuke — pagal nutylėjimą išjungta), **Show blocked** (pause / ban-by-tag kortelės; auto-download vis tiek ne); Loaded / Owned / Yield / Updates / …; **Updates** neskaičiuoja skipped versijų; Sort ir Tags; spustelėkite kortelę į eilę',
     browseDetails:
       'ℹ ant kortelės atidaro **Model details** (pilnas puslapis) — versijos dešinėje, lipni Back/Civitai/Show List/Ban juosta, trūkstamų versijų download, Load/Save preview turimoms versijoms',
     browsePreviews:
@@ -436,8 +436,11 @@ export const lt: Messages = {
     edgeQueued: 'Eilės accentas viršuje — siuntimo eilėje',
     edgeDownloading: 'Žalia juosta ant miniatiūros — aktyviai siunčiama',
     edgeNew: 'Mėlynai žalias kraštas — naujas, ne eilėje',
-    edgeAwaiting: 'Geltona — laukia prieigos / early access',
-    edgeBlocked: 'Violetinė — permanent ban-by-tag · amber — paused (Browse exclude)',
+    edgeAwaiting: 'Geltona / amber — Early access',
+    edgeAwaitingConfirm:
+      'Updates accentas — turimo modelio atnaujinimas / pack sibling (patvirtinkite Updates; Browse su Show updates)',
+    edgeBlocked:
+      'Blocked accentas — pause arba ban-by-tag (Show blocked); amber chip’ai = pause · violetiniai = permanent ban',
     dlStrip:
       'Siuntimo juosta — Nustatymai → išdėstymas: **Row** (scroll kortelės), **Grid** (tinklelis), **Minimal** (kompaktinis sąrašas). Antraštė: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) išvalo eilę nekeisdama režimo. Juosta rodo **version name** šalia pavadinimo.',
     dlStripLayouts:
@@ -453,7 +456,7 @@ export const lt: Messages = {
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be versijos duomenų; recheck arba įklijuokite download URL',
     dlNewVersions:
-      'Atnaujinimai — **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio; **Skip** = ši versija vėliau (iki **Unskip**); **Mark seen On** kartu įjungia **Hide seen** — spustelėkite kortelę arba išeikite kairėn/dešinėn (slepiasi ir **skipped**); **Forget** = niekada nesiūlyti **šios versijos** (**Show forgotten** → Unforget; kitos versijos lieka). Skipped / forgotten **neįtraukiamos** į Browse Updates. Tipų / rating / sort sidebar kaip Missing. Jei Early access — eina į Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
+      'Atnaujinimai — kitos versijos modelių, kuriuos jau turite (**naujesnė** arba kitas failas tame pačiame Civitai puslapyje / pack) — ne kaip naujas Browse Yield. **Download** vieną kartą į eilę; **Visada atnaujinti** + ateities versijos to modelio; abu palieka Updates kortelę su eilės statusu, kol baigiasi siuntimas. **Skip** = ši versija vėliau (iki **Unskip**); **Mark seen On** kartu įjungia **Hide seen** — spustelėkite kortelę arba išeikite kairėn/dešinėn (slepiasi ir **skipped**); **Forget** = niekada nesiūlyti **šios versijos** (**Show forgotten** → Unforget; kitos versijos lieka). Skipped / forgotten **neįtraukiamos** į Browse Updates. Tipų / rating / sort sidebar kaip Missing. Early access → Awaiting. Sąrašas pildomas Harvest ir foniniu check’u. Settings → Auto-download new versions: ON = globaliai į eilę. Custom folder lokalūs modeliai update check’e nedalyvauja.',
     dlTabBadges:
       'Skiltų ženkliukai — Browse: modeliai download eilėje · Library: +N nauji bibliotekoje · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
@@ -509,12 +512,14 @@ export const lt: Messages = {
         'Row = horizontalus scroll · Grid = kortelių tinklelis · Minimal = vertikalus sąrašas su miniatiūra, statuso stulpeliu, skirtuku ir pavadinimu; progresas baigiasi ties skirtuku.'
     },
     progressBar: {
-      green: 'Žalia = turite',
-      red: 'Raudona = banned',
-      yellow: 'Geltona = blocked tag',
-      gray: 'Pilka = Early access',
-      teal: 'Žalsva = Yield (ši sesija)',
-      yieldNote: 'Yield — modeliai, išsiųsti į download juostą šią sesiją (auga kai dedate į eilę arba Auto siunčia).'
+      owned: 'Owned (turite)',
+      banned: 'Banned',
+      blocked: 'Blocked (pause / ban-by-tag)',
+      awaiting: 'Awaiting (Early access)',
+      updates: 'Updates (patvirtinti Updates skirtuke)',
+      yield: 'Yield (eilėn šią sesiją)',
+      yieldNote:
+        'Yield — modeliai, išsiųsti į download juostą šią sesiją (auga kai dedate į eilę arba Auto siunčia). Segmentų spalvos seka aktyvią temą.'
     }
   },
   resultsPager: {

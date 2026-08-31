@@ -1342,6 +1342,10 @@ label.field-label {
   background: var(--browse-cat-awaiting);
 }
 
+.help-swatch-awaiting-confirm {
+  background: var(--browse-cat-awaiting-confirm, #7c6cf0);
+}
+
 .help-swatch-blocked {
   background: var(--browse-cat-blocked);
 }
