@@ -435,20 +435,46 @@ export function pickPrimaryFile(files: { name: string; type: string }[]): { name
 }
 
 const VIDEO_EXTENSIONS = /\.(mp4|webm|mov|avi|mkv|m4v)(\?|$)/i
+const CIVITAI_IMAGE_CDN =
+  /^https?:\/\/image\.civitai\.(?:com|red)\/[^/]+\/[0-9a-f-]{36}\//i
 
 function isLikelyPreviewUrl(url: string): boolean {
   if (!url) return false
   return !VIDEO_EXTENSIONS.test(url)
 }
 
-/** Civitai videos use .mp4 URLs but the same path works as .jpeg for a poster frame. */
+/**
+ * Civitai video assets need `transcode=true,anim=false` on the edge URL to return a JPEG
+ * still frame. Replacing `.mp4` → `.jpeg` alone still serves `video/mp4` from the CDN.
+ */
+export function civitaiVideoToStillFrameUrl(url: string, width = 450): string | undefined {
+  const normalized = normalizeCivitaiUrl(url)
+  if (!CIVITAI_IMAGE_CDN.test(normalized)) return undefined
+
+  if (/transcode=true/i.test(normalized) && /\.jpe?g(\?|$)/i.test(normalized)) {
+    return normalized
+  }
+
+  const match = normalized.match(
+    /^https?:\/\/image\.civitai\.(com|red)\/([^/]+)\/([0-9a-f-]{36})\/(?:[^/]+\/)?([^/?]+)\.(mp4|webm|mov|avi|mkv|m4v|jpe?g)(\?.*)?$/i
+  )
+  if (!match) return undefined
+
+  const [, tld, bucket, uuid, baseName] = match
+  return `https://image.civitai.${tld}/${bucket}/${uuid}/width=${width},transcode=true,anim=false/${baseName}.jpeg`
+}
+
+/** Map a Civitai gallery entry to a displayable preview URL (handles video still frames). */
 export function civitaiImageToPreviewUrl(img: CivitaiImage): string | undefined {
   if (!img.url) return undefined
   const url = normalizeCivitaiUrl(img.url)
   const type = img.type?.toLowerCase()
 
   if (type === 'video' || VIDEO_EXTENSIONS.test(url)) {
-    return url.replace(/\.(mp4|webm|mov|avi|mkv|m4v)(\?.*)?$/i, '.jpeg$2')
+    return (
+      civitaiVideoToStillFrameUrl(url) ??
+      url.replace(/\.(mp4|webm|mov|avi|mkv|m4v)(\?.*)?$/i, '.jpeg$2')
+    )
   }
 
   if (type && type !== 'image') return undefined
@@ -514,7 +540,8 @@ export function normalizeCivitaiUrl(url: string): string {
 /** Smaller Civitai CDN URL for grid thumbnails — more reliable in Electron. */
 export function optimizePreviewUrlForDisplay(url: string): string {
   const normalized = normalizeCivitaiUrl(url)
-  if (!normalized.includes('image.civitai.com')) return normalized
+  if (!/image\.civitai\.(?:com|red)/.test(normalized)) return normalized
+  if (/transcode=true/i.test(normalized)) return normalized
   if (normalized.includes('/original=true/')) {
     return normalized.replace('/original=true/', '/width=450/')
   }

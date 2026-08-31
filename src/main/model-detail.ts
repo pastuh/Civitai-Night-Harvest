@@ -6,7 +6,7 @@ import {
   modelStatsFromSearch,
   pickVersionStats
 } from '../shared/civitai-meta'
-import { getModelPageUrl } from '../shared/utils'
+import { collectPreviewCandidates, getModelPageUrl } from '../shared/utils'
 import { expandCivitaiTagNames } from '../shared/tag-routing'
 import { trainedWordsFromSwarm } from './library-hash-verify'
 import * as inventory from './inventory'
@@ -62,7 +62,7 @@ function buildDetailFromModel(
 
   const versions = (model.modelVersions ?? []).map((v) => {
     const vStats = pickVersionStats(v)
-    const previewUrls = (v.images ?? []).map((img) => img.url).filter(Boolean)
+    const previewUrls = collectPreviewCandidates(v.images)
     return {
       id: v.id,
       name: v.name,
