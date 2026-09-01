@@ -46,7 +46,7 @@ export interface SwarmMetaSummary {
   }
 }
 
-function htmlToPlain(text: string): string {
+export function htmlToPlain(text: string): string {
   return text
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|div|li|h[1-6])>/gi, '\n\n')

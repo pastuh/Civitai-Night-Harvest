@@ -369,7 +369,11 @@ export const en = {
     browseResults:
       'Results — search by name, author, or numeric Civitai model/version ID; **Hide owned**, **Show updates** (same offers as the Updates tab — off by default), **Show blocked** (pause / ban-by-tag cards; still no auto-download); Loaded / Owned / Yield / Updates / … stats; **Updates** count excludes skipped versions; Sort and Tags; click a card to queue',
     browseDetails:
-      'ℹ on a card opens **Model details** (full page) — versions on the right, sticky Back/Civitai/Show List/Ban bar, download missing versions, Load/Save preview for owned versions',
+      'ℹ on a card opens **Model details** — main description, per-version notes, scrollable version list with filter and **H**/**L** pair badges, sticky action bar, download, Load/Save preview',
+    browseVideoBadges:
+      'Version row badges — **I2V**, **T2V**, **FL2V**, **R2V** when detected in the model/version name or description (WAN, MiniMax H3, etc.). Solid = from name; outlined = description only',
+    browseQualityPairs:
+      '**PAIR** badge — Browse and Library combine High/Low noise variants of the **same base model** into one card (split thumbnail). Click to queue both versions',
     browsePreviews:
       'Previews are **per version** (not one shared model image). Cards and the download strip show **version name**; Load previews fetches only that version’s images; Save preview writes `.preview.jpg` for the selected owned version',
     browseTags:
@@ -400,7 +404,7 @@ export const en = {
     libraryByDate:
       '**Downloaded by date** — Today / Yesterday / Last 7 days, or the calendar: click one day, or two days for a from–to range. Shows how many downloads match the selection.',
     libraryDetails:
-      'ℹ opens the same Model details page as Browse — switch versions, save preview, open on Civitai',
+      'ℹ opens the same Model details page as Browse — filter versions, **H**/**L** pair badges, save preview, open on Civitai. **PAIR** cards in the grid merge High/Low variants you already own',
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
@@ -857,6 +861,20 @@ export const en = {
       other: 'Other'
     }
   },
+  videoModality: {
+    ariaGroup: 'Video workflow',
+    fromName: 'from model or version name',
+    fromDescription: 'from description only',
+    i2v: 'Image to video (I2V)',
+    t2v: 'Text to video (T2V)',
+    fl2v: 'First/last frame to video (FL2V / FL2VA)',
+    ref2v: 'Reference to video (R2V / Ref2VA)'
+  },
+  qualityTierPair: {
+    pairBadge: 'PAIR',
+    pairHint: 'HIGH + LOW variant pair — used together in WAN workflows',
+    downloadPairHint: 'Click to queue both HIGH and LOW versions'
+  },
   pending: {
     emptyHint: 'No updates waiting. Harvest fills this list automatically when it finds newer versions of models you own.',
     emptyForgottenHint:
@@ -978,6 +996,8 @@ export const en = {
     swarmResolution: 'Resolution',
     swarmSha256: 'SHA256',
     swarmDescription: 'Description',
+    modelDescription: 'Description',
+    versionDescription: 'About this version',
     swarmNoUsageHint: 'No suggested strength in API/description',
     downloadedAt: 'Downloaded {when}',
     pathModel: 'Model',
@@ -988,6 +1008,12 @@ export const en = {
     sortDefault: 'Default',
     sortDownloads: 'Downloads',
     sortLikes: 'Likes',
+    versionFilterPlaceholder: 'Filter versions by name or ID…',
+    versionFilterCount: '{shown} / {total} shown',
+    versionFilterEmpty: 'No versions match this filter.',
+    pairHigh: 'High noise tier',
+    pairLow: 'Low noise tier',
+    pairMate: 'Pair #{id}',
     inLibrary: 'In library',
     notOwned: 'Not owned',
     earlyAccess: 'Early access',

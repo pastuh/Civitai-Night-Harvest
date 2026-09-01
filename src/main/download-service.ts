@@ -44,6 +44,7 @@ import { getSettings, getTagRules } from './settings-store'
 import { tryAdoptExistingModelOnDisk } from './adopt-on-disk'
 import { writeCivitaiSidecar } from './model-sidecar'
 import { describeUnreachableOutputPath } from './output-paths'
+import { buildModalityText } from '../shared/video-modality'
 
 type ProgressCallback = (progress: DownloadProgress) => void
 
@@ -728,7 +729,14 @@ export class DownloadService {
         thumbsUpCount: stats.thumbsUpCount,
         checkpointType,
         civitaiMode: model.mode ?? undefined,
-        fileHashSha256
+        fileHashSha256,
+        modalityText: buildModalityText({
+          modelName: model.name,
+          versionName: version.name,
+          modelDescription: model.description,
+          versionDescription: version.description
+        }),
+        primaryFileName: primaryFile.name
       })
       inventory.clearLibraryVersionChecked(model.id)
 

@@ -11,6 +11,7 @@ import { formatCountdownTo, formatWaitDuration, isDisplayablePreviewUrl } from '
 import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
+import { VersionNameRow } from './VersionNameRow'
 import { ConfirmModal } from './ConfirmModal'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
@@ -748,11 +749,14 @@ export function DeferredTab({
                           meta={
                             <>
                               {item.versionName ? (
-                                <div className="status-card-version-line">
-                                  <span className="status-card-version-name">
-                                    {item.versionName}
-                                  </span>
-                                </div>
+                                <VersionNameRow
+                                  variant="status"
+                                  name={item.versionName}
+                                  source={{
+                                    modelName: item.modelName,
+                                    versionName: item.versionName
+                                  }}
+                                />
                               ) : null}
                               <div className="muted status-card-detail">
                                 {resolveDeferredModelType(item)} ·{' '}

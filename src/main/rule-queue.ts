@@ -662,7 +662,9 @@ function processModel(
         ? model.tags.filter((t): t is string => typeof t === 'string')
         : undefined,
       downloadCount: model.stats?.downloadCount,
-      thumbsUpCount: model.stats?.thumbsUpCount
+      thumbsUpCount: model.stats?.thumbsUpCount,
+      modelDescription: model.description,
+      versionDescription: version.description
     }
     inventory.addPendingVersion(pending)
     ctx.pendingVersions.push(pending)

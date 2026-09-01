@@ -219,6 +219,12 @@ function migrateInventorySchema(database: Database.Database): void {
   if (!hasCol('model_type')) {
     database.exec(`ALTER TABLE versions ADD COLUMN model_type TEXT NOT NULL DEFAULT ''`)
   }
+  if (!hasCol('modality_text')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN modality_text TEXT`)
+  }
+  if (!hasCol('primary_file_name')) {
+    database.exec(`ALTER TABLE versions ADD COLUMN primary_file_name TEXT`)
+  }
 
   const ensurePendingCol = (name: string, ddl: string) => {
     const cols = database.pragma('table_info(pending_versions)') as { name: string }[]
@@ -233,6 +239,8 @@ function migrateInventorySchema(database: Database.Database): void {
   ensurePendingCol('civitai_tags', "civitai_tags TEXT NOT NULL DEFAULT '[]'")
   ensurePendingCol('download_count', 'download_count INTEGER')
   ensurePendingCol('thumbs_up_count', 'thumbs_up_count INTEGER')
+  ensurePendingCol('model_description', 'model_description TEXT')
+  ensurePendingCol('version_description', 'version_description TEXT')
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS skipped_pending_versions (
@@ -262,6 +270,8 @@ function migrateInventorySchema(database: Database.Database): void {
   ensureSkippedCol('thumbs_up_count', 'thumbs_up_count INTEGER')
   ensureSkippedCol('detected_at', 'detected_at TEXT')
   ensureSkippedCol('forgotten', 'forgotten INTEGER NOT NULL DEFAULT 0')
+  ensureSkippedCol('model_description', 'model_description TEXT')
+  ensureSkippedCol('version_description', 'version_description TEXT')
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS pending_seen (
@@ -540,7 +550,9 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     duplicateOfVersionId:
       row.duplicate_of_version_id != null && Number(row.duplicate_of_version_id) !== 0
         ? (row.duplicate_of_version_id as number)
-        : undefined
+        : undefined,
+    modalityText: (row.modality_text as string) || undefined,
+    primaryFileName: (row.primary_file_name as string) || undefined
   }
 }
 
@@ -576,7 +588,9 @@ function rowToPending(row: Record<string, unknown>): PendingVersion {
     civitaiTags: tags.length ? tags : undefined,
     detectedAt,
     downloadCount: optStatCount(row.download_count),
-    thumbsUpCount: optStatCount(row.thumbs_up_count)
+    thumbsUpCount: optStatCount(row.thumbs_up_count),
+    modelDescription: (row.model_description as string) || undefined,
+    versionDescription: (row.version_description as string) || undefined
   }
 }
 
@@ -1406,8 +1420,8 @@ export function addVersion(record: InventoryRecord): void {
         routing_tag, routing_locked, output_folder, model_path, preview_path, swarm_path, downloaded_at, ignored,
         civitai_tags, file_size_bytes, file_fp, file_variant, training_resolution, is_nsfw,
         nsfw_level, awaiting_since, civitai_domain, download_count, thumbs_up_count, checkpoint_type,
-        civitai_mode, file_hash_sha256, origin, duplicate_of_version_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        civitai_mode, file_hash_sha256, origin, duplicate_of_version_id, modality_text, primary_file_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       record.modelId,
@@ -1441,7 +1455,9 @@ export function addVersion(record: InventoryRecord): void {
       record.civitaiMode ?? null,
       record.fileHashSha256 ?? null,
       record.origin === 'local' || record.versionId < 0 ? 'local' : 'civitai',
-      record.duplicateOfVersionId ?? null
+      record.duplicateOfVersionId ?? null,
+      record.modalityText ?? null,
+      record.primaryFileName ?? null
     )
   // Version is owned now — drop stale New Versions rows for this versionId.
   if (record.versionId > 0) {
@@ -1450,6 +1466,26 @@ export function addVersion(record: InventoryRecord): void {
   if (record.modelId > 0) {
     removeIncompleteModel(record.modelId)
   }
+}
+
+export function patchVersionPrimaryFileName(versionId: number, primaryFileName: string): void {
+  const name = primaryFileName.trim()
+  if (versionId <= 0 || !name) return
+  getDb()
+    .prepare(
+      `UPDATE versions SET primary_file_name = ? WHERE version_id = ? AND (primary_file_name IS NULL OR primary_file_name = '')`
+    )
+    .run(name, versionId)
+}
+
+export function patchVersionModalityText(versionId: number, modalityText: string): void {
+  const text = modalityText.trim()
+  if (versionId <= 0 || !text) return
+  getDb()
+    .prepare(
+      `UPDATE versions SET modality_text = ? WHERE version_id = ? AND (modality_text IS NULL OR modality_text = '')`
+    )
+    .run(text, versionId)
 }
 
 export function patchVersionFileMeta(
@@ -1662,8 +1698,9 @@ export function addPendingVersion(pending: PendingVersion): void {
       `INSERT OR IGNORE INTO pending_versions (
         version_id, model_id, model_name, version_name, base_model,
         author, preview_url, existing_folder, detected_at, total_versions,
-        model_type, is_nsfw, nsfw_level, civitai_tags, download_count, thumbs_up_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        model_type, is_nsfw, nsfw_level, civitai_tags, download_count, thumbs_up_count,
+        model_description, version_description
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pending.versionId,
@@ -1681,7 +1718,9 @@ export function addPendingVersion(pending: PendingVersion): void {
       pending.nsfwLevel ?? null,
       tagsJson,
       pending.downloadCount ?? null,
-      pending.thumbsUpCount ?? null
+      pending.thumbsUpCount ?? null,
+      pending.modelDescription ?? null,
+      pending.versionDescription ?? null
     )
 }
 
@@ -1804,8 +1843,8 @@ function upsertSkippedPendingVersion(pending: PendingVersion, forgotten: boolean
         version_id, model_id, model_name, version_name, base_model,
         author, preview_url, existing_folder, total_versions, skipped_at,
         model_type, is_nsfw, nsfw_level, civitai_tags, download_count, thumbs_up_count, detected_at,
-        forgotten
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        forgotten, model_description, version_description
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pending.versionId,
@@ -1825,7 +1864,9 @@ function upsertSkippedPendingVersion(pending: PendingVersion, forgotten: boolean
       pending.downloadCount ?? null,
       pending.thumbsUpCount ?? null,
       pending.detectedAt ?? null,
-      forgotten ? 1 : 0
+      forgotten ? 1 : 0,
+      pending.modelDescription ?? null,
+      pending.versionDescription ?? null
     )
   removePendingVersion(pending.versionId)
   clearPendingSeen(pending.versionId)

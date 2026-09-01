@@ -2453,6 +2453,12 @@ button.missing-tag-chip.is-clickable:hover {
   min-width: 0;
 }
 
+.status-card-version-line.version-name-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 .status-model-card-meta > .status-card-version-line:first-child {
   margin-top: 0;
 }

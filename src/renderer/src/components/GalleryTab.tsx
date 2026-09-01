@@ -6,6 +6,12 @@ import type {
 } from '../../../shared/types'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { LibraryModelCard } from './LibraryModelCard'
+import { LibraryQualityPairCard } from './LibraryQualityPairCard'
+import {
+  buildQualityTierPairUnits,
+  tierScannableFromInventory,
+  type QualityTierGridUnit
+} from '../../../shared/quality-tier-pair'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
 import type { ModelCardPreviewOverride } from '../utils/model-card-preview'
 import { libraryCardPreviewSource } from '../utils/model-card-preview'
@@ -938,17 +944,28 @@ function GalleryTabInner({
       resultsPageSize
     ]
   )
+  const sortedPairUnits = useMemo(
+    () => buildQualityTierPairUnits(sortedInventory, tierScannableFromInventory),
+    [sortedInventory]
+  )
   const resultsWindow = useResultsWindow(
-    sortedInventory,
+    sortedPairUnits,
     libraryDisplayMode,
     resultsPageSize,
     libraryResetKey
   )
-  const gridRecords = resultsWindow.visible
-  const libraryPreviewSources = useMemo(
-    () => gridRecords.map((r) => libraryCardPreviewSource(r)),
-    [gridRecords]
-  )
+  const gridUnits = resultsWindow.visible
+  const libraryPreviewSources = useMemo(() => {
+    const out: ReturnType<typeof libraryCardPreviewSource>[] = []
+    for (const unit of gridUnits) {
+      if (unit.kind === 'pair') {
+        out.push(libraryCardPreviewSource(unit.high), libraryCardPreviewSource(unit.low))
+      } else {
+        out.push(libraryCardPreviewSource(unit.item))
+      }
+    }
+    return out
+  }, [gridUnits])
   const { overrides: libraryPreviewOverrides } = useModelCardPreviewOverrides(libraryPreviewSources, {
     enabled: isActive,
     contentFilter: 'all',
@@ -1001,7 +1018,7 @@ function GalleryTabInner({
     libraryDisplayMode,
     resultsWindow.hasMoreLazy,
     resultsWindow.expandLazy,
-    gridRecords.length,
+    gridUnits.length,
     isActive
   ])
 
@@ -1733,7 +1750,7 @@ function GalleryTabInner({
             <>
             <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
             <LibraryCardGrid
-              records={gridRecords}
+              units={gridUnits}
               selected={selected}
               hiddenModelIds={hiddenModelIds}
               highlightVersionId={highlightVersionId}
@@ -1769,7 +1786,7 @@ function GalleryTabInner({
               totalPages={resultsWindow.totalPages}
               totalItems={resultsWindow.totalItems}
               pageSize={resultsPageSize}
-              shownCount={gridRecords.length}
+              shownCount={gridUnits.length}
               hasMoreLazy={resultsWindow.hasMoreLazy}
               onPrev={resultsWindow.prevPage}
               onNext={resultsWindow.nextPage}
@@ -2425,7 +2442,7 @@ function GalleryTabInner({
 }
 
 type LibraryCardGridProps = {
-  records: InventoryRecord[]
+  units: QualityTierGridUnit<InventoryRecord>[]
   selected: Set<number>
   hiddenModelIds: Set<number>
   highlightVersionId: number | null
@@ -2463,7 +2480,7 @@ type LibraryCardGridProps = {
 
 /** Isolates card renders from search-input keystrokes until deferred filter catches up. */
 const LibraryCardGrid = memo(function LibraryCardGrid({
-  records,
+  units,
   selected,
   hiddenModelIds,
   highlightVersionId,
@@ -2495,46 +2512,89 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
 }: LibraryCardGridProps) {
   return (
     <div className="gallery-grid">
-      {records.map((record) => (
-        <LibraryModelCard
-          key={record.versionId}
-          record={record}
-          previewOverride={libraryPreviewOverrides[record.versionId]}
-          browseVideoPreviews={browseVideoPreviews}
-          selected={selected.has(record.versionId)}
-          banned={hiddenModelIds.has(record.modelId)}
-          highlight={
-            highlightVersionId === record.versionId || highlightModelId === record.modelId
-          }
-          sessionNew={highlightSet.has(record.versionId)}
-          alwaysUpdate={autoUpdateModelIds?.has(record.modelId) ?? false}
-          hideBaseModelOnCards={hideBaseModelOnCards}
-          defaultLinkDomain={defaultLinkDomain}
-          tagRules={tagRules}
-          loraFolder={loraFolder}
-          checkpointFolder={checkpointFolder}
-          showCustomSubfolders={showCustomAssignmentSubfolders}
-          banFunctionMode={banFunctionMode}
-          hideCardTags={hideCardTags}
-          hideAssignedTags={hideAssignedTags}
-          blockedTags={blockedTags}
-          pausedTags={pausedTags}
-          onBanModel={onBanModel}
-          duplicateOfName={
-            record.duplicateOfVersionId != null
-              ? versionNameById.get(record.duplicateOfVersionId) ??
-                `#${record.duplicateOfVersionId}`
-              : null
-          }
-          onToggleSelect={onToggleSelect}
-          onOpenContextMenu={onOpenContextMenu}
-          onOpenDetails={onOpenDetails}
-          onCivitaiTagClick={onCivitaiTagClick}
-          eaFavorited={eaFavoriteSet?.has(record.modelId) ?? false}
-          onToggleEaFavorite={onToggleEaFavorite}
-          previewCacheBust={libraryPreviewCacheBust?.[record.versionId]}
-        />
-      ))}
+      {units.map((unit) =>
+        unit.kind === 'pair' ? (
+          <LibraryQualityPairCard
+            key={`pair:${unit.key}`}
+            high={unit.high}
+            low={unit.low}
+            highPreviewOverride={libraryPreviewOverrides[unit.high.versionId]}
+            lowPreviewOverride={libraryPreviewOverrides[unit.low.versionId]}
+            browseVideoPreviews={browseVideoPreviews}
+            selectedHigh={selected.has(unit.high.versionId)}
+            selectedLow={selected.has(unit.low.versionId)}
+            banned={hiddenModelIds.has(unit.high.modelId)}
+            highlight={
+              highlightVersionId === unit.high.versionId ||
+              highlightVersionId === unit.low.versionId ||
+              highlightModelId === unit.high.modelId
+            }
+            sessionNew={
+              highlightSet.has(unit.high.versionId) || highlightSet.has(unit.low.versionId)
+            }
+            alwaysUpdate={autoUpdateModelIds?.has(unit.high.modelId) ?? false}
+            hideBaseModelOnCards={hideBaseModelOnCards}
+            defaultLinkDomain={defaultLinkDomain}
+            tagRules={tagRules}
+            loraFolder={loraFolder}
+            checkpointFolder={checkpointFolder}
+            showCustomSubfolders={showCustomAssignmentSubfolders}
+            banFunctionMode={banFunctionMode}
+            hideCardTags={hideCardTags}
+            hideAssignedTags={hideAssignedTags}
+            blockedTags={blockedTags}
+            pausedTags={pausedTags}
+            onBanModel={onBanModel}
+            onToggleSelect={onToggleSelect}
+            onOpenContextMenu={onOpenContextMenu}
+            onOpenDetails={onOpenDetails}
+            onCivitaiTagClick={onCivitaiTagClick}
+            eaFavorited={eaFavoriteSet?.has(unit.high.modelId) ?? false}
+            onToggleEaFavorite={onToggleEaFavorite}
+            previewCacheBust={libraryPreviewCacheBust}
+          />
+        ) : (
+          <LibraryModelCard
+            key={unit.item.versionId}
+            record={unit.item}
+            previewOverride={libraryPreviewOverrides[unit.item.versionId]}
+            browseVideoPreviews={browseVideoPreviews}
+            selected={selected.has(unit.item.versionId)}
+            banned={hiddenModelIds.has(unit.item.modelId)}
+            highlight={
+              highlightVersionId === unit.item.versionId ||
+              highlightModelId === unit.item.modelId
+            }
+            sessionNew={highlightSet.has(unit.item.versionId)}
+            alwaysUpdate={autoUpdateModelIds?.has(unit.item.modelId) ?? false}
+            hideBaseModelOnCards={hideBaseModelOnCards}
+            defaultLinkDomain={defaultLinkDomain}
+            tagRules={tagRules}
+            loraFolder={loraFolder}
+            checkpointFolder={checkpointFolder}
+            showCustomSubfolders={showCustomAssignmentSubfolders}
+            banFunctionMode={banFunctionMode}
+            hideCardTags={hideCardTags}
+            hideAssignedTags={hideAssignedTags}
+            blockedTags={blockedTags}
+            pausedTags={pausedTags}
+            onBanModel={onBanModel}
+            duplicateOfName={
+              unit.item.duplicateOfVersionId != null
+                ? versionNameById.get(unit.item.duplicateOfVersionId) ??
+                  `#${unit.item.duplicateOfVersionId}`
+                : null
+            }
+            onToggleSelect={onToggleSelect}
+            onOpenContextMenu={onOpenContextMenu}
+            onOpenDetails={onOpenDetails}
+            onCivitaiTagClick={onCivitaiTagClick}
+            eaFavorited={eaFavoriteSet?.has(unit.item.modelId) ?? false}
+            onToggleEaFavorite={onToggleEaFavorite}
+            previewCacheBust={libraryPreviewCacheBust?.[unit.item.versionId]}
+          />
+        )
+      )}
     </div>
   )
 })

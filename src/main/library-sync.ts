@@ -15,6 +15,7 @@ import { backfillCivitaiIdentityFiles, invalidateIdentityBackfillCache } from '.
 import { getTagRules } from './settings-store'
 import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
 import { isLocalInventoryRecord } from '../shared/local-inventory'
+import { buildModalityText } from '../shared/video-modality'
 
 function pathsForSlug(record: InventoryRecord, slug: string, ext: string): InventoryRecord {
   const folder = record.outputFolder
@@ -114,10 +115,18 @@ export async function repairMissingPreviews(
     record: InventoryRecord,
     model?: CivitaiModel
   ): Promise<boolean> => {
-    if (!needsRating(record)) return false
+    let changed = false
     try {
       const client = pool.forDomain(record.civitaiDomain ?? pool.primaryDomain())
       const fetched = model ?? (await client.getModel(record.modelId))
+      const version = fetched.modelVersions?.find((v) => v.id === record.versionId)
+      const primaryFile =
+        version?.files?.find((f) => f.type === 'Model') ?? version?.files?.[0]
+      if (!record.primaryFileName?.trim() && primaryFile?.name?.trim()) {
+        inventory.patchVersionPrimaryFileName(record.versionId, primaryFile.name)
+        changed = true
+      }
+      if (!needsRating(record)) return changed
       const patch: { isNsfw?: boolean; nsfwLevel?: number } = {}
       if (record.isNsfw === undefined && fetched.nsfw !== undefined) {
         patch.isNsfw = Boolean(fetched.nsfw)
@@ -125,11 +134,11 @@ export async function repairMissingPreviews(
       if (record.nsfwLevel === undefined && fetched.nsfwLevel !== undefined) {
         patch.nsfwLevel = fetched.nsfwLevel
       }
-      if (!Object.keys(patch).length) return false
+      if (!Object.keys(patch).length) return changed
       inventory.patchVersionFileMeta(record.versionId, patch)
       return true
     } catch {
-      return false
+      return changed
     }
   }
 
@@ -785,16 +794,46 @@ function enrichInventoryFileMeta(): number {
     }
     if (!record.trainingResolution) {
       let resolution: string | undefined
+      let swarmDescription: string | undefined
       if (record.swarmPath && existsSync(record.swarmPath)) {
         try {
           const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
           const res = swarm['modelspec.resolution']
           if (typeof res === 'string' && res.trim()) resolution = res.trim()
+          const desc = swarm['modelspec.description']
+          if (typeof desc === 'string' && desc.trim()) swarmDescription = desc.trim()
         } catch {
           /* skip */
         }
       }
       patch.trainingResolution = resolution || 'n/a'
+      if (!record.modalityText?.trim() && swarmDescription) {
+        inventory.patchVersionModalityText(
+          record.versionId,
+          buildModalityText({
+            modelName: record.modelName,
+            versionName: record.versionName,
+            extraDescription: swarmDescription
+          })
+        )
+      }
+    } else if (!record.modalityText?.trim() && record.swarmPath && existsSync(record.swarmPath)) {
+      try {
+        const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
+        const desc = swarm['modelspec.description']
+        if (typeof desc === 'string' && desc.trim()) {
+          inventory.patchVersionModalityText(
+            record.versionId,
+            buildModalityText({
+              modelName: record.modelName,
+              versionName: record.versionName,
+              extraDescription: desc.trim()
+            })
+          )
+        }
+      } catch {
+        /* skip */
+      }
     }
     if (Object.keys(patch).length) {
       inventory.patchVersionFileMeta(record.versionId, patch)

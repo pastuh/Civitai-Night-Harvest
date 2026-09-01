@@ -35,6 +35,14 @@ import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPau
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
+import { VersionNameRow } from './VersionNameRow'
+import { BrowseQualityPairCard } from './BrowseQualityPairCard'
+import {
+  buildQualityTierPairUnits,
+  tierScannableFromBrowse,
+  findQualityPairMate,
+  type QualityTierGridUnit
+} from '../../../shared/quality-tier-pair'
 import { videoPreviewAvailabilityFor, videoPreviewOverrideFromDbMeta, type ModelCardPreviewOverride } from '../utils/model-card-preview'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
@@ -1219,17 +1227,30 @@ export function SearchBrowsePanel({
     ]
   )
 
+  const displayPairUnits = useMemo(
+    () => buildQualityTierPairUnits(displayModels, tierScannableFromBrowse),
+    [displayModels]
+  )
+
   const resultsWindow = useResultsWindow(
-    displayModels,
+    displayPairUnits,
     resultsDisplayMode,
     resultsPageSize,
     resultsResetKey
   )
-  const gridModels = resultsWindow.visible
+  const gridUnits = resultsWindow.visible
 
   useEffect(() => {
     if (!browseVideoPreviews) return
-    const versionIds = [...new Set(gridModels.map((m) => m.versionId).filter((id) => id > 0))]
+    const versionIds = [
+      ...new Set(
+        gridUnits.flatMap((unit) =>
+          unit.kind === 'pair'
+            ? [unit.high.versionId, unit.low.versionId]
+            : [unit.item.versionId]
+        ).filter((id) => id > 0)
+      )
+    ]
     if (!versionIds.length) return
     let cancelled = false
     void window.api.getVersionVideoPreview(versionIds).then((map) => {
@@ -1246,7 +1267,7 @@ export function SearchBrowsePanel({
     return () => {
       cancelled = true
     }
-  }, [browseVideoPreviews, gridModels, videoDbReloadKey])
+  }, [browseVideoPreviews, gridUnits, videoDbReloadKey])
 
   useEffect(() => {
     return window.api.onVideoPreviewSyncComplete(() => {
@@ -1321,7 +1342,7 @@ export function SearchBrowsePanel({
     resultsDisplayMode,
     resultsWindow.hasMoreLazy,
     resultsWindow.expandLazy,
-    gridModels.length,
+    gridUnits.length,
     isActive
   ])
 
@@ -1695,7 +1716,7 @@ export function SearchBrowsePanel({
   )
 
   const enqueueModel = useCallback(
-    async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean; startNow?: boolean }) => {
+    async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean; startNow?: boolean; withPairMate?: boolean }) => {
       if (model.inInventory) return
       if (!opts?.allowAfterUnban && isBanned(model)) return
 
@@ -1762,8 +1783,15 @@ export function SearchBrowsePanel({
       } finally {
         setQueuingId(null)
       }
+
+      if (opts?.withPairMate !== false) {
+        const mate = findQualityPairMate(displayModels, model, tierScannableFromBrowse)
+        if (mate && !mate.inInventory) {
+          await enqueueModel(mate, { ...opts, withPairMate: false })
+        }
+      }
     },
-    [isBanned, queueItemFor, routingTag, routingOverrides, tagRules]
+    [isBanned, queueItemFor, routingTag, routingOverrides, tagRules, displayModels]
   )
 
   const downloadNowModel = useCallback(
@@ -1804,6 +1832,15 @@ export function SearchBrowsePanel({
   const onCardEnqueue = useCallback((model: WatchRuleTestModel) => {
     void enqueueModelRef.current(model)
   }, [])
+  const onCardEnqueuePair = useCallback(
+    (high: WatchRuleTestModel, low: WatchRuleTestModel) => {
+      void (async () => {
+        if (!high.inInventory) await enqueueModelRef.current(high, { withPairMate: false })
+        if (!low.inInventory) await enqueueModelRef.current(low, { withPairMate: false })
+      })()
+    },
+    []
+  )
   const onCardViewDetails = useCallback((model: WatchRuleTestModel) => {
     openDetailRef.current(model)
   }, [])
@@ -1974,7 +2011,7 @@ export function SearchBrowsePanel({
   const banModelById = useCallback(
     (modelId: number, modelName: string) => {
       const model =
-        gridModels.find((m) => m.id === modelId) ??
+        displayModels.find((m) => m.id === modelId) ??
         displayModels.find((m) => m.id === modelId) ??
         ruleScopedModels.find((m) => m.id === modelId)
       if (model) {
@@ -1999,7 +2036,7 @@ export function SearchBrowsePanel({
         setMessage(err instanceof Error ? err.message : String(err))
       })
     },
-    [gridModels, displayModels, ruleScopedModels, onBrowseModelBanChange, t]
+    [displayModels, ruleScopedModels, onBrowseModelBanChange, t]
   )
 
   const unbanModel = async (model: WatchRuleTestModel) => {
@@ -2035,7 +2072,7 @@ export function SearchBrowsePanel({
   const unbanModelById = useCallback(
     (modelId: number, modelName: string) => {
       const model =
-        gridModels.find((m) => m.id === modelId) ??
+        displayModels.find((m) => m.id === modelId) ??
         displayModels.find((m) => m.id === modelId) ??
         ruleScopedModels.find((m) => m.id === modelId)
       if (model) {
@@ -2060,7 +2097,7 @@ export function SearchBrowsePanel({
         setMessage(err instanceof Error ? err.message : String(err))
       })
     },
-    [gridModels, displayModels, ruleScopedModels, onBrowseModelBanChange, t]
+    [displayModels, ruleScopedModels, onBrowseModelBanChange, t]
   )
 
   const deleteFromLibrary = async (model: WatchRuleTestModel) => {
@@ -2687,7 +2724,7 @@ export function SearchBrowsePanel({
           <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
 
           <BrowseModelGrid
-            models={gridModels}
+            units={gridUnits}
             searchQuery={searchQuery}
             browseSettledDimPercent={browseSettledDimPercent}
             awaitingAccessVersionIds={awaitingAccessVersionIds}
@@ -2705,6 +2742,7 @@ export function SearchBrowsePanel({
             banFunctionMode={banMode}
             onTagClick={onCardTagClick}
             onEnqueue={onCardEnqueue}
+            onEnqueuePair={onCardEnqueuePair}
             onJumpToGallery={onJumpToGallery}
             onViewDetails={onCardViewDetails}
             onBanModel={banModelById}
@@ -2719,7 +2757,7 @@ export function SearchBrowsePanel({
             ownedModelIds={ownedModelIds}
           />
 
-          {!gridModels.length && showEmptyHint && (
+          {!gridUnits.length && showEmptyHint && (
             <div className={`browse-empty-hint${resultsUpdating ? ' browse-empty-hint-updating' : ''}`}>
               {ruleScopedModels.length > 0 ? (
                 <>
@@ -2788,7 +2826,7 @@ export function SearchBrowsePanel({
             totalPages={resultsWindow.totalPages}
             totalItems={resultsWindow.totalItems}
             pageSize={resultsPageSize}
-            shownCount={gridModels.length}
+            shownCount={gridUnits.length}
             hasMoreLazy={resultsWindow.hasMoreLazy}
             canLoadMoreApi={effectiveCanLoadMore}
             loadingMoreApi={loadingMore}
@@ -2802,7 +2840,7 @@ export function SearchBrowsePanel({
           {resultsDisplayMode !== 'pages' && resultsWindow.hasMoreLazy && (
             <div ref={gridSentinelRef} className="browse-load-sentinel">
               {t('browse.showingGridCount', {
-                shown: gridModels.length,
+                shown: gridUnits.length,
                 total: displayModels.length
               })}
             </div>
@@ -3123,7 +3161,7 @@ const LiveCardDownloadProgress = memo(function LiveCardDownloadProgress({
 
 /** Isolated from SearchBrowsePanel context-menu state — opening a menu must not remap the gallery. */
 const BrowseModelGrid = memo(function BrowseModelGrid({
-  models,
+  units,
   searchQuery,
   browseSettledDimPercent,
   awaitingAccessVersionIds,
@@ -3141,6 +3179,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   banFunctionMode,
   onTagClick,
   onEnqueue,
+  onEnqueuePair,
   onJumpToGallery,
   onViewDetails,
   onBanModel,
@@ -3154,7 +3193,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   isAwaitingConfirmModel,
   ownedModelIds
 }: {
-  models: WatchRuleTestModel[]
+  units: QualityTierGridUnit<WatchRuleTestModel>[]
   searchQuery: string
   browseSettledDimPercent: number
   awaitingAccessVersionIds: Set<number>
@@ -3172,6 +3211,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   banFunctionMode: boolean
   onTagClick: (tag: string) => void
   onEnqueue: (model: WatchRuleTestModel) => void
+  onEnqueuePair: (high: WatchRuleTestModel, low: WatchRuleTestModel) => void
   onJumpToGallery?: (modelId: number, modelName?: string) => void
   onViewDetails?: (model: WatchRuleTestModel) => void
   onBanModel?: (modelId: number, modelName: string) => void
@@ -3188,7 +3228,32 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   const searchActive = searchQuery.trim().length > 0
   return (
     <div className={`gallery-grid compact${showOwned ? ' browse-show-owned' : ''}`}>
-      {models.map((m) => {
+      {units.map((unit) => {
+        if (unit.kind === 'pair') {
+          return (
+            <BrowseQualityPairCard
+              key={`pair:${unit.key}`}
+              high={unit.high}
+              low={unit.low}
+              searchQuery={searchQuery}
+              queueItemFor={queueItemFor}
+              queuePaused={queuePaused}
+              queuing={queuingId === unit.high.versionId || queuingId === unit.low.versionId}
+              routingTag={routingTag}
+              tagRules={tagRules}
+              loraFolder={loraFolder}
+              checkpointFolder={checkpointFolder}
+              onEnqueuePair={onEnqueuePair}
+              onViewDetails={onViewDetails}
+              onContextMenu={onContextMenu}
+              browseVideoPreviews={browseVideoPreviews}
+              resolvePreviewUrls={resolvePreviewUrls}
+              onPreviewBroken={onPreviewBroken}
+            />
+          )
+        }
+
+        const m = unit.item
         const matchesSearch = searchActive && modelMatchesBrowseSearch(m, searchQuery)
         const settled = isBrowseSettledModel(m, awaitingAccessVersionIds)
         const dimOpacity =
@@ -3635,9 +3700,16 @@ const ModelCard = memo(function ModelCard({
           </div>
         </div>
         {model.versionName ? (
-          <div className="gallery-card-version-row" title={model.versionName}>
-            {model.versionName}
-          </div>
+          <VersionNameRow
+            name={model.versionName}
+            source={{
+              modelName: model.name,
+              versionName: model.versionName,
+              modelDescription: model.modelDescription,
+              versionDescription: model.versionDescription
+            }}
+            title={model.versionName}
+          />
         ) : null}
         <div className="muted">
           {model.type} · {model.baseModel}

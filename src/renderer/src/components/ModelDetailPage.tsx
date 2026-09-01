@@ -27,6 +27,11 @@ import {
   shortCardFolderLabel
 } from './gallery-card-utils'
 import { useT } from '../i18n/context'
+import { VersionNameRow } from './VersionNameRow'
+import {
+  buildVersionPairIndex,
+  tierScannableFromDetailVersion
+} from '../../../shared/quality-tier-pair'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
 import { mapPreviewSrcs, previewSrcSame, toPreviewSrc } from '../utils/preview-src'
 
@@ -233,6 +238,7 @@ export function ModelDetailPage({
     target.kind === 'library' ? target.record : null
   )
   const [versionSort, setVersionSort] = useState<VersionSort>('default')
+  const [versionFilter, setVersionFilter] = useState('')
   const [banned, setBanned] = useState(false)
   const [banBusy, setBanBusy] = useState(false)
   const [confirmBan, setConfirmBan] = useState(false)
@@ -385,6 +391,7 @@ export function ModelDetailPage({
     setActiveVersionId(target.kind === 'library' ? target.record.versionId : target.versionId)
     if (target.kind === 'library') setLibraryRecord(target.record)
     setVersionSort('default')
+    setVersionFilter('')
     setAllowRemote(!target.deferRemote)
     setReloadToken(0)
     setBrokenIndexes(new Set())
@@ -776,7 +783,28 @@ export function ModelDetailPage({
     [fastTagMode, canFastTag, onOpenTagFolders]
   )
 
+  const modelDescriptionText = detail?.modelDescription?.trim() || ''
+  const activeVersionDescription = activeVersionMeta?.versionDescription?.trim() || ''
   const swarmDescription = detail?.swarmMeta?.description?.trim() || ''
+  const showModelDescription = Boolean(modelDescriptionText)
+  const showVersionDescription = Boolean(
+    activeVersionDescription &&
+      activeVersionDescription !== modelDescriptionText
+  )
+  const showSwarmFallback =
+    Boolean(swarmDescription) &&
+    !showModelDescription &&
+    !showVersionDescription
+
+  const modalitySource = useMemo(
+    () => ({
+      modelName: title,
+      versionName: versionLabel,
+      modelDescription: modelDescriptionText || undefined,
+      versionDescription: activeVersionDescription || undefined
+    }),
+    [title, versionLabel, modelDescriptionText, activeVersionDescription]
+  )
 
   const routingForTags =
     libraryRecord?.routingTag?.trim() ||
@@ -827,6 +855,25 @@ export function ModelDetailPage({
     () => (displayDetail ? sortVersions(displayDetail.versions, versionSort) : []),
     [displayDetail, versionSort]
   )
+
+  const versionPairIndex = useMemo(() => {
+    if (!displayDetail?.versions.length) return new Map<number, { tier: 'high' | 'low'; mateVersionId: number }>()
+    return buildVersionPairIndex(displayDetail.versions, (v) =>
+      tierScannableFromDetailVersion(displayDetail.modelId, v)
+    )
+  }, [displayDetail])
+
+  const filteredVersions = useMemo(() => {
+    const q = versionFilter.trim().toLowerCase()
+    if (!q) return sortedVersions
+    return sortedVersions.filter((v) => {
+      if (v.name.toLowerCase().includes(q)) return true
+      if (String(v.id).includes(q)) return true
+      const pair = versionPairIndex.get(v.id)
+      if (pair && String(pair.mateVersionId).includes(q)) return true
+      return false
+    })
+  }, [sortedVersions, versionFilter, versionPairIndex])
 
   const versionsHaveMixedBaseModels = useMemo(() => {
     if (!displayDetail || displayDetail.versions.length < 2) return false
@@ -1563,7 +1610,14 @@ export function ModelDetailPage({
             </div>
 
             <div className="model-detail-page-info">
-              {versionLabel && <p className="model-detail-version-title">{versionLabel}</p>}
+              {versionLabel ? (
+                <VersionNameRow
+                  name={versionLabel}
+                  source={modalitySource}
+                  variant="detail"
+                  className="model-detail-header-version-row"
+                />
+              ) : null}
 
               <p className="model-detail-ids muted">
                 Model ID <code>#{modelId}</code>
@@ -1777,8 +1831,29 @@ export function ModelDetailPage({
                   </select>
                 </label>
               </div>
+              <div className="model-detail-version-toolbar">
+                <input
+                  type="search"
+                  className="model-detail-version-filter"
+                  value={versionFilter}
+                  onChange={(e) => setVersionFilter(e.target.value)}
+                  placeholder={t('modelDetail.versionFilterPlaceholder')}
+                  aria-label={t('modelDetail.versionFilterPlaceholder')}
+                />
+                {versionFilter.trim() ? (
+                  <span className="muted model-detail-version-filter-count">
+                    {t('modelDetail.versionFilterCount', {
+                      shown: filteredVersions.length,
+                      total: displayDetail.versions.length
+                    })}
+                  </span>
+                ) : null}
+              </div>
               <div className="model-detail-version-table">
-                {sortedVersions.map((v) => {
+                {filteredVersions.length === 0 ? (
+                  <p className="muted model-detail-version-empty">{t('modelDetail.versionFilterEmpty')}</p>
+                ) : (
+                  filteredVersions.map((v) => {
                   const owned = ownedSet.has(v.id)
                   const active = v.id === activeVersionId
                   const ea = isVersionEarlyAccess(v)
@@ -1794,6 +1869,7 @@ export function ModelDetailPage({
                   const awaiting = ea
                   const busy = downloadBusyIds.has(v.id)
                   const created = formatVersionDate(v.publishedAt ?? v.createdAt)
+                  const pairInfo = versionPairIndex.get(v.id)
                   const showBaseOnRow =
                     versionsHaveMixedBaseModels && Boolean(v.baseModel?.trim())
                   const unlockHint =
@@ -1812,10 +1888,38 @@ export function ModelDetailPage({
                         className="model-detail-version-select"
                         onClick={() => switchVersion(v.id)}
                       >
-                        <span className="model-detail-version-name">{v.name}</span>
+                        <VersionNameRow
+                          name={v.name}
+                          source={{
+                            modelName: title,
+                            versionName: v.name,
+                            modelDescription: modelDescriptionText || undefined,
+                            versionDescription: v.versionDescription
+                          }}
+                          variant="detail"
+                          className="model-detail-version-name-row"
+                        />
                         <span className="model-detail-version-meta muted">
+                          <span className="model-detail-version-id">#{v.id}</span>
                           {created ? <span>{created}</span> : null}
                           {showBaseOnRow ? <span>{v.baseModel}</span> : null}
+                          {pairInfo ? (
+                            <span
+                              className={`model-detail-tier-badge is-${pairInfo.tier}`}
+                              title={t(
+                                pairInfo.tier === 'high'
+                                  ? 'modelDetail.pairHigh'
+                                  : 'modelDetail.pairLow'
+                              )}
+                            >
+                              {pairInfo.tier === 'high' ? 'H' : 'L'}
+                            </span>
+                          ) : null}
+                          {pairInfo ? (
+                            <span className="model-detail-pair-mate muted">
+                              {t('modelDetail.pairMate', { id: pairInfo.mateVersionId })}
+                            </span>
+                          ) : null}
                           {v.downloadCount != null && (
                             <span title={t('gallery.statDownloads')}>
                               ↓ {formatCompactCount(v.downloadCount)}
@@ -1891,27 +1995,44 @@ export function ModelDetailPage({
                       )}
                     </div>
                   )
-                })}
+                  })
+                )}
               </div>
             </aside>
           )}
 
-          {swarmDescription ? (
-            <section className="model-detail-page-description">
-              <h4>
-                {t('modelDetail.swarmDescription')}
-                {detail?.swarmMeta?.source === 'disk' ? (
-                  <span className="muted model-detail-source"> {t('modelDetail.swarmMetaDisk')}</span>
-                ) : detail?.swarmMeta ? (
-                  <span className="muted model-detail-source">
-                    {' '}
-                    {t('modelDetail.swarmMetaPreview')}
-                  </span>
-                ) : null}
-              </h4>
-              <pre className="model-detail-description-body">{swarmDescription}</pre>
-            </section>
-          ) : null}
+          {(showModelDescription || showVersionDescription || showSwarmFallback) && (
+            <div className="model-detail-descriptions">
+              {showModelDescription ? (
+                <section className="model-detail-page-description">
+                  <h4>{t('modelDetail.modelDescription')}</h4>
+                  <pre className="model-detail-description-body">{modelDescriptionText}</pre>
+                </section>
+              ) : null}
+              {showVersionDescription ? (
+                <section className="model-detail-page-description">
+                  <h4>{t('modelDetail.versionDescription')}</h4>
+                  <pre className="model-detail-description-body">{activeVersionDescription}</pre>
+                </section>
+              ) : null}
+              {showSwarmFallback ? (
+                <section className="model-detail-page-description">
+                  <h4>
+                    {t('modelDetail.swarmDescription')}
+                    {detail?.swarmMeta?.source === 'disk' ? (
+                      <span className="muted model-detail-source"> {t('modelDetail.swarmMetaDisk')}</span>
+                    ) : detail?.swarmMeta ? (
+                      <span className="muted model-detail-source">
+                        {' '}
+                        {t('modelDetail.swarmMetaPreview')}
+                      </span>
+                    ) : null}
+                  </h4>
+                  <pre className="model-detail-description-body">{swarmDescription}</pre>
+                </section>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
 

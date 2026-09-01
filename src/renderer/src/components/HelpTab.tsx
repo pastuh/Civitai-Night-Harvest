@@ -104,6 +104,8 @@ export function HelpTab({ onOpenSettings }: Props) {
             <li>{t('help.browseRules')}</li>
             <li>{t('help.browseResults')}</li>
             <li>{t('help.browseDetails')}</li>
+            <li>{t('help.browseVideoBadges')}</li>
+            <li>{t('help.browseQualityPairs')}</li>
             <li>{t('help.browsePreviews')}</li>
             <li>{t('help.browseTags')}</li>
             <li>{t('help.browsePausedBanned')}</li>

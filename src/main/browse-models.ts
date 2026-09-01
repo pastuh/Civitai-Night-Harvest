@@ -1,6 +1,6 @@
 import type { CivitaiClient } from '../shared/civitai-client'
 import type { CivitaiModel, ContentFilter, WatchRuleTestModel, WatchRuleTestResult } from '../shared/types'
-import { aggregateResultTags, matchesContentFilter, extractModelFileMeta } from '../shared/utils'
+import { aggregateResultTags, matchesContentFilter, extractModelFileMeta, pickPrimaryFile } from '../shared/utils'
 import { expandCivitaiTagNames } from '../shared/tag-routing'
 import { isVersionEarlyAccess } from '../shared/early-access'
 import { checkpointTypeLabel, modelStatsFromSearch } from '../shared/civitai-meta'
@@ -39,13 +39,15 @@ export function buildBrowseCardFromModel(
   const ea = isVersionEarlyAccess(v)
   const resolved = previewsFromModel(m, versionId, filter)
   const stats = modelStatsFromSearch(m, versionId)
-  const primaryFile = v?.files?.[0]
+  const primaryFile = v?.files?.length ? pickPrimaryFile(v.files) : null
   const fileMeta = primaryFile ? extractModelFileMeta(primaryFile) : {}
   return {
     id: m.id,
     versionId,
     name: m.name,
     versionName: v?.name,
+    modelDescription: m.description,
+    versionDescription: v?.description,
     type: m.type,
     baseModel: v?.baseModel ?? '',
     baseModelType: checkpointTypeLabel(v?.baseModelType) ?? undefined,
@@ -68,6 +70,7 @@ export function buildBrowseCardFromModel(
     thumbsUpCount: stats.thumbsUpCount,
     civitaiMode: m.mode ?? null,
     fileSizeBytes: fileMeta.fileSizeBytes,
+    primaryFileName: primaryFile?.name,
     packSibling: options?.packSibling
   }
 }

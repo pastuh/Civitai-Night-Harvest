@@ -24,6 +24,7 @@ import { getModelPageUrl } from '../../../shared/utils'
 import { useT } from '../i18n/context'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
+import { VersionNameRow } from './VersionNameRow'
 import { ConfirmModal } from './ConfirmModal'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
@@ -1158,41 +1159,52 @@ export const PendingTab = memo(function PendingTab({
                           }
                           meta={
                             <>
-                              <div className="status-card-version-line">
-                                <span className="status-card-version-name">{item.versionName}</span>
-                                <span className="status-card-version-base"> · {item.baseModel}</span>
-                                <span className="status-card-version-base"> · {mt}</span>
-                                {temporary ? (
-                                  <span className="status-card-skipped-badge">
-                                    {' '}
-                                    · {t('pending.temporaryBadge')}
-                                  </span>
-                                ) : null}
-                                {!temporary && autoUpdate ? (
-                                  <span className="status-card-skipped-badge">
-                                    {' '}
-                                    · {t('pending.alwaysUpdateBadge')}
-                                  </span>
-                                ) : null}
-                                {forgotten ? (
-                                  <span className="status-card-skipped-badge">
-                                    {' '}
-                                    · {t('pending.forgottenBadge')}
-                                  </span>
-                                ) : null}
-                                {skipped ? (
-                                  <span className="status-card-skipped-badge">
-                                    {' '}
-                                    · {t('pending.skippedBadge')}
-                                  </span>
-                                ) : null}
-                                {isSeen && !forgotten && !temporary ? (
-                                  <span className="status-card-skipped-badge">
-                                    {' '}
-                                    · {t('pending.seenBadge')}
-                                  </span>
-                                ) : null}
-                              </div>
+                              <VersionNameRow
+                                variant="status"
+                                name={item.versionName}
+                                source={{
+                                  modelName: item.modelName,
+                                  versionName: item.versionName,
+                                  modelDescription: item.modelDescription,
+                                  versionDescription: item.versionDescription
+                                }}
+                                inlineAfterName={
+                                  <>
+                                    <span className="status-card-version-base"> · {item.baseModel}</span>
+                                    <span className="status-card-version-base"> · {mt}</span>
+                                    {temporary ? (
+                                      <span className="status-card-skipped-badge">
+                                        {' '}
+                                        · {t('pending.temporaryBadge')}
+                                      </span>
+                                    ) : null}
+                                    {!temporary && autoUpdate ? (
+                                      <span className="status-card-skipped-badge">
+                                        {' '}
+                                        · {t('pending.alwaysUpdateBadge')}
+                                      </span>
+                                    ) : null}
+                                    {forgotten ? (
+                                      <span className="status-card-skipped-badge">
+                                        {' '}
+                                        · {t('pending.forgottenBadge')}
+                                      </span>
+                                    ) : null}
+                                    {skipped ? (
+                                      <span className="status-card-skipped-badge">
+                                        {' '}
+                                        · {t('pending.skippedBadge')}
+                                      </span>
+                                    ) : null}
+                                    {isSeen && !forgotten && !temporary ? (
+                                      <span className="status-card-skipped-badge">
+                                        {' '}
+                                        · {t('pending.seenBadge')}
+                                      </span>
+                                    ) : null}
+                                  </>
+                                }
+                              />
                               <div className="status-card-detail">{versionsLabel(item)}</div>
                               {tags && tags.length > 0 ? (
                                 <div className="tag-row library-card-tags" title={tags.join(', ')}>

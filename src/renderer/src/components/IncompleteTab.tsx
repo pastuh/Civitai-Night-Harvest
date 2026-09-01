@@ -3,6 +3,7 @@ import type { IncompleteModel } from '../../../shared/types'
 import { formatWaitDuration } from '../../../shared/utils'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
+import { VersionNameRow } from './VersionNameRow'
 import { ConfirmModal } from './ConfirmModal'
 import type { ModelDetailTarget } from './ModelDetailModal'
 
@@ -190,9 +191,14 @@ export function IncompleteTab({
               meta={
                 <>
                   {item.resolvedVersionName ? (
-                    <div className="status-card-version-line">
-                      <span className="status-card-version-name">{item.resolvedVersionName}</span>
-                    </div>
+                    <VersionNameRow
+                      variant="status"
+                      name={item.resolvedVersionName}
+                      source={{
+                        modelName: item.modelName,
+                        versionName: item.resolvedVersionName
+                      }}
+                    />
                   ) : null}
                   <div className="muted status-card-detail">
                     {item.modelType}

@@ -15,6 +15,7 @@ import {
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
+import { VersionNameRow } from './VersionNameRow'
 import { resolveModelCardThumb, libraryCardPreviewSource, videoPreviewAvailabilityFor, type ModelCardPreviewOverride } from '../utils/model-card-preview'
 
 export type LibraryModelCardProps = {
@@ -267,9 +268,15 @@ function LibraryModelCardInner({
             </button>
           )}
         </div>
-        <div className="gallery-card-version-row" title={record.versionName}>
-          {record.versionName}
-        </div>
+        <VersionNameRow
+          name={record.versionName}
+          source={{
+            modelName: record.modelName,
+            versionName: record.versionName,
+            modalityText: record.modalityText
+          }}
+          title={record.versionName}
+        />
         {!hideBaseModelOnCards && (
           <div className="muted library-base-model-line">
             {record.baseModel}

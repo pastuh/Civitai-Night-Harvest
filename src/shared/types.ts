@@ -619,6 +619,8 @@ export interface PendingVersion {
   detectedAt?: string
   downloadCount?: number
   thumbsUpCount?: number
+  modelDescription?: string
+  versionDescription?: string
 }
 
 /**
@@ -789,6 +791,10 @@ export interface WatchRuleTestModel {
   name: string
   /** Civitai version title when known (e.g. Krea2-SAT-DirtyRealismV4). */
   versionName?: string
+  /** Civitai model page description (video modality detection). */
+  modelDescription?: string
+  /** Civitai version description (video modality detection). */
+  versionDescription?: string
   type: string
   baseModel: string
   previewUrl?: string
@@ -817,6 +823,8 @@ export interface WatchRuleTestModel {
   trainedWords?: string[]
   /** Primary model file size from Civitai API */
   fileSizeBytes?: number
+  /** Primary Civitai model file name (tier detection for HIGH/LOW pairs). */
+  primaryFileName?: string
   /**
    * Same Civitai model page has multiple versions on the same base (LoRA packs).
    * Browse shows each as its own card. Unowned siblings of an owned model are Updates.
@@ -1189,6 +1197,10 @@ export interface InventoryRecord {
   origin?: 'civitai' | 'local'
   /** When SHA256 matches another library file, points at that versionId. */
   duplicateOfVersionId?: number
+  /** Joined name + description text for video modality badge detection. */
+  modalityText?: string
+  /** Civitai primary file name at download (HIGH/LOW pair detection). */
+  primaryFileName?: string
 }
 
 export interface CivitaiMeProfile {
@@ -1201,6 +1213,8 @@ export interface CivitaiMeProfile {
 export interface CivitaiModelDetailVersion {
   id: number
   name: string
+  /** Civitai "About this version" text (plain). */
+  versionDescription?: string
   baseModel: string
   createdAt?: string
   /** When this version became public (Civitai publishedAt) — used by Browse published sort. */
@@ -1221,6 +1235,8 @@ export interface CivitaiModelDetail {
   versionId: number
   name: string
   versionName: string
+  /** Civitai model page "Description" text (plain). */
+  modelDescription?: string
   type: string
   baseModel: string
   baseModelType?: string

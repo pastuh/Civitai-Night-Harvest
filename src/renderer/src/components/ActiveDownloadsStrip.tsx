@@ -5,6 +5,7 @@ import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
 import { describeNsfwRating } from '../../../shared/nsfw-rating'
 import { formatBytes, getModelPageUrl } from '../../../shared/utils'
 import { PreviewThumb } from './PreviewThumb'
+import { VersionNameRow } from './VersionNameRow'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { useT } from '../i18n/context'
 import type { TranslateFn } from '../i18n/context'
@@ -392,9 +393,14 @@ function DownloadQueueRichCard({
           <strong title={item.modelName}>{item.modelName}</strong>
         </div>
         {item.versionName ? (
-          <div className="gallery-card-version-row" title={item.versionName}>
-            {item.versionName}
-          </div>
+          <VersionNameRow
+            name={item.versionName}
+            source={{
+              modelName: item.modelName,
+              versionName: item.versionName
+            }}
+            title={item.versionName}
+          />
         ) : null}
       </div>
     </div>

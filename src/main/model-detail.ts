@@ -14,6 +14,7 @@ import { clearMissingModel, noteMissingModel404 } from './missing-models'
 import {
   buildSwarmMetaPreview,
   hasHardcodedLoraStrengthHint,
+  htmlToPlain,
   mergeLicenseIntoSwarmDisk,
   readSwarmMetaFromDisk
 } from './swarm-json'
@@ -64,9 +65,11 @@ function buildDetailFromModel(
     const vStats = pickVersionStats(v)
     const previewUrls = collectPreviewCandidates(v.images)
     const videoPreviewUrls = collectVideoPreviewCandidates(v.images)
+    const versionDescription = htmlToPlain(v.description || '')
     return {
       id: v.id,
       name: v.name,
+      versionDescription: versionDescription || undefined,
       baseModel: v.baseModel,
       createdAt: v.createdAt,
       publishedAt: v.publishedAt ?? null,
@@ -81,11 +84,14 @@ function buildDetailFromModel(
     }
   })
 
+  const modelDescription = htmlToPlain(model.description || '')
+
   return {
     modelId: model.id,
     versionId: version.id,
     name: model.name,
     versionName: version.name,
+    modelDescription: modelDescription || undefined,
     type: model.type,
     baseModel: version.baseModel,
     baseModelType: version.baseModelType,

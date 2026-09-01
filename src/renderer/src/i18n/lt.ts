@@ -372,7 +372,11 @@ export const lt: Messages = {
     browseResults:
       'Results — paieška pagal vardą, autorių ar skaitinį Civitai modelio/versijos ID; **Hide owned**, **Show updates** (tie patys pasiūlymai kaip Updates skirtuke — pagal nutylėjimą išjungta), **Show blocked** (pause / ban-by-tag kortelės; auto-download vis tiek ne); Loaded / Owned / Yield / Updates / …; **Updates** neskaičiuoja skipped versijų; Sort ir Tags; spustelėkite kortelę į eilę',
     browseDetails:
-      'ℹ ant kortelės atidaro **Model details** (pilnas puslapis) — versijos dešinėje, lipni Back/Civitai/Show List/Ban juosta, trūkstamų versijų download, Load/Save preview turimoms versijoms',
+      'ℹ ant kortelės atidaro **Model details** — pagrindinis aprašymas, versijų pastabos, slenkantis versijų sąrašas su filtru ir **H**/**L** porų ženkliukais, lipni veiksmų juosta, download, Load/Save preview',
+    browseVideoBadges:
+      'Versijos eilutės ženkliukai — **I2V**, **T2V**, **FL2V**, **R2V**, kai aptinkama modelyje/versijoje ar aprašyme (WAN, MiniMax H3 ir kt.). Vientisas = iš pavadinimo; kontūrinis = tik aprašyme',
+    browseQualityPairs:
+      '**PORA** ženkliukas — Browse ir Library sujungia High/Low noise variantus to paties **base model** į vieną kortelę (padalinta miniatiūra). Spustelėjimas — į eilę abi versijas',
     browsePreviews:
       'Preview yra **pagal versiją** (ne bendras modelio paveikslėlis). Kortelės ir siuntimo juosta rodo **version name**; Load previews krauna tik tos versijos nuotraukas; Save preview įrašo `.preview.jpg` pasirinktai turimai versijai',
     browseTags:
@@ -403,7 +407,7 @@ export const lt: Messages = {
     libraryByDate:
       '**Atsisiųsta pagal datą** — Šiandien / Vakar / 7 dienos, arba kalendorius: viena diena, arba dvi dienos nuo–iki intervalui. Rodo, kiek atsisiuntimų atitinka pasirinkimą.',
     libraryDetails:
-      'ℹ atidaro tą patį Model details puslapį kaip Browse — versijų perjungimas, save preview, Civitai',
+      'ℹ atidaro tą patį Model details puslapį kaip Browse — versijų filtras, **H**/**L** porų ženkliukai, save preview, Civitai. **PORA** kortelės tinklelyje sujungia jau turimus High/Low variantus',
     librarySort:
       'Sort — folder tag, Civitai downloads, tag group arba download order. Tas pats Settings rezultatų rodymas (lazy / puslapiai) kaip Browse.',
     libraryContent: 'Content filtras — visi, tik SFW ar tik NSFW',
@@ -867,6 +871,20 @@ export const lt: Messages = {
       other: 'Kita'
     }
   },
+  videoModality: {
+    ariaGroup: 'Video workflow',
+    fromName: 'iš modelio ar versijos pavadinimo',
+    fromDescription: 'tik iš aprašymo',
+    i2v: 'Image to video (I2V)',
+    t2v: 'Text to video (T2V)',
+    fl2v: 'First/last frame to video (FL2V / FL2VA)',
+    ref2v: 'Reference to video (R2V / Ref2VA)'
+  },
+  qualityTierPair: {
+    pairBadge: 'PORA',
+    pairHint: 'HIGH + LOW variantų pora — WAN workflow naudojama kartu',
+    downloadPairHint: 'Spustelėkite — į eilę abu HIGH ir LOW'
+  },
   pending: {
     emptyHint:
       'Nėra laukiančių atnaujinimų. Harvest pats papildo šį sąrašą, kai randa naujesnes versijas modelių, kuriuos jau turite.',
@@ -990,6 +1008,8 @@ export const lt: Messages = {
     swarmResolution: 'Resolution',
     swarmSha256: 'SHA256',
     swarmDescription: 'Aprašymas',
+    modelDescription: 'Aprašymas',
+    versionDescription: 'Apie šią versiją',
     swarmNoUsageHint: 'API/aprašyme nėra suggested strength',
     downloadedAt: 'Atsisiųsta {when}',
     pathModel: 'Modelis',
@@ -1000,6 +1020,12 @@ export const lt: Messages = {
     sortDefault: 'Numatyta',
     sortDownloads: 'Atsisiuntimai',
     sortLikes: 'Likes',
+    versionFilterPlaceholder: 'Filtruoti versijas pagal pavadinimą ar ID…',
+    versionFilterCount: 'rodoma {shown} / {total}',
+    versionFilterEmpty: 'Nėra versijų pagal šį filtrą.',
+    pairHigh: 'High noise lygis',
+    pairLow: 'Low noise lygis',
+    pairMate: 'Pora #{id}',
     inLibrary: 'Bibliotekoje',
     notOwned: 'Neturima',
     earlyAccess: 'Early access',

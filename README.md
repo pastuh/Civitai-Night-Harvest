@@ -15,7 +15,7 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Browse rules** — search filters (model type, base model, keywords, sort, SFW/NSFW, creator)
 - **👁 Quiet gallery** — hide Browse cards while harvest runs; downloads continue. **Show Browse snapshot** brings cards back
 - **Browse results** — search, filters, sort, tags; progress stats: Loaded, Owned, Yield, Updates, Awaiting, Banned
-- **Model details** — full page with versions, download, and preview save
+- **Model details** — full page with main description, scrollable version list (filter, H/L pair badges), download, and preview save
 - **Auto / Manual / Pause** — auto-queue from harvest (**LoRA only**), click-to-queue, or pause downloads. **Checkpoints are never auto-queued**; enabling a Checkpoint Browse rule turns **Pause** on
 - **Library** — local inventory; **LoRA / Checkpoint** type filter; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
 - **Tag Folders** — map Civitai tags to `\*\name` folders (**LoRA**); **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; **Custom folder assignments** for your own local-only folders (also the only Checkpoint folder override); unmatched LoRA downloads go to `\*\Unsorted`
@@ -23,6 +23,8 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL
 - **Updates** — other versions of models you already own (newer release or another file on the same page / pack): Download / Always update / Skip / Mark seen / Forget / Ban; Missing-like sidebar; **Show skipped** / **Show forgotten**; Settings **Show temporary** keeps handled cards dimmed in place until you leave the tab
 - **Download strip** — progress, priority, retries; shows **version name**; Early access when a model is gated
+- **Video workflow badges** — colored squares on the version-name row (I2V, T2V, FL2V, R2V) when detected in the model/version title or description (WAN, MiniMax H3, etc.); outlined when found only in description
+- **HIGH/LOW pairs** — Browse and Library merge matching High/Low noise variants (same base model) into one **PAIR** card with a split thumbnail; one click queues both versions
 - **Activity** — crawl and download history
 - **Status bar** — fetch, wait, and queue summary at the bottom
 - **Settings** — folders, API key, harvest timing, strip layout, results display, preserve filters, confirm tag moves, custom-folder subpaths in Library, Updates **Show temporary**
@@ -146,6 +148,7 @@ Local-only models under **Custom folder assignments** are not checked for Civita
 - **Yield** — how many models entered the download strip this session (grows as you queue / Auto sends)
 - **Sort & Tags** — arrange and filter the grid (⏸ pause a tag from the Tags popover)
 - **ℹ** — Model details
+- **PAIR** — High + Low noise variants of the same base model appear as one card (split thumbnail); click to queue both
 
 ---
 
