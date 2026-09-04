@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, renameSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
+import { rename } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import type { InventoryRecord, TagFolderRule } from '../shared/types'
 import { resolveUniqueSlug } from '../shared/utils'
@@ -14,6 +15,16 @@ import * as inventory from './inventory'
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+}
+
+async function yieldMain(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve))
+}
+
+async function renameFile(from: string, to: string): Promise<void> {
+  await rename(from, to)
+  // Prefer setTimeout so the Electron event loop can flush IPC / paint between large moves.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
 
 function inferModelType(
@@ -34,12 +45,12 @@ function foldersEqual(a: string, b: string): boolean {
   )
 }
 
-export function moveRecordToTagFolder(
+export async function moveRecordToTagFolder(
   record: InventoryRecord,
   tagName: string,
   tagRules: TagFolderRule[],
   options: { lockRouting?: boolean } = {}
-): InventoryRecord {
+): Promise<InventoryRecord> {
   const rule = findRuleForTag(tagName, tagRules)
   if (!rule) throw new Error(`No folder mapped for tag "${tagName}"`)
 
@@ -82,7 +93,7 @@ export function moveRecordToTagFolder(
     for (const [from, to] of moves) {
       if (from && existsSync(from) && from !== to) {
         ensureDir(dirname(to))
-        renameSync(from, to)
+        await renameFile(from, to)
       }
     }
     const updated: InventoryRecord = {
@@ -173,7 +184,7 @@ export function moveRecordToTagFolder(
     if (existsSync(from)) {
       if (existsSync(to)) throw new Error(`Target file already exists: ${to}`)
       ensureDir(dirname(to))
-      renameSync(from, to)
+      await renameFile(from, to)
     }
   }
 
@@ -194,17 +205,18 @@ export function moveRecordToTagFolder(
   return withDefaults
 }
 
-export function moveRecordsToTagFolder(
+export async function moveRecordsToTagFolder(
   versionIds: number[],
   tagName: string,
   tagRules: TagFolderRule[],
   options: { lockRouting?: boolean } = {}
-): InventoryRecord[] {
+): Promise<InventoryRecord[]> {
   const moved: InventoryRecord[] = []
   for (const versionId of versionIds) {
     const record = inventory.getVersion(versionId)
     if (!record) continue
-    moved.push(moveRecordToTagFolder(record, tagName, tagRules, options))
+    moved.push(await moveRecordToTagFolder(record, tagName, tagRules, options))
+    await yieldMain()
   }
   return moved
 }
@@ -231,13 +243,13 @@ export async function reconcileLibraryTagFolders(
 
   const records = inventory.getAllVersions()
   const total = records.length
-  const yieldEvery = 8
+  const yieldEvery = 1
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i]
     if (i > 0 && i % yieldEvery === 0) {
       onProgress?.({ current: i, total, moved, modelName: record.modelName })
-      await new Promise<void>((resolve) => setImmediate(resolve))
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
     }
 
     // Checkpoints are never bulk-routed by Civitai tags (base folder or custom only).
@@ -258,7 +270,7 @@ export async function reconcileLibraryTagFolders(
       continue
     }
     try {
-      const updated = moveRecordToTagFolder(record, winner, tagRules, { lockRouting: false })
+      const updated = await moveRecordToTagFolder(record, winner, tagRules, { lockRouting: false })
       const changed =
         !foldersEqual(updated.outputFolder, record.outputFolder) ||
         !tagsEqual(updated.routingTag, record.routingTag) ||

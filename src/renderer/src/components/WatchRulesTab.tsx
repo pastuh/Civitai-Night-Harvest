@@ -12,6 +12,7 @@ import type {
   DeferredDownload,
   WatchRule,
   WatchRuleSearchOptions,
+  WatchRuleTestModel,
   WatchRuleTestResult,
   RuleCrawlStatus,
   CrawlProgressPayload
@@ -157,6 +158,8 @@ interface Props {
   onJumpToGallery?: (modelId: number, modelName?: string) => void
   onOpenModelDetail?: (target: ModelDetailTarget) => void
   onOpenTagFolders?: (tag: string) => void
+  /** Jump to Missing → Session bans / Session pause. */
+  onOpenMissingSession?: (kind: 'sessionBans' | 'sessionPause') => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onRefreshInventory?: () => Promise<void>
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
@@ -168,8 +171,10 @@ interface Props {
   onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
   /** Session Yield — models that entered the download pipeline (only grows). */
   sessionYieldCount?: number
-  /** Skipped Updates version IDs — exclude from Browse Updates count. */
+  /** Skipped Updates version IDs — hidden on Browse unless Show skipped. */
   skippedPendingVersionIds?: Set<number>
+  /** Forgotten Updates version IDs — always hidden on Browse. */
+  forgottenPendingVersionIds?: Set<number>
   /** Active Updates offers — hide on Browse unless Show updates is on. */
   pendingUpdateVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause Browse scroll observers. */
@@ -227,6 +232,7 @@ export function WatchRulesTab({
   onJumpToGallery,
   onOpenModelDetail,
   onOpenTagFolders,
+  onOpenMissingSession,
   onSaveTagRules,
   onRefreshInventory,
   onSaveSettings,
@@ -237,6 +243,7 @@ export function WatchRulesTab({
   onBrowseViewPrefsChange,
   sessionYieldCount = 0,
   skippedPendingVersionIds,
+  forgottenPendingVersionIds,
   pendingUpdateVersionIds,
   isActive = true
 }: Props) {
@@ -354,8 +361,11 @@ export function WatchRulesTab({
     crawlProgress?.phase === 'fetching' ||
     crawlProgress?.phase === 'fetching-tags'
 
+  const activeRules = draft.filter((r) => r.enabled)
   const activeRule =
-    draft.find((r) => r.id === testRuleId) ?? draft.find((r) => r.enabled) ?? draft[0] ?? null
+    draft.find((r) => r.id === testRuleId) ?? activeRules[0] ?? draft[0] ?? null
+  const collapsedRuleSummaries = activeRules.length > 0 ? activeRules : activeRule ? [activeRule] : []
+  const collapsedRulesTitle = collapsedRuleSummaries.map(ruleSummaryPlain).join(' ··· ')
 
   const browseRule =
     draft.find((r) => r.id === crawlPageMeta?.ruleId) ??
@@ -669,9 +679,15 @@ export function WatchRulesTab({
           </div>
           <span
             className="browse-filters-summary muted"
-            title={activeRule ? ruleSummaryPlain(activeRule) : undefined}
+            title={collapsedRulesTitle || undefined}
           >
-            {activeRule ? <RuleSummaryView rule={activeRule} /> : null}
+            {collapsedRuleSummaries.length > 0 ? (
+              <span className="browse-rule-summaries-stack">
+                {collapsedRuleSummaries.map((rule) => (
+                  <RuleSummaryView key={rule.id} rule={rule} />
+                ))}
+              </span>
+            ) : null}
           </span>
           <div className="browse-filters-bar-actions">
             {saveRulesControl}
@@ -902,34 +918,52 @@ export function WatchRulesTab({
       <section className="browse-blocked-tags-section" aria-label="Tag policies">
         <SkippedTagsPanel
           compact
+          variant="paused"
           hiddenTags={settings.hiddenTags ?? []}
           tagSuggestions={tagSuggestions}
-          onChange={async (tags) => onSaveSettings({ hiddenTags: tags })}
+          onLabelClick={
+            onOpenMissingSession ? () => onOpenMissingSession('sessionPause') : undefined
+          }
+          labels={{
+            compactHint: t('browse.pausedTagsJumpHint')
+          }}
+          onChange={async (tags) => {
+            const banned = settings.bannedTags ?? []
+            const nextBanned = banned.filter(
+              (b) => !tags.some((t) => t.toLowerCase() === b.toLowerCase())
+            )
+            await onSaveSettings({
+              hiddenTags: tags,
+              ...(nextBanned.length !== banned.length ? { bannedTags: nextBanned } : {})
+            })
+          }}
         />
-        <div className="browse-filters-bar browse-banned-tags-bar" aria-label={t('browse.bannedTagsLabel')}>
-          <div className="browse-filters-bar-lead browse-blocked-tags-lead">
-            <span className="browse-blocked-tags-label" title={t('browse.bannedTagsHint')}>
-              {t('browse.bannedTagsLabel')}
-            </span>
-            {(settings.bannedTags ?? []).length === 0 ? (
-              <span className="muted browse-blocked-tags-empty">{t('browse.bannedTagsEmpty')}</span>
-            ) : (
-              <div className="skipped-tags-bar-chips">
-                {(settings.bannedTags ?? []).map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    className="tag-chip is-blocked-tag"
-                    title={t('browse.bannedTagsHint')}
-                    onClick={() => onOpenTagFolders?.(tag)}
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <SkippedTagsPanel
+          compact
+          variant="banned"
+          hiddenTags={settings.bannedTags ?? []}
+          tagSuggestions={tagSuggestions}
+          onLabelClick={
+            onOpenMissingSession ? () => onOpenMissingSession('sessionBans') : undefined
+          }
+          labels={{
+            compactLabel: t('browse.bannedTagsLabel'),
+            compactEmpty: t('browse.bannedTagsEmpty'),
+            compactHint: t('browse.bannedTagsJumpHint'),
+            blockPlaceholderShort: t('browse.bannedTagsPlaceholder'),
+            blockBtn: t('browse.bannedTagsAdd')
+          }}
+          onChange={async (tags) => {
+            const paused = settings.hiddenTags ?? []
+            const nextPaused = paused.filter(
+              (p) => !tags.some((t) => t.toLowerCase() === p.toLowerCase())
+            )
+            await onSaveSettings({
+              bannedTags: tags,
+              ...(nextPaused.length !== paused.length ? { hiddenTags: nextPaused } : {})
+            })
+          }}
+        />
       </section>
 
       {previewError && (
@@ -1039,6 +1073,7 @@ export function WatchRulesTab({
           onViewPrefsChange={onBrowseViewPrefsChange}
           sessionYieldCount={sessionYieldCount}
           skippedPendingVersionIds={skippedPendingVersionIds}
+          forgottenPendingVersionIds={forgottenPendingVersionIds}
           pendingUpdateVersionIds={pendingUpdateVersionIds}
           isActive={isActive}
         />

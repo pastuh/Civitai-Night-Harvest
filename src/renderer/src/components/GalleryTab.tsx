@@ -61,6 +61,8 @@ import {
 } from '../../../shared/results-display'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
+import { aggregateBaseModelOptions, baseModelLabel, baseModelsMatch } from '../../../shared/base-model-label'
+import { isModelTakenDown, isModelArchived } from '../../../shared/civitai-meta'
 import {
   DEFAULT_LIBRARY_VIEW_PREFS,
   LIBRARY_SORT_OPTIONS,
@@ -73,6 +75,7 @@ import {
 import { compareOptionalCount } from '../list-sort'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import { SkippedTagsPanel } from './SkippedTagsPanel'
+import { folderLabelForRecord, recordTagsFullyAssigned } from './gallery-card-utils'
 
 interface Props {
   inventory: InventoryRecord[]
@@ -132,6 +135,8 @@ interface Props {
   onToggleEaFavorite?: (modelId: number) => void
   /** Per-version cache buster for library thumbnail `<img>` after preview save. */
   libraryPreviewCacheBust?: Record<number, number>
+  /** Play video preview on hover (Settings). */
+  browseVideoPreviews?: boolean
 }
 
 interface ContextMenuState {
@@ -274,9 +279,12 @@ function GalleryTabInner({
   const [librarySort, setLibrarySort] = useState<LibrarySort>(() =>
     normalizeLibrarySort(initial.librarySort)
   )
+  /** false = newest/highest first (default); true = reverse. */
+  const [sortAscending, setSortAscending] = useState(false)
   const [nsfwFilter, setNsfwFilter] = useState<RatingFilter>(initial.nsfwFilter)
   const [hideFolderAssigned, setHideFolderAssigned] = useState(initial.hideFolderAssigned)
   const [ignoreExcludedTags, setIgnoreExcludedTags] = useState(initial.ignoreExcludedTags)
+  const [hideFullyTagged, setHideFullyTagged] = useState(initial.hideFullyTagged === true)
   const [hideAllAssignedTags, setHideAllAssignedTags] = useState(initial.hideAllAssignedTags)
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [tagSearch, setTagSearch] = useState('')
@@ -359,6 +367,7 @@ function GalleryTabInner({
       nsfwFilter,
       hideFolderAssigned,
       ignoreExcludedTags,
+      hideFullyTagged,
       hideAllAssignedTags,
       modelSearch,
       modelLetter,
@@ -371,6 +380,7 @@ function GalleryTabInner({
     nsfwFilter,
     hideFolderAssigned,
     ignoreExcludedTags,
+    hideFullyTagged,
     hideAllAssignedTags,
     modelSearch,
     modelLetter,
@@ -404,16 +414,14 @@ function GalleryTabInner({
   )
 
   const baseModelOptions = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const r of inventoryForMainCounts) {
-      const name = r.baseModel.trim()
-      if (!name) continue
-      map.set(name, (map.get(name) ?? 0) + 1)
-    }
-    return [...map.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    return aggregateBaseModelOptions(
+      inventoryForMainCounts.map((r) => r.baseModel).filter(Boolean)
+    )
   }, [inventoryForMainCounts])
+
+  const filterByBaseModel = useCallback((name: string) => {
+    setLibraryFilter({ type: 'baseModel', name: baseModelLabel(name) })
+  }, [])
 
   const hideBaseModelOnCards = libraryFilter.type === 'baseModel'
 
@@ -743,15 +751,18 @@ function GalleryTabInner({
         break
       }
       case 'baseModel':
-        list = list.filter(
-          (r) => r.baseModel.trim().toLowerCase() === libraryFilter.name.trim().toLowerCase()
-        )
+        list = list.filter((r) => baseModelsMatch(r.baseModel, libraryFilter.name))
         break
       case 'session':
         list = list.filter((r) => sessionSet.has(r.versionId))
         break
       case 'alwaysUpdate':
         list = list.filter((r) => autoUpdateModelIds.has(r.modelId))
+        break
+      case 'unavailable':
+        list = list.filter(
+          (r) => isModelTakenDown(r.civitaiMode) || isModelArchived(r.civitaiMode)
+        )
         break
       case 'byDate':
         list = list.filter((r) => recordInDownloadDay(r, libraryFilter.day))
@@ -779,7 +790,7 @@ function GalleryTabInner({
         matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)
       )
     }
-    if (hideFolderAssigned) {
+    if (hideFolderAssigned && !deferredModelSearch.trim() && pinModelId == null) {
       const excluded = normalizeHiddenTags(libraryExcludedTags)
       list = list.filter((r) => {
         const route = r.routingTag?.trim()
@@ -791,6 +802,12 @@ function GalleryTabInner({
           return true
         }
         return false
+      })
+    }
+    if (hideFullyTagged && !deferredModelSearch.trim() && pinModelId == null) {
+      list = list.filter((r) => {
+        const folderLabel = folderLabelForRecord(r, tagRules, loraFolder, checkpointFolder)
+        return !recordTagsFullyAssigned(r, tagRules, folderLabel)
       })
     }
     if (pinModelId != null) {
@@ -810,11 +827,13 @@ function GalleryTabInner({
     matchesModelSearch,
     nsfwFilter,
     hideFolderAssigned,
+    hideFullyTagged,
     ignoreExcludedTags,
     libraryExcludedTags,
     sessionSet,
     autoUpdateModelIds,
     pinModelId,
+    deferredModelSearch,
     loraFolder,
     checkpointFolder
   ])
@@ -828,6 +847,7 @@ function GalleryTabInner({
         (a, b) =>
           b.downloadedAt.localeCompare(a.downloadedAt) || a.modelName.localeCompare(b.modelName)
       )
+      if (sortAscending) list.reverse()
     } else {
       switch (librarySort) {
         case 'folder':
@@ -879,6 +899,7 @@ function GalleryTabInner({
           )
           break
       }
+      if (sortAscending) list.reverse()
     }
     if (highlightSet.size > 0 || pinEaFavoriteSet.size > 0) {
       // Pin favorites / session highlights first — keep primary librarySort within each group.
@@ -893,7 +914,15 @@ function GalleryTabInner({
       })
     }
     return list
-  }, [filteredInventory, librarySort, tagClusters, highlightSet, pinEaFavoriteSet, libraryFilter])
+  }, [
+    filteredInventory,
+    librarySort,
+    sortAscending,
+    tagClusters,
+    highlightSet,
+    pinEaFavoriteSet,
+    libraryFilter
+  ])
 
   const libraryDisplayMode =
     resultsDisplayMode === 'autoAdvance' ? 'lazy' : resultsDisplayMode
@@ -924,6 +953,7 @@ function GalleryTabInner({
         nsfwFilter,
         librarySort,
         hideFolderAssigned ? 1 : 0,
+        hideFullyTagged ? 1 : 0,
         ignoreExcludedTags ? 1 : 0,
         libraryExcludedTags.join(',').toLowerCase(),
         libraryDisplayMode,
@@ -938,6 +968,7 @@ function GalleryTabInner({
       nsfwFilter,
       librarySort,
       hideFolderAssigned,
+      hideFullyTagged,
       ignoreExcludedTags,
       libraryExcludedTags,
       libraryDisplayMode,
@@ -1088,6 +1119,13 @@ function GalleryTabInner({
     () => inventoryForMainCounts.filter((r) => autoUpdateModelIds.has(r.modelId)).length,
     [inventoryForMainCounts, autoUpdateModelIds]
   )
+  const unavailableFilterCount = useMemo(
+    () =>
+      inventoryForMainCounts.filter(
+        (r) => isModelTakenDown(r.civitaiMode) || isModelArchived(r.civitaiMode)
+      ).length,
+    [inventoryForMainCounts]
+  )
   const versionNameById = useMemo(() => {
     const map = new Map<number, string>()
     for (const r of inventory) map.set(r.versionId, r.modelName)
@@ -1127,7 +1165,7 @@ function GalleryTabInner({
   }, [])
 
   const banModel = useCallback(
-    async (modelId: number, modelName: string, versionId?: number) => {
+    (modelId: number, modelName: string, versionId?: number) => {
       const rec =
         versionId != null
           ? inventory.find((r) => r.versionId === versionId)
@@ -1161,42 +1199,47 @@ function GalleryTabInner({
         }
         return next
       })
-      try {
-        if (isLocal && rec) {
-          await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
-        } else {
-          await window.api.banModel(modelId, modelName, {
-            modelName,
-            versionId: rec?.versionId ?? versionId,
-            previewUrl: rec?.previewPath,
-            author: rec?.author,
-            baseModel: rec?.baseModel,
-            sourceDomain: rec?.civitaiDomain,
-            tags: rec?.civitaiTags,
-            downloadCount: rec?.downloadCount,
-            thumbsUpCount: rec?.thumbsUpCount
-          })
+
+      // Fire-and-forget — do not await before paint (main may unlink files; UI stays responsive).
+      const run = async () => {
+        try {
+          if (isLocal && rec) {
+            await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
+          } else {
+            await window.api.banModel(modelId, modelName, {
+              modelName,
+              versionId: rec?.versionId ?? versionId,
+              previewUrl: rec?.previewPath,
+              author: rec?.author,
+              baseModel: rec?.baseModel,
+              sourceDomain: rec?.civitaiDomain,
+              tags: rec?.civitaiTags,
+              downloadCount: rec?.downloadCount,
+              thumbsUpCount: rec?.thumbsUpCount
+            })
+          }
+          scheduleLibraryRefresh()
+        } catch (err) {
+          if (rec) {
+            setPendingHiddenVersionIds((prev) => {
+              if (!prev.has(rec.versionId)) return prev
+              const next = new Set(prev)
+              next.delete(rec.versionId)
+              return next
+            })
+          }
+          if (!isLocal && modelId > 0) {
+            setPendingBanIds((prev) => {
+              if (!prev.has(modelId)) return prev
+              const next = new Set(prev)
+              next.delete(modelId)
+              return next
+            })
+          }
+          setMessage(err instanceof Error ? err.message : String(err))
         }
-        scheduleLibraryRefresh()
-      } catch (err) {
-        if (rec) {
-          setPendingHiddenVersionIds((prev) => {
-            if (!prev.has(rec.versionId)) return prev
-            const next = new Set(prev)
-            next.delete(rec.versionId)
-            return next
-          })
-        }
-        if (!isLocal && modelId > 0) {
-          setPendingBanIds((prev) => {
-            if (!prev.has(modelId)) return prev
-            const next = new Set(prev)
-            next.delete(modelId)
-            return next
-          })
-        }
-        setMessage(err instanceof Error ? err.message : String(err))
       }
+      void run()
     },
     [inventory, scheduleLibraryRefresh]
   )
@@ -1359,27 +1402,30 @@ function GalleryTabInner({
     return true
   }
 
-  const assignFolderByTag = async (rawTag: string, versionId: number | undefined) => {
+  const assignFolderByTag = (rawTag: string, versionId: number | undefined) => {
     const tagName = rawTag.trim()
     if (!tagName || versionId == null) return
     const ids =
       selected.has(versionId) && selected.size > 0 ? [...selected] : [versionId]
-    setMoving(true)
-    setMessage('')
     setContextMenu(null)
     setAssignFolderOpen(false)
     setAssignTagQuery('')
-    try {
-      if (!(await ensureTagFolder(tagName, 'auto'))) return
-      await window.api.assignTag(ids, tagName)
-      setSelected(new Set())
-      setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
-      await onRefresh()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      setMoving(false)
-    }
+    setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
+    // Background move — keep Library interactive while files transfer.
+    void (async () => {
+      try {
+        if (!(await ensureTagFolder(tagName, 'auto'))) {
+          setMessage('')
+          return
+        }
+        await window.api.assignTag(ids, tagName)
+        setSelected(new Set())
+        setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
+        await onRefresh()
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : String(err))
+      }
+    })()
   }
 
   const routeTagAndMove = async (tagName: string) => {
@@ -1549,6 +1595,14 @@ function GalleryTabInner({
                   />
                   {t('gallery.hideFolderAssigned')}
                 </label>
+                <label className="checkbox-field" title={t('gallery.hideFullyTaggedTitle')}>
+                  <input
+                    type="checkbox"
+                    checked={hideFullyTagged}
+                    onChange={(e) => setHideFullyTagged(e.target.checked)}
+                  />
+                  {t('gallery.hideFullyTagged')}
+                </label>
                 <label
                   className="checkbox-field"
                   title={t('gallery.ignoreExcludedTitle')}
@@ -1597,29 +1651,34 @@ function GalleryTabInner({
                     {previewRepairBusy ? t('gallery.repairPreviewsBusy') : t('gallery.repairPreviews')}
                   </button>
                 )}
-                <select
-                  className={`browse-content-filter${nsfwFilter !== 'all' ? ' filtered' : ''}`}
-                  value={nsfwFilter}
-                  onChange={(e) => setNsfwFilter(e.target.value as RatingFilter)}
-                  title={t('gallery.contentLabel')}
-                >
-                  {RATING_FILTER_OPTIONS.map((opt) => (
-                    <option
-                      key={opt}
-                      value={opt}
-                      disabled={
-                        opt !== 'all' && opt !== nsfwFilter && libraryRatingCounts[opt] === 0
-                      }
-                    >
-                      {t(`gallery.ratingFilter.${opt}`)}
-                      {opt !== 'all' ? ` (${libraryRatingCounts[opt]})` : ''}
-                    </option>
-                  ))}
-                </select>
               </div>
             </div>
             <div className="browse-results-controls-box">
-              <label className="library-sort browse-results-sort">
+              <select
+                className={`browse-content-filter${nsfwFilter !== 'all' ? ' filtered' : ''}`}
+                value={nsfwFilter}
+                onChange={(e) => setNsfwFilter(e.target.value as RatingFilter)}
+                title={t('gallery.contentLabel')}
+              >
+                {RATING_FILTER_OPTIONS.map((opt) => (
+                  <option
+                    key={opt}
+                    value={opt}
+                    disabled={
+                      opt !== 'all' && opt !== nsfwFilter && libraryRatingCounts[opt] === 0
+                    }
+                  >
+                    {t(`gallery.ratingFilter.${opt}`)}
+                    {opt !== 'all' ? ` (${libraryRatingCounts[opt]})` : ''}
+                  </option>
+                ))}
+              </select>
+              <label
+                className="library-sort browse-results-sort"
+                title={
+                  librarySort === 'recent' ? t('listSort.recentHintLibrary') : undefined
+                }
+              >
                 {t('listSort.label')}
                 <select
                   value={librarySort}
@@ -1637,6 +1696,15 @@ function GalleryTabInner({
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  className="btn-sm library-sort-dir"
+                  title={t('listSort.sortDirToggle')}
+                  aria-label={t('listSort.sortDirToggle')}
+                  onClick={() => setSortAscending((v) => !v)}
+                >
+                  {sortAscending ? '↑' : '↓'}
+                </button>
               </label>
               {(modelSearch || modelLetter || pinModelId != null) && (
                 <button
@@ -1772,6 +1840,7 @@ function GalleryTabInner({
               onOpenContextMenu={openContextMenu}
               onOpenDetails={openLibraryDetails}
               onCivitaiTagClick={openTagInFolders}
+              onBaseModelClick={filterByBaseModel}
               blockedTags={blockedTags}
               pausedTags={pausedTags}
               eaFavoriteSet={liveEaFavoriteSet}
@@ -1836,6 +1905,7 @@ function GalleryTabInner({
             <span className="tag-name">{t('gallery.allModels')}</span>
             <span className="muted tag-count-inline">{inventoryForMainCounts.length}</span>
           </button>
+          <h4 className="sidebar-section-title">{t('gallery.modelTypes')}</h4>
           <button
             type="button"
             className={`sidebar-tag ${modelTypeFilterActive('LORA') ? 'active' : ''}`}
@@ -1886,6 +1956,17 @@ function GalleryTabInner({
             >
               <span className="tag-name">{t('gallery.alwaysUpdateFilter')}</span>
               <span className="muted tag-count-inline">{alwaysUpdateFilterCount}</span>
+            </button>
+          )}
+          {unavailableFilterCount > 0 && (
+            <button
+              type="button"
+              className={`sidebar-tag ${filterActive({ type: 'unavailable' }) ? 'active' : ''}`}
+              onClick={() => applyLibraryFilter({ type: 'unavailable' })}
+              title={t('gallery.unavailableFilterHint')}
+            >
+              <span className="tag-name">{t('gallery.unavailableFilter')}</span>
+              <span className="muted tag-count-inline">{unavailableFilterCount}</span>
             </button>
           )}
 
@@ -2471,6 +2552,7 @@ type LibraryCardGridProps = {
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
   onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
+  onBaseModelClick?: (baseModel: string) => void
   eaFavoriteSet?: Set<number>
   onToggleEaFavorite?: (modelId: number) => void
   libraryPreviewCacheBust?: Record<number, number>
@@ -2504,6 +2586,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   onOpenContextMenu,
   onOpenDetails,
   onCivitaiTagClick,
+  onBaseModelClick,
   eaFavoriteSet,
   onToggleEaFavorite,
   libraryPreviewCacheBust,
@@ -2549,6 +2632,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             onOpenContextMenu={onOpenContextMenu}
             onOpenDetails={onOpenDetails}
             onCivitaiTagClick={onCivitaiTagClick}
+            onBaseModelClick={onBaseModelClick}
             eaFavorited={eaFavoriteSet?.has(unit.high.modelId) ?? false}
             onToggleEaFavorite={onToggleEaFavorite}
             previewCacheBust={libraryPreviewCacheBust}
@@ -2589,6 +2673,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             onOpenContextMenu={onOpenContextMenu}
             onOpenDetails={onOpenDetails}
             onCivitaiTagClick={onCivitaiTagClick}
+            onBaseModelClick={onBaseModelClick}
             eaFavorited={eaFavoriteSet?.has(unit.item.modelId) ?? false}
             onToggleEaFavorite={onToggleEaFavorite}
             previewCacheBust={libraryPreviewCacheBust?.[unit.item.versionId]}

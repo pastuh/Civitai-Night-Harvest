@@ -125,8 +125,13 @@ export default function App() {
   tabRef.current = tab
   const contentRef = useRef<HTMLElement | null>(null)
   const scrollTabPrevRef = useRef<Tab>(tab)
-  /** Saved scroll position before opening Tag Folders / Model Details — restored on back. */
+  /** Saved scroll position before opening Tag Folders — restored on back. */
   const savedScrollRef = useRef<number | null>(null)
+  /**
+   * Gallery/list scroll before opening Model Details.
+   * Separate from savedScrollRef so openTagFolders (detail is scrolled to top) cannot wipe it.
+   */
+  const galleryScrollBeforeDetailRef = useRef<number | null>(null)
   /** When true, the next tab-change effect restores savedScrollRef instead of scrolling to top. */
   const restoreScrollRef = useRef(false)
   const [settings, setSettings] = useState<AppSettingsPublic | null>(null)
@@ -173,6 +178,9 @@ export default function App() {
   const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
   const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
   const [missingViewPrefs, setMissingViewPrefs] = useState<MissingViewPrefs>(DEFAULT_MISSING_VIEW_PREFS)
+  const [missingJumpSideFilter, setMissingJumpSideFilter] = useState<
+    { type: 'sessionBans' } | { type: 'sessionPause' } | null
+  >(null)
   const [pendingViewPrefs, setPendingViewPrefs] = useState<PendingViewPrefs>(DEFAULT_PENDING_VIEW_PREFS)
   const onLibraryViewPrefsChange = useCallback((prefs: LibraryViewPrefs) => {
     setLibraryViewPrefs((prev) =>
@@ -182,6 +190,7 @@ export default function App() {
       prev.nsfwFilter === prefs.nsfwFilter &&
       prev.hideFolderAssigned === prefs.hideFolderAssigned &&
       prev.ignoreExcludedTags === prefs.ignoreExcludedTags &&
+      prev.hideFullyTagged === prefs.hideFullyTagged &&
       prev.hideAllAssignedTags === prefs.hideAllAssignedTags &&
       prev.modelSearch === prefs.modelSearch &&
       prev.modelLetter === prefs.modelLetter &&
@@ -372,6 +381,16 @@ export default function App() {
   useEffect(() => {
     busyRef.current = Boolean(busy)
     if (!busy && !previewRepairRef.current) setSyncProgress(null)
+  }, [busy])
+
+  useEffect(() => {
+    // Only the blocking busy overlay should force a wait cursor — background
+    // tag moves / transfers keep a status message but must not lock the UI.
+    const appBusy = Boolean(busy)
+    document.body.classList.toggle('is-app-busy', appBusy)
+    return () => {
+      document.body.classList.remove('is-app-busy')
+    }
   }, [busy])
 
   useEffect(() => {
@@ -1265,40 +1284,14 @@ export default function App() {
         setSessionBanModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]))
       }
       setLiveCrawlBrowse((prev) => {
-        const makeBanned = (base?: WatchRuleTestModel): WatchRuleTestModel => ({
-          id: modelId,
-          versionId: stub?.versionId ?? base?.versionId ?? 0,
-          name: stub?.name || base?.name || `Model #${modelId}`,
-          type: stub?.type || base?.type || 'LORA',
-          baseModel: stub?.baseModel ?? base?.baseModel ?? '',
-          previewUrl: stub?.previewUrl ?? base?.previewUrl,
-          previewUrls: stub?.previewUrl
-            ? [stub.previewUrl]
-            : base?.previewUrls ?? (base?.previewUrl ? [base.previewUrl] : []),
-          pageUrl: stub?.pageUrl ?? base?.pageUrl,
-          tags: stub?.tags ?? base?.tags ?? [],
-          creator: stub?.creator ?? base?.creator,
-          inInventory: false,
-          isBanned: true
-        })
-
         if (!prev?.sampleModels?.length) {
-          if (!banned) return prev
-          return {
-            pageSize: 1,
-            currentPage: 1,
-            sampleModels: [makeBanned()],
-            baseModelsInResults: [],
-            tagsInResults: [],
-            enums: prev?.enums ?? { modelTypes: [], baseModels: [], sortOptions: [] },
-            crawlSource: prev?.crawlSource ?? 'night'
-          }
+          return prev
         }
         const idx = prev.sampleModels.findIndex((m) => m.id === modelId)
         const sampleModels = prev.sampleModels.slice()
         if (banned) {
+          // Only update an existing gallery card — never push a new one (causes hideBanned blink).
           if (idx >= 0) sampleModels[idx] = { ...sampleModels[idx], isBanned: true }
-          else sampleModels.push(makeBanned())
           return { ...prev, sampleModels }
         }
         if (idx < 0) return prev
@@ -1322,7 +1315,7 @@ export default function App() {
     // Save scroll position so the back button returns to the exact spot, not the top.
     const el = contentRef.current
     if (el) {
-      savedScrollRef.current = el.scrollTop
+      galleryScrollBeforeDetailRef.current = el.scrollTop
       // Overlay is positioned at the top of the scrollable content — scroll there first.
       el.scrollTop = 0
       window.requestAnimationFrame(() => {
@@ -1336,15 +1329,15 @@ export default function App() {
     setModelDetailTarget(null)
     // Model Details opens as an overlay on top of the current tab — the tab doesn't change.
     // Restore scroll position directly since tab-change effects don't fire for overlay close.
-    if (savedScrollRef.current != null && contentRef.current) {
-      const target = savedScrollRef.current
+    if (galleryScrollBeforeDetailRef.current != null && contentRef.current) {
+      const target = galleryScrollBeforeDetailRef.current
       const el = contentRef.current
       el.scrollTop = target
       window.requestAnimationFrame(() => {
         el.scrollTop = target
       })
     }
-    savedScrollRef.current = null
+    galleryScrollBeforeDetailRef.current = null
   }, [])
 
   const openTagFolders = useCallback(
@@ -1352,8 +1345,11 @@ export default function App() {
       tag: string,
       returnTo?: TagFoldersReturnTo | null
     ) => {
-      // Save scroll position so the back button returns to the exact spot, not the top.
-      if (contentRef.current) savedScrollRef.current = contentRef.current.scrollTop
+      // When opening from Model Details, keep galleryScrollBeforeDetailRef for the eventual close.
+      // Detail overlay is scrolled to top — do not overwrite the gallery scroll with 0.
+      if (!modelDetailTarget && contentRef.current) {
+        savedScrollRef.current = contentRef.current.scrollTop
+      }
       if (returnTo) {
         setTagFoldersReturnTo(returnTo)
       } else if (modelDetailTarget) {
@@ -1429,7 +1425,17 @@ export default function App() {
   const skippedPendingVersionIds = useMemo(() => {
     const ids = new Set<number>()
     for (const p of pending) {
-      if ((p.skipped || p.forgotten) && p.versionId > 0) ids.add(p.versionId)
+      // Per-version Skip only (not Forget) — Browse “Show skipped” and auto-queue gates.
+      if (p.skipped && !p.forgotten && p.versionId > 0) ids.add(p.versionId)
+    }
+    return ids
+  }, [pending])
+
+  /** Forgotten Updates versions — always hidden on Browse (not the Show skipped toggle). */
+  const forgottenPendingVersionIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const p of pending) {
+      if (p.forgotten && p.versionId > 0) ids.add(p.versionId)
     }
     return ids
   }, [pending])
@@ -2193,6 +2199,10 @@ export default function App() {
               onRetryDeferred={retryDeferred}
               onJumpToGallery={jumpToGallery}
               onOpenTagFolders={openTagFolders}
+              onOpenMissingSession={(kind) => {
+                setMissingJumpSideFilter({ type: kind })
+                setTab('missing')
+              }}
               onSaveTagRules={saveTagRules}
               onRefreshInventory={refreshInventory}
               onSaveSettings={saveSettings}
@@ -2205,7 +2215,11 @@ export default function App() {
               browseViewPrefs={
                 settings.preserveFilters
                   ? browseViewPrefs
-                  : { ...DEFAULT_BROWSE_VIEW_PREFS, hideAwaitingAccess: settings.hideAwaitingAccess ?? false }
+                  : {
+                      ...DEFAULT_BROWSE_VIEW_PREFS,
+                      hideBanned: true,
+                      hideAwaitingAccess: settings.hideAwaitingAccess ?? true
+                    }
               }
               onBrowseViewPrefsChange={
                 settings.preserveFilters
@@ -2214,6 +2228,7 @@ export default function App() {
               }
               sessionYieldCount={sessionYieldCount}
               skippedPendingVersionIds={skippedPendingVersionIds}
+              forgottenPendingVersionIds={forgottenPendingVersionIds}
               pendingUpdateVersionIds={pendingUpdateVersionIds}
               isActive={watchInteractive}
             />
@@ -2423,6 +2438,8 @@ export default function App() {
               onRefresh={refreshMissingExclusions}
               onOpenModelDetail={openModelDetail}
               onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'missing' })}
+              jumpSideFilter={missingJumpSideFilter}
+              onJumpSideFilterConsumed={() => setMissingJumpSideFilter(null)}
               isActive={missingInteractive}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
             />

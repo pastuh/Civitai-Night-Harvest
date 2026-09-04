@@ -1003,7 +1003,7 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'model:ban',
-    (
+    async (
       _e,
       payload: {
         modelId: number
@@ -1017,7 +1017,8 @@ export function initIpc(): void {
     const deferred = inventory
       .getAllDeferredDownloads()
       .find((d) => d.modelId === payload.modelId)
-    const deleted = deleteModelFromLibrary(payload.modelId)
+    // Detach inventory + ban immediately; unlink large files in background so UI stays responsive.
+    const deleted = await deleteModelFromLibrary(payload.modelId, { awaitFiles: false })
     const modelName =
       payload.modelName ??
       deleted[0]?.modelName ??
@@ -1091,7 +1092,7 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'model:forget',
-    (
+    async (
       _e,
       payload: {
         modelId: number
@@ -1105,7 +1106,7 @@ export function initIpc(): void {
         .find((d) => d.modelId === payload.modelId)
       const tagSkip = inventory.getTagSkipReview(payload.modelId)
       const missing = inventory.getMissingModel(payload.modelId)
-      const deleted = deleteModelFromLibrary(payload.modelId)
+      const deleted = await deleteModelFromLibrary(payload.modelId, { awaitFiles: false })
       const modelName =
         payload.modelName ??
         deleted[0]?.modelName ??
@@ -1337,8 +1338,8 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'inventory:deleteVersion',
-    (_e, payload: { versionId: number; ban?: boolean }) => {
-      const record = deleteVersionFromLibrary(payload.versionId)
+    async (_e, payload: { versionId: number; ban?: boolean }) => {
+      const record = await deleteVersionFromLibrary(payload.versionId, { awaitFiles: false })
       const shouldBan = payload.ban !== false
       if (shouldBan) {
         inventory.banModelAndMarkSeen(record.modelId, record.modelName, {
@@ -1427,8 +1428,8 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'inventory:assignTag',
-    (_e, payload: { versionIds: number[]; tagName: string }) => {
-      const moved = moveRecordsToTagFolder(payload.versionIds, payload.tagName, getTagRules(), {
+    async (_e, payload: { versionIds: number[]; tagName: string }) => {
+      const moved = await moveRecordsToTagFolder(payload.versionIds, payload.tagName, getTagRules(), {
         lockRouting: true
       })
       for (const versionId of payload.versionIds) {
@@ -1440,7 +1441,7 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'inventory:assignByCivitaiTag',
-    (_e, payload: { civitaiTag: string; routingTag: string }) => {
+    async (_e, payload: { civitaiTag: string; routingTag: string }) => {
       const routingTag = payload.routingTag.trim()
       const civitaiTag = payload.civitaiTag.trim()
       if (!routingTag || !civitaiTag) {
@@ -1475,7 +1476,7 @@ export function initIpc(): void {
           continue
         }
         try {
-          const updated = moveRecordToTagFolder(record, winner, tagRules, {
+          const updated = await moveRecordToTagFolder(record, winner, tagRules, {
             lockRouting: false
           })
           movedRecords.push(updated)
@@ -1490,39 +1491,67 @@ export function initIpc(): void {
     }
   )
 
+  let tagFolderReconcileJob: Promise<{
+    moved: number
+    skipped: number
+    queueUpdated: number
+    versionIds: number[]
+  }> | null = null
+
   ipcMain.handle('inventory:reconcileTagFolders', async () => {
-    const tagRules = getTagRules()
-    const result = await reconcileLibraryTagFolders(tagRules, (p) => {
-      sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
-        phase: p.current >= p.total && p.total > 0 ? 'done' : 'moving',
-        current: p.current,
-        total: p.total,
-        moved: p.moved,
-        message:
-          p.total > 0
-            ? `Moving tag folders… ${p.current}/${p.total}` +
-              (p.modelName ? ` · ${p.modelName}` : '')
-            : 'Moving tag folders…'
-      })
-    })
-    let queueUpdated = 0
-    const seen = new Set<string>()
-    for (const rule of tagRules) {
-      for (const name of parseTagRuleNames(rule.tagName)) {
-        const key = name.toLowerCase()
-        if (seen.has(key)) continue
-        seen.add(key)
-        queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
-      }
+    if (tagFolderReconcileJob) {
+      return { started: true as const, alreadyRunning: true as const }
     }
-    sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
-      phase: 'done',
-      current: result.moved + result.skipped,
-      total: result.moved + result.skipped,
-      moved: result.moved,
-      message: `Tag folders: moved ${result.moved}, skipped ${result.skipped}`
-    })
-    return { ...result, queueUpdated }
+
+    tagFolderReconcileJob = (async () => {
+      const tagRules = getTagRules()
+      try {
+        const result = await reconcileLibraryTagFolders(tagRules, (p) => {
+          sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+            phase: p.current >= p.total && p.total > 0 ? 'done' : 'moving',
+            current: p.current,
+            total: p.total,
+            moved: p.moved,
+            message:
+              p.total > 0
+                ? `Moving tag folders… ${p.current}/${p.total}` +
+                  (p.modelName ? ` · ${p.modelName}` : '')
+                : 'Moving tag folders…'
+          })
+        })
+        let queueUpdated = 0
+        const seen = new Set<string>()
+        for (const rule of tagRules) {
+          for (const name of parseTagRuleNames(rule.tagName)) {
+            const key = name.toLowerCase()
+            if (seen.has(key)) continue
+            seen.add(key)
+            queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
+          }
+        }
+        const payload = { ...result, queueUpdated }
+        sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+          phase: 'done',
+          current: result.moved + result.skipped,
+          total: result.moved + result.skipped,
+          moved: result.moved,
+          message: `Tag folders: moved ${result.moved}, skipped ${result.skipped}`
+        })
+        sendToRenderer(() => mainWindow, 'tagFolders:reconcileDone', payload)
+        return payload
+      } catch (err) {
+        sendToRenderer(() => mainWindow, 'tagFolders:reconcileError', {
+          message: err instanceof Error ? err.message : String(err)
+        })
+        throw err
+      } finally {
+        tagFolderReconcileJob = null
+      }
+    })()
+
+    // Return immediately so other IPC (ban, inventory, UI) stays responsive while files move.
+    void tagFolderReconcileJob
+    return { started: true as const, alreadyRunning: false as const }
   })
 
   ipcMain.handle('model:preview', async (_e, input: string) => {
@@ -1835,7 +1864,7 @@ export function initIpc(): void {
   )
 
   ipcMain.handle('pending:ignore', (_e, modelId: number) => {
-    scheduler.banModel(modelId)
+    void scheduler.banModel(modelId)
   })
 
   ipcMain.handle('pending:dismiss', (_e, versionId: number) => {

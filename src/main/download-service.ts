@@ -733,6 +733,7 @@ export class DownloadService {
         modalityText: buildModalityText({
           modelName: model.name,
           versionName: version.name,
+          baseModel: version.baseModel,
           modelDescription: model.description,
           versionDescription: version.description
         }),

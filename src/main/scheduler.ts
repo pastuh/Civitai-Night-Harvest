@@ -1810,7 +1810,7 @@ export class ScanScheduler {
       }
       if (ownedModelIds.has(m.id)) {
         if (m.versionId > 0 && inventory.isPendingVersionSkipped(m.versionId)) {
-          missing++
+          // Skipped Updates version — not a fresh catalog miss, not awaiting confirm.
           continue
         }
         awaitingConfirm++
@@ -2970,6 +2970,8 @@ export class ScanScheduler {
     if (!item) return
     inventory.skipPendingVersion({ ...item, forgotten: false, skipped: true })
     this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
+    // Drop any in-flight / queued download for this version only.
+    this.downloadQueue.cancel(versionId)
     this.emitPendingVersions()
     this.log(
       'info',
@@ -3136,10 +3138,10 @@ export class ScanScheduler {
     })
   }
 
-  banModel(modelId: number, modelName = ''): void {
+  async banModel(modelId: number, modelName = ''): Promise<void> {
     const pending = inventory.getAllPendingVersions().find((p) => p.modelId === modelId)
     const incomplete = inventory.getIncompleteModel(modelId)
-    const deleted = deleteModelFromLibrary(modelId)
+    const deleted = await deleteModelFromLibrary(modelId, { awaitFiles: false })
     inventory.banModelAndMarkSeen(modelId, modelName || deleted[0]?.modelName || '')
     inventory.clearBrowseCardCacheForModel(modelId)
     this.dismissPendingForModel(modelId)
@@ -3184,6 +3186,6 @@ export class ScanScheduler {
   }
 
   ignoreModel(modelId: number): void {
-    this.banModel(modelId)
+    void this.banModel(modelId)
   }
 }

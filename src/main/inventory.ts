@@ -1061,9 +1061,16 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
   }
   const withLocalPreview = (modelId: number, remote?: string): string | undefined => {
     const local = localPreviewByModel.get(modelId)
-    // Prefer on-disk Library preview — remote Civitai URLs often 404 later.
-    if (local) return local
-    return remote || undefined
+    // Prefer on-disk Library preview only when the file still exists.
+    if (local && safePathExists(local) === true) return local
+    const remoteTrimmed = remote?.trim()
+    if (!remoteTrimmed) return undefined
+    // HTTP(S) / media URLs are fine; dead local paths should fall through to browse enrich.
+    if (/^https?:\/\//i.test(remoteTrimmed) || /^media:\/\//i.test(remoteTrimmed) || /^data:/i.test(remoteTrimmed)) {
+      return remoteTrimmed
+    }
+    if (safePathExists(remoteTrimmed) === true) return remoteTrimmed
+    return undefined
   }
 
   const missing = getAllMissingModels().map(
@@ -1185,6 +1192,18 @@ function fillExclusionStatsFromVersions(items: ExclusionReviewItem[]): void {
   }
 }
 
+/** True when stored preview looks like a deleted local path and browse has an http URL. */
+function shouldReplaceDeadLocalPreview(
+  existing: string | undefined,
+  browsePreview: string | undefined
+): boolean {
+  const cur = existing?.trim()
+  const next = browsePreview?.trim()
+  if (!cur || !next) return false
+  if (/^https?:\/\//i.test(cur) || /^media:\/\//i.test(cur) || /^data:/i.test(cur)) return false
+  return /^https?:\/\//i.test(next)
+}
+
 /** Fill missing preview/tags/stats on ban + tag-skip + missing stubs from Browse gallery cards. */
 export function enrichExclusionStubsFromBrowse(
   models: Array<{
@@ -1217,7 +1236,8 @@ export function enrichExclusionStubsFromBrowse(
     if (!m) continue
     const browseDl = optStatCount(m.downloadCount)
     const browseUp = optStatCount(m.thumbsUpCount)
-    const needPreview = !row.previewUrl && Boolean(m.previewUrl)
+    const replacePreview = shouldReplaceDeadLocalPreview(row.previewUrl, m.previewUrl)
+    const needPreview = (!row.previewUrl && Boolean(m.previewUrl)) || replacePreview
     const needTags = (!row.tags || row.tags.length === 0) && (m.tags?.length ?? 0) > 0
     const needMeta =
       (!row.author && m.creator) ||
@@ -1231,7 +1251,7 @@ export function enrichExclusionStubsFromBrowse(
     if (!needPreview && !needTags && !needMeta && !needStats) continue
     db.prepare(
       `UPDATE tag_skip_reviews SET
-        preview_url = COALESCE(preview_url, ?),
+        preview_url = CASE WHEN ? = 1 THEN ? ELSE COALESCE(preview_url, ?) END,
         tags_json = CASE WHEN tags_json = '[]' OR tags_json = '' THEN ? ELSE tags_json END,
         author = CASE WHEN author = '' THEN ? ELSE author END,
         base_model = CASE WHEN base_model = '' THEN ? ELSE base_model END,
@@ -1244,6 +1264,8 @@ export function enrichExclusionStubsFromBrowse(
         thumbs_up_count = COALESCE(?, thumbs_up_count)
       WHERE model_id = ?`
     ).run(
+      replacePreview ? 1 : 0,
+      m.previewUrl || null,
       m.previewUrl || null,
       JSON.stringify(m.tags ?? []),
       m.creator || '',
@@ -1265,7 +1287,8 @@ export function enrichExclusionStubsFromBrowse(
     if (!m) continue
     const browseDl = optStatCount(m.downloadCount)
     const browseUp = optStatCount(m.thumbsUpCount)
-    const needPreview = !row.previewUrl && Boolean(m.previewUrl)
+    const replacePreview = shouldReplaceDeadLocalPreview(row.previewUrl, m.previewUrl)
+    const needPreview = (!row.previewUrl && Boolean(m.previewUrl)) || replacePreview
     const needTags = (!row.tags || row.tags.length === 0) && (m.tags?.length ?? 0) > 0
     const needMeta =
       (!row.author && m.creator) ||
@@ -1279,7 +1302,7 @@ export function enrichExclusionStubsFromBrowse(
     if (!needPreview && !needTags && !needMeta && !needStats) continue
     db.prepare(
       `UPDATE banned_models SET
-        preview_url = COALESCE(preview_url, ?),
+        preview_url = CASE WHEN ? = 1 THEN ? ELSE COALESCE(preview_url, ?) END,
         tags_json = CASE WHEN tags_json = '[]' OR tags_json = '' THEN ? ELSE tags_json END,
         author = CASE WHEN author = '' THEN ? ELSE author END,
         base_model = CASE WHEN base_model = '' THEN ? ELSE base_model END,
@@ -1292,6 +1315,8 @@ export function enrichExclusionStubsFromBrowse(
         thumbs_up_count = COALESCE(?, thumbs_up_count)
       WHERE model_id = ?`
     ).run(
+      replacePreview ? 1 : 0,
+      m.previewUrl || null,
       m.previewUrl || null,
       JSON.stringify(m.tags ?? []),
       m.creator || '',
@@ -1313,7 +1338,8 @@ export function enrichExclusionStubsFromBrowse(
     if (!m) continue
     const browseDl = optStatCount(m.downloadCount)
     const browseUp = optStatCount(m.thumbsUpCount)
-    const needPreview = !row.previewUrl && Boolean(m.previewUrl)
+    const replacePreview = shouldReplaceDeadLocalPreview(row.previewUrl, m.previewUrl)
+    const needPreview = (!row.previewUrl && Boolean(m.previewUrl)) || replacePreview
     const needMeta =
       (!row.author && m.creator) ||
       (!row.baseModel && m.baseModel) ||
@@ -1326,7 +1352,7 @@ export function enrichExclusionStubsFromBrowse(
     if (!needPreview && !needMeta && !needStats) continue
     db.prepare(
       `UPDATE missing_models SET
-        preview_url = COALESCE(preview_url, ?),
+        preview_url = CASE WHEN ? = 1 THEN ? ELSE COALESCE(preview_url, ?) END,
         author = CASE WHEN author = '' THEN ? ELSE author END,
         base_model = CASE WHEN base_model = '' THEN ? ELSE base_model END,
         page_url = CASE WHEN page_url = '' THEN ? ELSE page_url END,
@@ -1338,6 +1364,8 @@ export function enrichExclusionStubsFromBrowse(
         thumbs_up_count = COALESCE(?, thumbs_up_count)
       WHERE model_id = ?`
     ).run(
+      replacePreview ? 1 : 0,
+      m.previewUrl || null,
       m.previewUrl || null,
       m.creator || '',
       m.baseModel || '',

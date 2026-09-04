@@ -24,10 +24,10 @@ import {
 } from '../view-prefs'
 import { compareOptionalCount } from '../list-sort'
 import { StatusModelCard } from './StatusModelCard'
+import { ModelCardInfo } from './ModelCardInfo'
 import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import type { ModelDetailTarget } from './ModelDetailPage'
-import { formatCompactCount } from '../../../shared/civitai-meta'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
 import {
@@ -35,6 +35,12 @@ import {
   resolveModelCardThumb,
   videoPreviewAvailabilityFor
 } from '../utils/model-card-preview'
+import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
+import {
+  aggregateBaseModelOptions,
+  baseModelLabel,
+  baseModelsMatch
+} from '../../../shared/base-model-label'
 
 type KindFilter = 'all' | ExclusionKind
 type SortMode = MissingSort
@@ -69,7 +75,9 @@ interface Props {
   onOpenModelDetail?: (target: ModelDetailTarget) => void
   /** Open Tag Folders for a Civitai tag (same behavior as Browse / Library). */
   onOpenTagFolders?: (tag: string) => void
-  isActive?: boolean
+  /** Apply this Missing sidebar filter once when provided (e.g. from Browse Paused/Banned). */
+  jumpSideFilter?: { type: 'sessionBans' } | { type: 'sessionPause' } | null
+  onJumpSideFilterConsumed?: () => void
   browseVideoPreviews?: boolean
 }
 
@@ -166,13 +174,15 @@ export const MissingTab = memo(function MissingTab({
   sessionStartedAt,
   sessionBanModelIds = [],
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
-  resultsPageSize: resultsPageSizeProp = '100',
+  resultsPageSize: resultsPageSizeProp = 100,
   viewPrefs,
   onViewPrefsChange,
   onRefresh,
   isActive = false,
   onOpenModelDetail,
   onOpenTagFolders,
+  jumpSideFilter = null,
+  onJumpSideFilterConsumed,
   browseVideoPreviews = false
 }: Props) {
   const t = useT()
@@ -205,13 +215,26 @@ export const MissingTab = memo(function MissingTab({
   const [hideMissing, setHideMissing] = useState(initial.hideMissing ?? true)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
   const [sideFilter, setSideFilter] = useState<SideFilter>(() => ({ type: 'all' }))
+
+  useEffect(() => {
+    if (!jumpSideFilter) return
+    setSideFilter(jumpSideFilter)
+    setKindFilter('all')
+    if (jumpSideFilter.type === 'sessionBans') setHideBanned(false)
+    if (jumpSideFilter.type === 'sessionPause') setHidePaused(false)
+    onJumpSideFilterConsumed?.()
+  }, [jumpSideFilter, onJumpSideFilterConsumed])
   /** Stacks with kind + side filters (LoRA ∩ Session pause, etc.). */
   const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(null)
   const [dateAnchor, setDateAnchor] = useState<string | null>(null)
   const [tagSearch, setTagSearch] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>(() => normalizeMissingSort(initial.sortMode))
+  const [sortAscending, setSortAscending] = useState(false)
   const [search, setSearch] = useState(initial.search)
   const [sidebarExpanded, setSidebarExpanded] = useState(initial.sidebarExpanded !== false)
+  const [baseModelFilter, setBaseModelFilter] = useState<string | null>(
+    initial.baseModelFilter ?? null
+  )
   const [busyId, setBusyId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [banSeenByModelId, setBanSeenByModelId] = useState<Record<number, string>>({})
@@ -295,7 +318,8 @@ export const MissingTab = memo(function MissingTab({
       hideMissing,
       sortMode,
       search,
-      sidebarExpanded
+      sidebarExpanded,
+      baseModelFilter
     })
   }, [
     hideBanned,
@@ -307,6 +331,7 @@ export const MissingTab = memo(function MissingTab({
     sortMode,
     search,
     sidebarExpanded,
+    baseModelFilter,
     onViewPrefsChange
   ])
 
@@ -623,6 +648,15 @@ export const MissingTab = memo(function MissingTab({
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }, [items, showForgotten, ownedPrimaryByModel])
 
+  const baseModelOptions = useMemo(() => {
+    return aggregateBaseModelOptions(
+      items
+        .filter((m) => !(m.kind === 'forgotten' && !showForgotten))
+        .map((m) => m.baseModel)
+        .filter(Boolean) as string[]
+    )
+  }, [items, showForgotten])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     let list = items.filter((m) => {
@@ -664,8 +698,12 @@ export const MissingTab = memo(function MissingTab({
       // Model type stacks with any kind / status / date / tag filter.
       if (!matchesModelTypeFilter(m)) return false
 
+      if (baseModelFilter && !baseModelsMatch(m.baseModel || '', baseModelFilter)) {
+        return false
+      }
+
       // Hide banned / paused apply only on the plain All view (no kind/side/type pick).
-      if (kindFilter === 'all' && sideFilter.type === 'all' && !modelTypeFilter) {
+      if (kindFilter === 'all' && sideFilter.type === 'all' && !modelTypeFilter && !baseModelFilter) {
         if (hideBanned && (m.kind === 'bannedManual' || m.kind === 'bannedByTag')) return false
         if (hidePaused && m.kind === 'pausedByTag') return false
       }
@@ -675,7 +713,8 @@ export const MissingTab = memo(function MissingTab({
         m.kind === 'missing' &&
         kindFilter === 'all' &&
         sideFilter.type === 'all' &&
-        !modelTypeFilter
+        !modelTypeFilter &&
+        !baseModelFilter
       ) {
         return false
       }
@@ -735,6 +774,12 @@ export const MissingTab = memo(function MissingTab({
           new Date(b.at).getTime() - new Date(a.at).getTime()
       )
     }
+    if (sortAscending) {
+      // Keep ackRank groups: reverse within the already-sorted list carefully by flipping
+      // only the secondary order — simplest usable approach for Missing.
+      list.reverse()
+      list.sort((a, b) => ackRank(a) - ackRank(b))
+    }
     return list
   }, [
     items,
@@ -746,11 +791,13 @@ export const MissingTab = memo(function MissingTab({
     showForgotten,
     sideFilter,
     modelTypeFilter,
+    baseModelFilter,
     matchesModelTypeFilter,
     isSessionBan,
     isSessionPause,
     search,
     sortMode,
+    sortAscending,
     banSeenByModelId
   ])
 
@@ -772,6 +819,7 @@ export const MissingTab = memo(function MissingTab({
               ? sideFilter.tag
               : '',
         modelTypeFilter ?? '',
+        baseModelFilter ?? '',
         sortMode,
         search.trim().toLowerCase(),
         displayMode,
@@ -786,6 +834,7 @@ export const MissingTab = memo(function MissingTab({
       showForgotten,
       sideFilter,
       modelTypeFilter,
+      baseModelFilter,
       sortMode,
       search,
       displayMode,
@@ -1140,7 +1189,12 @@ export const MissingTab = memo(function MissingTab({
           </div>
         </div>
         <div className="browse-results-controls-box">
-          <label className="library-sort browse-results-sort">
+          <label
+            className="library-sort browse-results-sort"
+            title={
+              sortMode === 'recent' ? t('listSort.recentHintMissing') : undefined
+            }
+          >
             {t('listSort.label')}
             <select
               className={sortMode !== 'recent' ? 'filtered' : undefined}
@@ -1154,6 +1208,15 @@ export const MissingTab = memo(function MissingTab({
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className="btn-sm library-sort-dir"
+              title={t('listSort.sortDirToggle')}
+              aria-label={t('listSort.sortDirToggle')}
+              onClick={() => setSortAscending((v) => !v)}
+            >
+              {sortAscending ? '↑' : '↓'}
+            </button>
           </label>
           {!sidebarExpanded ? (
             <button
@@ -1248,6 +1311,11 @@ export const MissingTab = memo(function MissingTab({
               previewSource,
               versionId > 0 ? previewOverrides[versionId] : undefined
             )
+            const browseCard = versionId > 0 ? browseCards[versionId] : undefined
+            const ratingInfo = describeNsfwRatingForCard(
+              browseCard?.nsfw ?? owned?.isNsfw,
+              browseCard?.nsfwLevel ?? owned?.nsfwLevel
+            )
             return (
               <StatusModelCard
                 key={`${item.kind}:${item.modelId}`}
@@ -1263,6 +1331,16 @@ export const MissingTab = memo(function MissingTab({
                 }
                 onContextMenu={(e) => openContextMenu(e, item)}
                 title={item.modelName}
+                badges={
+                  ratingInfo ? (
+                  <span
+                    className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
+                    title={`Content: ${ratingInfo.label}`}
+                  >
+                    {ratingInfo.label}
+                  </span>
+                  ) : undefined
+                }
                 previewUrl={cardThumb.urls[0]}
                 previewUrls={cardThumb.urls}
                 videoUrl={cardThumb.videoUrl}
@@ -1335,29 +1413,18 @@ export const MissingTab = memo(function MissingTab({
                   </>
                 }
                 meta={
-                  <>
+                  <ModelCardInfo
+                    baseModel={item.baseModel}
+                    modelType={item.modelType}
+                    downloadCount={item.downloadCount}
+                    thumbsUpCount={item.thumbsUpCount}
+                    authorLine={item.author || undefined}
+                    statusChips={
+                      <span className="missing-kind-badge">{kindLabel(item.kind)}</span>
+                    }
+                  >
                     {item.kind === 'missing' ? (
                       <>
-                        <div className="muted status-card-detail">
-                          <span className="missing-kind-badge">{kindLabel(item.kind)}</span>
-                          {item.modelType ? ` · ${item.modelType}` : ''}
-                          {item.baseModel ? ` · ${item.baseModel}` : ''}
-                          {item.author ? ` · ${item.author}` : ''}
-                        </div>
-                        {(item.downloadCount != null || item.thumbsUpCount != null) && (
-                          <div className="model-stats-line muted">
-                            {item.downloadCount != null && (
-                              <span title={t('gallery.statDownloads')}>
-                                ↓ {formatCompactCount(item.downloadCount)}
-                              </span>
-                            )}
-                            {item.thumbsUpCount != null && (
-                              <span title={t('gallery.statThumbsUp')}>
-                                👍 {formatCompactCount(item.thumbsUpCount)}
-                              </span>
-                            )}
-                          </div>
-                        )}
                         <div className="muted status-card-detail">
                           ID #{item.modelId}
                           {item.versionId ? ` · v${item.versionId}` : ''}
@@ -1370,26 +1437,6 @@ export const MissingTab = memo(function MissingTab({
                       </>
                     ) : (
                       <>
-                        <div className="muted status-card-detail">
-                          <span className="missing-kind-badge">{kindLabel(item.kind)}</span>
-                          {item.modelType ? ` · ${item.modelType}` : ''}
-                          {item.baseModel ? ` · ${item.baseModel}` : ''}
-                          {item.author ? ` · ${item.author}` : ''}
-                        </div>
-                        {(item.downloadCount != null || item.thumbsUpCount != null) && (
-                          <div className="model-stats-line muted">
-                            {item.downloadCount != null && (
-                              <span title={t('gallery.statDownloads')}>
-                                ↓ {formatCompactCount(item.downloadCount)}
-                              </span>
-                            )}
-                            {item.thumbsUpCount != null && (
-                              <span title={t('gallery.statThumbsUp')}>
-                                👍 {formatCompactCount(item.thumbsUpCount)}
-                              </span>
-                            )}
-                          </div>
-                        )}
                         <div className="muted status-card-detail">
                           {t('missingTab.whenLine', { when: formatWhen(item.at) })}
                         </div>
@@ -1429,7 +1476,7 @@ export const MissingTab = memo(function MissingTab({
                         ) : null}
                       </>
                     )}
-                  </>
+                  </ModelCardInfo>
                 }
                 actions={
                   <>
@@ -1648,6 +1695,29 @@ export const MissingTab = memo(function MissingTab({
                     type="button"
                     className={`sidebar-tag ${modelTypeFilterActive(name) ? 'active' : ''}`}
                     onClick={() => applyModelTypeFilter(name)}
+                  >
+                    <span className="tag-name">{name}</span>
+                    <span className="muted tag-count-inline">{count}</span>
+                  </button>
+                ))}
+              </>
+            ) : null}
+
+            {baseModelOptions.length > 0 ? (
+              <>
+                <h4 className="sidebar-section-title">{t('gallery.baseModels')}</h4>
+                {baseModelOptions.slice(0, 40).map(({ name, count }) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`sidebar-tag ${
+                      baseModelFilter && baseModelsMatch(baseModelFilter, name) ? 'active' : ''
+                    }`}
+                    onClick={() =>
+                      setBaseModelFilter((prev) =>
+                        prev && baseModelsMatch(prev, name) ? null : baseModelLabel(name)
+                      )
+                    }
                   >
                     <span className="tag-name">{name}</span>
                     <span className="muted tag-count-inline">{count}</span>

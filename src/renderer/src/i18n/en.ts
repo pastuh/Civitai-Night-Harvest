@@ -17,9 +17,15 @@ export const en = {
   listSort: {
     label: 'Sort',
     recent: 'Recent',
-    recentLibrary: 'Download order',
-    recentBrowse: 'Crawl order',
-    recentDeferred: 'Added',
+    recentLibrary: 'Recent (downloaded)',
+    recentBrowse: 'Recent (crawl)',
+    recentDeferred: 'Recent (added)',
+    recentHintLibrary: 'By download time into your library (newest first by default)',
+    recentHintBrowse: 'By harvest / crawl order (newest first by default)',
+    recentHintMissing: 'By last seen / ban time (newest first by default)',
+    sortAsc: 'Oldest first',
+    sortDesc: 'Newest first',
+    sortDirToggle: 'Reverse sort order',
     name: 'Name',
     downloads: 'Downloads',
     likes: 'Likes',
@@ -330,7 +336,7 @@ export const en = {
     compactEmpty: 'None — pause a tag below or via Tags',
     compactHint: 'Paused tags skip auto-download until removed. Permanent bans live on Missing.',
     blockPlaceholder: 'Pause tag…',
-    blockPlaceholderShort: 'Tag…',
+    blockPlaceholderShort: 'Pause tag…',
     blockBtn: 'Pause'
   },
   help: {
@@ -379,7 +385,9 @@ export const en = {
     browseTags:
       'Tags popover — filter the grid · ⏸ pause tag (temporary Browse exclude) · permanent bans are managed in Tag Folders (purple chips)',
     browsePausedBanned:
-      '**Paused** bar — temporary exclude. **Banned** bar — permanent ban-by-tag (read-only here; Ban / Unban in Tag Folders). Amber = pause · purple = permanent on cards',
+      '**Paused** / **Banned** bars — add tags here (search + Ban / Pause). Click the label to jump to Missing → Session pause / Session bans. Amber = pause · purple = permanent on cards',
+    browseSearchHidden:
+      'Browse / Library search still finds models even when Hide excluded, blocked tags, or similar hide filters are on — so you can review and act on them',
     browseManualQueue:
       'Manual — crawl/scan and Auto pipeline do not add models; only your card clicks enter the queue (unlimited). Checkpoints always need a click even when Auto is on.',
     browseSettled:
@@ -388,7 +396,7 @@ export const en = {
     browseContextSkipTag:
       'Right-click a model → pause a tag (temporary). Permanent ban-by-tag: Tag Folders **Ban** column',
     libraryFolders:
-      'Tag Folders — map Civitai tags to `\\*\\name` under each base model (or a custom path) for **LoRA**. Checkpoints ignore Tag Folders tags and stay in `{checkpoint}/{baseModel}/` unless you use **Custom folder assignments** / manual Assign. Check tags to route LoRA downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `\\*\\Unsorted` (LoRA).',
+      'Tag Folders — map Civitai tags to `*\\name` under each base model (or a custom path) for **LoRA**. Checkpoints ignore Tag Folders tags and stay in `{checkpoint}/{baseModel}/` unless you use **Custom folder assignments** / manual Assign. Check tags to route LoRA downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `*\\Unsorted` (LoRA).',
     libraryCustomAssignments:
       '**Custom folder assignments** (Tag Folders) — personal tag + folder for local-only models (optional type/base). For Checkpoints this is the only way to put files outside `{checkpoint}/{baseModel}/`. After Save, that folder and its subfolders import into Library. Civitai LoRA downloads with the same tag name still use the normal app tag folder — not your custom path. These locals skip Civitai preview/update checks.',
     libraryPriority:
@@ -413,7 +421,7 @@ export const en = {
     libraryTags:
       'Right-click a card → **Assign model to tag**. Click a card tag opens Tag folders (or Fast tag popup when enabled). Green / mapped chips = folder rules.',
     libraryFastTag:
-      '**Fast tag** — assign the clicked tag as this model’s folder route without leaving Library (Path `\\*\\name`; change the name e.g. glass plug → plug). Suggestions group Folders / Assigned / Library tags.',
+      '**Fast tag** — assign the clicked tag as this model’s folder route without leaving Library (Path `*\\name`; change the name e.g. glass plug → plug). Suggestions group Folders / Assigned / Library tags.',
     libraryExcluded:
       '**Excluded** + **Ignore excluded** with **Hide folder-assigned** — keep models whose routing tag is in Excluded (e.g. concept). **All assigned** hides mapped tags on cards (dashed placeholder remains).',
     libraryManual:
@@ -572,6 +580,9 @@ export const en = {
     showAwaitingConfirm: 'Show updates',
     showAwaitingConfirmTitle:
       'Show newer versions of models you already own (same as Updates tab — confirm there first)',
+    showSkipped: 'Show skipped',
+    showSkippedTitle:
+      'Show Updates versions you skipped (per version). Hidden by default — Unskip on Updates to queue again',
     banModeOff: 'Ban Off',
     banModeOn: 'Ban On',
     banModeTitle: 'Red × next to the title excludes the model (Browse, Library, and download strip)',
@@ -641,8 +652,13 @@ export const en = {
     tagUnblockedMsg: 'Unpaused “{tag}” — auto-download allowed again',
     tagsUnblockedVisible: '{count} model(s) visible again after unpausing: {tags}',
     bannedTagsLabel: 'Banned',
-    bannedTagsEmpty: 'None — manage permanent bans in Tag folders',
-    bannedTagsHint: 'Permanent ban-by-tag (read-only here). Ban / unban in Tag folders.',
+    bannedTagsEmpty: 'None — type a tag to ban-by-tag',
+    bannedTagsHint: 'Permanent ban-by-tag — models with these tags skip auto-download',
+    bannedTagsJumpHint: 'Open Missing → Session bans to review models banned this session',
+    bannedTagsPlaceholder: 'Ban tag…',
+    bannedTagsAdd: 'Ban',
+    bannedTagRemoveHint: 'Remove ban for “{tag}”',
+    pausedTagsJumpHint: 'Open Missing → Session pause to review models paused this session',
     bannedTagUnbanHint: 'Unban permanent tag “{tag}”',
     tagUnbannedMsg: 'Unbanned “{tag}” — permanent ban removed',
     tagFilterCleared: 'Tag filter cleared',
@@ -905,9 +921,9 @@ export const en = {
     emptyAfterBan: 'Banned entries removed.',
     dismissHint: 'Hide this offer only (keeps your library files).',
     skip: 'Skip',
-    skipHint: 'Skip this version only (keeps your library). It stays skipped across rescans until you Unskip.',
+    skipHint: 'Skip this version only (keeps your library). Hidden from Browse and never auto-queued until you Unskip this version.',
     unskip: 'Unskip',
-    unskipHint: 'Return this version to the Updates list',
+    unskipHint: 'Return this version only to the Updates list (does not unskip other versions)',
     showSkipped: 'Show skipped',
     showSkippedTitle: 'Show versions you previously skipped on this page',
     skippedBadge: 'Skipped',
@@ -923,7 +939,7 @@ export const en = {
     alwaysUpdateOn: 'Always on',
     alwaysUpdateOnHint:
       'Auto-update is on for this model — click to turn off. Future versions will stop auto-queuing.',
-    alwaysUpdateBadge: 'Always update',
+    alwaysUpdateBadge: 'Up',
     queuedReady: 'In queue',
     queuedPaused: 'In queue · paused',
     downloadingNow: 'Downloading…',
@@ -983,6 +999,11 @@ export const en = {
     triggerWords: 'Trigger words',
     triggerWordsNote: 'Prompt activation words from the model — not folder tags.',
     folderRoute: 'Folder',
+    showTagRoutesOff: 'Routes',
+    showTagRoutesOn: 'Routes on',
+    showTagRoutesTitle:
+      'Show folder destinations next to each mapped tag (tag → folder). Off by default',
+    filePaths: 'File paths',
     fromSwarm: 'from swarm.json',
     swarmMeta: 'SwarmUI metadata',
     swarmMetaDisk: 'from .swarm.json on disk',
@@ -1035,10 +1056,18 @@ export const en = {
     previewOf: '{current} / {total}',
     previewTabImages: 'Images',
     previewTabVideos: 'Videos',
+    previewTabAll: 'All',
     noVersionVideos: 'No videos found for this version on Civitai.',
+    noAllPreviews: 'No preview images available.',
     openTagFoldersHint: 'Open Tag folders — find or assign “{tag}”',
     fastTagHint: 'Fast tag — assign folder for “{tag}”',
     tags: 'Tags',
+    assignModelToTag: 'Assign model to tag',
+    assignModelToTagHint: 'Add a tag and move this library version into its folder route',
+    assignModelToTagPlaceholder: 'Tag name…',
+    assignModelToTagBusy: 'Assigning…',
+    assignModelToTagDone: 'Assigned to “{tag}”',
+    assignModelToTagNeedOwned: 'Only owned library versions can be assigned to a tag folder',
     tagLegend:
       'Borders: solid accent = final route · dashed accent = mapped folder rule · dotted gray = not assigned',
     savePreview: 'Save preview',
@@ -1167,6 +1196,9 @@ export const en = {
     },
     hideFolderAssigned: 'Hide folder-assigned',
     hideFolderAssignedTitle: 'Hide models already moved to a tag folder',
+    hideFullyTagged: 'Hide tagged',
+    hideFullyTaggedTitle:
+      'Hide models whose every Civitai tag already has a folder rule — focus on tags still needing assignment',
     manualFolder: 'Manual',
     manualFolderHint:
       'Manual folder assign — auto tag moves / priority will not re-route this model. Folder: {folder}',
@@ -1276,6 +1308,7 @@ export const en = {
     allModels: 'All models',
     filterLora: 'LoRA',
     filterCheckpoint: 'Checkpoint',
+    modelTypes: 'Model types',
     untaggedFolder: 'Untagged folder',
     unrecognized: 'Unrecognized',
     unrecognizedHint: 'Custom / local file without Civitai identity (no .swarm.json or unmatched hash)',
@@ -1285,7 +1318,10 @@ export const en = {
     alwaysUpdateFilter: 'Always update',
     alwaysUpdateFilterHint:
       'Owned versions whose model has Always update on — right-click a card to turn it off',
-    alwaysUpdateBadge: 'Always update',
+    unavailableFilter: 'Unavailable on Civitai',
+    unavailableFilterHint:
+      'Library files whose Civitai mode is Taken down or Archived (from last known metadata — no extra API scan)',
+    alwaysUpdateBadge: 'Up',
     alwaysUpdateBadgeHint: 'Future versions of this model auto-queue',
     turnOffAlwaysUpdate: 'Turn off Always update',
     alwaysUpdateTurnedOff: 'Always update off: {name}',
@@ -1500,6 +1536,9 @@ export const en = {
     openTagFoldersHint: 'Open Tag folders — assign folder for “{tag}” before download',
     sidebarTitle: 'Filters',
     filterFavorites: 'Favorites',
+    unlockCalendar: 'Unlock dates',
+    unlockCalendarHint: 'Days with models that unlock for free. Click a day to filter.',
+    unlockCalendarRangeHint: 'Click a marked day to show models unlocking then. Click again to clear.',
     sessionBannedBadge: 'Banned this session',
     policyTagsHint: 'Models whose tags match pause / ban-by-tag policy.'
   },
@@ -1511,6 +1550,9 @@ export const en = {
     recheck: 'Recheck API',
     download: 'Download → queue',
     downloadWithUrl: 'Use link → queue',
+    pasteUrl: 'Paste URL…',
+    pasteUrlHint:
+      'Civitai /models/{id} sometimes returns no versions. Paste the download link from the site (…/api/download/models/VERSION_ID).',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
     banHint: 'Exclude this model permanently — it will not return to Incomplete or auto-download',
@@ -1520,7 +1562,11 @@ export const en = {
     waiting: 'Tracked {duration}',
     versionName: ' · {name}',
     badgeWaiting: 'Waiting for version data',
-    badgeReady: 'Version resolved'
+    badgeReady: 'Version resolved',
+    sidebarTitle: 'Filter',
+    filterWaiting: 'Waiting',
+    filterReady: 'Ready',
+    emptyFiltered: 'No incomplete models match these filters.'
   },
   missingTab: {
     title: 'Missing',

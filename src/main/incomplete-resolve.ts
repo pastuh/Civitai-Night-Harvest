@@ -278,9 +278,22 @@ export async function recheckIncompleteModels(
   for (const item of due.slice(0, INCOMPLETE_CHECK_BATCH)) {
     checked++
     try {
-      const client = pool.forDomain(item.sourceDomain === 'red' ? 'red' : 'com')
+      const domain = item.sourceDomain === 'red' ? 'red' : 'com'
+      const client = pool.forDomain(domain)
       const model = await client.getModel(item.modelId)
-      const version = model.modelVersions?.[0]
+      let version = model.modelVersions?.[0]
+      if (!version?.id) {
+        // /models/{id} sometimes returns empty modelVersions[] while the site still has a
+        // published version — recover via HTML scrape or leave for paste-URL download.
+        const scraped = await scrapeVersionIdFromModelPage(domain, item.modelId)
+        if (scraped) {
+          try {
+            version = await client.getModelVersion(scraped)
+          } catch {
+            version = undefined
+          }
+        }
+      }
       if (version?.id) {
         const previewUrl = pickPreviewImage(version.images) ?? item.previewUrl
         inventory.updateIncompleteModelResolved(item.modelId, {
@@ -295,7 +308,8 @@ export async function recheckIncompleteModels(
       } else {
         inventory.updateIncompleteModelResolved(item.modelId, {
           lastCheckedAt: new Date().toISOString(),
-          lastError: null
+          lastError:
+            'API returned no versions — use Download and paste the Civitai download URL if needed'
         })
       }
     } catch (err) {

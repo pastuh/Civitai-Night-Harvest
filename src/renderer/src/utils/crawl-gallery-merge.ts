@@ -12,6 +12,14 @@ export function applyCrawlPageToLiveGallery(
 ): WatchRuleTestResult {
   const mode = payload.galleryMode ?? 'full'
   if (mode !== 'delta' || !prev?.sampleModels?.length) {
+    // Ban-only delta must not wipe / replace an empty live gallery with stub cards.
+    if (
+      mode === 'delta' &&
+      payload.result.sampleModels.length > 0 &&
+      payload.result.sampleModels.every((m) => m.isBanned)
+    ) {
+      return prev ?? payload.result
+    }
     return payload.result
   }
 
@@ -33,6 +41,8 @@ export function applyCrawlPageToLiveGallery(
   for (const m of payload.result.sampleModels) {
     const key = browseModelDedupeKey(m)
     if (seen.has(key)) continue
+    // Ban stubs from main must not insert a new card — causes Hide excluded blink.
+    if (m.isBanned) continue
     ordered.push(byKey.get(key)!)
     seen.add(key)
   }

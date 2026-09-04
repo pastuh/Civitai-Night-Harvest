@@ -84,6 +84,18 @@ describe('detectVideoModalities', () => {
     assert.equal(badges.find((b) => b.id === 't2v')?.source, 'description')
   })
 
+  it('detects I2V from base model when version name is clean', () => {
+    const badges = detectVideoModalities({
+      modelName: 'Cool motion LoRA',
+      versionName: 'v1.0 High',
+      baseModel: 'Wan Video 2.2 I2V-A14B'
+    })
+    assert.deepEqual(
+      badges.map((b) => ({ label: b.label, source: b.source })),
+      [{ label: 'I2V', source: 'name' }]
+    )
+  })
+
   it('returns empty when nothing matches', () => {
     assert.deepEqual(detectVideoModalities({ versionName: 'mini2video pack' }), [])
   })

@@ -11,6 +11,7 @@ import { expandCivitaiTagNames } from '../shared/tag-routing'
 import { trainedWordsFromSwarm } from './library-hash-verify'
 import * as inventory from './inventory'
 import { clearMissingModel, noteMissingModel404 } from './missing-models'
+import { scrapeVersionIdFromModelPage } from './incomplete-resolve'
 import {
   buildSwarmMetaPreview,
   hasHardcodedLoraStrengthHint,
@@ -65,11 +66,13 @@ function buildDetailFromModel(
     const vStats = pickVersionStats(v)
     const previewUrls = collectPreviewCandidates(v.images)
     const videoPreviewUrls = collectVideoPreviewCandidates(v.images)
-    const versionDescription = htmlToPlain(v.description || '')
+    const versionHtml = (v.description || '').trim()
+    const versionDescription = htmlToPlain(versionHtml)
     return {
       id: v.id,
       name: v.name,
       versionDescription: versionDescription || undefined,
+      versionDescriptionHtml: versionHtml || undefined,
       baseModel: v.baseModel,
       createdAt: v.createdAt,
       publishedAt: v.publishedAt ?? null,
@@ -84,7 +87,8 @@ function buildDetailFromModel(
     }
   })
 
-  const modelDescription = htmlToPlain(model.description || '')
+  const modelHtml = (model.description || '').trim()
+  const modelDescription = htmlToPlain(modelHtml)
 
   return {
     modelId: model.id,
@@ -92,6 +96,7 @@ function buildDetailFromModel(
     name: model.name,
     versionName: version.name,
     modelDescription: modelDescription || undefined,
+    modelDescriptionHtml: modelHtml || undefined,
     type: model.type,
     baseModel: version.baseModel,
     baseModelType: version.baseModelType,
@@ -111,6 +116,48 @@ function buildDetailFromModel(
   }
 }
 
+/**
+ * Some NSFW / freshly published models return 200 from /models/{id} with an empty
+ * modelVersions[] — the version still exists via /model-versions/{id} or the HTML page.
+ */
+async function attachVersionIfMissing(
+  pool: CivitaiClientPool,
+  domain: CivitaiDomain,
+  model: CivitaiModel,
+  versionId: number
+): Promise<{ model: CivitaiModel; versionId: number } | null> {
+  if (model.modelVersions?.length) {
+    const picked =
+      (versionId > 0
+        ? model.modelVersions.find((v) => v.id === versionId)
+        : undefined) ?? model.modelVersions[0]
+    return { model, versionId: picked.id }
+  }
+
+  const client = pool.forDomain(domain)
+  const pace = { pace: 'interactive' as const }
+  let vid = versionId > 0 ? versionId : 0
+  if (!vid) {
+    vid = (await scrapeVersionIdFromModelPage(domain, model.id)) ?? 0
+  }
+  if (!vid) return null
+
+  try {
+    const version = await client.getModelVersion(vid, pace)
+    return {
+      model: {
+        ...model,
+        name: model.name || version.name,
+        type: model.type || 'LORA',
+        modelVersions: [version]
+      },
+      versionId: version.id
+    }
+  } catch {
+    return null
+  }
+}
+
 /** Load model on one host; on model 404, try version id then re-fetch model. */
 async function loadModelOnDomain(
   pool: CivitaiClientPool,
@@ -122,9 +169,34 @@ async function loadModelOnDomain(
   const pace = { pace: 'interactive' as const }
   try {
     const model = await client.getModel(modelId, pace)
-    return { model, versionId }
+    const attached = await attachVersionIfMissing(pool, domain, model, versionId)
+    if (attached) return attached
+    // Model listing exists but no version could be resolved yet — not a 404.
+    return { model, versionId: versionId > 0 ? versionId : 0 }
   } catch (err) {
     if (!isNotFoundError(err)) throw err
+  }
+
+  if (!(versionId > 0)) {
+    const scraped = await scrapeVersionIdFromModelPage(domain, modelId)
+    if (scraped) {
+      try {
+        const version = await client.getModelVersion(scraped, pace)
+        return {
+          model: {
+            id: modelId,
+            name: version.name,
+            type: 'LORA',
+            tags: [],
+            modelVersions: [version]
+          },
+          versionId: version.id
+        }
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err
+      }
+    }
+    return null
   }
 
   try {
@@ -132,7 +204,12 @@ async function loadModelOnDomain(
     const mid = version.modelId && version.modelId > 0 ? version.modelId : modelId
     try {
       const model = await client.getModel(mid, pace)
-      return { model, versionId: version.id }
+      const attached = await attachVersionIfMissing(pool, domain, model, version.id)
+      if (attached) return attached
+      return {
+        model: { ...model, modelVersions: model.modelVersions?.length ? model.modelVersions : [version] },
+        versionId: version.id
+      }
     } catch (err) {
       if (!isNotFoundError(err)) throw err
       // Version exists but parent model listing is gone — still show this version.
@@ -300,14 +377,23 @@ export async function fetchCivitaiModelDetail(
 
   const domains: CivitaiDomain[] = [domain, otherDomain(domain)]
   let lastError: unknown
+  let sawModelWithoutVersions = false
 
   for (const d of domains) {
     try {
       const loaded = await loadModelOnDomain(pool, d, modelId, versionId)
-      if (loaded) {
-        clearMissingModel(getWindow ?? null, loaded.model.id)
-        return buildDetailFromModel(pool, loaded.model, loaded.versionId, d, swarmPath)
+      if (!loaded) continue
+      if (!loaded.model.modelVersions?.length || !(loaded.versionId > 0)) {
+        // /models/{id} can return 200 with empty modelVersions[] (common for some NSFW /
+        // freshly published rows). That is Incomplete territory — not a Missing 404.
+        sawModelWithoutVersions = true
+        lastError = new Error(
+          `Model ${modelId} exists on ${d} but the API returned no versions yet`
+        )
+        continue
       }
+      clearMissingModel(getWindow ?? null, loaded.model.id)
+      return buildDetailFromModel(pool, loaded.model, loaded.versionId, d, swarmPath)
     } catch (err) {
       lastError = err
       // Transient / auth errors: still try the other host before giving up.
@@ -315,32 +401,39 @@ export async function fetchCivitaiModelDetail(
     }
   }
 
-  const errMsg =
-    lastError instanceof Error
-      ? lastError.message
-      : `Civitai API 404: No model with id ${modelId}`
   const owned = inventory.getVersionsForModel(modelId)[0]
   const deferred =
     (versionId > 0 ? inventory.getDeferredDownload(versionId) : null) ||
     (owned?.versionId ? inventory.getDeferredDownload(owned.versionId) : null)
-  noteMissingModel404(getWindow ?? null, {
-    modelId,
-    versionId: owned?.versionId || versionId,
-    modelName: hint?.modelName || owned?.modelName,
-    modelType: owned?.modelType || hint?.modelType,
-    author: owned?.author || hint?.author,
-    baseModel: owned?.baseModel || hint?.baseModel,
-    previewUrl: owned?.previewPath || hint?.previewUrl,
-    sourceDomain: owned?.civitaiDomain || domain,
-    error: errMsg,
-    fromEarlyAccess: deferred?.failureKind === 'early_access'
-  })
+
+  if (!sawModelWithoutVersions) {
+    const errMsg =
+      lastError instanceof Error
+        ? lastError.message
+        : `Civitai API 404: No model with id ${modelId}`
+    noteMissingModel404(getWindow ?? null, {
+      modelId,
+      versionId: owned?.versionId || versionId,
+      modelName: hint?.modelName || owned?.modelName,
+      modelType: owned?.modelType || hint?.modelType,
+      author: owned?.author || hint?.author,
+      baseModel: owned?.baseModel || hint?.baseModel,
+      previewUrl: owned?.previewPath || hint?.previewUrl,
+      sourceDomain: owned?.civitaiDomain || domain,
+      error: errMsg,
+      fromEarlyAccess: deferred?.failureKind === 'early_access'
+    })
+  }
 
   const offline = offlineDetailFromSwarm(modelId, versionId, domain, swarmPath, hint)
   if (offline) return offline
 
   if (lastError instanceof Error) throw lastError
-  throw new Error(`Civitai API 404: No model with id ${modelId}`)
+  throw new Error(
+    sawModelWithoutVersions
+      ? `Model ${modelId} exists but Civitai API returned no versions. Open Incomplete and paste the download URL, or Retry later.`
+      : `Civitai API 404: No model with id ${modelId}`
+  )
 }
 
 export async function refreshCivitaiMe(

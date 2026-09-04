@@ -22,7 +22,7 @@ import {
   parseRuleFilterTags,
   isDisplayablePreviewUrl
 } from '../../../shared/utils'
-import { describeNsfwRating, nsfwRatingCardClass } from '../../../shared/nsfw-rating'
+import { describeNsfwRatingForCard, nsfwRatingCardClass } from '../../../shared/nsfw-rating'
 import {
   countModelsByRatingFilter,
   matchesRatingFilter,
@@ -30,7 +30,14 @@ import {
   RATING_FILTER_OPTIONS,
   type RatingFilter
 } from '../../../shared/rating-filter'
-import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown, modelModeLabel } from '../../../shared/civitai-meta'
+import {
+  formatCompactCount,
+  civitaiModeBadgeLabel,
+  checkpointTypeLabel,
+  isModelTakenDown,
+  modelModeLabel
+} from '../../../shared/civitai-meta'
+import { baseModelLabel } from '../../../shared/base-model-label'
 import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag, expandCivitaiTagNames, parseTagRuleNames } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
@@ -86,13 +93,15 @@ function modelFromQueueItem(item: DownloadQueueItem, ownedVersionIds: Set<number
     id: item.modelId,
     versionId: item.versionId,
     name: item.modelName,
+    versionName: item.versionName,
     type: item.modelType,
-    baseModel: '',
+    baseModel: item.baseModel ?? '',
     previewUrl: item.previewUrl,
     previewUrls: item.previewUrl ? [item.previewUrl] : [],
     tags: item.civitaiTags ?? [],
     nsfw: item.nsfw,
     nsfwLevel: item.nsfwLevel,
+    creator: item.author,
     inInventory: ownedVersionIds.has(item.versionId),
     isBanned: false
   }
@@ -199,8 +208,10 @@ interface Props {
   onViewPrefsChange?: (prefs: BrowseViewPrefs) => void
   /** Session Yield — models that entered download pipeline (only grows). */
   sessionYieldCount?: number
-  /** Pending Updates version IDs the user skipped — exclude from Browse Updates count. */
+  /** Pending Updates version IDs the user skipped — exclude from Browse unless Show skipped. */
   skippedPendingVersionIds?: Set<number>
+  /** Forgotten Updates version IDs — always hidden on Browse. */
+  forgottenPendingVersionIds?: Set<number>
   /** Active Updates offers — Browse hides these unless Show updates is on. */
   pendingUpdateVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause scroll observers so inactive tabs do not expand mid-scroll. */
@@ -270,6 +281,7 @@ export function SearchBrowsePanel({
   onViewPrefsChange,
   sessionYieldCount = 0,
   skippedPendingVersionIds,
+  forgottenPendingVersionIds,
   pendingUpdateVersionIds,
   isActive = true,
   browseVideoPreviews = false
@@ -334,6 +346,7 @@ export function SearchBrowsePanel({
   const [hideAwaitingAccess, setHideAwaitingAccess] = useState(browseInitial.hideAwaitingAccess)
   /** Default off — hide owned-model newer versions awaiting New Versions confirm. */
   const [showAwaitingConfirm, setShowAwaitingConfirm] = useState(browseInitial.showAwaitingConfirm)
+  const [showSkipped, setShowSkipped] = useState(browseInitial.showSkipped === true)
   const [routingTag, setRoutingTag] = useState('')
   const [queuingId, setQueuingId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -358,6 +371,7 @@ export function SearchBrowsePanel({
   const [browseSort, setBrowseSort] = useState<BrowseSort>(() =>
     normalizeBrowseSort(browseInitial.browseSort)
   )
+  const [sortAscending, setSortAscending] = useState(false)
   const tagsPopoverRef = useRef<HTMLDivElement>(null)
   const tagCatalogRef = useRef<Map<number, WatchRuleTestModel>>(new Map())
   const [tagCatalogTick, setTagCatalogTick] = useState(0)
@@ -381,6 +395,7 @@ export function SearchBrowsePanel({
       hideBanned,
       hideAwaitingAccess,
       showAwaitingConfirm,
+      showSkipped,
       showBlockedModels,
       browseSort,
       ratingFilter,
@@ -392,6 +407,7 @@ export function SearchBrowsePanel({
     hideBanned,
     hideAwaitingAccess,
     showAwaitingConfirm,
+    showSkipped,
     showBlockedModels,
     browseSort,
     ratingFilter,
@@ -903,15 +919,21 @@ export function SearchBrowsePanel({
     return ids
   }, [ownedModelIdsFromInventory, ruleScopedModels, ownedVersionIds])
 
+  const isSkippedPendingModel = useCallback(
+    (m: WatchRuleTestModel) =>
+      m.versionId > 0 && Boolean(skippedPendingVersionIds?.has(m.versionId)),
+    [skippedPendingVersionIds]
+  )
+
   const isAwaitingConfirmModel = useCallback(
     (m: WatchRuleTestModel) =>
       !m.inInventory &&
       !ownedVersionIds.has(m.versionId) &&
       !isBanned(m) &&
-      !(m.versionId > 0 && skippedPendingVersionIds?.has(m.versionId)) &&
+      !isSkippedPendingModel(m) &&
       (ownedModelIds.has(m.id) ||
         (m.versionId > 0 && Boolean(pendingUpdateVersionIds?.has(m.versionId)))),
-    [ownedModelIds, ownedVersionIds, isBanned, skippedPendingVersionIds, pendingUpdateVersionIds]
+    [ownedModelIds, ownedVersionIds, isBanned, isSkippedPendingModel, pendingUpdateVersionIds]
   )
 
   const browseRatingCounts = useMemo(
@@ -977,25 +999,42 @@ export function SearchBrowsePanel({
     const searchActive = deferredSearchQuery.trim().length > 0
     for (const m of ruleScopedModels) {
       const idHit = isExactBrowseIdHit(m, deferredSearchQuery)
-      if (!idHit && !matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) {
+      if (
+        !idHit &&
+        !searchActive &&
+        !matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)
+      ) {
         continue
       }
 
       // Hide early access models even when queued — user explicitly wants them hidden.
-      if (!idHit && hideAwaitingAccess && m.isEarlyAccess) continue
+      // Search / exact ID lookup bypasses hide filters so you can still find the card.
+      if (!idHit && !searchActive && hideAwaitingAccess && m.isEarlyAccess) continue
 
       if (searchActive && !modelMatchesBrowseSearch(m, deferredSearchQuery)) continue
 
       const inActiveQueue =
-        m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)
+        (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
+        (m.id > 0 && queueActiveForFilter.byModel.has(m.id))
 
       // Updates of owned models stay on the Updates tab unless “Show updates” is on —
       // including when already queued (queue accent must not bypass this gate).
-      if (!idHit && !showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
+      if (!idHit && !searchActive && !showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
 
-      // Exact id search keeps the card visible. Active queue only keeps THAT version visible —
-      // do not bypass Hide owned via another version of the same modelId.
-      if (!idHit && !inActiveQueue) {
+      // Skipped Updates versions stay hidden unless “Show skipped” is on (per versionId).
+      if (!idHit && !searchActive && !showSkipped && isSkippedPendingModel(m)) continue
+      // Forgotten Updates versions never appear on Browse (search can still surface them).
+      if (
+        !idHit &&
+        !searchActive &&
+        m.versionId > 0 &&
+        forgottenPendingVersionIds?.has(m.versionId)
+      ) {
+        continue
+      }
+
+      // Exact id / text search keeps the card visible past Hide excluded / blocked / owned.
+      if (!idHit && !searchActive && !inActiveQueue) {
         if (forgottenModelIds?.has(m.id)) continue
         if (hideBanned && m.isBanned) continue
         if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) continue
@@ -1007,9 +1046,14 @@ export function SearchBrowsePanel({
         }
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
-      } else if (!idHit && inActiveQueue) {
+      } else if (!idHit && !searchActive && inActiveQueue) {
+        // Queued: still hide excluded (ban) so Ban × does not blink back via queue bypass.
+        if (hideBanned && m.isBanned) continue
         // Queued version: still honor Hide owned for already-downloaded files.
         if (onlyMissing && m.inInventory) continue
+      } else if (!idHit && searchActive) {
+        // Searching: still allow tag filter if set; never hide banned/blocked/updates.
+        if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
       }
 
       const key = browseModelDedupeKey(m)
@@ -1026,7 +1070,10 @@ export function SearchBrowsePanel({
     hideAwaitingAccess,
     awaitingAccessVersionIds,
     showAwaitingConfirm,
+    showSkipped,
     isAwaitingConfirmModel,
+    isSkippedPendingModel,
+    forgottenPendingVersionIds,
     hiddenTags,
     bannedTags,
     forgottenModelIds,
@@ -1037,46 +1084,47 @@ export function SearchBrowsePanel({
   ])
 
   const displayModels = useMemo(() => {
-    const orderIndex = new Map<string, number>()
-    filtered.forEach((m, i) => orderIndex.set(browseModelDedupeKey(m), i))
-
     const orphanOrder = new Map<string, number>()
     let list: WatchRuleTestModel[]
 
-    if (result.crawlSource) {
-      list = filtered
-    } else {
-      const seen = new Set(filtered.map((m) => browseModelDedupeKey(m)))
-      const orphanSeen = new Set<string>()
-      const orphans = queue
-        .filter((i) => isOrphanQueueStatus(i.status))
-        .filter((i) => !ownedVersionIds.has(i.versionId))
-        .filter((i) => !awaitingAccessVersionIds.has(i.versionId))
-        .filter((i) =>
-          matchesRatingFilter({ nsfw: i.nsfw, nsfwLevel: i.nsfwLevel }, ratingFilter)
-        )
-        .filter((i) => {
-          const key = i.versionId > 0 ? `v:${i.versionId}` : `m:${i.modelId}`
-          if (orphanSeen.has(key) || seen.has(key)) return false
-          orphanSeen.add(key)
-          return true
-        })
-        .map((i) => {
-          const synthetic = modelFromQueueItem(i, ownedVersionIds)
-          return { ...synthetic, isBanned: isBanned(synthetic) }
-        })
+    const searchActive = deferredSearchQuery.trim().length > 0
+    const seen = new Set(filtered.map((m) => browseModelDedupeKey(m)))
+    const orphanSeen = new Set<string>()
+    // Always surface active queue items (incl. crawl gallery) so search can find queued models
+    // that left the sample list or were never mounted as cards.
+    const orphans = queue
+      .filter((i) => isOrphanQueueStatus(i.status))
+      .filter((i) => !ownedVersionIds.has(i.versionId))
+      .filter((i) => !awaitingAccessVersionIds.has(i.versionId))
+      .filter((i) =>
+        searchActive ||
+        matchesRatingFilter({ nsfw: i.nsfw, nsfwLevel: i.nsfwLevel }, ratingFilter)
+      )
+      .filter((i) => {
+        const key = i.versionId > 0 ? `v:${i.versionId}` : `m:${i.modelId}`
+        if (orphanSeen.has(key) || seen.has(key)) return false
+        orphanSeen.add(key)
+        return true
+      })
+      .map((i) => {
+        const synthetic = modelFromQueueItem(i, ownedVersionIds)
+        return { ...synthetic, isBanned: isBanned(synthetic) }
+      })
+      .filter((m) => !searchActive || modelMatchesBrowseSearch(m, deferredSearchQuery))
 
-      orphans.forEach((m, i) => orphanOrder.set(browseModelDedupeKey(m), i))
+    orphans.forEach((m, i) => orphanOrder.set(browseModelDedupeKey(m), i))
 
-      const merged = [...filtered, ...orphans]
-      const byKey = new Map<string, WatchRuleTestModel>()
-      for (const m of merged) {
-        const key = browseModelDedupeKey(m)
-        const existing = byKey.get(key)
-        byKey.set(key, existing ? preferBrowseModel(existing, m) : m)
-      }
-      list = [...byKey.values()]
+    const merged = [...filtered, ...orphans]
+    const byKey = new Map<string, WatchRuleTestModel>()
+    for (const m of merged) {
+      const key = browseModelDedupeKey(m)
+      const existing = byKey.get(key)
+      byKey.set(key, existing ? preferBrowseModel(existing, m) : m)
     }
+    list = [...byKey.values()]
+
+    const orderIndex = new Map<string, number>()
+    filtered.forEach((m, i) => orderIndex.set(browseModelDedupeKey(m), i))
 
     const sorted = [...list]
     switch (browseSort) {
@@ -1147,7 +1195,7 @@ export function SearchBrowsePanel({
           return (orphanOrder.get(ka) ?? 0) - (orphanOrder.get(kb) ?? 0)
         })
     }
-    const searchActive = searchQuery.trim().length > 0
+    if (sortAscending) sorted.reverse()
     if (browseSettledToEnd && !searchActive) {
       const withIdx = sorted.map((m, i) => ({ m, i }))
       withIdx.sort((a, b) => {
@@ -1161,7 +1209,7 @@ export function SearchBrowsePanel({
     return sorted
   }, [
     filtered,
-    result.crawlSource,
+    sortAscending,
     ownedVersionIds,
     awaitingAccessVersionIds,
     isBanned,
@@ -1170,7 +1218,9 @@ export function SearchBrowsePanel({
     routingTag,
     browseSettledToEnd,
     searchQuery,
+    deferredSearchQuery,
     ratingFilter,
+    queue,
     queueActiveMembershipKey
   ])
 
@@ -2144,25 +2194,6 @@ export function SearchBrowsePanel({
             ) : null}
             <div className="browse-results-filters-box">
             <div className="browse-results-filters-row">
-              <select
-                className={`browse-content-filter${ratingFilter !== 'all' ? ' filtered' : ''}`}
-                value={ratingFilter}
-                onChange={(e) => onRatingFilterChange(e.target.value as RatingFilter)}
-                title={t('browse.contentFilterTitle')}
-              >
-                {RATING_FILTER_OPTIONS.map((opt) => (
-                  <option
-                    key={opt}
-                    value={opt}
-                    disabled={
-                      opt !== 'all' && opt !== ratingFilter && browseRatingCounts[opt] === 0
-                    }
-                  >
-                    {t(`gallery.ratingFilter.${opt}`)}
-                    {opt !== 'all' ? ` (${browseRatingCounts[opt]})` : ''}
-                  </option>
-                ))}
-              </select>
               <label className="checkbox-field" title={t('browse.hideOwnedTitle')}>
                 <input
                   type="checkbox"
@@ -2195,6 +2226,14 @@ export function SearchBrowsePanel({
                 />
                 {t('browse.showAwaitingConfirm')}
               </label>
+              <label className="checkbox-field" title={t('browse.showSkippedTitle')}>
+                <input
+                  type="checkbox"
+                  checked={showSkipped}
+                  onChange={(e) => setShowSkipped(e.target.checked)}
+                />
+                {t('browse.showSkipped')}
+              </label>
               {hiddenTags.length > 0 && (
                 <label className="checkbox-field" title={t('browse.showBlockedTitle')}>
                   <input
@@ -2219,7 +2258,31 @@ export function SearchBrowsePanel({
             </div>
             </div>
             <div className="browse-results-controls-box">
-              <label className="library-sort browse-results-sort">
+              <select
+                className={`browse-content-filter${ratingFilter !== 'all' ? ' filtered' : ''}`}
+                value={ratingFilter}
+                onChange={(e) => onRatingFilterChange(e.target.value as RatingFilter)}
+                title={t('browse.contentFilterTitle')}
+              >
+                {RATING_FILTER_OPTIONS.map((opt) => (
+                  <option
+                    key={opt}
+                    value={opt}
+                    disabled={
+                      opt !== 'all' && opt !== ratingFilter && browseRatingCounts[opt] === 0
+                    }
+                  >
+                    {t(`gallery.ratingFilter.${opt}`)}
+                    {opt !== 'all' ? ` (${browseRatingCounts[opt]})` : ''}
+                  </option>
+                ))}
+              </select>
+              <label
+                className="library-sort browse-results-sort"
+                title={
+                  browseSort === 'recent' ? t('listSort.recentHintBrowse') : undefined
+                }
+              >
                 {t('listSort.label')}
                 <select
                   value={browseSort}
@@ -2235,6 +2298,15 @@ export function SearchBrowsePanel({
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  className="btn-sm library-sort-dir"
+                  title={t('listSort.sortDirToggle')}
+                  aria-label={t('listSort.sortDirToggle')}
+                  onClick={() => setSortAscending((v) => !v)}
+                >
+                  {sortAscending ? '↑' : '↓'}
+                </button>
               </label>
               <div className="tags-popover-wrap" ref={tagsPopoverRef}>
                 <div className="tags-popover-toggle-row">
@@ -2754,6 +2826,7 @@ export function SearchBrowsePanel({
             resolvePreviewUrls={resolvePreviewUrls}
             onPreviewBroken={markPreviewBroken}
             isAwaitingConfirmModel={isAwaitingConfirmModel}
+            isSkippedPendingModel={isSkippedPendingModel}
             ownedModelIds={ownedModelIds}
           />
 
@@ -3191,6 +3264,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   resolvePreviewUrls,
   onPreviewBroken,
   isAwaitingConfirmModel,
+  isSkippedPendingModel,
   ownedModelIds
 }: {
   units: QualityTierGridUnit<WatchRuleTestModel>[]
@@ -3223,6 +3297,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   resolvePreviewUrls: (model: WatchRuleTestModel) => string[]
   onPreviewBroken: (versionId: number) => void
   isAwaitingConfirmModel?: (model: WatchRuleTestModel) => boolean
+  isSkippedPendingModel?: (model: WatchRuleTestModel) => boolean
   ownedModelIds?: Set<number>
 }) {
   const searchActive = searchQuery.trim().length > 0
@@ -3262,10 +3337,12 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             : undefined
         const awaitingAccess = m.versionId > 0 && awaitingAccessVersionIds.has(m.versionId)
         const awaitingConfirm = Boolean(isAwaitingConfirmModel?.(m))
+        const updateSkipped = Boolean(isSkippedPendingModel?.(m))
         const packExtraFile =
           Boolean(m.packSibling) &&
           !m.inInventory &&
           !awaitingConfirm &&
+          !updateSkipped &&
           Boolean(ownedModelIds?.has(m.id))
         return (
           <ModelCard
@@ -3277,6 +3354,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             queuePaused={queuePaused}
             awaitingAccess={awaitingAccess}
             awaitingConfirm={awaitingConfirm}
+            updateSkipped={updateSkipped}
             packExtraFile={packExtraFile}
             waitAccessVersionIds={waitAccessVersionIds}
             queuing={queuingId === m.versionId}
@@ -3316,6 +3394,7 @@ const ModelCard = memo(function ModelCard({
   queuePaused = false,
   awaitingAccess = false,
   awaitingConfirm = false,
+  updateSkipped = false,
   packExtraFile = false,
   waitAccessVersionIds,
   queuing,
@@ -3349,6 +3428,8 @@ const ModelCard = memo(function ModelCard({
   awaitingAccess?: boolean
   /** Unowned version of a model you already own (incl. pack siblings) — confirm on Updates. */
   awaitingConfirm?: boolean
+  /** Updates version the user skipped (per versionId). */
+  updateSkipped?: boolean
   /** Extra pack file when you do not own this model yet (Browse multi-card packs). */
   packExtraFile?: boolean
   waitAccessVersionIds?: Set<number>
@@ -3418,6 +3499,8 @@ const ModelCard = memo(function ModelCard({
     checkpointFolder
   )
   const folderLine = folderLineIfNotDuplicatingTag(folderLabel, cardTags)
+  const baseModelDisplay = model.baseModel?.trim() ? baseModelLabel(model.baseModel) : ''
+  const checkpointType = checkpointTypeLabel(model.baseModelType)
 
   let badge = ''
   let badgeClass = ''
@@ -3444,6 +3527,9 @@ const ModelCard = memo(function ModelCard({
   } else if (model.inInventory) {
     badge = 'Owned'
     badgeClass = 'badge-owned'
+  } else if (updateSkipped) {
+    badge = t('pending.skippedBadge')
+    badgeClass = 'badge-skipped'
   } else if (awaitingConfirm) {
     badge = 'Update'
     badgeClass = 'badge-update'
@@ -3497,11 +3583,12 @@ const ModelCard = memo(function ModelCard({
     badgeClass === 'badge-soon' ||
     badgeClass === 'badge-skipped'
 
-  const rating = describeNsfwRating(model.nsfw, model.nsfwLevel)
-  const ratingClass = showRating ? nsfwRatingCardClass(rating.tier) : ''
+  const rating = describeNsfwRatingForCard(model.nsfw, model.nsfwLevel)
+  const ratingClass = rating ? nsfwRatingCardClass(rating.tier) : ''
 
   let cardState = 'new'
   if (model.inInventory) cardState = 'owned'
+  else if (updateSkipped) cardState = 'skipped'
   else if (awaitingConfirm) cardState = 'awaiting-confirm'
   else if (isEarlyAccessCard || isDeferred) cardState = 'deferred'
   else if (isDownloading) cardState = 'downloading'
@@ -3560,11 +3647,14 @@ const ModelCard = memo(function ModelCard({
       }}
       title={statusHint}
     >
-      {showRating && (
-        <span className={`nsfw-rating-badge tier-${rating.tier}`} title={`Content: ${rating.label}`}>
+      {rating ? (
+        <span
+          className={`nsfw-rating-badge tier-${rating.tier}`}
+          title={`Content: ${rating.label}`}
+        >
           {rating.label}
         </span>
-      )}
+      ) : null}
       {civitaiModeBadgeLabel(model.civitaiMode) && (
         <span
           className={`civitai-mode-badge ${isModelTakenDown(model.civitaiMode) ? 'taken-down' : 'archived'}`}
@@ -3705,28 +3795,41 @@ const ModelCard = memo(function ModelCard({
             source={{
               modelName: model.name,
               versionName: model.versionName,
+              baseModel: model.baseModel,
               modelDescription: model.modelDescription,
               versionDescription: model.versionDescription
             }}
             title={model.versionName}
           />
         ) : null}
-        <div className="muted">
-          {model.type} · {model.baseModel}
-          {model.baseModelType && (
-            <span className="checkpoint-badge" title="Checkpoint type">
-              {model.baseModelType}
-            </span>
-          )}
-          {showRating ? '' : model.nsfw ? ' · NSFW' : ''}
-        </div>
+        {baseModelDisplay || checkpointType ? (
+          <div className="library-base-model-line">
+            {baseModelDisplay ? <span>{baseModelDisplay}</span> : null}
+            {checkpointType ? (
+              <span className="checkpoint-badge" title={t('gallery.checkpointType')}>
+                {checkpointType}
+              </span>
+            ) : null}
+            {model.type?.trim() ? (
+              <span className="model-card-type-chip">{model.type}</span>
+            ) : null}
+          </div>
+        ) : model.type?.trim() ? (
+          <div className="library-base-model-line">
+            <span className="model-card-type-chip">{model.type}</span>
+          </div>
+        ) : null}
         {(model.downloadCount != null || model.thumbsUpCount != null) && (
           <div className="model-stats-line muted">
             {model.downloadCount != null && (
-              <span title="Downloads">↓ {formatCompactCount(model.downloadCount)}</span>
+              <span title={t('gallery.statDownloads')}>
+                ↓ {formatCompactCount(model.downloadCount)}
+              </span>
             )}
             {model.thumbsUpCount != null && (
-              <span title="Thumbs up">👍 {formatCompactCount(model.thumbsUpCount)}</span>
+              <span title={t('gallery.statThumbsUp')}>
+                👍 {formatCompactCount(model.thumbsUpCount)}
+              </span>
             )}
           </div>
         )}

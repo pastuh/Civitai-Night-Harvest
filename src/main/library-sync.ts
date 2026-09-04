@@ -813,6 +813,7 @@ function enrichInventoryFileMeta(): number {
           buildModalityText({
             modelName: record.modelName,
             versionName: record.versionName,
+            baseModel: record.baseModel,
             extraDescription: swarmDescription
           })
         )
@@ -827,6 +828,7 @@ function enrichInventoryFileMeta(): number {
             buildModalityText({
               modelName: record.modelName,
               versionName: record.versionName,
+              baseModel: record.baseModel,
               extraDescription: desc.trim()
             })
           )

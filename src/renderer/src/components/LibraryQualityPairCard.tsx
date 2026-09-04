@@ -3,7 +3,8 @@ import type { InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown } from '../../../shared/civitai-meta'
 import { formatAuthorWithWeight, getModelPageUrl } from '../../../shared/utils'
 import type { CivitaiDomain } from '../../../shared/types'
-import { describeNsfwRating } from '../../../shared/nsfw-rating'
+import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
+import { baseModelLabel } from '../../../shared/base-model-label'
 import { useT } from '../i18n/context'
 import {
   folderLabelForRecord,
@@ -20,7 +21,6 @@ import { SplitPairThumbnail } from './SplitPairThumbnail'
 import {
   libraryCardPreviewSource,
   resolveModelCardThumb,
-  videoPreviewAvailabilityFor,
   type ModelCardPreviewOverride
 } from '../utils/model-card-preview'
 
@@ -54,6 +54,8 @@ export type LibraryQualityPairCardProps = {
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
   onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
+  /** Click base-model chip to filter Library by that base model. */
+  onBaseModelClick?: (baseModel: string) => void
   eaFavorited?: boolean
   onToggleEaFavorite?: (modelId: number) => void
   previewCacheBust?: Record<number, number>
@@ -87,6 +89,7 @@ function LibraryQualityPairCardInner({
   onOpenContextMenu,
   onOpenDetails,
   onCivitaiTagClick,
+  onBaseModelClick,
   eaFavorited = false,
   onToggleEaFavorite,
   previewCacheBust,
@@ -123,12 +126,13 @@ function LibraryQualityPairCardInner({
   const highThumb = resolveModelCardThumb(highSource, highPreviewOverride)
   const lowThumb = resolveModelCardThumb(lowSource, lowPreviewOverride)
   const metaExtra = inventoryMetaExtra(high) || inventoryMetaExtra(low)
-  const ratingInfo =
-    high.isNsfw != null || high.nsfwLevel
-      ? describeNsfwRating(high.isNsfw, high.nsfwLevel)
-      : low.isNsfw != null || low.nsfwLevel
-        ? describeNsfwRating(low.isNsfw, low.nsfwLevel)
-        : null
+  const ratingInfo = describeNsfwRatingForCard(
+    high.isNsfw ?? low.isNsfw,
+    high.nsfwLevel ?? low.nsfwLevel
+  )
+  const baseModelDisplay = (high.baseModel || low.baseModel)?.trim()
+    ? baseModelLabel(high.baseModel || low.baseModel || '')
+    : ''
   const folderLabel = folderLabelForRecord(record, tagRules, loraFolder, checkpointFolder, {
     showCustomSubfolders
   })
@@ -176,11 +180,6 @@ function LibraryQualityPairCardInner({
         onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
     >
-      {alwaysUpdate ? (
-        <span className="library-always-update-badge" title={t('gallery.alwaysUpdateBadgeHint')}>
-          {t('gallery.alwaysUpdateBadge')}
-        </span>
-      ) : null}
       {ratingInfo ? (
         <span
           className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
@@ -204,6 +203,11 @@ function LibraryQualityPairCardInner({
         </span>
       )}
       <div className="gallery-thumb-wrap quality-tier-pair-thumb-wrap" aria-hidden="true">
+        {alwaysUpdate ? (
+          <span className="library-always-update-badge" title={t('gallery.alwaysUpdateBadgeHint')}>
+            {t('gallery.alwaysUpdateBadge')}
+          </span>
+        ) : null}
         <span className="quality-tier-pair-badge" title={t('qualityTierPair.pairHint')}>
           {t('qualityTierPair.pairBadge')}
         </span>
@@ -211,7 +215,6 @@ function LibraryQualityPairCardInner({
           high={{ urls: highThumb.urls, videoUrl: highThumb.videoUrl, label: 'H' }}
           low={{ urls: lowThumb.urls, videoUrl: lowThumb.videoUrl, label: 'L' }}
           browseVideoPreviews={browseVideoPreviews}
-          videoAvailability={videoPreviewAvailabilityFor(highSource, highPreviewOverride)}
         />
       </div>
       <div className="gallery-card-body">
@@ -282,11 +285,30 @@ function LibraryQualityPairCardInner({
           source={{
             modelName: record.modelName,
             versionName: versionLabel,
+            baseModel: high.baseModel || low.baseModel || record.baseModel,
             modalityText: high.modalityText || low.modalityText
           }}
           title={versionLabel}
         />
-        {!hideBaseModelOnCards && <div className="muted library-base-model-line">{record.baseModel}</div>}
+        {!hideBaseModelOnCards && baseModelDisplay && (
+          <div className="library-base-model-line">
+            {onBaseModelClick ? (
+              <button
+                type="button"
+                className="base-model-filter-chip"
+                title={baseModelDisplay}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onBaseModelClick(baseModelDisplay)
+                }}
+              >
+                {baseModelDisplay}
+              </button>
+            ) : (
+              <span>{baseModelDisplay}</span>
+            )}
+          </div>
+        )}
         {(record.downloadCount != null || record.thumbsUpCount != null) && (
           <div className="model-stats-line muted">
             {record.downloadCount != null && (

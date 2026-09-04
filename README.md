@@ -14,13 +14,13 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Harvest** — walks your Browse rules through the Civitai catalog, then peeks for newest models; queues and downloads in the background
 - **Browse rules** — search filters (model type, base model, keywords, sort, SFW/NSFW, creator)
 - **👁 Quiet gallery** — hide Browse cards while harvest runs; downloads continue. **Show Browse snapshot** brings cards back
-- **Browse results** — search, filters, sort, tags; progress stats: Loaded, Owned, Yield, Updates, Awaiting, Banned
+- **Browse results** — search, filters, sort, tags; progress stats: Loaded, Owned, Yield, Updates, Awaiting, Banned. **Paused** / **Banned** bars support ban-by-tag; click a label to open Missing session filters. Search still finds models hidden by exclude/block filters
 - **Model details** — full page with main description, scrollable version list (filter, H/L pair badges), download, and preview save
 - **Auto / Manual / Pause** — auto-queue from harvest (**LoRA only**), click-to-queue, or pause downloads. **Checkpoints are never auto-queued**; enabling a Checkpoint Browse rule turns **Pause** on
 - **Library** — local inventory; **LoRA / Checkpoint** type filter; Excluded tags, Fast tag, All assigned; session and date filters; tab **+N** for new downloads
 - **Tag Folders** — map Civitai tags to `\*\name` folders (**LoRA**); **Mass** assign; per-tag **Priority**; **Ban** column for permanent ban-by-tag; **Custom folder assignments** for your own local-only folders (also the only Checkpoint folder override); unmatched LoRA downloads go to `\*\Unsorted`
 - **Missing** — 404 reviews, paused/banned-by-tag skips, manual bans; **Mark seen** / **Hide seen** / **Unseen bans** filter; per-model **Allow**; **Forget** (hide everywhere); right-click context menu; click a policy tag to filter that skip list
-- **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL
+- **Incomplete** — Civitai models with empty version data; recheck API or paste a download URL; sidebar filters by status, type, and base model
 - **Updates** — other versions of models you already own (newer release or another file on the same page / pack): Download / Always update / Skip / Mark seen / Forget / Ban; Missing-like sidebar; **Show skipped** / **Show forgotten**; Settings **Show temporary** keeps handled cards dimmed in place until you leave the tab
 - **Download strip** — progress, priority, retries; shows **version name**; Early access when a model is gated
 - **Video workflow badges** — colored squares on the version-name row (I2V, T2V, FL2V, R2V) when detected in the model/version title or description (WAN, MiniMax H3, etc.); outlined when found only in description

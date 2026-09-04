@@ -5,6 +5,8 @@ export type VideoModalityBadgeSource = 'name' | 'description'
 export type VideoModalitySource = {
   modelName?: string
   versionName?: string
+  /** Often carries I2V/T2V (e.g. Wan Video 2.2 I2V-A14B) when version name does not. */
+  baseModel?: string
   modelDescription?: string
   versionDescription?: string
   /** Library: pre-joined name + description blob from disk. */
@@ -105,7 +107,7 @@ function scanTextForIds(text: string): Set<VideoModalityId> {
 }
 
 function nameTierText(source: VideoModalitySource): string {
-  return [source.versionName, source.modelName].filter(Boolean).join('\n')
+  return [source.versionName, source.modelName, source.baseModel].filter(Boolean).join('\n')
 }
 
 function descriptionTierText(source: VideoModalitySource): string {
@@ -145,6 +147,7 @@ export const VIDEO_MODALITY_COLORS: Record<VideoModalityId, string> = {
 export function buildModalityText(parts: {
   modelName?: string
   versionName?: string
+  baseModel?: string
   modelDescription?: string
   versionDescription?: string
   extraDescription?: string
@@ -152,6 +155,7 @@ export function buildModalityText(parts: {
   return [
     parts.modelName,
     parts.versionName,
+    parts.baseModel,
     parts.modelDescription,
     parts.versionDescription,
     parts.extraDescription

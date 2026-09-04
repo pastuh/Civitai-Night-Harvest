@@ -134,6 +134,7 @@ function BrowseQualityPairCardInner({
             source={{
               modelName: model.name,
               versionName: versionLabel,
+              baseModel: model.baseModel || high.baseModel || low.baseModel,
               modelDescription: model.modelDescription,
               versionDescription: model.versionDescription
             }}

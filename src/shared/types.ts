@@ -1215,6 +1215,8 @@ export interface CivitaiModelDetailVersion {
   name: string
   /** Civitai "About this version" text (plain). */
   versionDescription?: string
+  /** Raw HTML from Civitai version description (sanitize before render). */
+  versionDescriptionHtml?: string
   baseModel: string
   createdAt?: string
   /** When this version became public (Civitai publishedAt) — used by Browse published sort. */
@@ -1228,6 +1230,8 @@ export interface CivitaiModelDetailVersion {
   videoPreviewUrls?: string[]
   availability?: string
   earlyAccessEndsAt?: string | null
+  nsfw?: boolean
+  nsfwLevel?: number
 }
 
 export interface CivitaiModelDetail {
@@ -1237,6 +1241,8 @@ export interface CivitaiModelDetail {
   versionName: string
   /** Civitai model page "Description" text (plain). */
   modelDescription?: string
+  /** Raw HTML from Civitai model description (sanitize before render). */
+  modelDescriptionHtml?: string
   type: string
   baseModel: string
   baseModelType?: string
@@ -1255,6 +1261,7 @@ export interface CivitaiModelDetail {
   trainedWordsSource?: 'swarm' | 'api'
   pageUrl: string
   nsfw?: boolean
+  nsfwLevel?: number
   sourceDomain: CivitaiDomain
   /** All Civitai versions for this model (newest first). */
   versions: CivitaiModelDetailVersion[]

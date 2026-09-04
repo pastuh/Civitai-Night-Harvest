@@ -397,7 +397,8 @@ function DownloadQueueRichCard({
             name={item.versionName}
             source={{
               modelName: item.modelName,
-              versionName: item.versionName
+              versionName: item.versionName,
+              baseModel: item.baseModel
             }}
             title={item.versionName}
           />

@@ -19,12 +19,12 @@ export type PendingSort = 'recent' | 'name' | 'downloads' | 'likes'
 export type DeferredSort = 'unlock' | 'recent' | 'name' | 'folder'
 
 export const LIBRARY_SORT_OPTIONS: LibrarySort[] = [
+  'recent',
   'tagGroup',
   'folder',
   'downloads',
   'likes',
-  'name',
-  'recent'
+  'name'
 ]
 
 export const BROWSE_SORT_OPTIONS: BrowseSort[] = [
@@ -49,7 +49,7 @@ export const PENDING_SORT_OPTIONS: PendingSort[] = ['recent', 'downloads', 'like
 export const DEFERRED_SORT_OPTIONS: DeferredSort[] = ['unlock', 'recent', 'name', 'folder']
 
 /** Map legacy prefs (`default`) and unknown values onto a page sort key. */
-export function normalizeLibrarySort(raw: unknown, fallback: LibrarySort = 'tagGroup'): LibrarySort {
+export function normalizeLibrarySort(raw: unknown, fallback: LibrarySort = 'recent'): LibrarySort {
   if (raw === 'default') return 'recent'
   if (typeof raw === 'string' && (LIBRARY_SORT_OPTIONS as string[]).includes(raw)) {
     return raw as LibrarySort

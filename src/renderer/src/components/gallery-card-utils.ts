@@ -4,6 +4,7 @@ import { tagsEqual } from '../../../shared/tag-fuzzy'
 import {
   customAssignmentLabelForRecord,
   displayFolderForTag,
+  expandCivitaiTagNames,
   findCustomAssignmentForFolder,
   findRuleForTag,
   isCustomTagFolderRule,
@@ -41,6 +42,43 @@ export function cardTagFolderRoleClass(role: CardTagFolderRole): string {
   if (role === 'final') return 'tag-role-final'
   if (role === 'mapped') return 'tag-role-mapped'
   return 'tag-role-unmapped'
+}
+
+/** True when the model has tags and every tag already has a Tag Folders rule (mapped/final). */
+export function recordTagsFullyAssigned(
+  record: Pick<InventoryRecord, 'civitaiTags' | 'routingTag'>,
+  tagRules: TagFolderRule[],
+  folderLabel?: string | null
+): boolean {
+  const tags = expandCivitaiTagNames(record.civitaiTags)
+  if (!tags.length) return false
+  return tags.every(
+    (tag) =>
+      cardTagFolderRole(tag, {
+        routingTag: record.routingTag,
+        folderLabel,
+        tagRules
+      }) !== 'unmapped'
+  )
+}
+
+/** Short folder destination label for a mapped Civitai tag (e.g. `locations` or `\*\locations`). */
+export function tagFolderRouteLabel(
+  tag: string,
+  tagRules: TagFolderRule[],
+  loraFolder: string,
+  checkpointFolder: string
+): string | null {
+  const rule = findRuleForTag(tag, tagRules)
+  if (!rule) return null
+  const display = displayFolderForTag(tag, tagRules, loraFolder, checkpointFolder)
+  if (display?.trim()) {
+    const parts = display.replace(/\//g, '\\').split('\\').map((p) => p.trim()).filter(Boolean)
+    const last = parts[parts.length - 1]
+    if (last && last !== '*') return last
+    return display
+  }
+  return subfolderNameForRule(rule, tag) || null
 }
 
 /** True when this tag chip is the card's primary folder (solid colored border). */

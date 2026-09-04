@@ -958,6 +958,11 @@ export function queueEligibleTestModels(
       skipped.owned++
       continue
     }
+    // User skipped this exact version on Updates — never auto-queue until Unskip.
+    if (inventory.isPendingVersionSkipped(m.versionId)) {
+      skipped.needsConfirm++
+      continue
+    }
     // Owned model, newer version card — New Versions confirm / Always update / Settings auto-NV.
     if (inventory.getVersionsForModel(m.id).length > 0) {
       const autoNv =

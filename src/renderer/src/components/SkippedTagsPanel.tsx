@@ -25,6 +25,10 @@ interface Props {
   onChange: (tags: string[]) => Promise<void>
   compact?: boolean
   labels?: SkippedTagsLabels
+  /** Visual style for compact Browse bars. */
+  variant?: 'paused' | 'banned'
+  /** Click the Paused / Banned label (e.g. jump to Missing session filter). */
+  onLabelClick?: () => void
 }
 
 export function SkippedTagsPanel({
@@ -32,7 +36,9 @@ export function SkippedTagsPanel({
   tagSuggestions = [],
   onChange,
   compact = false,
-  labels
+  labels,
+  variant = 'paused',
+  onLabelClick
 }: Props) {
   const t = useT()
   const [draft, setDraft] = useState('')
@@ -63,16 +69,33 @@ export function SkippedTagsPanel({
     }
   }
 
+  const chipClass =
+    variant === 'banned' ? 'tag-chip is-blocked-tag' : 'tag-chip hidden-tag-chip'
+  const barClass =
+    variant === 'banned'
+      ? 'browse-filters-bar browse-banned-tags-bar'
+      : 'browse-filters-bar browse-blocked-tags-bar browse-paused-tags-bar'
+
   if (compact) {
+    const labelText = labels?.compactLabel ?? t('skippedTags.compactLabel')
+    const labelHint = labels?.compactHint ?? t('skippedTags.compactHint')
     return (
-      <div className="browse-filters-bar browse-blocked-tags-bar">
+      <div className={barClass}>
         <div className="browse-filters-bar-lead browse-blocked-tags-lead">
-          <span
-            className="browse-blocked-tags-label"
-            title={labels?.compactHint ?? t('skippedTags.compactHint')}
-          >
-            {labels?.compactLabel ?? t('skippedTags.compactLabel')}
-          </span>
+          {onLabelClick ? (
+            <button
+              type="button"
+              className="browse-blocked-tags-label browse-blocked-tags-label-btn"
+              title={labelHint}
+              onClick={onLabelClick}
+            >
+              {labelText}
+            </button>
+          ) : (
+            <span className="browse-blocked-tags-label" title={labelHint}>
+              {labelText}
+            </span>
+          )}
           {hiddenTags.length === 0 ? (
             <span className="muted browse-blocked-tags-empty">
               {labels?.compactEmpty ?? t('skippedTags.compactEmpty')}
@@ -83,8 +106,13 @@ export function SkippedTagsPanel({
                 <button
                   key={tag}
                   type="button"
-                  className="tag-chip hidden-tag-chip"
+                  className={chipClass}
                   disabled={busy}
+                  title={
+                    variant === 'banned'
+                      ? t('browse.bannedTagRemoveHint', { tag })
+                      : t('browse.tagUnblockTitle')
+                  }
                   onClick={() => void removeTag(tag)}
                 >
                   {tag} ×
@@ -125,7 +153,7 @@ export function SkippedTagsPanel({
             <button
               key={tag}
               type="button"
-              className="tag-chip hidden-tag-chip"
+              className={chipClass}
               disabled={busy}
               onClick={() => void removeTag(tag)}
             >

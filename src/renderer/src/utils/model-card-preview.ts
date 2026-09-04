@@ -258,12 +258,24 @@ export function exclusionCardPreviewSource(
   const owned = options?.owned
   const browseCard = options?.browseCard
   const versionId = item.versionId ?? owned?.versionId ?? 0
+  const browseHttp = [browseCard?.previewUrl, ...(browseCard?.previewUrls ?? [])]
+    .map((u) => u?.trim())
+    .find((u) => u && /^https?:\/\//i.test(u))
+  const itemUrl = item.previewUrl?.trim()
+  const itemLooksNonHttp =
+    Boolean(itemUrl) &&
+    !/^https?:\/\//i.test(itemUrl!) &&
+    !/^media:\/\//i.test(itemUrl!) &&
+    !/^data:/i.test(itemUrl!)
+  // Prefer live HTTP browse URLs over dead local paths stored on exclusion stubs.
   const previewUrl = coalesceDisplayPreview(
-    item.previewUrl,
-    browseCard?.previewUrl,
-    browseCard?.previewUrls?.[0],
     options?.localPreviewPath,
-    owned?.previewPath
+    owned?.previewPath,
+    itemLooksNonHttp ? browseHttp : itemUrl,
+    browseHttp,
+    itemUrl,
+    browseCard?.previewUrl,
+    browseCard?.previewUrls?.[0]
   )
   return withDefaultPreviewDomain({
     modelId: item.modelId,

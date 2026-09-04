@@ -1,9 +1,10 @@
 import { memo, type MouseEvent } from 'react'
 import type { InventoryRecord, TagFolderRule } from '../../../shared/types'
-import { formatCompactCount, civitaiModeBadgeLabel, isModelTakenDown } from '../../../shared/civitai-meta'
+import { formatCompactCount, civitaiModeBadgeLabel, checkpointTypeLabel, isModelTakenDown } from '../../../shared/civitai-meta'
 import { formatAuthorWithWeight, formatWaitDuration, getModelPageUrl } from '../../../shared/utils'
 import type { CivitaiDomain } from '../../../shared/types'
-import { describeNsfwRating } from '../../../shared/nsfw-rating'
+import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
+import { baseModelLabel } from '../../../shared/base-model-label'
 import { useT } from '../i18n/context'
 import {
   folderLabelForRecord,
@@ -53,6 +54,8 @@ export type LibraryModelCardProps = {
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
   onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
+  /** Click base-model chip to filter Library by that base model. */
+  onBaseModelClick?: (baseModel: string) => void
   /** Early-access favorite — pin at top of Library until cleared. */
   eaFavorited?: boolean
   onToggleEaFavorite?: (modelId: number) => void
@@ -86,6 +89,7 @@ function LibraryModelCardInner({
   onOpenContextMenu,
   onOpenDetails,
   onCivitaiTagClick,
+  onBaseModelClick,
   eaFavorited = false,
   onToggleEaFavorite,
   previewCacheBust,
@@ -104,10 +108,9 @@ function LibraryModelCardInner({
   const cardThumb = resolveModelCardThumb(previewSource, previewOverride)
   const videoAvailability = videoPreviewAvailabilityFor(previewSource, previewOverride)
   const metaExtra = inventoryMetaExtra(record)
-  const ratingInfo =
-    record.isNsfw != null || record.nsfwLevel
-      ? describeNsfwRating(record.isNsfw, record.nsfwLevel)
-      : null
+  const ratingInfo = describeNsfwRatingForCard(record.isNsfw, record.nsfwLevel)
+  const baseModelDisplay = record.baseModel?.trim() ? baseModelLabel(record.baseModel) : ''
+  const checkpointType = checkpointTypeLabel(record.checkpointType)
   const folderLabel = folderLabelForRecord(record, tagRules, loraFolder, checkpointFolder, {
     showCustomSubfolders
   })
@@ -161,11 +164,6 @@ function LibraryModelCardInner({
           {t('gallery.unrecognized')}
         </span>
       ) : null}
-      {alwaysUpdate ? (
-        <span className="library-always-update-badge" title={t('gallery.alwaysUpdateBadgeHint')}>
-          {t('gallery.alwaysUpdateBadge')}
-        </span>
-      ) : null}
       {duplicateOfName ? (
         <span
           className="library-duplicate-badge"
@@ -197,6 +195,11 @@ function LibraryModelCardInner({
         </span>
       )}
       <div className="gallery-thumb-wrap" aria-hidden="true">
+        {alwaysUpdate ? (
+          <span className="library-always-update-badge" title={t('gallery.alwaysUpdateBadgeHint')}>
+            {t('gallery.alwaysUpdateBadge')}
+          </span>
+        ) : null}
         <PreviewThumb
           urls={cardThumb.urls}
           videoUrl={cardThumb.videoUrl}
@@ -273,16 +276,31 @@ function LibraryModelCardInner({
           source={{
             modelName: record.modelName,
             versionName: record.versionName,
+            baseModel: record.baseModel,
             modalityText: record.modalityText
           }}
           title={record.versionName}
         />
-        {!hideBaseModelOnCards && (
-          <div className="muted library-base-model-line">
-            {record.baseModel}
-            {record.checkpointType && (
+        {!hideBaseModelOnCards && baseModelDisplay && (
+          <div className="library-base-model-line">
+            {onBaseModelClick ? (
+              <button
+                type="button"
+                className="base-model-filter-chip"
+                title={baseModelDisplay}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onBaseModelClick(baseModelDisplay)
+                }}
+              >
+                {baseModelDisplay}
+              </button>
+            ) : (
+              <span>{baseModelDisplay}</span>
+            )}
+            {checkpointType && (
               <span className="checkpoint-badge" title={t('gallery.checkpointType')}>
-                {record.checkpointType}
+                {checkpointType}
               </span>
             )}
           </div>

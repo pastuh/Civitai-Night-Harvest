@@ -99,13 +99,11 @@ export function StatusModelCard({
         {statusFoot ? <div className="card-status-foot">{statusFoot}</div> : null}
       </div>
       <div className="gallery-card-body">
-        <div className="gallery-card-title-row status-model-card-title-row">
-          <strong className="status-model-card-title" title={title}>
-            {title}
-          </strong>
+        <div className="gallery-card-title-row">
+          <strong title={title}>{title}</strong>
           {titleActions && (
             <div
-              className="status-model-card-title-actions"
+              className="gallery-card-title-actions"
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => e.stopPropagation()}
             >
@@ -113,7 +111,7 @@ export function StatusModelCard({
             </div>
           )}
         </div>
-        {meta && <div className="muted status-model-card-meta">{meta}</div>}
+        {meta && <div className="status-model-card-meta">{meta}</div>}
         {details}
         {actions ? (
           <div className="row status-model-card-actions" onClick={(e) => e.stopPropagation()}>

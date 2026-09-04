@@ -12,7 +12,10 @@ type Props = {
   daysWithSecondaryCounts?: Map<string, number>
   onPickDay: (day: string) => void
   /** Optional override for the footer hint. */
-  rangeHintKey?: 'gallery.calendarRangeHint' | 'missingTab.calendarRangeHint'
+  rangeHintKey?:
+    | 'gallery.calendarRangeHint'
+    | 'missingTab.calendarRangeHint'
+    | 'deferredTab.unlockCalendarRangeHint'
 }
 
 function parseDay(day: string): { y: number; m: number; d: number } | null {

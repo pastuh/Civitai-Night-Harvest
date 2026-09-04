@@ -200,7 +200,7 @@ export async function recognizeLocalModels(
 
         if (modelId > 0 && inventory.isModelBanned(modelId)) {
           try {
-            deleteVersionFromLibrary(record.versionId)
+            await deleteVersionFromLibrary(record.versionId)
           } catch {
             inventory.removeVersion(record.versionId)
           }

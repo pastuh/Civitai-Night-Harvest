@@ -10,6 +10,7 @@ import type {
 import { MAX_MISSING_CONFIRM_HITS } from '../../../shared/types'
 import {
   formatCompactCount,
+  checkpointTypeLabel,
   isModelArchived,
   isModelTakenDown,
   modelModeLabel
@@ -24,7 +25,8 @@ import { FastTagAssignModal } from './FastTagAssignModal'
 import {
   cardTagFolderRole,
   cardTagFolderRoleClass,
-  shortCardFolderLabel
+  shortCardFolderLabel,
+  tagFolderRouteLabel
 } from './gallery-card-utils'
 import { useT } from '../i18n/context'
 import { VersionNameRow } from './VersionNameRow'
@@ -34,6 +36,8 @@ import {
 } from '../../../shared/quality-tier-pair'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
 import { mapPreviewSrcs, previewSrcSame, toPreviewSrc } from '../utils/preview-src'
+import { sanitizeCivitaiHtml } from '../../../shared/sanitize-html'
+import { TagAutocompleteInput } from './TagAutocompleteInput'
 
 export type ModelDetailTarget =
   | {
@@ -96,7 +100,7 @@ interface Props {
 }
 
 type VersionSort = 'default' | 'downloads' | 'likes'
-type PreviewMediaTab = 'images' | 'videos'
+type PreviewMediaTab = 'images' | 'videos' | 'all'
 
 function fallbackPreviewUrls(target: ModelDetailTarget, libraryRecord: InventoryRecord | null): string[] {
   if (target.kind === 'library') {
@@ -263,6 +267,19 @@ export function ModelDetailPage({
   const [videoPreviewIndex, setVideoPreviewIndex] = useState(0)
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [fastTagMessage, setFastTagMessage] = useState<string | null>(null)
+  const [assignTagOpen, setAssignTagOpen] = useState(false)
+  const [assignTagQuery, setAssignTagQuery] = useState('')
+  const [assignTagBusy, setAssignTagBusy] = useState(false)
+  const [assignTagMessage, setAssignTagMessage] = useState<string | null>(null)
+  const [showTagRoutes, setShowTagRoutes] = useState(() => {
+    try {
+      return localStorage.getItem('civitai-model-detail-show-tag-routes') === '1'
+    } catch {
+      return false
+    }
+  })
+  const [pathsOpen, setPathsOpen] = useState(false)
+  const [licenseOpen, setLicenseOpen] = useState(false)
   const [unavailableConfirmed, setUnavailableConfirmed] = useState(false)
   const [missingHitCount, setMissingHitCount] = useState<number | null>(null)
   const [allowRemote, setAllowRemote] = useState(() => !target.deferRemote)
@@ -783,27 +800,67 @@ export function ModelDetailPage({
     [fastTagMode, canFastTag, onOpenTagFolders]
   )
 
+  const canAssignModelToTag = Boolean(
+    (libraryRecord || ownedRecordForActive) &&
+      (libraryRecord?.versionId ?? ownedRecordForActive?.versionId ?? 0) > 0
+  )
+
+  const assignModelToTag = useCallback(
+    async (rawTag: string) => {
+      const tagName = rawTag.trim()
+      const versionId = libraryRecord?.versionId ?? ownedRecordForActive?.versionId ?? 0
+      if (!tagName || versionId <= 0 || assignTagBusy) return
+      setAssignTagBusy(true)
+      setAssignTagMessage(null)
+      try {
+        await window.api.assignTag([versionId], tagName)
+        setAssignTagMessage(t('modelDetail.assignModelToTagDone', { tag: tagName }))
+        setAssignTagQuery('')
+        setAssignTagOpen(false)
+        await onInventoryRefresh?.()
+      } catch (err) {
+        setAssignTagMessage(err instanceof Error ? err.message : String(err))
+      } finally {
+        setAssignTagBusy(false)
+      }
+    },
+    [libraryRecord, ownedRecordForActive, assignTagBusy, onInventoryRefresh, t]
+  )
+
   const modelDescriptionText = detail?.modelDescription?.trim() || ''
+  const modelDescriptionHtml = detail?.modelDescriptionHtml?.trim() || ''
   const activeVersionDescription = activeVersionMeta?.versionDescription?.trim() || ''
+  const activeVersionDescriptionHtml = activeVersionMeta?.versionDescriptionHtml?.trim() || ''
   const swarmDescription = detail?.swarmMeta?.description?.trim() || ''
-  const showModelDescription = Boolean(modelDescriptionText)
+  const showModelDescription = Boolean(modelDescriptionHtml || modelDescriptionText)
   const showVersionDescription = Boolean(
-    activeVersionDescription &&
-      activeVersionDescription !== modelDescriptionText
+    (activeVersionDescriptionHtml || activeVersionDescription) &&
+      activeVersionDescription !== modelDescriptionText &&
+      activeVersionDescriptionHtml !== modelDescriptionHtml
   )
   const showSwarmFallback =
     Boolean(swarmDescription) &&
     !showModelDescription &&
     !showVersionDescription
 
+  const sanitizedModelDescriptionHtml = useMemo(
+    () => (modelDescriptionHtml ? sanitizeCivitaiHtml(modelDescriptionHtml) : ''),
+    [modelDescriptionHtml]
+  )
+  const sanitizedVersionDescriptionHtml = useMemo(
+    () => (activeVersionDescriptionHtml ? sanitizeCivitaiHtml(activeVersionDescriptionHtml) : ''),
+    [activeVersionDescriptionHtml]
+  )
+
   const modalitySource = useMemo(
     () => ({
       modelName: title,
       versionName: versionLabel,
+      baseModel: baseModelLabel || undefined,
       modelDescription: modelDescriptionText || undefined,
       versionDescription: activeVersionDescription || undefined
     }),
-    [title, versionLabel, modelDescriptionText, activeVersionDescription]
+    [title, versionLabel, baseModelLabel, modelDescriptionText, activeVersionDescription]
   )
 
   const routingForTags =
@@ -1016,6 +1073,31 @@ export function ModelDetailPage({
     [previewUrls, brokenIndexes]
   )
 
+  /** All image previews across versions (for the All tab grid). */
+  const allPreviewGridUrls = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    const remember = (url?: string) => {
+      const trimmed = url?.trim()
+      if (!trimmed || seen.has(trimmed) || !isDisplayablePreviewUrl(trimmed)) return
+      seen.add(trimmed)
+      out.push(trimmed)
+    }
+    for (const url of validPreviewUrls) remember(url)
+    for (const v of displayDetail?.versions ?? []) {
+      if (v.previewUrls?.length) {
+        for (const url of v.previewUrls) remember(url)
+      } else {
+        remember(v.previewUrl)
+      }
+      const override = previewOverrides[v.id]
+      if (override?.length) {
+        for (const url of override) remember(url)
+      }
+    }
+    return out
+  }, [validPreviewUrls, displayDetail?.versions, previewOverrides])
+
   const previewCount = validPreviewUrls.length
   const safeIndex = Math.min(previewIndex, Math.max(0, previewCount - 1))
   const selectedPreviewUrl = validPreviewUrls[safeIndex]
@@ -1023,15 +1105,15 @@ export function ModelDetailPage({
   const versionGalleryLoaded = previewsFetchedVersions.has(activeVersionId)
   const civitaiGalleryLoaded = Boolean(previewOverrides[activeVersionId]?.length)
   const showLoadPreviews =
-    previewMediaTab === 'images' &&
+    (previewMediaTab === 'images' || previewMediaTab === 'all') &&
     activeVersionId > 0 &&
     !previewFetchBusy &&
-    !versionGalleryLoaded
+    // Keep "Load previews" until a full Civitai gallery fetch has run (not just a search stub).
+    !civitaiGalleryLoaded
   const showPreviewCounter =
     previewMediaTab === 'images' &&
     previewCount >= 1 &&
-    versionGalleryLoaded &&
-    civitaiGalleryLoaded
+    (versionGalleryLoaded || civitaiGalleryLoaded)
   const savePreviewLabel =
     !ownedSet.has(activeVersionId)
       ? t('modelDetail.useAsPreview')
@@ -1049,7 +1131,7 @@ export function ModelDetailPage({
     savedPreferredUrl && selectedPreviewUrl && previewSrcSame(selectedPreviewUrl, savedPreferredUrl)
   )
   const showSavePreviewButton =
-    versionGalleryLoaded && previewCount > 0 && !isCurrentPreviewPreferred
+    previewCount > 0 && !isCurrentPreviewPreferred && (versionGalleryLoaded || civitaiGalleryLoaded || Boolean(selectedPreviewUrl))
 
   useEffect(() => {
     if (!isCurrentPreviewPreferred) setPreviewSaveOk(false)
@@ -1383,17 +1465,17 @@ export function ModelDetailPage({
         <div className="model-detail-page-layout">
           <div className="model-detail-page-main">
             <div className="model-detail-page-preview">
-              {showVideoTab && (
-                <div className="model-detail-preview-tabs" role="tablist" aria-label="Preview media">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={previewMediaTab === 'images'}
-                    className={`btn-sm model-detail-preview-tab${previewMediaTab === 'images' ? ' active' : ''}`}
-                    onClick={() => setPreviewMediaTab('images')}
-                  >
-                    {t('modelDetail.previewTabImages')}
-                  </button>
+              <div className="model-detail-preview-tabs" role="tablist" aria-label="Preview media">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={previewMediaTab === 'images'}
+                  className={`btn-sm model-detail-preview-tab${previewMediaTab === 'images' ? ' active' : ''}`}
+                  onClick={() => setPreviewMediaTab('images')}
+                >
+                  {t('modelDetail.previewTabImages')}
+                </button>
+                {showVideoTab ? (
                   <button
                     type="button"
                     role="tab"
@@ -1403,8 +1485,17 @@ export function ModelDetailPage({
                   >
                     {t('modelDetail.previewTabVideos')}
                   </button>
-                </div>
-              )}
+                ) : null}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={previewMediaTab === 'all'}
+                  className={`btn-sm model-detail-preview-tab${previewMediaTab === 'all' ? ' active' : ''}`}
+                  onClick={() => setPreviewMediaTab('all')}
+                >
+                  {t('modelDetail.previewTabAll')}
+                </button>
+              </div>
               <div className="model-detail-preview-wrap">
                 {previewMediaTab === 'videos' && showVideoTab ? (
                   selectedVideoUrl ? (
@@ -1421,6 +1512,42 @@ export function ModelDetailPage({
                   ) : (
                     <div className="gallery-thumb placeholder preview-empty model-detail-preview-img">
                       <span className="preview-empty-label">{t('modelDetail.noVersionVideos')}</span>
+                    </div>
+                  )
+                ) : previewMediaTab === 'all' ? (
+                  allPreviewGridUrls.length > 0 ? (
+                    <div className="model-detail-all-previews-grid">
+                      {allPreviewGridUrls.map((url) => (
+                        <button
+                          key={url}
+                          type="button"
+                          className="model-detail-all-preview-cell"
+                          title={url}
+                          onClick={() => {
+                            const idx = previewUrls.findIndex((u) => previewSrcSame(u, url))
+                            if (idx >= 0) {
+                              setPreviewIndex(idx)
+                              setBrokenIndexes((prev) => {
+                                if (!prev.has(idx)) return prev
+                                const next = new Set(prev)
+                                next.delete(idx)
+                                return next
+                              })
+                            }
+                            setPreviewMediaTab('images')
+                          }}
+                        >
+                          <PreviewThumb
+                            urls={[url]}
+                            className="model-detail-all-preview-thumb"
+                            loading="lazy"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="gallery-thumb placeholder preview-empty model-detail-preview-img">
+                      <span className="preview-empty-label">{t('modelDetail.noAllPreviews')}</span>
                     </div>
                   )
                 ) : (
@@ -1533,6 +1660,24 @@ export function ModelDetailPage({
                   )}
                 </div>
                 )}
+                {previewMediaTab === 'all' && showLoadPreviews ? (
+                  <div className="model-detail-preview-actions">
+                    <button
+                      type="button"
+                      className="btn-sm"
+                      disabled={previewFetchBusy || activeVersionId <= 0}
+                      title={t('modelDetail.loadPreviewsHint')}
+                      onClick={() => void loadVersionPreviews(activeVersionId)}
+                    >
+                      {t('modelDetail.loadPreviews')}
+                    </button>
+                    {previewFetchBusy && (
+                      <span className="muted model-detail-preview-loading">
+                        {t('modelDetail.loadingPreviews')}
+                      </span>
+                    )}
+                  </div>
+                ) : null}
               </div>
               {previewSaveMessage && (
                 <p
@@ -1544,22 +1689,51 @@ export function ModelDetailPage({
                   {previewSaveMessage}
                 </p>
               )}
-              {displayTags.length > 0 && (
+              {(displayTags.length > 0 || canAssignModelToTag) && (
                 <div className="model-detail-preview-tags">
                   <div className="model-detail-preview-tags-head">
                     <h4>{t('modelDetail.tags')}</h4>
-                    {onFastTagModeChange && canFastTag && (
-                      <button
-                        type="button"
-                        className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                        onClick={() => onFastTagModeChange(!fastTagMode)}
-                        title={t('gallery.fastTagModeTitle')}
-                        aria-pressed={fastTagMode}
-                      >
-                        {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
-                      </button>
-                    )}
+                    <div className="model-detail-preview-tags-actions">
+                      {displayTags.length > 0 ? (
+                        <button
+                          type="button"
+                          className={`btn-sm browse-ban-toggle ${showTagRoutes ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                          onClick={() => {
+                            setShowTagRoutes((prev) => {
+                              const next = !prev
+                              try {
+                                localStorage.setItem(
+                                  'civitai-model-detail-show-tag-routes',
+                                  next ? '1' : '0'
+                                )
+                              } catch {
+                                /* ignore */
+                              }
+                              return next
+                            })
+                          }}
+                          title={t('modelDetail.showTagRoutesTitle')}
+                          aria-pressed={showTagRoutes}
+                        >
+                          {showTagRoutes
+                            ? t('modelDetail.showTagRoutesOn')
+                            : t('modelDetail.showTagRoutesOff')}
+                        </button>
+                      ) : null}
+                      {onFastTagModeChange && canFastTag && (
+                        <button
+                          type="button"
+                          className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                          onClick={() => onFastTagModeChange(!fastTagMode)}
+                          title={t('gallery.fastTagModeTitle')}
+                          aria-pressed={fastTagMode}
+                        >
+                          {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  {displayTags.length > 0 ? (
                   <div className="model-detail-preview-tags-list">
                     {displayTags.map((tag) => {
                       const role = cardTagFolderRole(tag, {
@@ -1567,6 +1741,10 @@ export function ModelDetailPage({
                         folderLabel: folderLabelForTags,
                         tagRules
                       })
+                      const routeLabel =
+                        showTagRoutes && role !== 'unmapped'
+                          ? tagFolderRouteLabel(tag, tagRules, loraFolder, checkpointFolder)
+                          : null
                       const banned = isPermanentlyBannedModelTag(tag, bannedTags)
                       const paused = isPausedOnlyModelTag(tag, pausedTags, bannedTags)
                       const roleTitle =
@@ -1592,18 +1770,111 @@ export function ModelDetailPage({
                           type="button"
                           className={`tag-chip model-detail-tag-btn ${cardTagFolderRoleClass(role)}${
                             banned ? ' is-blocked-tag' : paused ? ' is-paused-tag' : ''
-                          }`}
+                          }${routeLabel ? ' has-tag-route' : ''}`}
                           title={policyTitle ? `${policyTitle} · ${roleTitle}` : roleTitle}
                           disabled={!canFastTag && !onOpenTagFolders}
                           onClick={() => onTagClick(tag)}
                         >
-                          {tag}
+                          {routeLabel ? (
+                            <span className="model-detail-tag-route">
+                              <span className="model-detail-tag-route-from">{tag}</span>
+                              <span className="model-detail-tag-route-arrow" aria-hidden>
+                                →
+                              </span>
+                              <span className="model-detail-tag-route-to">{routeLabel}</span>
+                            </span>
+                          ) : (
+                            tag
+                          )}
                         </button>
                       )
                     })}
                   </div>
+                  ) : null}
+                  {(folderLabelForTags ||
+                    (libraryRecord ?? ownedRecordForActive)?.routingLocked) && (
+                    <div
+                      className={`gallery-folder-line model-detail-folder-line ${folderLabelForTags ? 'is-assigned' : ''} ${(libraryRecord ?? ownedRecordForActive)?.routingLocked ? 'is-manual' : ''}`}
+                      title={
+                        (libraryRecord ?? ownedRecordForActive)?.routingLocked
+                          ? t('gallery.manualFolderHint', {
+                              folder: folderLabelForTags || routingForTags || '—'
+                            })
+                          : folderLabelForTags || undefined
+                      }
+                    >
+                      <span className="muted model-detail-folder-label">{t('modelDetail.folderRoute')}</span>
+                      {folderLabelForTags ? (
+                        <span className="gallery-folder-path">{folderLabelForTags}</span>
+                      ) : (
+                        <span className="muted">{t('gallery.defaultFolder')}</span>
+                      )}
+                      {(libraryRecord ?? ownedRecordForActive)?.routingLocked ? (
+                        <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
+                      ) : null}
+                    </div>
+                  )}
+                  {canAssignModelToTag ? (
+                    <div className="model-detail-assign-tag">
+                      {!assignTagOpen ? (
+                        <button
+                          type="button"
+                          className="btn-sm"
+                          disabled={assignTagBusy}
+                          title={t('modelDetail.assignModelToTagHint')}
+                          onClick={() => {
+                            setAssignTagOpen(true)
+                            setAssignTagMessage(null)
+                          }}
+                        >
+                          {t('modelDetail.assignModelToTag')}
+                        </button>
+                      ) : (
+                        <div className="model-detail-assign-tag-row">
+                          <TagAutocompleteInput
+                            value={assignTagQuery}
+                            onChange={setAssignTagQuery}
+                            suggestions={tagSuggestions}
+                            singleTag
+                            autoFocus
+                            matchMode="fuzzy"
+                            placeholder={t('modelDetail.assignModelToTagPlaceholder')}
+                            confirmLabel={t('gallery.assignFolderConfirm')}
+                            confirmText="→"
+                            clearable
+                            disabled={assignTagBusy}
+                            onConfirm={() => void assignModelToTag(assignTagQuery)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
+                                e.preventDefault()
+                                void assignModelToTag(assignTagQuery)
+                              }
+                              if (e.key === 'Escape') {
+                                setAssignTagOpen(false)
+                                setAssignTagQuery('')
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            disabled={assignTagBusy}
+                            onClick={() => {
+                              setAssignTagOpen(false)
+                              setAssignTagQuery('')
+                            }}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                   {fastTagMessage && (
                     <p className="muted model-detail-preview-save-msg">{fastTagMessage}</p>
+                  )}
+                  {assignTagMessage && (
+                    <p className="muted model-detail-preview-save-msg">{assignTagMessage}</p>
                   )}
                 </div>
               )}
@@ -1693,11 +1964,14 @@ export function ModelDetailPage({
                         👍 {formatCompactCount(detail.thumbsUpCount)}
                       </span>
                     )}
-                    {detail.baseModelType && (
-                      <span className="checkpoint-badge" title={t('gallery.checkpointType')}>
-                        {detail.baseModelType}
-                      </span>
-                    )}
+                    {(() => {
+                      const ck = checkpointTypeLabel(detail.baseModelType)
+                      return ck ? (
+                        <span className="checkpoint-badge" title={t('gallery.checkpointType')}>
+                          {ck}
+                        </span>
+                      ) : null
+                    })()}
                     {detail.versions.length > 0 && (
                       <span className="muted">
                         {t('pending.versionsCount', {
@@ -1709,40 +1983,6 @@ export function ModelDetailPage({
                   </div>
 
                   {detail.type ? <p className="muted model-detail-type-line">{detail.type}</p> : null}
-
-                  {hasLicenseInfo ? (
-                  <section className="model-detail-section">
-                    <h4>{t('modelDetail.license')}</h4>
-                    <dl className="model-detail-dl">
-                      <dt>{t('modelDetail.commercialUse')}</dt>
-                      <dd>{detail.license.commercialUse}</dd>
-                      <dt>{t('modelDetail.derivatives')}</dt>
-                      <dd>
-                        {licenseBool(
-                          detail.license.derivatives,
-                          t('modelDetail.allowed'),
-                          t('modelDetail.notAllowed')
-                        )}
-                      </dd>
-                      <dt>{t('modelDetail.creditRequired')}</dt>
-                      <dd>
-                        {licenseBool(
-                          detail.license.noCredit,
-                          t('modelDetail.noCreditNeeded'),
-                          t('modelDetail.creditNeeded')
-                        )}
-                      </dd>
-                      <dt>{t('modelDetail.differentLicense')}</dt>
-                      <dd>
-                        {licenseBool(
-                          detail.license.differentLicense,
-                          t('modelDetail.mustDifferentLicense'),
-                          t('modelDetail.sameLicenseOk')
-                        )}
-                      </dd>
-                    </dl>
-                  </section>
-                  ) : null}
 
                   {detail.trainedWords && detail.trainedWords.length > 0 && (
                     <section className="model-detail-section">
@@ -1766,43 +2006,11 @@ export function ModelDetailPage({
               )}
 
               {displayTarget.kind === 'library' && libraryRecord && (
-                <>
-                  {(folderLabelForTags || libraryRecord.routingLocked) && (
-                    <div
-                      className={`gallery-folder-line model-detail-folder-line ${folderLabelForTags ? 'is-assigned' : ''} ${libraryRecord.routingLocked ? 'is-manual' : ''}`}
-                      title={
-                        libraryRecord.routingLocked
-                          ? t('gallery.manualFolderHint', {
-                              folder: folderLabelForTags || libraryRecord.routingTag || '—'
-                            })
-                          : folderLabelForTags || undefined
-                      }
-                    >
-                      <span className="muted model-detail-folder-label">{t('modelDetail.folderRoute')}</span>
-                      {folderLabelForTags ? (
-                        <span className="gallery-folder-path">{folderLabelForTags}</span>
-                      ) : (
-                        <span className="muted">{t('gallery.defaultFolder')}</span>
-                      )}
-                      {libraryRecord.routingLocked ? (
-                        <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
-                      ) : null}
-                    </div>
-                  )}
-                  <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-                    {t('modelDetail.downloadedAt', {
-                      when: new Date(libraryRecord.downloadedAt).toLocaleString()
-                    })}
-                  </p>
-                  <dl className="preview-paths">
-                    <dt>{t('modelDetail.pathModel')}</dt>
-                    <dd>{libraryRecord.modelPath}</dd>
-                    <dt>{t('modelDetail.pathPreview')}</dt>
-                    <dd>{libraryRecord.previewPath || '—'}</dd>
-                    <dt>{t('modelDetail.pathSwarm')}</dt>
-                    <dd>{libraryRecord.swarmPath}</dd>
-                  </dl>
-                </>
+                <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+                  {t('modelDetail.downloadedAt', {
+                    when: new Date(libraryRecord.downloadedAt).toLocaleString()
+                  })}
+                </p>
               )}
             </div>
           </div>
@@ -1893,6 +2101,7 @@ export function ModelDetailPage({
                           source={{
                             modelName: title,
                             versionName: v.name,
+                            baseModel: v.baseModel || baseModelLabel || undefined,
                             modelDescription: modelDescriptionText || undefined,
                             versionDescription: v.versionDescription
                           }}
@@ -2006,13 +2215,27 @@ export function ModelDetailPage({
               {showModelDescription ? (
                 <section className="model-detail-page-description">
                   <h4>{t('modelDetail.modelDescription')}</h4>
-                  <pre className="model-detail-description-body">{modelDescriptionText}</pre>
+                  {sanitizedModelDescriptionHtml ? (
+                    <div
+                      className="model-detail-description-body model-detail-description-html"
+                      dangerouslySetInnerHTML={{ __html: sanitizedModelDescriptionHtml }}
+                    />
+                  ) : (
+                    <pre className="model-detail-description-body">{modelDescriptionText}</pre>
+                  )}
                 </section>
               ) : null}
               {showVersionDescription ? (
                 <section className="model-detail-page-description">
                   <h4>{t('modelDetail.versionDescription')}</h4>
-                  <pre className="model-detail-description-body">{activeVersionDescription}</pre>
+                  {sanitizedVersionDescriptionHtml ? (
+                    <div
+                      className="model-detail-description-body model-detail-description-html"
+                      dangerouslySetInnerHTML={{ __html: sanitizedVersionDescriptionHtml }}
+                    />
+                  ) : (
+                    <pre className="model-detail-description-body">{activeVersionDescription}</pre>
+                  )}
                 </section>
               ) : null}
               {showSwarmFallback ? (
@@ -2030,6 +2253,65 @@ export function ModelDetailPage({
                   </h4>
                   <pre className="model-detail-description-body">{swarmDescription}</pre>
                 </section>
+              ) : null}
+            </div>
+          )}
+
+          {(hasLicenseInfo || (displayTarget.kind === 'library' && libraryRecord)) && (
+            <div className="model-detail-meta-accordions">
+              {hasLicenseInfo && detail ? (
+                <details
+                  className="model-detail-accordion"
+                  open={licenseOpen}
+                  onToggle={(e) => setLicenseOpen((e.target as HTMLDetailsElement).open)}
+                >
+                  <summary>{t('modelDetail.license')}</summary>
+                  <dl className="model-detail-dl">
+                    <dt>{t('modelDetail.commercialUse')}</dt>
+                    <dd>{detail.license.commercialUse}</dd>
+                    <dt>{t('modelDetail.derivatives')}</dt>
+                    <dd>
+                      {licenseBool(
+                        detail.license.derivatives,
+                        t('modelDetail.allowed'),
+                        t('modelDetail.notAllowed')
+                      )}
+                    </dd>
+                    <dt>{t('modelDetail.creditRequired')}</dt>
+                    <dd>
+                      {licenseBool(
+                        detail.license.noCredit,
+                        t('modelDetail.noCreditNeeded'),
+                        t('modelDetail.creditNeeded')
+                      )}
+                    </dd>
+                    <dt>{t('modelDetail.differentLicense')}</dt>
+                    <dd>
+                      {licenseBool(
+                        detail.license.differentLicense,
+                        t('modelDetail.mustDifferentLicense'),
+                        t('modelDetail.sameLicenseOk')
+                      )}
+                    </dd>
+                  </dl>
+                </details>
+              ) : null}
+              {displayTarget.kind === 'library' && libraryRecord ? (
+                <details
+                  className="model-detail-accordion"
+                  open={pathsOpen}
+                  onToggle={(e) => setPathsOpen((e.target as HTMLDetailsElement).open)}
+                >
+                  <summary>{t('modelDetail.filePaths')}</summary>
+                  <dl className="preview-paths">
+                    <dt>{t('modelDetail.pathModel')}</dt>
+                    <dd>{libraryRecord.modelPath}</dd>
+                    <dt>{t('modelDetail.pathPreview')}</dt>
+                    <dd>{libraryRecord.previewPath || '—'}</dd>
+                    <dt>{t('modelDetail.pathSwarm')}</dt>
+                    <dd>{libraryRecord.swarmPath}</dd>
+                  </dl>
+                </details>
               ) : null}
             </div>
           )}

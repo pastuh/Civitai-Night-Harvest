@@ -771,6 +771,14 @@ export class DownloadQueue {
     // Unavailable Missing: block auto harvest; allow explicit manual queue / Retry.
     if (meta.manual !== true && inventory.isMissingUnavailable(request.modelId)) return ''
     if (request.versionId && inventory.hasVersion(request.versionId)) return ''
+    // Updates Skip is per version — never auto-queue until the user Unskips (manual still OK).
+    if (
+      meta.manual !== true &&
+      request.versionId &&
+      inventory.isPendingVersionSkipped(request.versionId)
+    ) {
+      return ''
+    }
     const settings = getSettings()
     if (settings.manualQueueMode && meta.manual !== true) return ''
     if (meta.manual !== true && request.versionId && this.isAutoQueueCoolingDown(request.versionId)) {
@@ -1248,15 +1256,24 @@ export class DownloadQueue {
     this.items = this.items.filter((i) => i.id !== id)
     if (this.items.length !== before) {
       if (!item.manual && item.modelId > 0) {
-        const deleted = deleteModelFromLibrary(item.modelId)
-        inventory.banModelAndMarkSeen(item.modelId, item.modelName)
-        inventory.clearBrowseCardCacheForModel(item.modelId)
-        this.log?.(
-          'info',
-          deleted.length > 0
-            ? `Deleted and excluded: ${item.modelName}`
-            : `Excluded from auto-download: ${item.modelName}`
-        )
+        void (async () => {
+          try {
+            const deleted = await deleteModelFromLibrary(item.modelId)
+            inventory.banModelAndMarkSeen(item.modelId, item.modelName)
+            inventory.clearBrowseCardCacheForModel(item.modelId)
+            this.log?.(
+              'info',
+              deleted.length > 0
+                ? `Deleted and excluded: ${item.modelName}`
+                : `Excluded from auto-download: ${item.modelName}`
+            )
+          } catch (err) {
+            this.log?.(
+              'error',
+              `Exclude after dismiss failed: ${item.modelName} — ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
+        })()
       }
       this.broadcast()
       this.checkIdle()

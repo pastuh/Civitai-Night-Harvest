@@ -43,6 +43,8 @@ export function checkpointTypeLabel(baseModelType: string | undefined): string |
   if (!baseModelType) return null
   const t = baseModelType.trim()
   if (!t) return null
+  // Civitai default — noise on cards (only Trained / Merge / etc. are useful).
+  if (t.toLowerCase() === 'standard') return null
   return t
 }
 

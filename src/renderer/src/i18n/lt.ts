@@ -19,9 +19,15 @@ export const lt: Messages = {
   listSort: {
     label: 'Rikiuoti',
     recent: 'Naujausi',
-    recentLibrary: 'Atsisiuntimo eilė',
-    recentBrowse: 'Crawl eilė',
-    recentDeferred: 'Pridėta',
+    recentLibrary: 'Naujausi (atsisiuntimas)',
+    recentBrowse: 'Naujausi (crawl)',
+    recentDeferred: 'Naujausi (pridėta)',
+    recentHintLibrary: 'Pagal atsisiuntimo į biblioteką laiką (pagal nutylėjimą — naujausi viršuje)',
+    recentHintBrowse: 'Pagal harvest / crawl eilę (pagal nutylėjimą — naujausi viršuje)',
+    recentHintMissing: 'Pagal paskutinį matymą / ban laiką (pagal nutylėjimą — naujausi viršuje)',
+    sortAsc: 'Seniausi viršuje',
+    sortDesc: 'Naujausi viršuje',
+    sortDirToggle: 'Apversti rikiavimą',
     name: 'Pavadinimas',
     downloads: 'Atsisiuntimai',
     likes: 'Like’ai',
@@ -333,7 +339,7 @@ export const lt: Messages = {
     compactEmpty: 'Nėra — pause tagą žemiau arba per Tags',
     compactHint: 'Paused tagai skip’ina auto-download kol pašalinti. Permanent banai — Missing.',
     blockPlaceholder: 'Pause tag…',
-    blockPlaceholderShort: 'Tag…',
+    blockPlaceholderShort: 'Pause tag…',
     blockBtn: 'Pause'
   },
   help: {
@@ -382,7 +388,9 @@ export const lt: Messages = {
     browseTags:
       'Tags langas — filtruoti grid · ⏸ pause tag (laikinas Browse exclude) · permanent ban — Tag Folders (violetiniai chip’ai)',
     browsePausedBanned:
-      '**Paused** juosta — laikinas exclude. **Banned** juosta — permanent ban-by-tag (čia tik skaitymui; Ban / Unban — Tag Folders). Amber = pause · purple = permanent ant kortelių',
+      '**Paused** / **Banned** juostos — čia galima pridėti tagus (paieška + Ban / Pause). Spustelėkite pavadinimą → Missing → Sesijos pause / Sesijos banai. Amber = pause · purple = permanent ant kortelių',
+    browseSearchHidden:
+      'Browse / Library paieška randa modelius net kai įjungti Hide excluded, blocked tags ar panašūs hide filtrai — kad galėtumėte peržiūrėti ir veikti',
     browseManualQueue:
       'Manual — crawl/scan ir Auto pipeline nebededa modelių; tik jūsų paspaustos kortelės eina į eilę (be limito). Checkpoint visada reikia spausti, net kai Auto ON.',
     browseSettled:
@@ -391,7 +399,7 @@ export const lt: Messages = {
     browseContextSkipTag:
       'Dešinis pelės mygtukas ant modelio → pause tag (laikinas). Permanent ban-by-tag: Tag Folders **Ban** stulpelis',
     libraryFolders:
-      'Tag Folders — Civitai tag → `\\*\\name` po kiekvienu base model (arba custom kelias) **LoRA**. Checkpoint **ignoruojami** Tag Folders tagai ir lieka `{checkpoint}/{baseModel}/`, nebent **Custom folder assignments** / rankinis Assign. Pažymėk tagus LoRA routing ir unsorted perkėlimui. **Apply to library** — perrikiuoti po priority; rankiniu būdu Library perkelti praleidžiami. **Mass** — daug tagų vienam aplankui. Be taisyklės → `\\*\\Unsorted` (LoRA).',
+      'Tag Folders — Civitai tag → `*\\name` po kiekvienu base model (arba custom kelias) **LoRA**. Checkpoint **ignoruojami** Tag Folders tagai ir lieka `{checkpoint}/{baseModel}/`, nebent **Custom folder assignments** / rankinis Assign. Pažymėk tagus LoRA routing ir unsorted perkėlimui. **Apply to library** — perrikiuoti po priority; rankiniu būdu Library perkelti praleidžiami. **Mass** — daug tagų vienam aplankui. Be taisyklės → `*\\Unsorted` (LoRA).',
     libraryCustomAssignments:
       '**Custom folder assignments** (Tag Folders) — asmeninis tagas + aplankas lokaliesiems (nebūtinas tipas/base). Checkpoint — vienintelis būdas failus dėti ne į `{checkpoint}/{baseModel}/`. Po Save aplankas ir subfolderiai importuojami į Library. Civitai LoRA su tuo pačiu tago vardu eina į įprastą app tag aplanką — ne į custom. Lokalūs skip Civitai preview/update.',
     libraryPriority:
@@ -416,7 +424,7 @@ export const lt: Messages = {
     libraryTags:
       'Dešinis spustelėjimas → **Priskirti modelį tagui**. Spustelėkite tag ant kortelės — atidaromi Tag folders (arba Fast tag popup, jei įjungta). Žali / mapped chip’ai = aplanko taisyklės.',
     libraryFastTag:
-      '**Fast tag** — priskirkite paspaustą tagą kaip šio modelio folder route neišeidami iš Library (kelias `\\*\\name`; pakeiskite vardą pvz. glass plug → plug). Pasiūlymai grupuoti: Folders / Assigned / Library tagai.',
+      '**Fast tag** — priskirkite paspaustą tagą kaip šio modelio folder route neišeidami iš Library (kelias `*\\name`; pakeiskite vardą pvz. glass plug → plug). Pasiūlymai grupuoti: Folders / Assigned / Library tagai.',
     libraryExcluded:
       '**Excluded** + **Ignore excluded** su **Hide folder-assigned** — palieka modelius, kurių routing tag yra Excluded (pvz. concept). **All assigned** slepia mapped tagus ant kortelių (lieka brūkšninis placeholder).',
     libraryManual:
@@ -579,6 +587,9 @@ export const lt: Messages = {
     showAwaitingConfirm: 'Rodyti atnaujinimus',
     showAwaitingConfirmTitle:
       'Rodyti naujesnes versijas modelių, kuriuos jau turite (kaip Atnaujinimai tabas — ten patvirtinkite)',
+    showSkipped: 'Rodyti skipped',
+    showSkippedTitle:
+      'Rodyti Updates versijas, kurias praleidote (pagal version ID). Pagal nutylėjimą paslėpta — Unskip Updates puslapyje, kad vėl eilėje',
     banModeOff: 'Ban Off',
     banModeOn: 'Ban On',
     banModeTitle: 'Raudonas × šalia pavadinimo — blokuoti modelį (Browse, Library ir download juosta)',
@@ -649,8 +660,13 @@ export const lt: Messages = {
     tagUnblockedMsg: 'Unpaused „{tag}“ — auto-download vėl leidžiamas',
     tagsUnblockedVisible: '{count} modeliai vėl matomi po unpause: {tags}',
     bannedTagsLabel: 'Banned',
-    bannedTagsEmpty: 'Nėra — permanent banai Tag folders',
-    bannedTagsHint: 'Permanent ban-by-tag (čia tik skaitymui). Ban / unban — Tag folders.',
+    bannedTagsEmpty: 'Nėra — įveskite tagą ban-by-tag',
+    bannedTagsHint: 'Permanent ban-by-tag — modeliai su šiais tagais neauto-download',
+    bannedTagsJumpHint: 'Atidaryti Missing → Sesijos banai — peržiūrėti šią sesiją ban’intus',
+    bannedTagsPlaceholder: 'Ban tag…',
+    bannedTagsAdd: 'Ban',
+    bannedTagRemoveHint: 'Nuimti ban „{tag}“',
+    pausedTagsJumpHint: 'Atidaryti Missing → Sesijos pause — peržiūrėti šią sesiją pause’intus',
     bannedTagUnbanHint: 'Unban permanent tagą „{tag}“',
     tagUnbannedMsg: 'Unbanned „{tag}“ — permanent ban nuimtas',
     tagFilterCleared: 'Tag filtras nuimtas',
@@ -917,9 +933,9 @@ export const lt: Messages = {
     dismissHint: 'Paslėpti tik šį pasiūlymą (bibliotekos failų neliesti).',
     skip: 'Skip',
     skipHint:
-      'Praleisti tik šią versiją (bibliotekos neliesti). Lieka skipped ir po rescan, kol Unskip.',
+      'Praleisti tik šią versiją (bibliotekos neliesti). Browse jos nerodo ir neauto-queue’ina, kol Unskip’insite būtent šią versiją.',
     unskip: 'Unskip',
-    unskipHint: 'Grąžinti šią versiją į Updates sąrašą',
+    unskipHint: 'Grąžinti tik šią versiją į Updates sąrašą (kitų versijų Unskip nedaro)',
     showSkipped: 'Rodyti skipped',
     showSkippedTitle: 'Rodyti versijas, kurias anksčiau praleidote šiame puslapyje',
     skippedBadge: 'Skipped',
@@ -935,7 +951,7 @@ export const lt: Messages = {
     alwaysUpdateOn: 'Visada įjungta',
     alwaysUpdateOnHint:
       'Auto-update įjungtas šiam modeliui — spustelėkite, kad išjungtumėte. Ateities versijos nebebus auto-queue.',
-    alwaysUpdateBadge: 'Visada atnaujinti',
+    alwaysUpdateBadge: 'Up',
     queuedReady: 'Eilėje',
     queuedPaused: 'Eilėje · pause',
     downloadingNow: 'Siunčiama…',
@@ -995,6 +1011,11 @@ export const lt: Messages = {
     triggerWords: 'Trigger words',
     triggerWordsNote: 'Prompt aktyvacijos žodžiai iš modelio — ne aplanko tagai.',
     folderRoute: 'Aplankas',
+    showTagRoutesOff: 'Routes',
+    showTagRoutesOn: 'Routes on',
+    showTagRoutesTitle:
+      'Rodyti folder paskirtį šalia kiekvieno mapped tago (tag → folder). Pagal nutylėjimą išjungta',
+    filePaths: 'Failų keliai',
     fromSwarm: 'iš swarm.json',
     swarmMeta: 'SwarmUI metadata',
     swarmMetaDisk: 'iš .swarm.json diske',
@@ -1047,10 +1068,18 @@ export const lt: Messages = {
     previewOf: '{current} / {total}',
     previewTabImages: 'Nuotraukos',
     previewTabVideos: 'Video',
+    previewTabAll: 'Visos',
     noVersionVideos: 'Šiai versijai Civitai nerasta video.',
+    noAllPreviews: 'Peržiūrų nuotraukų nėra.',
     openTagFoldersHint: 'Atidaryti Tag folders — rasti ar priskirti „{tag}“',
-    fastTagHint: 'Fast tag — priskirti aplanką tagui „{tag}“',
+    fastTagHint: 'Greitas tag — priskirti aplanką „{tag}“',
     tags: 'Tagai',
+    assignModelToTag: 'Priskirti modelį tagui',
+    assignModelToTagHint: 'Pridėti tagą ir perkelti šią bibliotekos versiją į jo aplanko maršrutą',
+    assignModelToTagPlaceholder: 'Tago pavadinimas…',
+    assignModelToTagBusy: 'Priskiriama…',
+    assignModelToTagDone: 'Priskirta „{tag}“',
+    assignModelToTagNeedOwned: 'Tik turimos bibliotekos versijos gali būti priskirtos tagų aplankui',
     tagLegend:
       'Rėmeliai: solid accent = pagrindinis kelias · dashed accent = mapped aplanko taisyklė · dotted pilkas = laukia priskyrimo',
     savePreview: 'Išsaugoti preview',
@@ -1179,6 +1208,9 @@ export const lt: Messages = {
     },
     hideFolderAssigned: 'Slėpti su aplanku',
     hideFolderAssignedTitle: 'Slėpti modelius, jau perkeltus į tag aplanką',
+    hideFullyTagged: 'Slėpti tagged',
+    hideFullyTaggedTitle:
+      'Slėpti modelius, kurių visi Civitai tagai jau turi folder taisyklę — lieka tik tie, kuriems dar reikia priskyrimo',
     manualFolder: 'Rankinis',
     manualFolderHint:
       'Rankinis aplanko priskyrimas — auto tag perkėlimai / prioritetas šio modelio neperadresuos. Aplankas: {folder}',
@@ -1289,6 +1321,7 @@ export const lt: Messages = {
     allModels: 'Visi modeliai',
     filterLora: 'LoRA',
     filterCheckpoint: 'Checkpoint',
+    modelTypes: 'Modelių tipai',
     untaggedFolder: 'Be aplanko tag',
     unrecognized: 'Neatpažinti',
     unrecognizedHint: 'Custom / vietinis failas be Civitai tapatybės (nėra .swarm.json arba nesutapo hash)',
@@ -1298,7 +1331,10 @@ export const lt: Messages = {
     alwaysUpdateFilter: 'Visada atnaujinti',
     alwaysUpdateFilterHint:
       'Turimos versijos, kurių modeliui įjungtas Always update — dešiniu pelės mygtuku kortelėje galima išjungti',
-    alwaysUpdateBadge: 'Visada atnaujinti',
+    unavailableFilter: 'Nepasiekiama Civitai',
+    unavailableFilterHint:
+      'Bibliotekos failai, kurių Civitai mode yra Taken down arba Archived (iš paskutinės žinomos meta — be papildomo API scan)',
+    alwaysUpdateBadge: 'Up',
     alwaysUpdateBadgeHint: 'Ateities šio modelio versijos automatiškai į eilę',
     turnOffAlwaysUpdate: 'Išjungti Always update',
     alwaysUpdateTurnedOff: 'Always update išjungta: {name}',
@@ -1517,6 +1553,10 @@ export const lt: Messages = {
     openTagFoldersHint: 'Atidaryti Tag folders — priskirti aplanką „{tag}“ prieš atsisiuntimą',
     sidebarTitle: 'Filtrai',
     filterFavorites: 'Favorites',
+    unlockCalendar: 'Atrakinimo datos',
+    unlockCalendarHint: 'Dienos, kai modeliai atrakinsis nemokamai. Spustelėkite dieną filtrui.',
+    unlockCalendarRangeHint:
+      'Spustelėkite pažymėtą dieną — modeliai, kurie tada atrakinsis. Dar kartą — nuimti filtrą.',
     sessionBannedBadge: 'Banned šią sesiją',
     policyTagsHint: 'Modeliai, kurių tagai atitinka pause / ban-by-tag politiką.'
   },
@@ -1528,6 +1568,9 @@ export const lt: Messages = {
     recheck: 'Tikrinti API',
     download: 'Siųsti → eilė',
     downloadWithUrl: 'Naudoti nuorodą → eilė',
+    pasteUrl: 'Įklijuoti URL…',
+    pasteUrlHint:
+      'Civitai /models/{id} kartais grąžina be versijų. Įklijuokite download nuorodą iš svetainės (…/api/download/models/VERSION_ID).',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
     banHint: 'Visam laikui išjungti šį modelį — nebegrįš į Incomplete ir nebus auto-siunčiamas',
@@ -1537,7 +1580,11 @@ export const lt: Messages = {
     waiting: 'Sekama {duration}',
     versionName: ' · {name}',
     badgeWaiting: 'Laukia versijos duomenų',
-    badgeReady: 'Versija rasta'
+    badgeReady: 'Versija rasta',
+    sidebarTitle: 'Filtras',
+    filterWaiting: 'Laukia',
+    filterReady: 'Paruošta',
+    emptyFiltered: 'Nėra Incomplete modelių pagal šiuos filtrus.'
   },
   missingTab: {
     title: 'Missing',

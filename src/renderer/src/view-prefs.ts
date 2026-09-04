@@ -34,6 +34,7 @@ export type LibraryFilter =
   | { type: 'baseModel'; name: string }
   | { type: 'session' }
   | { type: 'alwaysUpdate' }
+  | { type: 'unavailable' }
   | { type: 'byDate'; day: string }
   | { type: 'byDateRange'; from: string; to: string }
 
@@ -46,6 +47,11 @@ export interface LibraryViewPrefs {
   hideFolderAssigned: boolean
   /** Keep models whose routing tag is in libraryExcludedTags when hide folder-assigned is on. */
   ignoreExcludedTags: boolean
+  /**
+   * Hide models whose every Civitai tag already has a Tag Folders rule —
+   * focus on cards that still need tag assignment.
+   */
+  hideFullyTagged: boolean
   /** Temporarily hide folder-assigned tags (mapped/final) on library cards. */
   hideAllAssignedTags: boolean
   modelSearch: string
@@ -57,10 +63,11 @@ export interface LibraryViewPrefs {
 export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
   libraryFilter: { type: 'all' },
   modelTypeFilter: null,
-  librarySort: 'tagGroup',
+  librarySort: 'recent',
   nsfwFilter: 'all',
   hideFolderAssigned: false,
   ignoreExcludedTags: false,
+  hideFullyTagged: false,
   hideAllAssignedTags: false,
   modelSearch: '',
   modelLetter: null,
@@ -73,6 +80,8 @@ export interface BrowseViewPrefs {
   hideBanned: boolean
   hideAwaitingAccess: boolean
   showAwaitingConfirm: boolean
+  /** Show Updates versions the user skipped (per versionId). Default off. */
+  showSkipped: boolean
   showBlockedModels: boolean
   browseSort: BrowseSort
   ratingFilter: RatingFilter
@@ -82,9 +91,10 @@ export interface BrowseViewPrefs {
 
 export const DEFAULT_BROWSE_VIEW_PREFS: BrowseViewPrefs = {
   onlyMissing: true,
-  hideBanned: false,
-  hideAwaitingAccess: false,
+  hideBanned: true,
+  hideAwaitingAccess: true,
   showAwaitingConfirm: false,
+  showSkipped: false,
   showBlockedModels: false,
   browseSort: 'recent',
   ratingFilter: 'all',
@@ -105,6 +115,8 @@ export interface MissingViewPrefs {
   sortMode: MissingSort
   search: string
   sidebarExpanded: boolean
+  /** Case-insensitive base model filter (uppercase label). */
+  baseModelFilter: string | null
 }
 
 export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
@@ -116,7 +128,8 @@ export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
   hideMissing: true,
   sortMode: 'recent',
   search: '',
-  sidebarExpanded: true
+  sidebarExpanded: true,
+  baseModelFilter: null
 }
 
 /** Updates sidebar / toolbar filter (status / base model — model type stacks separately). */
@@ -181,7 +194,8 @@ export function coerceLibraryViewPrefs(raw: Partial<LibraryViewPrefs> | null | u
       rawFilter.type === 'untagged' ||
       rawFilter.type === 'unrecognized' ||
       rawFilter.type === 'session' ||
-      rawFilter.type === 'alwaysUpdate'
+      rawFilter.type === 'alwaysUpdate' ||
+      rawFilter.type === 'unavailable'
     ) {
       libraryFilter = { type: rawFilter.type }
     } else if (
@@ -212,18 +226,30 @@ export function coerceLibraryViewPrefs(raw: Partial<LibraryViewPrefs> | null | u
     ...base,
     librarySort: normalizeLibrarySort(base.librarySort),
     libraryFilter,
-    modelTypeFilter
+    modelTypeFilter,
+    hideFullyTagged: base.hideFullyTagged === true
   }
 }
 
 export function coerceBrowseViewPrefs(raw: Partial<BrowseViewPrefs> | null | undefined): BrowseViewPrefs {
   const base = { ...DEFAULT_BROWSE_VIEW_PREFS, ...(raw ?? {}) }
-  return { ...base, browseSort: normalizeBrowseSort(base.browseSort) }
+  return {
+    ...base,
+    browseSort: normalizeBrowseSort(base.browseSort),
+    showSkipped: base.showSkipped === true
+  }
 }
 
 export function coerceMissingViewPrefs(raw: Partial<MissingViewPrefs> | null | undefined): MissingViewPrefs {
   const base = { ...DEFAULT_MISSING_VIEW_PREFS, ...(raw ?? {}) }
-  return { ...base, sortMode: normalizeMissingSort(base.sortMode) }
+  return {
+    ...base,
+    sortMode: normalizeMissingSort(base.sortMode),
+    baseModelFilter:
+      typeof base.baseModelFilter === 'string' && base.baseModelFilter.trim()
+        ? base.baseModelFilter.trim()
+        : null
+  }
 }
 
 export function coercePendingViewPrefs(raw: Partial<PendingViewPrefs> | null | undefined): PendingViewPrefs {

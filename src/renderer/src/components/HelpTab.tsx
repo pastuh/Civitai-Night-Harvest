@@ -1,4 +1,5 @@
 import { useT } from '../i18n/context'
+import { helpInline } from '../utils/help-inline'
 
 interface Props {
   onOpenSettings?: () => void
@@ -37,6 +38,10 @@ const SETTINGS_REF: { refKey: string; fieldKey: string }[] = [
   { refKey: 'hashVerify', fieldKey: 'settings.fields.hashVerify' }
 ]
 
+function HelpLi({ text }: { text: string }) {
+  return <li>{helpInline(text)}</li>
+}
+
 export function HelpTab({ onOpenSettings }: Props) {
   const t = useT()
 
@@ -49,7 +54,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </span>
           {t('help.sections.testing')}
         </h3>
-        <p>{t('help.testingBody')}</p>
+        <p>{helpInline(t('help.testingBody'))}</p>
       </section>
 
       <section className="help-section help-callout help-callout-warn">
@@ -59,7 +64,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </span>
           {t('help.sections.nsfw')}
         </h3>
-        <p>{t('help.nsfwBody')}</p>
+        <p>{helpInline(t('help.nsfwBody'))}</p>
       </section>
 
       <section className="help-section help-callout help-callout-start">
@@ -70,9 +75,9 @@ export function HelpTab({ onOpenSettings }: Props) {
           {t('help.sections.quickStart')}
         </h3>
         <ol className="help-steps">
-          <li>{t('help.quickStart1')}</li>
-          <li>{t('help.quickStart2')}</li>
-          <li>{t('help.quickStart3')}</li>
+          <HelpLi text={t('help.quickStart1')} />
+          <HelpLi text={t('help.quickStart2')} />
+          <HelpLi text={t('help.quickStart3')} />
         </ol>
       </section>
 
@@ -85,11 +90,11 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.header')}
           </h3>
           <ul>
-            <li>{t('help.headerHarvest')}</li>
-            <li>{t('help.headerNightModes')}</li>
-            <li>{t('help.headerDownloads')}</li>
-            <li>{t('help.headerEye')}</li>
-            <li>{t('help.headerBlur')}</li>
+            <HelpLi text={t('help.headerHarvest')} />
+            <HelpLi text={t('help.headerNightModes')} />
+            <HelpLi text={t('help.headerDownloads')} />
+            <HelpLi text={t('help.headerEye')} />
+            <HelpLi text={t('help.headerBlur')} />
           </ul>
         </section>
 
@@ -101,18 +106,19 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.browse')}
           </h3>
           <ul>
-            <li>{t('help.browseRules')}</li>
-            <li>{t('help.browseResults')}</li>
-            <li>{t('help.browseDetails')}</li>
-            <li>{t('help.browseVideoBadges')}</li>
-            <li>{t('help.browseQualityPairs')}</li>
-            <li>{t('help.browsePreviews')}</li>
-            <li>{t('help.browseTags')}</li>
-            <li>{t('help.browsePausedBanned')}</li>
-            <li>{t('help.browseManualQueue')}</li>
-            <li>{t('help.browseSettled')}</li>
-            <li>{t('help.browseBan')}</li>
-            <li>{t('help.browseContextSkipTag')}</li>
+            <HelpLi text={t('help.browseRules')} />
+            <HelpLi text={t('help.browseResults')} />
+            <HelpLi text={t('help.browseDetails')} />
+            <HelpLi text={t('help.browseVideoBadges')} />
+            <HelpLi text={t('help.browseQualityPairs')} />
+            <HelpLi text={t('help.browsePreviews')} />
+            <HelpLi text={t('help.browseTags')} />
+            <HelpLi text={t('help.browsePausedBanned')} />
+            <HelpLi text={t('help.browseSearchHidden')} />
+            <HelpLi text={t('help.browseManualQueue')} />
+            <HelpLi text={t('help.browseSettled')} />
+            <HelpLi text={t('help.browseBan')} />
+            <HelpLi text={t('help.browseContextSkipTag')} />
           </ul>
         </section>
 
@@ -124,25 +130,25 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.library')}
           </h3>
           <ul>
-            <li>{t('help.libraryFolders')}</li>
-            <li>{t('help.libraryCustomAssignments')}</li>
-            <li>{t('help.libraryPriority')}</li>
-            <li>{t('help.libraryTagBan')}</li>
-            <li>{t('help.libraryBadge')}</li>
-            <li>{t('help.librarySession')}</li>
-            <li>{t('help.libraryAlwaysUpdate')}</li>
-            <li>{t('help.libraryByDate')}</li>
-            <li>{t('help.libraryDetails')}</li>
-            <li>{t('help.librarySort')}</li>
-            <li>{t('help.libraryContent')}</li>
-            <li>{t('help.libraryTypeFilter')}</li>
-            <li>{t('help.libraryTags')}</li>
-            <li>{t('help.libraryFastTag')}</li>
-            <li>{t('help.libraryExcluded')}</li>
-            <li>{t('help.libraryManual')}</li>
-            <li>{t('help.libraryPreserve')}</li>
-            <li>{t('help.libraryConfirmMoves')}</li>
-            <li>{t('help.libraryDiskSync')}</li>
+            <HelpLi text={t('help.libraryFolders')} />
+            <HelpLi text={t('help.libraryCustomAssignments')} />
+            <HelpLi text={t('help.libraryPriority')} />
+            <HelpLi text={t('help.libraryTagBan')} />
+            <HelpLi text={t('help.libraryBadge')} />
+            <HelpLi text={t('help.librarySession')} />
+            <HelpLi text={t('help.libraryAlwaysUpdate')} />
+            <HelpLi text={t('help.libraryByDate')} />
+            <HelpLi text={t('help.libraryDetails')} />
+            <HelpLi text={t('help.librarySort')} />
+            <HelpLi text={t('help.libraryContent')} />
+            <HelpLi text={t('help.libraryTypeFilter')} />
+            <HelpLi text={t('help.libraryTags')} />
+            <HelpLi text={t('help.libraryFastTag')} />
+            <HelpLi text={t('help.libraryExcluded')} />
+            <HelpLi text={t('help.libraryManual')} />
+            <HelpLi text={t('help.libraryPreserve')} />
+            <HelpLi text={t('help.libraryConfirmMoves')} />
+            <HelpLi text={t('help.libraryDiskSync')} />
           </ul>
         </section>
 
@@ -154,13 +160,13 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.missing')}
           </h3>
           <ul>
-            <li>{t('help.missingOverview')}</li>
-            <li>{t('help.missingKinds')}</li>
-            <li>{t('help.missingFilters')}</li>
-            <li>{t('help.missingMarkSeen')}</li>
-            <li>{t('help.missingAllow')}</li>
-            <li>{t('help.missingForget')}</li>
-            <li>{t('help.missingContextMenu')}</li>
+            <HelpLi text={t('help.missingOverview')} />
+            <HelpLi text={t('help.missingKinds')} />
+            <HelpLi text={t('help.missingFilters')} />
+            <HelpLi text={t('help.missingMarkSeen')} />
+            <HelpLi text={t('help.missingAllow')} />
+            <HelpLi text={t('help.missingForget')} />
+            <HelpLi text={t('help.missingContextMenu')} />
           </ul>
         </section>
 
@@ -173,26 +179,32 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul className="help-legend-list">
             <li>
-              <span className="help-swatch help-swatch-owned" aria-hidden /> {t('help.edgeOwned')}
+              <span className="help-swatch help-swatch-owned" aria-hidden />{' '}
+              {helpInline(t('help.edgeOwned'))}
             </li>
             <li>
-              <span className="help-swatch help-swatch-queued" aria-hidden /> {t('help.edgeQueued')}
+              <span className="help-swatch help-swatch-queued" aria-hidden />{' '}
+              {helpInline(t('help.edgeQueued'))}
             </li>
             <li>
-              <span className="help-swatch help-swatch-downloading" aria-hidden /> {t('help.edgeDownloading')}
+              <span className="help-swatch help-swatch-downloading" aria-hidden />{' '}
+              {helpInline(t('help.edgeDownloading'))}
             </li>
             <li>
-              <span className="help-swatch help-swatch-new" aria-hidden /> {t('help.edgeNew')}
+              <span className="help-swatch help-swatch-new" aria-hidden />{' '}
+              {helpInline(t('help.edgeNew'))}
             </li>
             <li>
-              <span className="help-swatch help-swatch-awaiting" aria-hidden /> {t('help.edgeAwaiting')}
+              <span className="help-swatch help-swatch-awaiting" aria-hidden />{' '}
+              {helpInline(t('help.edgeAwaiting'))}
             </li>
             <li>
               <span className="help-swatch help-swatch-awaiting-confirm" aria-hidden />{' '}
-              {t('help.edgeAwaitingConfirm')}
+              {helpInline(t('help.edgeAwaitingConfirm'))}
             </li>
             <li>
-              <span className="help-swatch help-swatch-blocked" aria-hidden /> {t('help.edgeBlocked')}
+              <span className="help-swatch help-swatch-blocked" aria-hidden />{' '}
+              {helpInline(t('help.edgeBlocked'))}
             </li>
           </ul>
         </section>
@@ -205,17 +217,17 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.downloads')}
           </h3>
           <ul>
-            <li>{t('help.dlStrip')}</li>
-            <li>{t('help.dlStripLayouts')}</li>
-            <li>{t('help.dlStripProgress')}</li>
-            <li>{t('help.dlStripColors')}</li>
-            <li>{t('help.dlStripPriority')}</li>
-            <li>{t('help.dlStatusBar')}</li>
-            <li>{t('help.dlAwaiting')}</li>
-            <li>{t('help.dlIncomplete')}</li>
-            <li>{t('help.dlNewVersions')}</li>
-            <li>{t('help.dlTabBadges')}</li>
-            <li>{t('help.dlActivity')}</li>
+            <HelpLi text={t('help.dlStrip')} />
+            <HelpLi text={t('help.dlStripLayouts')} />
+            <HelpLi text={t('help.dlStripProgress')} />
+            <HelpLi text={t('help.dlStripColors')} />
+            <HelpLi text={t('help.dlStripPriority')} />
+            <HelpLi text={t('help.dlStatusBar')} />
+            <HelpLi text={t('help.dlAwaiting')} />
+            <HelpLi text={t('help.dlIncomplete')} />
+            <HelpLi text={t('help.dlNewVersions')} />
+            <HelpLi text={t('help.dlTabBadges')} />
+            <HelpLi text={t('help.dlActivity')} />
           </ul>
         </section>
 
@@ -227,10 +239,11 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.progressBar')}
           </h3>
           <p className="muted">
-            {t('help.progressBar.owned')} · {t('help.progressBar.banned')} · {t('help.progressBar.blocked')} ·{' '}
-            {t('help.progressBar.awaiting')} · {t('help.progressBar.updates')} · {t('help.progressBar.yield')}
+            {helpInline(t('help.progressBar.owned'))} · {helpInline(t('help.progressBar.banned'))} ·{' '}
+            {helpInline(t('help.progressBar.blocked'))} · {helpInline(t('help.progressBar.awaiting'))} ·{' '}
+            {helpInline(t('help.progressBar.updates'))} · {helpInline(t('help.progressBar.yield'))}
           </p>
-          <p className="muted">{t('help.progressBar.yieldNote')}</p>
+          <p className="muted">{helpInline(t('help.progressBar.yieldNote'))}</p>
         </section>
       </div>
 
@@ -245,7 +258,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           {SETTINGS_REF.map(({ refKey, fieldKey }) => (
             <div key={refKey} className="help-settings-ref-row">
               <dt>{t(fieldKey)}</dt>
-              <dd className="muted">{t(`help.settingsRef.${refKey}`)}</dd>
+              <dd className="muted">{helpInline(t(`help.settingsRef.${refKey}`))}</dd>
             </div>
           ))}
         </dl>
@@ -258,7 +271,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </span>
           {t('help.sections.domains')}
         </h3>
-        <p className="muted">{t('help.domainsBody')}</p>
+        <p className="muted">{helpInline(t('help.domainsBody'))}</p>
       </section>
 
       {onOpenSettings && (

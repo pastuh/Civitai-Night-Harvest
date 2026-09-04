@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent as ReactMouseEvent } from 'react'
+﻿import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent as ReactMouseEvent } from 'react'
 
 import type { HiddenTagApplyProgress, InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { tagsEqual, fuzzyTagMatch, tagAliasMatch } from '../../../shared/tag-fuzzy'
@@ -359,7 +359,8 @@ export function TagsTab({
   const [customOpen, setCustomOpen] = useState(false)
   /** Blank rows from "Add custom assignment" — not auto table rules (those use empty folderPath too). */
   const [pendingCustomIds, setPendingCustomIds] = useState<Set<string>>(() => new Set())
-  const [movingTag, setMovingTag] = useState<string | null>(null)
+  /** File moves / reconcile — status shows but UI stays interactive (no global wait lock). */
+  const [backgroundMoving, setBackgroundMoving] = useState(false)
   const [folderEditTag, setFolderEditTag] = useState<string | null>(null)
   const [folderEditValue, setFolderEditValue] = useState('')
   /** Local display labels for table rows (key = original Civitai / pool tag). Matching stays on the key. */
@@ -496,7 +497,7 @@ export function TagsTab({
   )
 
   useEffect(() => {
-    if (movingTag) return
+    if (backgroundMoving) return
     if (hideAssigned && pinnedAssignLabels.length > 0) return
     setDraft(rules)
     // Preserve pendingCustomIds that still exist as in-progress draft rows.
@@ -512,7 +513,7 @@ export function TagsTab({
     })
     setSaveState('idle')
     setSaveError(null)
-  }, [rules, movingTag, hideAssigned, pinnedAssignLabels.length])
+  }, [rules, backgroundMoving, hideAssigned, pinnedAssignLabels.length])
 
   const tableTagPool = useMemo(() => {
     const byKey = new Map<string, string>()
@@ -740,7 +741,7 @@ export function TagsTab({
   }
 
   const startFolderEdit = (tag: string, opts?: { force?: boolean }) => {
-    if (!opts?.force && (movingTag || massAssign)) return
+    if (!opts?.force && (backgroundMoving || massAssign)) return
     const rule = findRuleForTag(tag, draft)
     if (!rule || isCustomTagFolderRule(rule, loraFolder, checkpointFolder)) return
     setFolderEditTag(tag)
@@ -753,7 +754,7 @@ export function TagsTab({
   }
 
   const startTagRename = (tag: string) => {
-    if (movingTag || massAssign || folderEditTag) return
+    if (backgroundMoving || massAssign || folderEditTag) return
     setTagEditFrom(tag)
     setTagEditValue(displayNameFor(tag))
   }
@@ -800,7 +801,7 @@ export function TagsTab({
     if (tagEditFrom !== from) return
     const typed = tagEditValue.trim()
     cancelTagRename()
-    if (!typed || movingTag) return
+    if (!typed || backgroundMoving) return
 
     // Exact name only — do not coerce via plural/alias (that made renames "revert").
     if (tagsEqual(typed, from)) {
@@ -894,7 +895,7 @@ export function TagsTab({
   }
 
   const removeTableTag = async (tag: string) => {
-    if (movingTag || !canRemoveTableTag(tag)) return
+    if (backgroundMoving || !canRemoveTableTag(tag)) return
     if (tagEditFrom && tagsEqual(tagEditFrom, tag)) cancelTagRename()
 
     setManualTableTags((prev) => prev.filter((t) => !tagsEqual(t, tag)))
@@ -949,7 +950,7 @@ export function TagsTab({
     ) {
       return null
     }
-    setMovingTag('reconcile')
+    setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
     try {
       const result = await window.api.reconcileTagFolders()
@@ -967,7 +968,7 @@ export function TagsTab({
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
       return null
     } finally {
-      setMovingTag(null)
+      setBackgroundMoving(false)
     }
   }
 
@@ -976,7 +977,7 @@ export function TagsTab({
     const rule = findRuleForTag(tag, draft)
     const newName = folderEditValue.trim()
     cancelFolderEdit()
-    if (!rule || !newName || movingTag) return
+    if (!rule || !newName || backgroundMoving) return
 
     const current = subfolderNameForRule(rule, tag)
     if (newName === current) return
@@ -988,7 +989,7 @@ export function TagsTab({
     const routingTag = tagsInRule[0] ?? tag
 
     prepareAssignDraft([tag], updated)
-    setMovingTag(tag)
+    setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
     try {
       await persistRules(updated)
@@ -1006,14 +1007,14 @@ export function TagsTab({
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
-      setMovingTag(null)
+      setBackgroundMoving(false)
       pinAssignLabels([tag])
     }
   }
 
   const commitPriority = async (tag: string, raw: string | number) => {
     const rule = findRuleForTag(tag, draft)
-    if (!rule || movingTag) return
+    if (!rule || backgroundMoving) return
     const next = storedTagPriority(
       typeof raw === 'number'
         ? raw
@@ -1031,7 +1032,7 @@ export function TagsTab({
     const routingTag = tagsInRule[0] ?? tag
 
     prepareAssignDraft(tagsInRule, updated)
-    setMovingTag(tag)
+    setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
     try {
       await persistRules(updated)
@@ -1049,14 +1050,14 @@ export function TagsTab({
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
-      setMovingTag(null)
+      setBackgroundMoving(false)
       pinAssignLabels([tag])
     }
   }
 
   const nudgePriority = (tag: string, direction: 1 | -1) => {
     const rule = findRuleForTag(tag, draft)
-    if (!rule || movingTag) return
+    if (!rule || backgroundMoving) return
     const next = stepTagPriority(getRulePriority(rule), direction)
     void commitPriority(tag, next)
   }
@@ -1065,7 +1066,7 @@ export function TagsTab({
     bannedTags.some((h) => h.toLowerCase() === tag.trim().toLowerCase())
 
   const toggleBlockTag = async (tag: string) => {
-    if (!onBannedTagsChange || movingTag || saveState === 'saving' || blockApply) return
+    if (!onBannedTagsChange || backgroundMoving || saveState === 'saving' || blockApply) return
     const blocked = isTagBlocked(tag)
     const next = blocked
       ? bannedTags.filter((h) => h.toLowerCase() !== tag.trim().toLowerCase())
@@ -1145,13 +1146,13 @@ export function TagsTab({
   }
 
   const enableAutoTag = async (tag: string) => {
-    if (movingTag) return
+    if (backgroundMoving) return
     if (findRuleForTag(tag, draft)) return
     const existingCustom = customRules.find((r) => ruleCoversTag(r, tag))
     if (existingCustom) return
     const next = [...draft, { id: newId(), tagName: tag, folderPath: '' }]
     prepareAssignDraft([tag], next)
-    setMovingTag(tag)
+    setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
     try {
       await persistRules(next)
@@ -1188,7 +1189,7 @@ export function TagsTab({
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
-      setMovingTag(null)
+      setBackgroundMoving(false)
       pinAssignLabels([tag])
       if (hideAssignedRef.current) {
         queueMicrotask(() => startFolderEdit(tag, { force: true }))
@@ -1225,7 +1226,7 @@ export function TagsTab({
 
   const applyMassAssign = async () => {
     const name = massFolderName.trim()
-    if (!massSelected.size || !name || movingTag) return
+    if (!massSelected.size || !name || backgroundMoving) return
     const tags = [...massSelected]
     const without = draft.filter((r) => !tags.some((tag) => ruleCoversTag(r, tag)))
     const next = [
@@ -1234,7 +1235,7 @@ export function TagsTab({
     ]
     const routingTag = tags[0]
     prepareAssignDraft(tags, next)
-    setMovingTag('mass')
+    setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
     try {
       await persistRules(next)
@@ -1255,7 +1256,7 @@ export function TagsTab({
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
-      setMovingTag(null)
+      setBackgroundMoving(false)
       pinAssignLabels(tags)
     }
   }
@@ -1427,11 +1428,11 @@ const dirty = useMemo(() => {
           <button
             type="button"
             className="primary"
-            disabled={Boolean(movingTag) || reconcilePendingCount === 0}
+            disabled={Boolean(backgroundMoving) || reconcilePendingCount === 0}
             title={t('tagsTab.reconcileHint')}
             onClick={() => void runLibraryReconcile()}
           >
-            {movingTag === 'reconcile'
+            {backgroundMoving
               ? t('tagsTab.transferring')
               : t('tagsTab.reconcileApply', { count: reconcilePendingCount })}
           </button>
@@ -1469,11 +1470,16 @@ const dirty = useMemo(() => {
                   type="button"
                   className="primary tags-mass-apply-inline"
                   disabled={
-                    !massSelected.size || !massFolderName.trim() || saveState === 'saving' || !!movingTag
+                    !massSelected.size ||
+                    !massFolderName.trim() ||
+                    saveState === 'saving' ||
+                    !!backgroundMoving 
                   }
                   onClick={() => void applyMassAssign()}
                 >
-                  {t('tagsTab.massAssignApply', { count: massSelected.size })}
+                  {backgroundMoving
+                    ? t('tagsTab.transferring')
+                    : t('tagsTab.massAssignApply', { count: massSelected.size })}
                 </button>
               </>
             )}
@@ -1581,7 +1587,7 @@ const dirty = useMemo(() => {
                         type="checkbox"
                         className={massAssign ? 'tags-check-mass' : 'tags-check-auto'}
                         checked={massAssign ? massOn : assigned}
-                        disabled={!!movingTag || saveState === 'saving'}
+                        disabled={saveState === 'saving'}
                         onChange={() => {
                           if (massAssign) toggleMassSelect(tag)
                           else if (assigned) void disableAutoTag(tag)
@@ -1602,7 +1608,6 @@ const dirty = useMemo(() => {
                           singleTag
                           matchMode="substring"
                           autoFocus
-                          disabled={!!movingTag}
                           onBlur={() => void commitTagRename(tag)}
                           onConfirm={() => void commitTagRename(tag)}
                           confirmLabel={t('tagsTab.confirmRenameTag')}
@@ -1618,7 +1623,7 @@ const dirty = useMemo(() => {
                         <button
                           type="button"
                           className="tags-name-edit-btn"
-                          disabled={!!movingTag || massAssign}
+                          disabled={massAssign}
                           onClick={() => startTagRename(tag)}
                           title={t('tagsTab.renameTagHint')}
                         >
@@ -1638,7 +1643,6 @@ const dirty = useMemo(() => {
                           singleTag
                           matchMode="substring"
                           autoFocus
-                          disabled={!!movingTag}
                           onBlur={() => void commitFolderEdit(tag)}
                           onConfirm={() => void commitFolderEdit(tag)}
                           confirmLabel={t('tagsTab.confirmFolder')}
@@ -1651,7 +1655,7 @@ const dirty = useMemo(() => {
                         <button
                           type="button"
                           className="tags-folder-label tags-folder-edit-btn"
-                          disabled={!!movingTag || massAssign}
+                          disabled={massAssign}
                           onClick={() => startFolderEdit(tag)}
                           title={t('tagsTab.renameFolderHint')}
                         >
@@ -1680,7 +1684,6 @@ const dirty = useMemo(() => {
                             className="tags-priority-nudge"
                             title={t('tagsTab.priorityUp')}
                             disabled={
-                              !!movingTag ||
                               saveState === 'saving' ||
                               massAssign ||
                               priority >= 9999
@@ -1697,7 +1700,7 @@ const dirty = useMemo(() => {
                             step={1}
                             defaultValue={priority}
                             key={`${tag}:${priority}`}
-                            disabled={!!movingTag || saveState === 'saving' || massAssign}
+                            disabled={saveState === 'saving' || massAssign}
                             title={t('tagsTab.priorityHint')}
                             aria-label={t('tagsTab.colPriority')}
                             onBlur={(e) => void commitPriority(tag, e.target.value)}
@@ -1721,7 +1724,6 @@ const dirty = useMemo(() => {
                             className="tags-priority-nudge"
                             title={t('tagsTab.priorityDown')}
                             disabled={
-                              !!movingTag ||
                               saveState === 'saving' ||
                               massAssign ||
                               priority <= -9999
@@ -1741,7 +1743,7 @@ const dirty = useMemo(() => {
                           type="checkbox"
                           className="tags-check-block"
                           checked={blocked}
-                          disabled={!!movingTag || saveState === 'saving'}
+                          disabled={saveState === 'saving'}
                           onChange={() => void toggleBlockTag(tag)}
                           title={
                             blocked ? t('tagsTab.unblockTagHint') : t('tagsTab.blockTagHint')
@@ -1768,7 +1770,7 @@ const dirty = useMemo(() => {
                           type="button"
                           className="tag-library-filter-btn tags-remove-tag-btn"
                           title={t('tagsTab.removeTagHint')}
-                          disabled={!!movingTag || saveState === 'saving'}
+                          disabled={saveState === 'saving'}
                           onClick={() => void removeTableTag(tag)}
                         >
                           ×
@@ -1923,3 +1925,6 @@ const dirty = useMemo(() => {
     </div>
   )
 }
+
+
+

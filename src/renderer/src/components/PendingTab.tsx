@@ -19,12 +19,12 @@ import {
   matchesRatingFilter,
   type RatingFilter
 } from '../../../shared/rating-filter'
-import { describeNsfwRating } from '../../../shared/nsfw-rating'
+import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
 import { getModelPageUrl } from '../../../shared/utils'
 import { useT } from '../i18n/context'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
-import { VersionNameRow } from './VersionNameRow'
+import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
@@ -44,6 +44,11 @@ import {
   coercePendingViewPrefs
 } from '../view-prefs'
 import { compareOptionalCount } from '../list-sort'
+import {
+  aggregateBaseModelOptions,
+  baseModelLabel,
+  baseModelsMatch
+} from '../../../shared/base-model-label'
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { ResultsPager } from './ResultsPager'
 
@@ -636,7 +641,6 @@ export const PendingTab = memo(function PendingTab({
   }, [baseRows, ownedPrimaryByModel, showForgotten, showSkipped])
 
   const baseModelCounts = useMemo(() => {
-    const map = new Map<string, number>()
     const rows = modelTypeFilter
       ? baseRows.filter((row) => {
           if (row.temporary) return false
@@ -644,12 +648,11 @@ export const PendingTab = memo(function PendingTab({
           return mt.toUpperCase() === modelTypeFilter.toUpperCase()
         })
       : baseRows.filter((row) => !row.temporary)
-    for (const row of rows) {
-      if (row.item.forgotten || row.item.skipped) continue
-      const bm = (row.item.baseModel || '').trim() || '—'
-      map.set(bm, (map.get(bm) ?? 0) + 1)
-    }
-    return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    return aggregateBaseModelOptions(
+      rows
+        .filter((row) => !row.item.forgotten && !row.item.skipped)
+        .map((row) => (row.item.baseModel || '').trim() || '—')
+    ).map((o) => [o.name, o.count] as [string, number])
   }, [baseRows, modelTypeFilter, ownedPrimaryByModel])
 
   const rowsForMainCounts = useMemo(() => {
@@ -728,7 +731,7 @@ export const PendingTab = memo(function PendingTab({
       if (modelTypeFilter && mt.toUpperCase() !== modelTypeFilter.toUpperCase()) {
         return false
       }
-      if (sideFilter.type === 'baseModel' && (item.baseModel || '').trim() !== sideFilter.name) {
+      if (sideFilter.type === 'baseModel' && !baseModelsMatch(item.baseModel || '—', sideFilter.name)) {
         return false
       }
 
@@ -884,7 +887,9 @@ export const PendingTab = memo(function PendingTab({
   const sideFilterActive = useCallback(
     (f: PendingSideFilter) => {
       if (f.type !== sideFilter.type) return false
-      if (f.type === 'baseModel' && sideFilter.type === 'baseModel') return f.name === sideFilter.name
+      if (f.type === 'baseModel' && sideFilter.type === 'baseModel') {
+        return baseModelsMatch(f.name, sideFilter.name)
+      }
       return true
     },
     [sideFilter]
@@ -985,20 +990,18 @@ export const PendingTab = memo(function PendingTab({
           </div>
         </div>
         <div className="browse-results-controls-box">
-          <label className="library-sort browse-results-sort">
-            {t('gallery.contentLabel')}
-            <select
-              className={ratingFilter !== 'all' ? 'filtered' : undefined}
-              value={ratingFilter}
-              onChange={(e) => setRatingFilter(e.target.value as RatingFilter)}
-            >
-              {RATING_FILTER_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {t(`gallery.ratingFilter.${opt}`)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <select
+            className={`browse-content-filter${ratingFilter !== 'all' ? ' filtered' : ''}`}
+            value={ratingFilter}
+            onChange={(e) => setRatingFilter(e.target.value as RatingFilter)}
+            title={t('gallery.contentLabel')}
+          >
+            {RATING_FILTER_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {t(`gallery.ratingFilter.${opt}`)}
+              </option>
+            ))}
+          </select>
           <label className="library-sort browse-results-sort">
             {t('listSort.label')}
             <select
@@ -1081,10 +1084,7 @@ export const PendingTab = memo(function PendingTab({
                         !temporary && markSeenMode && !isSeen && !forgotten && !skipped
                       const mt = resolveModelType(item, owned)
                       const nsfw = resolveNsfw(item, owned)
-                      const ratingInfo =
-                        nsfw.nsfw != null || nsfw.nsfwLevel
-                          ? describeNsfwRating(nsfw.nsfw, nsfw.nsfwLevel)
-                          : null
+                      const ratingInfo = describeNsfwRatingForCard(nsfw.nsfw, nsfw.nsfwLevel)
                       const queueItem = queueByVersionId.get(item.versionId)
                       const isDownloading = queueItem?.status === 'downloading'
                       const isQueued = queueItem?.status === 'queued'
@@ -1158,54 +1158,55 @@ export const PendingTab = memo(function PendingTab({
                               : undefined
                           }
                           meta={
-                            <>
-                              <VersionNameRow
-                                variant="status"
-                                name={item.versionName}
-                                source={{
-                                  modelName: item.modelName,
-                                  versionName: item.versionName,
-                                  modelDescription: item.modelDescription,
-                                  versionDescription: item.versionDescription
-                                }}
-                                inlineAfterName={
+                            <ModelCardInfo
+                              versionName={item.versionName}
+                              versionSource={{
+                                modelName: item.modelName,
+                                versionName: item.versionName,
+                                modelDescription: item.modelDescription,
+                                versionDescription: item.versionDescription
+                              }}
+                              baseModel={item.baseModel}
+                              modelType={mt}
+                              downloadCount={item.downloadCount ?? owned?.downloadCount}
+                              thumbsUpCount={item.thumbsUpCount ?? owned?.thumbsUpCount}
+                              statusChips={
+                                temporary ||
+                                (!temporary && autoUpdate) ||
+                                forgotten ||
+                                skipped ||
+                                (isSeen && !forgotten && !temporary) ? (
                                   <>
-                                    <span className="status-card-version-base"> · {item.baseModel}</span>
-                                    <span className="status-card-version-base"> · {mt}</span>
                                     {temporary ? (
                                       <span className="status-card-skipped-badge">
-                                        {' '}
-                                        · {t('pending.temporaryBadge')}
+                                        {t('pending.temporaryBadge')}
                                       </span>
                                     ) : null}
                                     {!temporary && autoUpdate ? (
                                       <span className="status-card-skipped-badge">
-                                        {' '}
-                                        · {t('pending.alwaysUpdateBadge')}
+                                        {t('pending.alwaysUpdateBadge')}
                                       </span>
                                     ) : null}
                                     {forgotten ? (
                                       <span className="status-card-skipped-badge">
-                                        {' '}
-                                        · {t('pending.forgottenBadge')}
+                                        {t('pending.forgottenBadge')}
                                       </span>
                                     ) : null}
                                     {skipped ? (
                                       <span className="status-card-skipped-badge">
-                                        {' '}
-                                        · {t('pending.skippedBadge')}
+                                        {t('pending.skippedBadge')}
                                       </span>
                                     ) : null}
                                     {isSeen && !forgotten && !temporary ? (
                                       <span className="status-card-skipped-badge">
-                                        {' '}
-                                        · {t('pending.seenBadge')}
+                                        {t('pending.seenBadge')}
                                       </span>
                                     ) : null}
                                   </>
-                                }
-                              />
-                              <div className="status-card-detail">{versionsLabel(item)}</div>
+                                ) : null
+                              }
+                            >
+                              <div className="status-card-detail muted">{versionsLabel(item)}</div>
                               {tags && tags.length > 0 ? (
                                 <div className="tag-row library-card-tags" title={tags.join(', ')}>
                                   {tags.slice(0, 6).map((tag) => (
@@ -1215,18 +1216,18 @@ export const PendingTab = memo(function PendingTab({
                                   ))}
                                 </div>
                               ) : null}
-                            </>
+                            </ModelCardInfo>
                           }
                           statusFoot={queueFoot || undefined}
                           badges={
                             ratingInfo ? (
-                              <span
-                                className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
-                                title={`Content: ${ratingInfo.label}`}
-                              >
-                                {ratingInfo.label}
-                              </span>
-                            ) : null
+                            <span
+                              className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
+                              title={`Content: ${ratingInfo.label}`}
+                            >
+                              {ratingInfo.label}
+                            </span>
+                            ) : undefined
                           }
                           previewUrl={cardThumb.urls[0]}
                           previewUrls={cardThumb.urls}
@@ -1500,7 +1501,7 @@ export const PendingTab = memo(function PendingTab({
                         key={name}
                         type="button"
                         className={`sidebar-tag ${sideFilterActive({ type: 'baseModel', name }) ? 'active' : ''}`}
-                        onClick={() => applySideFilter({ type: 'baseModel', name })}
+                        onClick={() => applySideFilter({ type: 'baseModel', name: baseModelLabel(name) })}
                       >
                         <span className="tag-name">{name}</span>
                         <span className="muted tag-count-inline">{count}</span>

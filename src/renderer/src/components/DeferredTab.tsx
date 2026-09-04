@@ -11,13 +11,20 @@ import { formatCountdownTo, formatWaitDuration, isDisplayablePreviewUrl } from '
 import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
-import { VersionNameRow } from './VersionNameRow'
+import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
 import { FastTagAssignModal } from './FastTagAssignModal'
+import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { resolveModelCardThumb, deferredCardPreviewSource, inventoryByVersionMap, videoPreviewAvailabilityFor } from '../utils/model-card-preview'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
 import type { ModelDetailTarget } from './ModelDetailModal'
+import {
+  aggregateBaseModelOptions,
+  baseModelLabel,
+  baseModelsMatch
+} from '../../../shared/base-model-label'
+import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
 import {
   cardTagFolderRole,
   cardTagFolderRoleClass,
@@ -80,6 +87,17 @@ interface Props {
 function modelPageUrl(domain: 'com' | 'red' | 'both', modelId: number, versionId: number): string {
   const host = domain === 'red' ? 'civitai.red' : 'civitai.com'
   return `https://${host}/models/${modelId}?modelVersionId=${versionId}`
+}
+
+/** Local calendar day (YYYY-MM-DD) when early access unlocks. */
+function unlockDayKey(iso: string | undefined | null): string | null {
+  if (!iso?.trim()) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function sortDeferred(
@@ -237,6 +255,7 @@ export function DeferredTab({
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [sectionOpen, setSectionOpen] = useState({ baseModels: true })
   const [sidebarSearch, setSidebarSearch] = useState('')
+  const [unlockDayFilter, setUnlockDayFilter] = useState<string | null>(null)
   const [deferredSort, setDeferredSort] = useState<DeferredSort>('unlock')
   const [search, setSearch] = useState('')
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
@@ -434,12 +453,9 @@ export function DeferredTab({
 
   const baseModelCounts = useMemo(() => {
     const pool = modelTypeFilter ? itemsForMainCounts : scopedDeferred
-    const map = new Map<string, number>()
-    for (const d of pool) {
-      const bm = deferredBaseModelLabel(d, browseCards, inventoryByVersion)
-      map.set(bm, (map.get(bm) ?? 0) + 1)
-    }
-    return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    return aggregateBaseModelOptions(
+      pool.map((d) => deferredBaseModelLabel(d, browseCards, inventoryByVersion))
+    ).map((o) => [o.name, o.count] as [string, number])
   }, [scopedDeferred, itemsForMainCounts, modelTypeFilter, browseCards, inventoryByVersion])
 
   const filteredBaseModelCounts = useMemo(() => {
@@ -447,6 +463,21 @@ export function DeferredTab({
     if (!q) return baseModelCounts
     return baseModelCounts.filter(([name]) => name.toLowerCase().includes(q))
   }, [baseModelCounts, sidebarSearch])
+
+  const unlockDayCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const d of scopedDeferred) {
+      if (!canWaitForDeferredUnlock(d)) continue
+      const day = unlockDayKey(d.earlyAccessEndsAt)
+      if (!day) continue
+      map.set(day, (map.get(day) ?? 0) + 1)
+    }
+    return map
+  }, [scopedDeferred])
+
+  const pickUnlockDay = useCallback((day: string) => {
+    setUnlockDayFilter((prev) => (prev === day ? null : day))
+  }, [])
 
   const sorted = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -466,8 +497,8 @@ export function DeferredTab({
     } else if (sideFilter.type === 'buy') {
       list = scopedDeferred.filter((d) => !canWaitForDeferredUnlock(d))
     } else if (sideFilter.type === 'baseModel') {
-      list = scopedDeferred.filter(
-        (d) => deferredBaseModelLabel(d, browseCards, inventoryByVersion) === sideFilter.name
+      list = scopedDeferred.filter((d) =>
+        baseModelsMatch(deferredBaseModelLabel(d, browseCards, inventoryByVersion), sideFilter.name)
       )
     } else {
       list = scopedDeferred
@@ -477,12 +508,16 @@ export function DeferredTab({
       const want = modelTypeFilter.toUpperCase()
       list = list.filter((d) => resolveDeferredModelType(d).toUpperCase() === want)
     }
+    if (unlockDayFilter) {
+      list = list.filter((d) => unlockDayKey(d.earlyAccessEndsAt) === unlockDayFilter)
+    }
     if (q) list = list.filter((d) => matchesSearch(d, q))
     return list
   }, [
     search,
     sideFilter,
     modelTypeFilter,
+    unlockDayFilter,
     scopedDeferred,
     sessionBannedList,
     sessionBanLive,
@@ -510,7 +545,7 @@ export function DeferredTab({
     (f: SideFilter) => {
       if (f.type !== sideFilter.type) return false
       if (f.type === 'baseModel' && sideFilter.type === 'baseModel') {
-        return f.name === sideFilter.name
+        return baseModelsMatch(f.name, sideFilter.name)
       }
       return true
     },
@@ -734,6 +769,12 @@ export function DeferredTab({
                         previewSource,
                         previewOverrides[item.versionId]
                       )
+                      const browseCard = browseCards[item.versionId]
+                      const owned = inventoryByVersion.get(item.versionId)
+                      const ratingInfo = describeNsfwRatingForCard(
+                        browseCard?.nsfw ?? owned?.isNsfw,
+                        browseCard?.nsfwLevel ?? owned?.nsfwLevel
+                      )
                       return (
                         <StatusModelCard
                           key={item.versionId}
@@ -745,25 +786,48 @@ export function DeferredTab({
                             .filter(Boolean)
                             .join(' ')}
                           title={item.modelName}
+                          badges={
+                            <>
+                              {ratingInfo ? (
+                              <span
+                                className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
+                                title={`Content: ${ratingInfo.label}`}
+                              >
+                                {ratingInfo.label}
+                              </span>
+                              ) : null}
+                              {item.failureKind !== 'early_access' ? (
+                                <div className="deferred-kind">
+                                  {DEFERRED_KIND_LABELS[item.failureKind]}
+                                </div>
+                              ) : null}
+                            </>
+                          }
                           onContextMenu={(e) => openContextMenu(e, item)}
                           meta={
-                            <>
-                              {item.versionName ? (
-                                <VersionNameRow
-                                  variant="status"
-                                  name={item.versionName}
-                                  source={{
-                                    modelName: item.modelName,
-                                    versionName: item.versionName
-                                  }}
-                                />
-                              ) : null}
+                            <ModelCardInfo
+                              versionName={item.versionName}
+                              versionSource={{
+                                modelName: item.modelName,
+                                versionName: item.versionName
+                              }}
+                              baseModel={deferredBaseModelLabel(
+                                item,
+                                browseCards,
+                                inventoryByVersion
+                              )}
+                              modelType={resolveDeferredModelType(item)}
+                              statusChips={
+                                sessionBanned ? (
+                                  <span className="status-card-skipped-badge">
+                                    {t('deferredTab.sessionBannedBadge')}
+                                  </span>
+                                ) : null
+                              }
+                            >
                               <div className="muted status-card-detail">
-                                {resolveDeferredModelType(item)} ·{' '}
-                                {deferredBaseModelLabel(item, browseCards, inventoryByVersion)} · v
-                                {item.versionId}
+                                v{item.versionId}
                                 {item.routingTag ? ` · ${item.routingTag}` : ''}
-                                {sessionBanned ? ` · ${t('deferredTab.sessionBannedBadge')}` : ''}
                               </div>
                               {folderLine ? (
                                 <div className="gallery-folder-line is-assigned" title={folderLine}>
@@ -813,14 +877,7 @@ export function DeferredTab({
                                   ) : null}
                                 </div>
                               ) : null}
-                            </>
-                          }
-                          badges={
-                            item.failureKind !== 'early_access' ? (
-                              <div className="deferred-kind">
-                                {DEFERRED_KIND_LABELS[item.failureKind]}
-                              </div>
-                            ) : undefined
+                            </ModelCardInfo>
                           }
                           details={
                             <>
@@ -1043,6 +1100,22 @@ export function DeferredTab({
                   </>
                 ) : null}
 
+                {unlockDayCounts.size > 0 ? (
+                  <>
+                    <h4 className="sidebar-section-title">{t('deferredTab.unlockCalendar')}</h4>
+                    <p className="muted sidebar-hint sidebar-hint-compact">
+                      {t('deferredTab.unlockCalendarHint')}
+                    </p>
+                    <SidebarDownloadCalendar
+                      from={unlockDayFilter}
+                      to={unlockDayFilter}
+                      daysWithCounts={unlockDayCounts}
+                      onPickDay={pickUnlockDay}
+                      rangeHintKey="deferredTab.unlockCalendarRangeHint"
+                    />
+                  </>
+                ) : null}
+
                 {filteredBaseModelCounts.length > 0 ? (
                   <div className="sidebar-collapsible">
                     <button
@@ -1072,7 +1145,7 @@ export function DeferredTab({
                             if (sideFilterActive({ type: 'baseModel', name })) {
                               clearSideFilter()
                             } else {
-                              applySideFilter({ type: 'baseModel', name })
+                              applySideFilter({ type: 'baseModel', name: baseModelLabel(name) })
                             }
                           }}
                         >
