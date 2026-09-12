@@ -423,6 +423,7 @@ export function IncompleteTab({
                   <button
                     type="button"
                     className="tag-sidebar-toggle"
+                    aria-expanded
                     title={t('missingTab.collapseSidebar')}
                     onClick={() => setSidebarExpanded(false)}
                   >
@@ -441,7 +442,7 @@ export function IncompleteTab({
                   }}
                 >
                   <span className="tag-name">{t('missingTab.sidebarAll')}</span>
-                  <span className="tag-count">{visible.length}</span>
+                  <span className="muted tag-count-inline">{visible.length}</span>
                 </button>
                 <button
                   type="button"
@@ -449,7 +450,7 @@ export function IncompleteTab({
                   onClick={() => setSideFilter((v) => (v === 'waiting' ? 'all' : 'waiting'))}
                 >
                   <span className="tag-name">{t('incompleteTab.filterWaiting')}</span>
-                  <span className="tag-count">{waitingCount}</span>
+                  <span className="muted tag-count-inline">{waitingCount}</span>
                 </button>
                 <button
                   type="button"
@@ -457,7 +458,7 @@ export function IncompleteTab({
                   onClick={() => setSideFilter((v) => (v === 'ready' ? 'all' : 'ready'))}
                 >
                   <span className="tag-name">{t('incompleteTab.filterReady')}</span>
-                  <span className="tag-count">{readyCount}</span>
+                  <span className="muted tag-count-inline">{readyCount}</span>
                 </button>
 
                 {modelTypeCounts.length > 0 ? (
@@ -477,7 +478,7 @@ export function IncompleteTab({
                         }
                       >
                         <span className="tag-name">{name}</span>
-                        <span className="tag-count">{count}</span>
+                        <span className="muted tag-count-inline">{count}</span>
                       </button>
                     ))}
                   </>
@@ -500,7 +501,7 @@ export function IncompleteTab({
                         }
                       >
                         <span className="tag-name">{name}</span>
-                        <span className="tag-count">{count}</span>
+                        <span className="muted tag-count-inline">{count}</span>
                       </button>
                     ))}
                   </>

@@ -35,13 +35,13 @@ import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, res
 import { cacheVideoPreviewUrl } from './preview-video-cache'
 import { countVideoPreviewSyncCandidates, syncAllVideoPreviews } from './preview-video-sync'
 import { finalizeBrowseCards } from './browse-cache'
-import { buildSampleModels, buildWatchRuleTestResult, lookupBrowseModelByNumericId } from './browse-models'
+import { buildSampleModels, buildWatchRuleTestResult, lookupBrowseModelByNumericId, lookupBrowseModelPackByNumericId, searchBrowseModelsByText } from './browse-models'
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
-import { moveRecordToTagFolder, moveRecordsToTagFolder, reconcileLibraryTagFolders } from './model-move'
+import { moveRecordToTagFolder, reconcileLibraryTagFolders } from './model-move'
 import { deleteModelFromLibrary, deleteVersionFromLibrary } from './model-delete'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
-import { emitMissingList, recheckMissingModels } from './missing-models'
+import { emitMissingList, emitExclusionRemoved, recheckMissingModels } from './missing-models'
 import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
 import { recognizeLocalModels } from './recognize-local-models'
 import { syncLibrarySlugs } from './slug-rename'
@@ -1212,6 +1212,8 @@ export function initIpc(): void {
     const tagSkip = inventory.getTagSkipReview(modelId)
     inventory.unbanModel(modelId)
     inventory.removeTagSkipReview(modelId)
+    inventory.clearBrowseCardCacheForModel(modelId)
+    scheduler.markModelUnbannedInBrowseGallery(modelId)
     const queued = tryManualQueueExclusionModel(modelId, {
       versionId: banned?.versionId ?? tagSkip?.versionId,
       modelName: banned?.modelName ?? tagSkip?.modelName,
@@ -1230,11 +1232,192 @@ export function initIpc(): void {
       undefined,
       { source: 'system', modelId }
     )
-    emitMissingList(() => mainWindow)
+    emitExclusionRemoved(() => mainWindow, { modelId })
     return { modelId, queued }
   })
 
   ipcMain.handle('model:getBanned', () => inventory.getBannedModels())
+
+  /** Exclude one version from auto-download (Browse Ban) — does not ban the whole model. */
+  ipcMain.handle(
+    'model:excludeVersion',
+    async (
+      _e,
+      payload: {
+        modelId: number
+        versionId: number
+        modelName?: string
+        versionName?: string
+        baseModel?: string
+        author?: string
+        previewUrl?: string
+        modelType?: string
+        tags?: string[]
+        sourceDomain?: import('../shared/types').CivitaiDomain
+      }
+    ) => {
+      const versionId = payload.versionId
+      const modelId = payload.modelId
+      if (versionId <= 0 || modelId <= 0) {
+        throw new Error('modelId and versionId are required')
+      }
+      const owned = inventory.getVersion(versionId)
+      if (owned) {
+        await deleteVersionFromLibrary(versionId, { awaitFiles: false })
+        scheduler.markVersionRemovedFromBrowseGallery(modelId, versionId)
+      }
+      inventory.forgetPendingVersion({
+        versionId,
+        modelId,
+        modelName: payload.modelName || owned?.modelName || `Model #${modelId}`,
+        versionName: payload.versionName || owned?.versionName || `v${versionId}`,
+        baseModel: payload.baseModel || owned?.baseModel || '',
+        author: payload.author || owned?.author || '',
+        previewUrl: payload.previewUrl || owned?.previewPath || undefined,
+        existingFolder: owned?.outputFolder || owned?.routingTag || '',
+        modelType: payload.modelType || owned?.modelType,
+        civitaiTags: payload.tags?.length ? payload.tags : owned?.civitaiTags,
+        nsfw: owned?.isNsfw ?? undefined,
+        nsfwLevel: owned?.nsfwLevel ?? undefined,
+        downloadCount: owned?.downloadCount,
+        thumbsUpCount: owned?.thumbsUpCount
+      })
+      downloadQueue.cancel(versionId)
+      scheduler.dismissPending(versionId)
+      scheduler.markVersionBannedInBrowseGallery(modelId, versionId, true)
+      scheduler.log(
+        'info',
+        `Excluded version: ${payload.modelName || modelId} → ${payload.versionName || versionId}`,
+        undefined,
+        { source: 'system', modelId, versionId }
+      )
+      return { modelId, versionId }
+    }
+  )
+
+  /**
+   * Allow one version (Browse Unban). Never touches sibling versions unless the whole
+   * model was on the old model-level ban list — then lift that ban and keep other known
+   * versions excluded so only this card opens.
+   */
+  ipcMain.handle(
+    'model:allowVersion',
+    (
+      _e,
+      payload: {
+        modelId: number
+        versionId: number
+        siblings?: Array<{
+          versionId: number
+          modelName?: string
+          versionName?: string
+          baseModel?: string
+          author?: string
+          previewUrl?: string
+          modelType?: string
+          tags?: string[]
+        }>
+      }
+    ) => {
+      const versionId = payload.versionId
+      const modelId = payload.modelId
+      if (versionId <= 0 || modelId <= 0) {
+        throw new Error('modelId and versionId are required')
+      }
+      const wasModelBanned = inventory.isModelBanned(modelId)
+      inventory.removeSkippedPendingVersion(versionId)
+
+      if (!wasModelBanned) {
+        // Version-scoped exclude → allow only this version. Do not forget/ban siblings.
+        scheduler.markVersionBannedInBrowseGallery(modelId, versionId, false)
+        scheduler.log('info', `Allowed version #${versionId} of model #${modelId}`, undefined, {
+          source: 'system',
+          modelId,
+          versionId
+        })
+        emitExclusionRemoved(() => mainWindow, {
+          modelId,
+          versionId,
+          kinds: ['excludedVersion']
+        })
+        return { modelId, versionId, wasModelBanned: false, siblingExcludedIds: [] as number[] }
+      }
+
+      inventory.unbanModel(modelId)
+      inventory.removeTagSkipReview(modelId)
+      // Keep browse_card_cache — clearing wiped pack sibling cards used by Browse search.
+
+      const siblingMeta = new Map<
+        number,
+        {
+          modelName?: string
+          versionName?: string
+          baseModel?: string
+          author?: string
+          previewUrl?: string
+          modelType?: string
+          tags?: string[]
+        }
+      >()
+      for (const s of payload.siblings ?? []) {
+        if (s.versionId > 0 && s.versionId !== versionId) siblingMeta.set(s.versionId, s)
+      }
+      for (const v of inventory.getVersionsForModel(modelId)) {
+        if (v.versionId === versionId) continue
+        if (!siblingMeta.has(v.versionId)) {
+          siblingMeta.set(v.versionId, {
+            modelName: v.modelName,
+            versionName: v.versionName,
+            baseModel: v.baseModel,
+            author: v.author,
+            previewUrl: v.previewPath,
+            modelType: v.modelType,
+            tags: v.civitaiTags
+          })
+        }
+      }
+      for (const m of scheduler.getBrowseGalleryModels()) {
+        if (m.id !== modelId || m.versionId <= 0 || m.versionId === versionId) continue
+        if (!siblingMeta.has(m.versionId)) {
+          siblingMeta.set(m.versionId, {
+            modelName: m.name,
+            versionName: m.versionName,
+            baseModel: m.baseModel,
+            author: m.creator,
+            previewUrl: m.previewUrl,
+            modelType: m.type,
+            tags: m.tags
+          })
+        }
+      }
+
+      const siblingExcludedIds: number[] = []
+      for (const [sibId, meta] of siblingMeta) {
+        inventory.forgetPendingVersion({
+          versionId: sibId,
+          modelId,
+          modelName: meta.modelName || `Model #${modelId}`,
+          versionName: meta.versionName || `v${sibId}`,
+          baseModel: meta.baseModel || '',
+          author: meta.author || '',
+          previewUrl: meta.previewUrl,
+          existingFolder: '',
+          modelType: meta.modelType,
+          civitaiTags: meta.tags
+        })
+        siblingExcludedIds.push(sibId)
+      }
+      scheduler.applyVersionBanFlags(modelId, versionId, siblingExcludedIds)
+      scheduler.log(
+        'info',
+        `Unbanned version #${versionId} of model #${modelId} (legacy model ban; siblings stay excluded)`,
+        undefined,
+        { source: 'system', modelId, versionId }
+      )
+      emitMissingList(() => mainWindow)
+      return { modelId, versionId, wasModelBanned: true, siblingExcludedIds }
+    }
+  )
 
   ipcMain.handle('exclusions:get', () => {
     try {
@@ -1247,7 +1430,10 @@ export function initIpc(): void {
 
   ipcMain.handle('exclusions:dismissTagSkip', (_e, modelId: number) => {
     inventory.removeTagSkipReview(modelId)
-    emitMissingList(() => mainWindow)
+    emitExclusionRemoved(() => mainWindow, {
+      modelId,
+      kinds: ['bannedByTag', 'pausedByTag']
+    })
     return inventory.getExclusionReviewItems()
   })
 
@@ -1274,7 +1460,10 @@ export function initIpc(): void {
         { source: 'system', modelId }
       )
     }
-    emitMissingList(() => mainWindow)
+    emitExclusionRemoved(() => mainWindow, {
+      modelId,
+      kinds: ['bannedByTag', 'pausedByTag']
+    })
     return { modelId, queued, items: inventory.getExclusionReviewItems() }
   })
 
@@ -1302,6 +1491,15 @@ export function initIpc(): void {
   ipcMain.handle('exclusions:clearBanSeen', (_e, payload?: { day?: string }) => {
     if (payload?.day) inventory.clearMissingBanSeenDay(payload.day)
     else inventory.clearAllMissingBanSeen()
+    return {
+      byModelId: inventory.getMissingBanSeenMap(),
+      countByDay: inventory.getMissingBanSeenCountByDay()
+    }
+  })
+
+  ipcMain.handle('exclusions:pruneBanSeen', (_e, payload?: { keepModelIds?: number[] }) => {
+    const keep = Array.isArray(payload?.keepModelIds) ? payload.keepModelIds : []
+    inventory.pruneMissingBanSeen(keep)
     return {
       byModelId: inventory.getMissingBanSeenMap(),
       countByDay: inventory.getMissingBanSeenCountByDay()
@@ -1340,34 +1538,41 @@ export function initIpc(): void {
     'inventory:deleteVersion',
     async (_e, payload: { versionId: number; ban?: boolean }) => {
       const record = await deleteVersionFromLibrary(payload.versionId, { awaitFiles: false })
-      const shouldBan = payload.ban !== false
-      if (shouldBan) {
-        inventory.banModelAndMarkSeen(record.modelId, record.modelName, {
-          modelName: record.modelName,
+      // ban:true = exclude THIS version only (forget), not ban/delete the whole model.
+      const shouldExclude = payload.ban !== false
+      if (shouldExclude) {
+        inventory.forgetPendingVersion({
           versionId: record.versionId,
-          baseModel: record.baseModel,
-          author: record.author,
-          sourceDomain: record.civitaiDomain,
-          tags: record.civitaiTags
+          modelId: record.modelId,
+          modelName: record.modelName,
+          versionName: record.versionName || `v${record.versionId}`,
+          baseModel: record.baseModel || '',
+          author: record.author || '',
+          previewUrl: record.previewPath || undefined,
+          existingFolder: record.outputFolder || record.routingTag || '',
+          modelType: record.modelType,
+          nsfw: record.isNsfw ?? undefined,
+          nsfwLevel: record.nsfwLevel ?? undefined,
+          civitaiTags: record.civitaiTags,
+          downloadCount: record.downloadCount,
+          thumbsUpCount: record.thumbsUpCount
         })
         inventory.clearBrowseCardCacheForModel(record.modelId)
-        inventory.removePendingForModel(record.modelId)
-        scheduler.dismissPendingForModel(record.modelId)
-        scheduler.markModelBannedInBrowseGallery(record.modelId, {
-          modelName: record.modelName,
-          versionId: record.versionId,
-          baseModel: record.baseModel,
-          author: record.author,
-          sourceDomain: record.civitaiDomain,
-          tags: record.civitaiTags
-        })
-        downloadQueue.cancelByModelId(record.modelId)
-        scheduler.log('info', `Deleted and excluded: ${record.modelName}`, undefined, {
-          source: 'library',
-          modelId: record.modelId,
-          versionId: record.versionId
-        })
+        downloadQueue.cancel(record.versionId)
+        scheduler.dismissPending(record.versionId)
+        scheduler.markVersionRemovedFromBrowseGallery(record.modelId, record.versionId)
+        scheduler.log(
+          'info',
+          `Deleted and excluded version: ${record.modelName} → ${record.versionName || record.versionId}`,
+          undefined,
+          {
+            source: 'library',
+            modelId: record.modelId,
+            versionId: record.versionId
+          }
+        )
       } else {
+        scheduler.markVersionRemovedFromBrowseGallery(record.modelId, record.versionId)
         scheduler.log('info', `Deleted files: ${record.modelName}`, undefined, {
           source: 'library',
           modelId: record.modelId,
@@ -1377,7 +1582,8 @@ export function initIpc(): void {
       return {
         modelId: record.modelId,
         versionId: record.versionId,
-        banned: shouldBan
+        banned: false,
+        versionExcluded: shouldExclude
       }
     }
   )
@@ -1429,15 +1635,55 @@ export function initIpc(): void {
   ipcMain.handle(
     'inventory:assignTag',
     async (_e, payload: { versionIds: number[]; tagName: string }) => {
-      const moved = await moveRecordsToTagFolder(payload.versionIds, payload.tagName, getTagRules(), {
-        lockRouting: true
-      })
-      for (const versionId of payload.versionIds) {
+      const versionIds = payload.versionIds.filter((id) => id > 0)
+      const total = versionIds.length
+      const moved: InventoryRecord[] = []
+      const tagRules = getTagRules()
+      for (let i = 0; i < versionIds.length; i++) {
+        const versionId = versionIds[i]
+        const record = inventory.getVersion(versionId)
+        sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+          phase: 'moving',
+          current: i,
+          total,
+          moved: moved.length,
+          message:
+            total > 0
+              ? `Moving tag folders… ${i + 1}/${total}` +
+                (record?.modelName ? ` · ${record.modelName}` : '')
+              : 'Moving tag folders…'
+        })
+        if (record) {
+          try {
+            moved.push(
+              await moveRecordToTagFolder(record, payload.tagName, tagRules, {
+                lockRouting: true
+              })
+            )
+          } catch {
+            /* skip failed rename */
+          }
+        }
         downloadQueue.updateRoutingForVersion(versionId, payload.tagName)
+        await new Promise<void>((r) => setTimeout(r, 0))
       }
+      sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+        phase: 'done',
+        current: total,
+        total,
+        moved: moved.length,
+        message: `Tag folders: moved ${moved.length}`
+      })
       return moved
     }
   )
+
+  let tagFolderAssignByCivitaiJob: Promise<{
+    moved: number
+    skipped: number
+    queueUpdated: number
+    versionIds: number[]
+  }> | null = null
 
   ipcMain.handle(
     'inventory:assignByCivitaiTag',
@@ -1447,47 +1693,88 @@ export function initIpc(): void {
       if (!routingTag || !civitaiTag) {
         return { moved: 0, skipped: 0, queueUpdated: 0, versionIds: [] as number[] }
       }
-      const settings = getSettings()
-      const tagRules = getTagRules()
-      const candidates = inventory
-        .getAllVersions()
-        .filter((r) => modelHasExactTag(r.civitaiTags, civitaiTag))
-
-      let skipped = 0
-      const movedRecords: InventoryRecord[] = []
-      const versionIds: number[] = []
-
-      for (const record of candidates) {
-        if (
-          shouldSkipTagBulkMove(
-            record,
-            tagRules,
-            settings.loraOutputFolder,
-            settings.checkpointOutputFolder
-          )
-        ) {
-          skipped++
-          continue
-        }
-        const winner =
-          pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules) || routingTag
-        if (!findRuleForTag(winner, tagRules)) {
-          skipped++
-          continue
-        }
-        try {
-          const updated = await moveRecordToTagFolder(record, winner, tagRules, {
-            lockRouting: false
-          })
-          movedRecords.push(updated)
-          versionIds.push(record.versionId)
-        } catch {
-          skipped++
-        }
+      if (tagFolderAssignByCivitaiJob) {
+        return tagFolderAssignByCivitaiJob
       }
 
-      const queueUpdated = downloadQueue.reassignRoutingByCivitaiTag(civitaiTag, routingTag)
-      return { moved: movedRecords.length, skipped, queueUpdated, versionIds }
+      tagFolderAssignByCivitaiJob = (async () => {
+        const settings = getSettings()
+        const tagRules = getTagRules()
+        const candidates = inventory
+          .getAllVersions()
+          .filter((r) => modelHasExactTag(r.civitaiTags, civitaiTag))
+
+        let skipped = 0
+        const movedRecords: InventoryRecord[] = []
+        const versionIds: number[] = []
+        const total = candidates.length
+
+        for (let i = 0; i < candidates.length; i++) {
+          const record = candidates[i]
+          sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+            phase: 'moving',
+            current: i,
+            total,
+            moved: movedRecords.length,
+            message:
+              total > 0
+                ? `Moving tag folders… ${i + 1}/${total}` +
+                  (record.modelName ? ` · ${record.modelName}` : '')
+                : 'Moving tag folders…'
+          })
+          if (
+            shouldSkipTagBulkMove(
+              record,
+              tagRules,
+              settings.loraOutputFolder,
+              settings.checkpointOutputFolder
+            )
+          ) {
+            skipped++
+            await new Promise<void>((r) => setTimeout(r, 0))
+            continue
+          }
+          const winner =
+            pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules) || routingTag
+          if (!findRuleForTag(winner, tagRules)) {
+            skipped++
+            await new Promise<void>((r) => setTimeout(r, 0))
+            continue
+          }
+          try {
+            const updated = await moveRecordToTagFolder(record, winner, tagRules, {
+              lockRouting: false
+            })
+            movedRecords.push(updated)
+            versionIds.push(record.versionId)
+          } catch {
+            skipped++
+          }
+          await new Promise<void>((r) => setTimeout(r, 0))
+        }
+
+        const queueUpdated = downloadQueue.reassignRoutingByCivitaiTag(civitaiTag, routingTag)
+        const payloadOut = {
+          moved: movedRecords.length,
+          skipped,
+          queueUpdated,
+          versionIds
+        }
+        sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+          phase: 'done',
+          current: movedRecords.length + skipped,
+          total: movedRecords.length + skipped,
+          moved: movedRecords.length,
+          message: `Tag folders: moved ${movedRecords.length}, skipped ${skipped}`
+        })
+        return payloadOut
+      })()
+
+      try {
+        return await tagFolderAssignByCivitaiJob
+      } finally {
+        tagFolderAssignByCivitaiJob = null
+      }
     }
   )
 
@@ -1729,6 +2016,19 @@ export function initIpc(): void {
     const numericId = typeof rawId === 'number' ? rawId : Number(String(rawId).trim())
     if (!Number.isFinite(numericId) || numericId <= 0) return null
     return lookupBrowseModelByNumericId(clientPool, numericId)
+  })
+
+  ipcMain.handle('browse:lookupPack', async (_e, rawId: number | string) => {
+    const numericId = typeof rawId === 'number' ? rawId : Number(String(rawId).trim())
+    if (!Number.isFinite(numericId) || numericId <= 0) return []
+    return lookupBrowseModelPackByNumericId(clientPool, numericId)
+  })
+
+  /** Browse text search — always returns full version packs (not hide-filter gated). */
+  ipcMain.handle('browse:searchText', async (_e, rawQuery: string) => {
+    const query = String(rawQuery ?? '').trim()
+    if (!query || /^\d+$/.test(query)) return [] as import('../shared/types').WatchRuleTestModel[]
+    return searchBrowseModelsByText(clientPool, query)
   })
 
   ipcMain.handle('app:rendererReady', async () => {
@@ -2093,6 +2393,12 @@ export function initIpc(): void {
     inventory.acknowledgeMissingModel(modelId)
     emitMissingList(() => mainWindow)
     return inventory.getAllMissingModels()
+  })
+
+  ipcMain.handle('missing:acknowledgeUnacked', () => {
+    const acknowledged = inventory.acknowledgeAllUnackedMissingModels()
+    emitMissingList(() => mainWindow)
+    return { acknowledged, items: inventory.getAllMissingModels() }
   })
 
   ipcMain.handle('shell:showInFolder', (_e, filePath: string) => {

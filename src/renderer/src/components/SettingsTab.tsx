@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppLocale } from '../../../shared/locale'
 import type { AppSettingsPublic, AppSettingsSave, ContentFilter, LibraryHashVerifyProgress, VideoPreviewSyncProgress } from '../../../shared/types'
 import { DEFAULT_ACTIVITY_LOG_TOPICS, resolveActivityLogTopics, type ActivityLogTopic } from '../../../shared/activity-log-policy'
@@ -19,6 +19,8 @@ import { RangeSlider } from './RangeSlider'
 interface Props {
   settings: AppSettingsPublic
   onSave: (partial: AppSettingsSave) => Promise<void>
+  /** Same gate as header Night — returns false if folders/drive block enable. */
+  onSetNightMode?: (enabled: boolean) => Promise<boolean>
   onOpenHelp?: () => void
   onRefreshInventory?: (
     syncDiskOrOpts?: boolean | import('../../../shared/types').InventoryGetOptions
@@ -30,6 +32,7 @@ interface Props {
 export function SettingsTab({
   settings,
   onSave,
+  onSetNightMode,
   onOpenHelp,
   onRefreshInventory,
   onWithBusy
@@ -38,6 +41,14 @@ export function SettingsTab({
   const [draft, setDraft] = useState(settings)
   const [newApiKey, setNewApiKey] = useState('')
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [autoSaving, setAutoSaving] = useState(false)
+  const dirtyRef = useRef(false)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const draftRef = useRef(draft)
+  const newApiKeyRef = useRef(newApiKey)
+  draftRef.current = draft
+  newApiKeyRef.current = newApiKey
   const [hashBusy, setHashBusy] = useState(false)
   const [hashResult, setHashResult] = useState<string | null>(null)
   const [hashProgress, setHashProgress] = useState<LibraryHashVerifyProgress | null>(null)
@@ -78,6 +89,7 @@ export function SettingsTab({
   }, [draft.browseVideoPreviews, settings.browseVideoPreviews, videoSyncBusy, videoSyncResult])
 
   useEffect(() => {
+    dirtyRef.current = false
     setDraft(settings)
     setNewApiKey('')
     setOptimizationChanges([])
@@ -94,9 +106,15 @@ export function SettingsTab({
     root.style.setProperty('--queue-card-width', `${queue}px`)
   }, [draft.galleryGridMinPx, draft.queueGridMinPx])
 
+  const markDirty = () => {
+    dirtyRef.current = true
+    setSaved(false)
+    setSaveError(null)
+  }
+
   const update = <K extends keyof AppSettingsPublic>(key: K, value: AppSettingsPublic[K]) => {
     setDraft((d) => ({ ...d, [key]: value }))
-    setSaved(false)
+    markDirty()
     setOptimizationChanges([])
     setOptimizationTarget(null)
     optimizationBaselineRef.current = null
@@ -112,16 +130,62 @@ export function SettingsTab({
     setOptimizationTarget(target)
     setOptimizationChanges(changes)
     setDraft((d) => ({ ...d, ...next }))
-    setSaved(false)
+    markDirty()
   }
 
-  const save = async () => {
-    const payload: AppSettingsSave = { ...draft }
-    if (newApiKey.trim()) payload.apiKey = newApiKey.trim()
-    await onSave(payload)
-    setNewApiKey('')
-    setSaved(true)
-  }
+  const save = useCallback(async (opts?: { fromAuto?: boolean }) => {
+    const payload: AppSettingsSave = { ...draftRef.current }
+    const key = newApiKeyRef.current.trim()
+    if (key) payload.apiKey = key
+    if (opts?.fromAuto) setAutoSaving(true)
+    setSaveError(null)
+    try {
+      await onSave(payload)
+      dirtyRef.current = false
+      setNewApiKey('')
+      setSaved(true)
+    } catch (err) {
+      setSaved(false)
+      setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (opts?.fromAuto) setAutoSaving(false)
+    }
+  }, [onSave])
+
+  // Auto-save draft changes (debounce) so users don't hunt for a distant Save button.
+  useEffect(() => {
+    if (!dirtyRef.current) return
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null
+      if (!dirtyRef.current) return
+      void save({ fromAuto: true })
+    }, 450)
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+    }
+  }, [draft, save])
+
+  // Persist API key shortly after typing stops (not part of draft).
+  useEffect(() => {
+    if (!newApiKey.trim()) return
+    dirtyRef.current = true
+    setSaved(false)
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null
+      void save({ fromAuto: true })
+    }, 600)
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+    }
+  }, [newApiKey, save])
 
   const pickLoraFolder = async () => {
     const path = await window.api.pickFolder()
@@ -204,7 +268,7 @@ export function SettingsTab({
       activityLogVerbosity: 'custom',
       activityLogTopics: { ...DEFAULT_ACTIVITY_LOG_TOPICS, ...d.activityLogTopics, [topic]: enabled }
     }))
-    setSaved(false)
+    markDirty()
     setOptimizationChanges([])
     setOptimizationTarget(null)
     optimizationBaselineRef.current = null
@@ -212,10 +276,18 @@ export function SettingsTab({
 
   const saveRow = (extraClass?: string) => (
     <div className={['settings-save-row', extraClass].filter(Boolean).join(' ')}>
-      <button type="button" className="primary" onClick={() => void save()}>
-        {t('common.save')}
+      {autoSaving ? (
+        <span className="muted">{t('common.saving')}</span>
+      ) : saved ? (
+        <span className="muted">{t('common.saved')}</span>
+      ) : saveError ? (
+        <span className="settings-field-warn">{saveError}</span>
+      ) : (
+        <span className="muted">{t('settings.autoSaveHint')}</span>
+      )}
+      <button type="button" className="btn-sm" onClick={() => void save()} disabled={autoSaving}>
+        {t('common.saveNow')}
       </button>
-      {saved && <span className="muted">{t('common.saved')}</span>}
     </div>
   )
 
@@ -549,6 +621,22 @@ export function SettingsTab({
               checked={draft.nightMode ?? false}
               onChange={(e) => {
                 const enabled = e.target.checked
+                if (onSetNightMode) {
+                  void (async () => {
+                    const ok = await onSetNightMode(enabled)
+                    if (!ok) return
+                    // Header path already persisted — keep draft in sync without a second autosave fight.
+                    dirtyRef.current = false
+                    setDraft((d) => ({
+                      ...d,
+                      nightMode: enabled,
+                      ...(enabled && d.scanIntervalMinutes <= 0
+                        ? { scanIntervalMinutes: 60 }
+                        : {})
+                    }))
+                  })()
+                  return
+                }
                 update('nightMode', enabled)
                 if (enabled && draft.scanIntervalMinutes <= 0) {
                   update('scanIntervalMinutes', 60)
@@ -589,9 +677,9 @@ export function SettingsTab({
         />
         <RangeSlider
           label={t('settings.fields.parallelDownloads')}
-          value={draft.downloadConcurrency}
+          value={Math.min(6, Math.max(1, draft.downloadConcurrency || 2))}
           min={1}
-          max={12}
+          max={6}
           step={1}
           onChange={(v) => update('downloadConcurrency', v)}
         />
@@ -709,10 +797,10 @@ export function SettingsTab({
                     verbosity: seedVerbosity
                   })
                 }))
+                markDirty()
               } else {
                 update('activityLogVerbosity', value)
               }
-              setSaved(false)
             }}
           >
             <option value="off">{t('settings.options.activityLogOff')}</option>
@@ -759,6 +847,18 @@ export function SettingsTab({
             />
             {t('settings.fields.blurPreviews')}
           </label>
+        </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.blurVideoPreviews ?? false}
+              onChange={(e) => update('blurVideoPreviews', e.target.checked)}
+              disabled={!(draft.blurPreviews ?? false)}
+            />
+            {t('settings.fields.blurVideoPreviews')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.blurVideoPreviews')}</p>
         </div>
         <div className="field field-checkbox">
           <label>

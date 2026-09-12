@@ -1,4 +1,5 @@
 import type { MouseEvent, PointerEvent, ReactNode } from 'react'
+import { memo } from 'react'
 import { PreviewThumb } from './PreviewThumb'
 import { mapPreviewSrcs } from '../utils/preview-src'
 
@@ -30,9 +31,11 @@ interface Props {
   onPointerLeave?: (e: PointerEvent<HTMLDivElement>) => void
   /** Re-fetch preview when every thumbnail candidate fails to load. */
   onPreviewAllFailed?: () => void
+  /** Prefer eager on dense status grids — lazy reloads thumbs after Allow layout shifts. */
+  previewLoading?: 'lazy' | 'eager'
 }
 
-export function StatusModelCard({
+export const StatusModelCard = memo(function StatusModelCard({
   title,
   meta,
   badges,
@@ -52,7 +55,8 @@ export function StatusModelCard({
   dataBanSeenPending,
   onPointerEnter,
   onPointerLeave,
-  onPreviewAllFailed
+  onPreviewAllFailed,
+  previewLoading = 'eager'
 }: Props) {
   const thumbUrls = mapPreviewSrcs(
     previewUrls?.length ? previewUrls : previewUrl ? [previewUrl] : []
@@ -93,7 +97,7 @@ export function StatusModelCard({
           videoAvailability={videoAvailability}
           videoFetch={videoFetch}
           className="gallery-thumb"
-          loading="lazy"
+          loading={previewLoading}
           onAllFailed={onPreviewAllFailed}
         />
         {statusFoot ? <div className="card-status-foot">{statusFoot}</div> : null}
@@ -121,4 +125,4 @@ export function StatusModelCard({
       </div>
     </div>
   )
-}
+})

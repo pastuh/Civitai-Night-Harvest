@@ -65,7 +65,7 @@ export function PreviewThumb({
       (isCivitaiVideoPreviewUrl(rawVideo) ? civitaiVideoToStillFrameUrl(rawVideo) : undefined) ??
       rawVideo
     return mapPreviewSrcs(still ? [still] : [])
-  }, [urls, videoUrl])
+  }, [urls.join('|'), videoUrl])
   const [index, setIndex] = useState(0)
   const [failed, setFailed] = useState(false)
   const [pointerInside, setPointerInside] = useState(false)

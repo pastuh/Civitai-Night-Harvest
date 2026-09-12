@@ -1141,8 +1141,31 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
       })
     )
 
-  const items = [...missing, ...banned, ...tagSkips]
+  // Version-scoped Browse/Updates excludes — not whole-model banned_models.
+  const excludedVersions = getAllSkippedPendingVersions()
+    .filter((p) => p.forgotten && p.versionId > 0 && p.modelId > 0)
+    .filter((p) => !bannedIds.has(p.modelId))
+    .map((p): ExclusionReviewItem => {
+      return {
+        kind: 'excludedVersion',
+        modelId: p.modelId,
+        versionId: p.versionId,
+        versionName: p.versionName,
+        modelName: p.modelName,
+        modelType: p.modelType,
+        author: p.author,
+        baseModel: p.baseModel,
+        previewUrl: withLocalPreview(p.modelId, p.previewUrl),
+        tags: p.civitaiTags,
+        at: p.detectedAt || new Date().toISOString(),
+        downloadCount: p.downloadCount,
+        thumbsUpCount: p.thumbsUpCount
+      }
+    })
+
+  const items = [...missing, ...banned, ...tagSkips, ...excludedVersions]
   fillExclusionStatsFromVersions(items)
+  fillExclusionVersionNames(items)
   return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 }
 
@@ -1189,6 +1212,82 @@ function fillExclusionStatsFromVersions(items: ExclusionReviewItem[]): void {
     if (!s) continue
     if (item.downloadCount == null && s.downloadCount != null) item.downloadCount = s.downloadCount
     if (item.thumbsUpCount == null && s.thumbsUpCount != null) item.thumbsUpCount = s.thumbsUpCount
+  }
+}
+
+/** Fill blank version titles from Library + browse_card_cache when stubs only have ids. */
+function fillExclusionVersionNames(items: ExclusionReviewItem[]): void {
+  const need = items.filter((i) => !i.versionName?.trim() && i.modelId > 0)
+  if (!need.length) return
+  const db = getDb()
+  const byVersionId = new Map<number, string>()
+  const byModelId = new Map<number, string>()
+
+  const versionIds = [
+    ...new Set(need.map((i) => i.versionId).filter((id): id is number => id != null && id > 0))
+  ]
+  if (versionIds.length) {
+    const chunkSize = 400
+    for (let i = 0; i < versionIds.length; i += chunkSize) {
+      const chunk = versionIds.slice(i, i + chunkSize)
+      const placeholders = chunk.map(() => '?').join(',')
+      const rows = db
+        .prepare(
+          `SELECT version_id AS versionId, version_name AS versionName
+           FROM versions
+           WHERE version_id IN (${placeholders}) AND TRIM(version_name) != ''`
+        )
+        .all(...chunk) as Array<{ versionId: number; versionName: string }>
+      for (const row of rows) {
+        const name = row.versionName.trim()
+        if (name) byVersionId.set(row.versionId, name)
+      }
+      const cache = getBrowseCardCache(chunk)
+      for (const [vid, card] of cache) {
+        if (byVersionId.has(vid)) continue
+        const name = (card.versionName || '').trim()
+        if (name) byVersionId.set(vid, name)
+      }
+    }
+  }
+
+  const modelIds = [
+    ...new Set(
+      need
+        .filter((i) => !(i.versionId && byVersionId.has(i.versionId)))
+        .map((i) => i.modelId)
+    )
+  ]
+  if (modelIds.length) {
+    const chunkSize = 400
+    for (let i = 0; i < modelIds.length; i += chunkSize) {
+      const chunk = modelIds.slice(i, i + chunkSize)
+      const placeholders = chunk.map(() => '?').join(',')
+      // Prefer a single clear title when the model has exactly one named library version;
+      // otherwise take the newest named version for that model.
+      const rows = db
+        .prepare(
+          `SELECT model_id AS modelId, version_name AS versionName
+           FROM versions
+           WHERE model_id IN (${placeholders}) AND TRIM(version_name) != ''
+           ORDER BY model_id ASC, downloaded_at DESC`
+        )
+        .all(...chunk) as Array<{ modelId: number; versionName: string }>
+      for (const row of rows) {
+        if (byModelId.has(row.modelId)) continue
+        const name = row.versionName.trim()
+        if (name) byModelId.set(row.modelId, name)
+      }
+    }
+  }
+
+  for (const item of need) {
+    if (item.versionId && byVersionId.has(item.versionId)) {
+      item.versionName = byVersionId.get(item.versionId)
+      continue
+    }
+    const fromModel = byModelId.get(item.modelId)
+    if (fromModel) item.versionName = fromModel
   }
 }
 
@@ -1831,6 +1930,22 @@ export function isPendingVersionSkipped(versionId: number): boolean {
   return Boolean(row)
 }
 
+/** Browse Ban / version exclude — forgotten=1 in skipped_pending_versions. */
+export function isVersionForgotten(versionId: number): boolean {
+  if (!versionId || versionId <= 0) return false
+  const row = getDb()
+    .prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ? AND forgotten = 1')
+    .get(versionId)
+  return Boolean(row)
+}
+
+export function getForgottenVersionIds(): Set<number> {
+  const rows = getDb()
+    .prepare('SELECT version_id FROM skipped_pending_versions WHERE forgotten = 1')
+    .all() as Array<{ version_id: number }>
+  return new Set(rows.map((r) => r.version_id))
+}
+
 export function getSkippedPendingVersionIds(): Set<number> {
   const rows = getDb()
     .prepare('SELECT version_id FROM skipped_pending_versions')
@@ -2393,6 +2508,14 @@ export function acknowledgeMissingModel(modelId: number): MissingModel | null {
   return getMissingModel(modelId)
 }
 
+/** Mark every unacknowledged 404 stub as reviewed (clears Missing tab badge). */
+export function acknowledgeAllUnackedMissingModels(): number {
+  const result = getDb()
+    .prepare(`UPDATE missing_models SET acknowledged = 1 WHERE acknowledged = 0`)
+    .run()
+  return Number(result.changes ?? 0)
+}
+
 export type MissingHitInput = {
   modelId: number
   versionId?: number
@@ -2697,6 +2820,25 @@ export function clearMissingBanSeenDay(seenDay: string): void {
   const day = seenDay.trim().slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return
   getDb().prepare('DELETE FROM missing_ban_seen WHERE seen_day = ?').run(day)
+}
+
+/** Drop seen marks for models no longer on the ban/pause/exclude review list. */
+export function pruneMissingBanSeen(keepModelIds: number[]): number {
+  const keep = new Set(keepModelIds.filter((id) => id > 0))
+  const rows = getDb()
+    .prepare('SELECT model_id FROM missing_ban_seen')
+    .all() as Array<{ model_id: number }>
+  const del = getDb().prepare('DELETE FROM missing_ban_seen WHERE model_id = ?')
+  let removed = 0
+  const tx = getDb().transaction((ids: number[]) => {
+    for (const id of ids) {
+      if (keep.has(id)) continue
+      del.run(id)
+      removed++
+    }
+  })
+  tx(rows.map((r) => r.model_id))
+  return removed
 }
 
 /** versionId → local calendar day when the Updates card was marked seen. */

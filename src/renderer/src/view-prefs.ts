@@ -142,6 +142,8 @@ export type PendingSideFilter =
 
 export interface PendingViewPrefs {
   hideSeen: boolean
+  /** Hide Done (temporary) cards and versions already queued for download. */
+  hideConfirmed: boolean
   markSeenMode: boolean
   showForgotten: boolean
   showSkipped: boolean
@@ -156,6 +158,7 @@ export interface PendingViewPrefs {
 
 export const DEFAULT_PENDING_VIEW_PREFS: PendingViewPrefs = {
   hideSeen: false,
+  hideConfirmed: true,
   markSeenMode: false,
   showForgotten: false,
   showSkipped: false,
@@ -278,6 +281,7 @@ export function coercePendingViewPrefs(raw: Partial<PendingViewPrefs> | null | u
   }
   return {
     ...base,
+    hideConfirmed: base.hideConfirmed !== false,
     sortMode: normalizePendingSort(base.sortMode),
     ratingFilter: base.ratingFilter ?? 'all',
     sideFilter,

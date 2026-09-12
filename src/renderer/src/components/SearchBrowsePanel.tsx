@@ -22,6 +22,16 @@ import {
   parseRuleFilterTags,
   isDisplayablePreviewUrl
 } from '../../../shared/utils'
+import {
+  browseCardFromInventoryRecord,
+  browseCardVisibleDuringSearch,
+  browseSearchMatchedModelIds,
+  browseSearchMatchQuery,
+  browseSearchQueryActive,
+  inventoryMatchesBrowseSearch,
+  modelMatchesBrowseSearch
+} from '../../../shared/browse-search'
+import { toPreviewSrc } from '../utils/preview-src'
 import { describeNsfwRatingForCard, nsfwRatingCardClass } from '../../../shared/nsfw-rating'
 import {
   countModelsByRatingFilter,
@@ -44,6 +54,7 @@ import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
 import { VersionNameRow } from './VersionNameRow'
 import { BrowseQualityPairCard } from './BrowseQualityPairCard'
+import { ConfirmModal } from './ConfirmModal'
 import {
   buildQualityTierPairUnits,
   tierScannableFromBrowse,
@@ -107,23 +118,6 @@ function modelFromQueueItem(item: DownloadQueueItem, ownedVersionIds: Set<number
   }
 }
 
-function modelMatchesBrowseSearch(model: WatchRuleTestModel, query: string): boolean {
-  const q = query.trim().toLowerCase()
-  if (!q) return true
-  if (String(model.id) === q) return true
-  if (String(model.versionId) === q) return true
-  if (model.name.toLowerCase().includes(q)) return true
-  if (model.creator?.toLowerCase().includes(q)) return true
-  return false
-}
-
-/** Exact model/version id typed in Browse search — keep visible even if blocked/owned filters would hide it. */
-function isExactBrowseIdHit(model: WatchRuleTestModel, query: string): boolean {
-  const q = query.trim()
-  if (!/^\d+$/.test(q)) return false
-  return String(model.id) === q || String(model.versionId) === q
-}
-
 function isBrowseSettledModel(
   model: WatchRuleTestModel,
   awaitingAccessVersionIds: Set<number>
@@ -178,7 +172,13 @@ interface Props {
   uiExtended?: boolean
   banFunctionMode?: boolean
   onBanFunctionModeChange?: (enabled: boolean) => void | Promise<void>
-  onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
+  onBrowseModelBanChange?: (
+    modelId: number,
+    banned: boolean,
+    stub?: { versionId?: number }
+  ) => void
+  /** Merge fetched pack sibling cards into the live Browse gallery. */
+  onSeedBrowseModels?: (models: WatchRuleTestModel[]) => void
   crawlPageMeta?: {
     ruleId?: string
     ruleName?: string
@@ -265,6 +265,7 @@ export function SearchBrowsePanel({
   banFunctionMode = false,
   onBanFunctionModeChange,
   onBrowseModelBanChange,
+  onSeedBrowseModels,
   crawlPageMeta = null,
   civitaiDomain = 'com',
   crawlFetching = false,
@@ -339,7 +340,12 @@ export function SearchBrowsePanel({
   const deferredSearchQuery = useDeferredValue(searchQuery)
   const [idLookupModel, setIdLookupModel] = useState<WatchRuleTestModel | null>(null)
   const [idLookupStatus, setIdLookupStatus] = useState<'idle' | 'loading' | 'miss'>('idle')
+  /** Extra pack sibling cards fetched when search hits a model that only has one gallery card. */
+  const [searchPackExtras, setSearchPackExtras] = useState<WatchRuleTestModel[]>([])
   const idLookupSeqRef = useRef(0)
+  const searchPackSeqRef = useRef(0)
+  /** Model ids already pack-hydrated for the current text search (avoid clear/refetch races). */
+  const searchPackHydratedRef = useRef<Set<number>>(new Set())
   const [onlyMissing, setOnlyMissing] = useState(browseInitial.onlyMissing)
   const [hideBanned, setHideBanned] = useState(browseInitial.hideBanned)
   const [showBlockedModels, setShowBlockedModels] = useState(browseInitial.showBlockedModels)
@@ -353,6 +359,10 @@ export function SearchBrowsePanel({
   const [localBanned, setLocalBanned] = useState<Set<number>>(new Set())
   /** Optimistic unban overrides — m.isBanned from crawl data can stay stale until remapped. */
   const [localUnbanned, setLocalUnbanned] = useState<Set<number>>(new Set())
+  /** Per-version exclude (Browse Ban) — does not ban sibling version cards. */
+  const [localBannedVersions, setLocalBannedVersions] = useState<Set<number>>(() => new Set())
+  /** Per-version allow after unban — wins over model-level banned flags on siblings. */
+  const [localAllowedVersions, setLocalAllowedVersions] = useState<Set<number>>(() => new Set())
   const [previewOverrides, setPreviewOverrides] = useState<
     Record<number, { previewUrl?: string; previewUrls: string[] }>
   >({})
@@ -376,6 +386,9 @@ export function SearchBrowsePanel({
   const tagCatalogRef = useRef<Map<number, WatchRuleTestModel>>(new Map())
   const [tagCatalogTick, setTagCatalogTick] = useState(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [deleteConfirmModel, setDeleteConfirmModel] = useState<WatchRuleTestModel | null>(null)
+  /** Skip delete confirm for the rest of this session (checkbox on ConfirmModal). */
+  const [deleteConfirmSkipForSession, setDeleteConfirmSkipForSession] = useState(false)
   const [assignTagOpen, setAssignTagOpen] = useState(false)
   const [assignTagQuery, setAssignTagQuery] = useState('')
   const [assignTagBusy, setAssignTagBusy] = useState(false)
@@ -399,7 +412,7 @@ export function SearchBrowsePanel({
       showBlockedModels,
       browseSort,
       ratingFilter,
-      searchQuery,
+      searchQuery: deferredSearchQuery,
       tagFilter
     })
   }, [
@@ -411,7 +424,7 @@ export function SearchBrowsePanel({
     showBlockedModels,
     browseSort,
     ratingFilter,
-    searchQuery,
+    deferredSearchQuery,
     tagFilter,
     onViewPrefsChange
   ])
@@ -602,14 +615,8 @@ export function SearchBrowsePanel({
     [ratingFilter, resolvePreviewUrls, brokenPreviewIds]
   )
 
-  useEffect(() => {
-    const fromResult = result.sampleModels.filter((m) => m.isBanned).map((m) => m.id)
-    setLocalBanned((prev) => {
-      const next = new Set(prev)
-      for (const id of fromResult) next.add(id)
-      return next
-    })
-  }, [result])
+  // Do not re-seed localBanned* from crawl sampleModels — that fought Unban and kept
+  // every version card sticky-Banned after allowing one version of a multi-version model.
 
   useEffect(() => {
     if (!tagsOpen) return
@@ -727,11 +734,14 @@ export function SearchBrowsePanel({
 
   const isBanned = useCallback(
     (m: WatchRuleTestModel) => {
-      if (localBanned.has(m.id)) return true
+      if (m.versionId > 0 && localAllowedVersions.has(m.versionId)) return false
+      if (m.versionId > 0 && localBannedVersions.has(m.versionId)) return true
+      // Optimistic model unban wins — crawl/gallery may still carry isBanned until remapped.
       if (localUnbanned.has(m.id)) return false
+      if (localBanned.has(m.id)) return true
       return Boolean(m.isBanned)
     },
-    [localBanned, localUnbanned]
+    [localBanned, localUnbanned, localBannedVersions, localAllowedVersions]
   )
 
   const ownedVersionIdsFromInventory = useMemo(
@@ -765,7 +775,9 @@ export function SearchBrowsePanel({
     for (const item of queue) {
       if (item.status !== 'queued' && item.status !== 'downloading') continue
       if (item.versionId > 0) byVersion.set(item.versionId, item)
-      byModel.set(item.modelId, item)
+      // Only index by model when the queue row has no version — otherwise sibling
+      // version cards of the same modelId would inherit another version's progress.
+      if (!(item.versionId > 0) && item.modelId > 0) byModel.set(item.modelId, item)
     }
     return { byVersion, byModel }
   }, [queue])
@@ -773,8 +785,7 @@ export function SearchBrowsePanel({
   const queueItemFor = useCallback(
     (model: WatchRuleTestModel) => {
       if (model.versionId > 0) {
-        const byVersion = queueLookup.byVersion.get(model.versionId)
-        if (byVersion) return byVersion
+        return queueLookup.byVersion.get(model.versionId)
       }
       return queueLookup.byModel.get(model.id)
     },
@@ -787,7 +798,7 @@ export function SearchBrowsePanel({
     for (const item of queue) {
       if (item.status !== 'queued' && item.status !== 'downloading') continue
       if (item.versionId > 0) byVersion.add(item.versionId)
-      byModel.add(item.modelId)
+      else if (item.modelId > 0) byModel.add(item.modelId)
     }
     return { byVersion, byModel }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
@@ -806,36 +817,95 @@ export function SearchBrowsePanel({
       }),
     [result.sampleModels, previewOverrides]
   )
+  const modelsWithPreviewsRef = useRef(modelsWithPreviews)
+  modelsWithPreviewsRef.current = modelsWithPreviews
+
+  /** Local library hits for the active search — including models no longer on Civitai. */
+  const localSearchHits = useMemo(() => {
+    const q = browseSearchMatchQuery(searchQuery, deferredSearchQuery)
+    if (!browseSearchQueryActive(searchQuery, deferredSearchQuery) || !q) return [] as WatchRuleTestModel[]
+    const out: WatchRuleTestModel[] = []
+    for (const rec of inventory) {
+      if (rec.ignored) continue
+      if (!inventoryMatchesBrowseSearch(rec, q)) continue
+      const previewRaw = rec.previewPath?.trim()
+      const previewUrl = previewRaw ? toPreviewSrc(previewRaw) : undefined
+      out.push(
+        browseCardFromInventoryRecord(rec, {
+          previewUrl: previewUrl || undefined,
+          isBanned: isBanned({
+            id: rec.modelId,
+            versionId: rec.versionId,
+            name: rec.modelName,
+            type: rec.modelType || 'LORA',
+            baseModel: rec.baseModel || '',
+            tags: rec.civitaiTags ?? [],
+            inInventory: true,
+            isBanned: false
+          })
+        })
+      )
+    }
+    return out
+  }, [inventory, searchQuery, deferredSearchQuery, isBanned])
 
   const enrichedModels = useMemo(() => {
     const out: WatchRuleTestModel[] = []
-    for (const m of modelsWithPreviews) {
-      const banned = isBanned(m)
-      // Do not drop banned here — Hide excluded filters cards in `filtered`, while
-      // catalog bar/legend must still count Banned.
-      const inInventory = m.inInventory || ownedVersionIds.has(m.versionId)
-      // Reuse the same object when flags unchanged — ModelCard memo can skip re-renders.
-      if (banned === Boolean(m.isBanned) && inInventory === Boolean(m.inInventory)) {
-        out.push(m)
-      } else {
-        out.push({ ...m, isBanned: banned, inInventory })
+    const byKey = new Map<string, WatchRuleTestModel>()
+    const pushCard = (raw: WatchRuleTestModel) => {
+      const banned = isBanned(raw)
+      // Inventory is authoritative when present; keep crawl inInventory so Owned does not
+      // flicker off between download-complete and inventory refresh. Cleared when this
+      // version is locally excluded (Ban / delete).
+      const inInventory =
+        ownedVersionIds.has(raw.versionId) ||
+        (Boolean(raw.inInventory) &&
+          !(raw.versionId > 0 && localBannedVersions.has(raw.versionId)))
+      const card =
+        banned === Boolean(raw.isBanned) && inInventory === Boolean(raw.inInventory)
+          ? raw
+          : { ...raw, isBanned: banned, inInventory }
+      const key = browseModelDedupeKey(card)
+      const existing = byKey.get(key)
+      byKey.set(key, existing ? preferBrowseModel(existing, card) : card)
+    }
+    for (const m of modelsWithPreviews) pushCard(m)
+    for (const m of searchPackExtras) pushCard(m)
+    for (const m of localSearchHits) pushCard(m)
+    if (idLookupModel) pushCard(idLookupModel)
+    // Preserve first-seen order (gallery → API extras → local → id lookup).
+    const seen = new Set<string>()
+    const appendMerged = (list: WatchRuleTestModel[]) => {
+      for (const m of list) {
+        const key = browseModelDedupeKey(m)
+        if (seen.has(key)) continue
+        const merged = byKey.get(key)
+        if (merged) {
+          out.push(merged)
+          seen.add(key)
+        }
       }
     }
+    appendMerged(modelsWithPreviews)
+    appendMerged(searchPackExtras)
+    appendMerged(localSearchHits)
     if (idLookupModel) {
-      const banned = isBanned(idLookupModel)
-      const inInventory = idLookupModel.inInventory || ownedVersionIds.has(idLookupModel.versionId)
-      const card = {
-        ...idLookupModel,
-        isBanned: banned,
-        inInventory
-      }
-      const key = browseModelDedupeKey(card)
-      if (!out.some((m) => browseModelDedupeKey(m) === key)) {
-        out.unshift(card)
+      const key = browseModelDedupeKey(idLookupModel)
+      if (!seen.has(key)) {
+        const merged = byKey.get(key)
+        if (merged) out.push(merged)
       }
     }
     return out
-  }, [modelsWithPreviews, isBanned, ownedVersionIds, idLookupModel])
+  }, [
+    modelsWithPreviews,
+    searchPackExtras,
+    localSearchHits,
+    isBanned,
+    ownedVersionIds,
+    idLookupModel,
+    localBannedVersions
+  ])
 
   useEffect(() => {
     const q = searchQuery.trim()
@@ -869,6 +939,90 @@ export function SearchBrowsePanel({
     }, 350)
     return () => window.clearTimeout(timer)
   }, [searchQuery, modelsWithPreviews])
+
+  // Browse text search — ALWAYS query Civitai for full version packs.
+  // Independent of crawl gallery. Hide filters never apply (see browse-search.ts).
+  // Dependency is ONLY the search query — do not re-hit API on every crawl page merge.
+  useEffect(() => {
+    const q = deferredSearchQuery.trim()
+    if (!q || /^\d+$/.test(q)) {
+      setSearchPackExtras([])
+      searchPackHydratedRef.current = new Set()
+      return
+    }
+    if (
+      typeof window.api.searchBrowseText !== 'function' &&
+      typeof window.api.lookupBrowsePack !== 'function'
+    ) {
+      return
+    }
+    const seq = ++searchPackSeqRef.current
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const byKey = new Map<string, WatchRuleTestModel>()
+        const push = (cards: WatchRuleTestModel[]) => {
+          for (const c of cards) {
+            if (!(c.versionId > 0)) continue
+            const key = browseModelDedupeKey(c)
+            const prev = byKey.get(key)
+            byKey.set(key, prev ? preferBrowseModel(prev, c) : c)
+          }
+        }
+
+        if (typeof window.api.searchBrowseText === 'function') {
+          try {
+            const apiCards = await window.api.searchBrowseText(q)
+            if (cancelled || searchPackSeqRef.current !== seq) return
+            push(apiCards)
+            for (const c of apiCards) {
+              if (c.id > 0) searchPackHydratedRef.current.add(c.id)
+            }
+          } catch {
+            /* gallery pack fallback below */
+          }
+        }
+
+        // Expand thin gallery hits not covered by API (same query, local-only cards).
+        if (typeof window.api.lookupBrowsePack === 'function') {
+          const needPack: number[] = []
+          const seen = new Set<number>()
+          for (const m of modelsWithPreviewsRef.current) {
+            if (m.id <= 0 || seen.has(m.id)) continue
+            if (!modelMatchesBrowseSearch(m, q)) continue
+            seen.add(m.id)
+            if (searchPackHydratedRef.current.has(m.id)) continue
+            const siblings = modelsWithPreviewsRef.current.filter((x) => x.id === m.id)
+            const versionCount = new Set(siblings.map((x) => x.versionId).filter((id) => id > 0))
+              .size
+            const inApi = [...byKey.values()].some((x) => x.id === m.id)
+            if (!inApi && versionCount < 2) needPack.push(m.id)
+            else if (inApi) searchPackHydratedRef.current.add(m.id)
+          }
+          for (const modelId of needPack.slice(0, 8)) {
+            try {
+              const cards = await window.api.lookupBrowsePack(modelId)
+              if (cancelled || searchPackSeqRef.current !== seq) return
+              searchPackHydratedRef.current.add(modelId)
+              push(cards)
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+
+        if (cancelled || searchPackSeqRef.current !== seq) return
+        const extras = [...byKey.values()]
+        setSearchPackExtras(extras)
+        if (extras.length) onSeedBrowseModels?.(extras)
+      })()
+    }, 320)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+    // modelsWithPreviews read via ref — must NOT be a dependency (crawl churn cancels search).
+  }, [deferredSearchQuery, onSeedBrowseModels])
 
   const ruleKeywordExtras = useMemo(() => {
     const extras: string[] = []
@@ -996,64 +1150,48 @@ export function SearchBrowsePanel({
 
   const filtered = useMemo(() => {
     const byKey = new Map<string, WatchRuleTestModel>()
-    const searchActive = deferredSearchQuery.trim().length > 0
+    const searchActive = browseSearchQueryActive(searchQuery, deferredSearchQuery)
+    const matchQuery = browseSearchMatchQuery(searchQuery, deferredSearchQuery)
+    const searchMatchedModelIds = browseSearchMatchedModelIds(ruleScopedModels, matchQuery)
+
+    // ── SEARCH ACTIVE: only match matters. Never apply hide filters. ─────────
+    // See src/shared/browse-search.ts — HARD INVARIANT.
+    if (searchActive) {
+      for (const m of ruleScopedModels) {
+        if (!browseCardVisibleDuringSearch(m, matchQuery, searchMatchedModelIds)) continue
+        const key = browseModelDedupeKey(m)
+        const prev = byKey.get(key)
+        byKey.set(key, prev ? preferBrowseModel(prev, m) : m)
+      }
+      return [...byKey.values()]
+    }
+
     for (const m of ruleScopedModels) {
-      const idHit = isExactBrowseIdHit(m, deferredSearchQuery)
-      if (
-        !idHit &&
-        !searchActive &&
-        !matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)
-      ) {
+      if (!matchesRatingFilter({ nsfw: m.nsfw, nsfwLevel: m.nsfwLevel }, ratingFilter)) {
         continue
       }
 
-      // Hide early access models even when queued — user explicitly wants them hidden.
-      // Search / exact ID lookup bypasses hide filters so you can still find the card.
-      if (!idHit && !searchActive && hideAwaitingAccess && m.isEarlyAccess) continue
-
-      if (searchActive && !modelMatchesBrowseSearch(m, deferredSearchQuery)) continue
+      if (hideAwaitingAccess && m.isEarlyAccess) continue
 
       const inActiveQueue =
-        (m.versionId > 0 && queueActiveForFilter.byVersion.has(m.versionId)) ||
-        (m.id > 0 && queueActiveForFilter.byModel.has(m.id))
+        m.versionId > 0
+          ? queueActiveForFilter.byVersion.has(m.versionId)
+          : m.id > 0 && queueActiveForFilter.byModel.has(m.id)
 
-      // Updates of owned models stay on the Updates tab unless “Show updates” is on —
-      // including when already queued (queue accent must not bypass this gate).
-      if (!idHit && !searchActive && !showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
+      if (!showAwaitingConfirm && isAwaitingConfirmModel(m)) continue
+      if (!showSkipped && isSkippedPendingModel(m)) continue
+      if (m.versionId > 0 && forgottenPendingVersionIds?.has(m.versionId)) continue
 
-      // Skipped Updates versions stay hidden unless “Show skipped” is on (per versionId).
-      if (!idHit && !searchActive && !showSkipped && isSkippedPendingModel(m)) continue
-      // Forgotten Updates versions never appear on Browse (search can still surface them).
-      if (
-        !idHit &&
-        !searchActive &&
-        m.versionId > 0 &&
-        forgottenPendingVersionIds?.has(m.versionId)
-      ) {
-        continue
-      }
-
-      // Exact id / text search keeps the card visible past Hide excluded / blocked / owned.
-      if (!idHit && !searchActive && !inActiveQueue) {
+      if (!inActiveQueue) {
         if (forgottenModelIds?.has(m.id)) continue
         if (hideBanned && m.isBanned) continue
         if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) continue
-        if (
-          hideAwaitingAccess &&
-          awaitingAccessVersionIds.has(m.versionId)
-        ) {
-          continue
-        }
+        if (hideAwaitingAccess && awaitingAccessVersionIds.has(m.versionId)) continue
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
-      } else if (!idHit && !searchActive && inActiveQueue) {
-        // Queued: still hide excluded (ban) so Ban × does not blink back via queue bypass.
+      } else {
         if (hideBanned && m.isBanned) continue
-        // Queued version: still honor Hide owned for already-downloaded files.
         if (onlyMissing && m.inInventory) continue
-      } else if (!idHit && searchActive) {
-        // Searching: still allow tag filter if set; never hide banned/blocked/updates.
-        if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
       }
 
       const key = browseModelDedupeKey(m)
@@ -1079,8 +1217,8 @@ export function SearchBrowsePanel({
     forgottenModelIds,
     tagFilter,
     deferredSearchQuery,
-    queueActiveForFilter,
-    result.crawlSource
+    searchQuery,
+    queueActiveForFilter
   ])
 
   const displayModels = useMemo(() => {
@@ -1768,10 +1906,10 @@ export function SearchBrowsePanel({
   const enqueueModel = useCallback(
     async (model: WatchRuleTestModel, opts?: { allowAfterUnban?: boolean; startNow?: boolean; withPairMate?: boolean }) => {
       if (model.inInventory) return
-      if (!opts?.allowAfterUnban && isBanned(model)) return
 
       const existing = queueItemFor(model)
-      if (existing?.status === 'queued') {
+      // Always allow removing a queued/failed row — even when the card still shows Banned.
+      if (existing?.status === 'queued' || existing?.status === 'failed') {
         setMessage('')
         try {
           await window.api.cancelDownload(model.versionId)
@@ -1785,6 +1923,8 @@ export function SearchBrowsePanel({
         setMessage(`Already downloading: ${model.name}`)
         return
       }
+
+      if (!opts?.allowAfterUnban && isBanned(model)) return
 
       setQueuingId(model.versionId)
       setMessage('')
@@ -2020,54 +2160,75 @@ export function SearchBrowsePanel({
   )
 
   const banModel = async (model: WatchRuleTestModel) => {
-    setLocalBanned((prev) => new Set(prev).add(model.id))
-    setLocalUnbanned((prev) => {
+    if (!(model.versionId > 0)) return
+    setLocalBannedVersions((prev) => new Set(prev).add(model.versionId))
+    setLocalAllowedVersions((prev) => {
       const next = new Set(prev)
-      next.delete(model.id)
+      next.delete(model.versionId)
       return next
     })
-    onBrowseModelBanChange?.(model.id, true)
+    onBrowseModelBanChange?.(model.id, true, { versionId: model.versionId })
     setMessage(t('gallery.banned', { name: model.name }))
     setContextMenu(null)
-    // Do not await before paint — main may be busy with harvest; UI is already optimistic.
+    // Version-scoped exclude — does not ban sibling version cards / whole model.
     void window.api
-      .banModel(model.id, model.name, {
-        modelName: model.name,
+      .excludeVersion({
+        modelId: model.id,
         versionId: model.versionId,
+        modelName: model.name,
+        versionName: model.versionName,
         previewUrl: model.previewUrl,
-        pageUrl: model.pageUrl,
         sourceDomain: model.sourceDomain,
         author: model.creator,
         baseModel: model.baseModel,
         modelType: model.type,
-        tags: model.tags,
-        downloadCount: model.downloadCount,
-        thumbsUpCount: model.thumbsUpCount
+        tags: model.tags
       })
+      .then(() => onRefreshInventory?.())
       .catch((err) => {
-      setLocalBanned((prev) => {
-        const next = new Set(prev)
-        next.delete(model.id)
-        return next
+        setLocalBannedVersions((prev) => {
+          const next = new Set(prev)
+          next.delete(model.versionId)
+          return next
+        })
+        onBrowseModelBanChange?.(model.id, false, { versionId: model.versionId })
+        setMessage(err instanceof Error ? err.message : String(err))
       })
-      onBrowseModelBanChange?.(model.id, false)
-      setMessage(err instanceof Error ? err.message : String(err))
-    })
   }
 
   const banModelRef = useRef(banModel)
   banModelRef.current = banModel
 
   const banModelById = useCallback(
-    (modelId: number, modelName: string) => {
+    (modelId: number, modelName: string, versionId?: number) => {
       const model =
-        displayModels.find((m) => m.id === modelId) ??
+        (versionId && versionId > 0
+          ? displayModels.find((m) => m.id === modelId && m.versionId === versionId)
+          : undefined) ??
         displayModels.find((m) => m.id === modelId) ??
         ruleScopedModels.find((m) => m.id === modelId)
       if (model) {
         void banModelRef.current(model)
         return
       }
+      if (versionId && versionId > 0) {
+        setLocalBannedVersions((prev) => new Set(prev).add(versionId))
+        onBrowseModelBanChange?.(modelId, true, { versionId })
+        setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
+        void window.api
+          .excludeVersion({ modelId, versionId, modelName })
+          .catch((err) => {
+            setLocalBannedVersions((prev) => {
+              const next = new Set(prev)
+              next.delete(versionId)
+              return next
+            })
+            onBrowseModelBanChange?.(modelId, false, { versionId })
+            setMessage(err instanceof Error ? err.message : String(err))
+          })
+        return
+      }
+      // Fallback: whole-model ban only when version is unknown.
       setLocalBanned((prev) => new Set(prev).add(modelId))
       setLocalUnbanned((prev) => {
         const next = new Set(prev)
@@ -2090,28 +2251,81 @@ export function SearchBrowsePanel({
   )
 
   const unbanModel = async (model: WatchRuleTestModel) => {
+    if (!(model.versionId > 0)) return
     setContextMenu(null)
+    const siblings = displayModels
+      .filter((m) => m.id === model.id && m.versionId > 0 && m.versionId !== model.versionId)
+      .map((m) => ({
+        versionId: m.versionId,
+        modelName: m.name,
+        versionName: m.versionName,
+        baseModel: m.baseModel,
+        author: m.creator,
+        previewUrl: m.previewUrl,
+        modelType: m.type,
+        tags: m.tags
+      }))
+
+    // Optimistic: allow ONLY this version. Never mark siblings banned here.
+    setLocalAllowedVersions((prev) => new Set(prev).add(model.versionId))
+    setLocalBannedVersions((prev) => {
+      const next = new Set(prev)
+      next.delete(model.versionId)
+      return next
+    })
     setLocalBanned((prev) => {
       const next = new Set(prev)
       next.delete(model.id)
       return next
     })
-    setLocalUnbanned((prev) => new Set(prev).add(model.id))
-    onBrowseModelBanChange?.(model.id, false)
+    setLocalUnbanned((prev) => {
+      const next = new Set(prev)
+      next.delete(model.id)
+      return next
+    })
+    onBrowseModelBanChange?.(model.id, false, { versionId: model.versionId })
     setMessage(t('gallery.unbanned', { name: model.name }))
     try {
-      await window.api.unbanModel(model.id)
-      // “Unban — allow downloads”: queue + start when downloads aren’t paused.
+      if (typeof window.api.allowVersion !== 'function') {
+        // Preload not restarted — fall back to whole-model unban so UI is not stuck Banned.
+        await window.api.unbanModel(model.id)
+        onBrowseModelBanChange?.(model.id, false)
+      } else {
+        const result = await window.api.allowVersion({
+          modelId: model.id,
+          versionId: model.versionId,
+          siblings
+        })
+        onBrowseModelBanChange?.(model.id, false, { versionId: model.versionId })
+        // Only after a legacy whole-model ban: siblings stay excluded.
+        if (result.wasModelBanned) {
+          const excluded =
+            result.siblingExcludedIds?.length > 0
+              ? result.siblingExcludedIds
+              : siblings.map((s) => s.versionId)
+          setLocalBannedVersions((prev) => {
+            const next = new Set(prev)
+            for (const id of excluded) next.add(id)
+            return next
+          })
+          for (const id of excluded) {
+            onBrowseModelBanChange?.(model.id, true, { versionId: id })
+          }
+        }
+      }
       if (!model.inInventory) {
         await enqueueModel({ ...model, isBanned: false }, { allowAfterUnban: true })
+      } else {
+        await onRefreshInventory?.()
       }
     } catch (err) {
-      setLocalUnbanned((prev) => {
+      setLocalAllowedVersions((prev) => {
         const next = new Set(prev)
-        next.delete(model.id)
+        next.delete(model.versionId)
         return next
       })
-      onBrowseModelBanChange?.(model.id, true)
+      setLocalBannedVersions((prev) => new Set(prev).add(model.versionId))
+      onBrowseModelBanChange?.(model.id, true, { versionId: model.versionId })
       setMessage(err instanceof Error ? err.message : String(err))
     }
   }
@@ -2120,13 +2334,50 @@ export function SearchBrowsePanel({
   unbanModelRef.current = unbanModel
 
   const unbanModelById = useCallback(
-    (modelId: number, modelName: string) => {
+    (modelId: number, modelName: string, versionId?: number) => {
       const model =
-        displayModels.find((m) => m.id === modelId) ??
+        (versionId && versionId > 0
+          ? displayModels.find((m) => m.id === modelId && m.versionId === versionId)
+          : undefined) ??
         displayModels.find((m) => m.id === modelId) ??
         ruleScopedModels.find((m) => m.id === modelId)
       if (model) {
         void unbanModelRef.current(model)
+        return
+      }
+      if (versionId && versionId > 0) {
+        setLocalAllowedVersions((prev) => new Set(prev).add(versionId))
+        setLocalBannedVersions((prev) => {
+          const next = new Set(prev)
+          next.delete(versionId)
+          return next
+        })
+        onBrowseModelBanChange?.(modelId, false, { versionId })
+        setMessage(t('gallery.unbanned', { name: modelName || `#${modelId}` }))
+        void window.api
+          .allowVersion({ modelId, versionId })
+          .then((result) => {
+            if (!result.wasModelBanned) return
+            const excluded = result.siblingExcludedIds ?? []
+            if (!excluded.length) return
+            setLocalBannedVersions((prev) => {
+              const next = new Set(prev)
+              for (const id of excluded) next.add(id)
+              return next
+            })
+            for (const id of excluded) {
+              onBrowseModelBanChange?.(modelId, true, { versionId: id })
+            }
+          })
+          .catch((err) => {
+            setLocalAllowedVersions((prev) => {
+              const next = new Set(prev)
+              next.delete(versionId)
+              return next
+            })
+            onBrowseModelBanChange?.(modelId, true, { versionId })
+            setMessage(err instanceof Error ? err.message : String(err))
+          })
         return
       }
       setLocalBanned((prev) => {
@@ -2150,23 +2401,61 @@ export function SearchBrowsePanel({
     [displayModels, ruleScopedModels, onBrowseModelBanChange, t]
   )
 
-  const deleteFromLibrary = async (model: WatchRuleTestModel) => {
-    if (!model.inInventory || !model.versionId) return
-    const ok = window.confirm(
-      `Delete "${model.name}" from disk (model, preview, swarm.json) and exclude from future downloads?`
-    )
-    if (!ok) return
-    setContextMenu(null)
-    setMessage('')
-    try {
-      await window.api.deleteInventoryVersion(model.versionId, { ban: true })
-      setLocalBanned((prev) => new Set(prev).add(model.id))
-      setMessage(`Deleted and excluded: ${model.name}`)
-      await onRefreshInventory?.()
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
-  }
+  const runDeleteFromLibrary = useCallback(
+    async (model: WatchRuleTestModel, scope: 'version' | 'all' = 'version') => {
+      if (!model.versionId) return
+      setDeleteConfirmModel(null)
+      setContextMenu(null)
+      setMessage('')
+      try {
+        if (scope === 'all' && model.id > 0) {
+          const owned = (inventory ?? []).filter((r) => r.modelId === model.id)
+          const versionIds = owned.length
+            ? owned.map((r) => r.versionId)
+            : [model.versionId]
+          for (const versionId of versionIds) {
+            await window.api.deleteInventoryVersion(versionId, { ban: true })
+            setLocalBannedVersions((prev) => new Set(prev).add(versionId))
+            onBrowseModelBanChange?.(model.id, true, { versionId })
+          }
+          setMessage(
+            t('gallery.deletedExcludedAllVersions', {
+              name: model.name,
+              count: String(versionIds.length)
+            })
+          )
+        } else {
+          // Version-scoped: deletes this version's files and forgets it — not a whole-model ban.
+          await window.api.deleteInventoryVersion(model.versionId, { ban: true })
+          setLocalBannedVersions((prev) => new Set(prev).add(model.versionId))
+          onBrowseModelBanChange?.(model.id, true, { versionId: model.versionId })
+          setMessage(
+            t('gallery.deletedExcludedVersion', {
+              name: model.name,
+              version: model.versionName || String(model.versionId)
+            })
+          )
+        }
+        await onRefreshInventory?.()
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [inventory, onBrowseModelBanChange, onRefreshInventory, t]
+  )
+
+  const requestDeleteFromLibrary = useCallback(
+    (model: WatchRuleTestModel) => {
+      if (!model.versionId) return
+      if (deleteConfirmSkipForSession) {
+        void runDeleteFromLibrary(model)
+        return
+      }
+      setContextMenu(null)
+      setDeleteConfirmModel(model)
+    },
+    [deleteConfirmSkipForSession, runDeleteFromLibrary]
+  )
 
   return (
     <div
@@ -2797,7 +3086,7 @@ export function SearchBrowsePanel({
 
           <BrowseModelGrid
             units={gridUnits}
-            searchQuery={searchQuery}
+            searchQuery={deferredSearchQuery}
             browseSettledDimPercent={browseSettledDimPercent}
             awaitingAccessVersionIds={awaitingAccessVersionIds}
             waitAccessVersionIds={waitAccessVersionIds}
@@ -3024,10 +3313,10 @@ export function SearchBrowsePanel({
             )}
             {contextMenu.model.inInventory && (
               <button
-                {...contextMenuButtonProps(
-                  () => void deleteFromLibrary(contextMenu.model),
-                  closeContextMenu
-                )}
+                {...contextMenuButtonProps(() => {
+                  const model = contextMenu.model
+                  requestDeleteFromLibrary(model)
+                }, closeContextMenu)}
                 className="context-menu-danger"
               >
                 Delete files & exclude
@@ -3174,6 +3463,45 @@ export function SearchBrowsePanel({
             )}
           </p>
         )}
+      {deleteConfirmModel && (
+        <ConfirmModal
+          title={t('gallery.deleteFilesExclude')}
+          message={
+            inventory.filter((r) => r.modelId === deleteConfirmModel.id).length > 1
+              ? t('gallery.deleteConfirmVersionOrAll', {
+                  name: deleteConfirmModel.name,
+                  version: deleteConfirmModel.versionName || String(deleteConfirmModel.versionId),
+                  count: String(
+                    inventory.filter((r) => r.modelId === deleteConfirmModel.id).length
+                  )
+                })
+              : t('gallery.deleteConfirmVersion', {
+                  name: deleteConfirmModel.name,
+                  version: deleteConfirmModel.versionName || String(deleteConfirmModel.versionId)
+                })
+          }
+          confirmLabel={t('gallery.deleteThisVersion')}
+          secondaryConfirmLabel={
+            inventory.filter((r) => r.modelId === deleteConfirmModel.id).length > 1
+              ? t('gallery.deleteAllVersions', {
+                  count: String(
+                    inventory.filter((r) => r.modelId === deleteConfirmModel.id).length
+                  )
+                })
+              : undefined
+          }
+          onSecondaryConfirm={
+            inventory.filter((r) => r.modelId === deleteConfirmModel.id).length > 1
+              ? () => void runDeleteFromLibrary(deleteConfirmModel, 'all')
+              : undefined
+          }
+          danger
+          dontAskAgainLabel={t('gallery.deleteConfirmDontAsk')}
+          onDontAskAgainChange={setDeleteConfirmSkipForSession}
+          onConfirm={() => void runDeleteFromLibrary(deleteConfirmModel, 'version')}
+          onCancel={() => setDeleteConfirmModel(null)}
+        />
+      )}
     </div>
   )
 }
@@ -3210,11 +3538,9 @@ const LiveCardDownloadProgress = memo(function LiveCardDownloadProgress({
   const { items } = useDownloadQueue()
   const item = useMemo(() => {
     const active = items.filter((i) => i.status === 'downloading')
-    if (versionId > 0) {
-      const byVersion = active.find((i) => i.versionId === versionId)
-      if (byVersion) return byVersion
-    }
-    return active.find((i) => i.modelId === modelId)
+    // Prefer exact version — never paint another version's bar onto sibling cards.
+    if (versionId > 0) return active.find((i) => i.versionId === versionId)
+    return active.find((i) => i.modelId === modelId && !(i.versionId > 0))
   }, [items, versionId, modelId])
   if (!item) return null
   return (
@@ -3288,8 +3614,8 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   onEnqueuePair: (high: WatchRuleTestModel, low: WatchRuleTestModel) => void
   onJumpToGallery?: (modelId: number, modelName?: string) => void
   onViewDetails?: (model: WatchRuleTestModel) => void
-  onBanModel?: (modelId: number, modelName: string) => void
-  onUnbanModel?: (modelId: number, modelName: string) => void
+  onBanModel?: (modelId: number, modelName: string, versionId?: number) => void
+  onUnbanModel?: (modelId: number, modelName: string, versionId?: number) => void
   onContextMenu: (e: MouseEvent, model: WatchRuleTestModel) => void
   showOwned: boolean
   browseVideoPreviews?: boolean
@@ -3310,7 +3636,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
               key={`pair:${unit.key}`}
               high={unit.high}
               low={unit.low}
-              searchQuery={searchQuery}
+              searchQuery={deferredSearchQuery}
               queueItemFor={queueItemFor}
               queuePaused={queuePaused}
               queuing={queuingId === unit.high.versionId || queuingId === unit.low.versionId}
@@ -3449,8 +3775,8 @@ const ModelCard = memo(function ModelCard({
   onJumpToGallery?: (modelId: number, modelName?: string) => void
   onViewDetails?: (model: WatchRuleTestModel) => void
   banFunctionMode?: boolean
-  onBanModel?: (modelId: number, modelName: string) => void
-  onUnbanModel?: (modelId: number, modelName: string) => void
+  onBanModel?: (modelId: number, modelName: string, versionId?: number) => void
+  onUnbanModel?: (modelId: number, modelName: string, versionId?: number) => void
   browseVideoPreviews?: boolean
   videoDbOverride?: ModelCardPreviewOverride
   previewUrls: string[]
@@ -3780,8 +4106,8 @@ const ModelCard = memo(function ModelCard({
                 }
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (model.isBanned) onUnbanModel?.(model.id, model.name)
-                  else onBanModel?.(model.id, model.name)
+                  if (model.isBanned) onUnbanModel?.(model.id, model.name, model.versionId)
+                  else onBanModel?.(model.id, model.name, model.versionId)
                 }}
               >
                 ×
@@ -3789,19 +4115,25 @@ const ModelCard = memo(function ModelCard({
             )}
           </div>
         </div>
-        {model.versionName ? (
-          <VersionNameRow
-            name={model.versionName}
-            source={{
-              modelName: model.name,
-              versionName: model.versionName,
-              baseModel: model.baseModel,
-              modelDescription: model.modelDescription,
-              versionDescription: model.versionDescription
-            }}
-            title={model.versionName}
-          />
-        ) : null}
+        {(() => {
+          const versionLabel =
+            (model.versionName ?? '').trim() ||
+            (model.primaryFileName ?? '').trim() ||
+            (model.versionId > 0 ? `v${model.versionId}` : '')
+          return versionLabel ? (
+            <VersionNameRow
+              name={versionLabel}
+              source={{
+                modelName: model.name,
+                versionName: model.versionName || versionLabel,
+                baseModel: model.baseModel,
+                modelDescription: model.modelDescription,
+                versionDescription: model.versionDescription
+              }}
+              title={versionLabel}
+            />
+          ) : null
+        })()}
         {baseModelDisplay || checkpointType ? (
           <div className="library-base-model-line">
             {baseModelDisplay ? <span>{baseModelDisplay}</span> : null}

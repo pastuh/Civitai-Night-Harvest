@@ -165,7 +165,12 @@ interface Props {
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
   /** Forgotten models — always hidden in Browse results. */
   forgottenModelIds?: Set<number>
-  onBrowseModelBanChange?: (modelId: number, banned: boolean) => void
+  onBrowseModelBanChange?: (
+    modelId: number,
+    banned: boolean,
+    stub?: { versionId?: number }
+  ) => void
+  onSeedBrowseModels?: (models: import('../../../shared/types').WatchRuleTestModel[]) => void
   onBrowseSnapshot?: (gallery: WatchRuleTestResult) => void | Promise<void>
   browseViewPrefs?: import('../view-prefs').BrowseViewPrefs
   onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
@@ -238,6 +243,7 @@ export function WatchRulesTab({
   onSaveSettings,
   forgottenModelIds,
   onBrowseModelBanChange,
+  onSeedBrowseModels,
   onBrowseSnapshot,
   browseViewPrefs,
   onBrowseViewPrefsChange,
@@ -1056,6 +1062,7 @@ export function WatchRulesTab({
           banFunctionMode={settings.banFunctionMode ?? false}
           onBanFunctionModeChange={(enabled) => onSaveSettings({ banFunctionMode: enabled })}
           onBrowseModelBanChange={onBrowseModelBanChange}
+          onSeedBrowseModels={onSeedBrowseModels}
           appStatus={status}
           uiExtended={settings.uiMode === 'extended'}
           crawlPageMeta={crawlPageMeta}

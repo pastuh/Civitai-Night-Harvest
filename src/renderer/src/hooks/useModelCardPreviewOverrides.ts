@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ContentFilter } from '../../../shared/types'
 import {
   overrideFromResolveResult,
@@ -113,6 +113,16 @@ export function useModelCardPreviewOverrides(
   const videoStartedRef = useRef(new Set<number>())
   const brokenRef = useRef(new Set<number>())
   const [dbReloadKey, setDbReloadKey] = useState(0)
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  /** Stable identity so parent list rebuilds (Allow/Unban) don't refetch every preview. */
+  const versionIdsKey = useMemo(
+    () =>
+      [...new Set(items.map((i) => i.versionId).filter((id) => id > 0))]
+        .sort((a, b) => a - b)
+        .join(','),
+    [items]
+  )
 
   useEffect(() => {
     return window.api.onVideoPreviewSyncComplete(() => setDbReloadKey((k) => k + 1))
@@ -125,14 +135,27 @@ export function useModelCardPreviewOverrides(
     imageStartedRef.current.delete(versionId)
   }, [])
 
+  const knownVersionIdsRef = useRef(new Set<number>())
+  const lastDbReloadKeyRef = useRef(dbReloadKey)
+
   useEffect(() => {
     if (!enabled) return
-    const versionIds = [...new Set(items.map((i) => i.versionId).filter((id) => id > 0))]
+    const versionIds = versionIdsKey
+      ? versionIdsKey.split(',').map(Number).filter((id) => id > 0)
+      : []
     if (!versionIds.length) return
+    const reloadAll = lastDbReloadKeyRef.current !== dbReloadKey
+    lastDbReloadKeyRef.current = dbReloadKey
+    const toFetch = reloadAll
+      ? versionIds
+      : versionIds.filter((id) => !knownVersionIdsRef.current.has(id))
+    for (const id of versionIds) knownVersionIdsRef.current.add(id)
+    // Shrinking the list (Allow/Unban) must not refetch already-loaded thumbs.
+    if (!toFetch.length) return
     let cancelled = false
     void Promise.all([
-      window.api.getBrowseCardCache(versionIds),
-      window.api.getVersionVideoPreview(versionIds)
+      window.api.getBrowseCardCache(toFetch),
+      window.api.getVersionVideoPreview(toFetch)
     ]).then(([cards, videoMeta]) => {
       if (cancelled) return
       if (Object.keys(cards).length) {
@@ -148,12 +171,13 @@ export function useModelCardPreviewOverrides(
     return () => {
       cancelled = true
     }
-  }, [enabled, items, dbReloadKey])
+  }, [enabled, versionIdsKey, dbReloadKey])
 
   useEffect(() => {
     if (!enabled) return
+    const list = itemsRef.current
 
-    const missingImages = items.filter((item) => {
+    const missingImages = list.filter((item) => {
       if (item.versionId <= 0 || item.modelId <= 0) return false
       const cache = browseCards[item.versionId]
       const broken = brokenRef.current.has(item.versionId)
@@ -209,7 +233,7 @@ export function useModelCardPreviewOverrides(
 
     if (!fetchVideo) return
 
-    const missingVideo = items.filter((item) => {
+    const missingVideo = list.filter((item) => {
       if (item.versionId <= 0 || item.modelId <= 0) return false
       if (overrides[item.versionId]?.videoAbsent) return false
       const thumb = resolveModelCardThumb(item, overrides[item.versionId], browseCards[item.versionId])
@@ -264,7 +288,7 @@ export function useModelCardPreviewOverrides(
     return () => {
       cancelled = true
     }
-  }, [enabled, items, overrides, browseCards, contentFilter, fetchVideo])
+  }, [enabled, versionIdsKey, overrides, browseCards, contentFilter, fetchVideo])
 
   return { overrides, browseCards, markPreviewBroken }
 }

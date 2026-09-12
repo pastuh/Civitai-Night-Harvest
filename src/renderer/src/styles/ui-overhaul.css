@@ -1618,6 +1618,11 @@ label.field-label {
 .settings-save-row-top {
   margin-top: 0;
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px 0;
+  background: var(--panel-bg, var(--bg, #1a1a1a));
 }
 
 .settings-save-row-bottom {

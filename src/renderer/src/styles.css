@@ -1759,7 +1759,7 @@ body.is-app-busy * {
   background: color-mix(in srgb, var(--success) 85%, white);
 }
 
-.status-gallery-card.is-ban-seen .status-model-card-title-row {
+.status-gallery-card.is-ban-seen .gallery-card-title-row {
   /* Left edge only on the title bar — theme success, muted. */
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--success) 58%, transparent);
 }
@@ -4107,6 +4107,38 @@ select.browse-content-filter {
   font-size: 14px;
 }
 
+.confirm-modal-dont-ask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.confirm-modal-dont-ask input {
+  width: auto;
+  margin: 0;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.confirm-modal-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .fast-tag-confirm-layer {
   position: relative;
   z-index: 12000;
@@ -4748,21 +4780,24 @@ select.browse-content-filter {
   bottom: 6px;
   right: 6px;
   z-index: 2;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border-radius: 50%;
-  background: var(--error);
-  color: #fff;
-  font-size: 16px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface2, #1a1a22) 82%, var(--accent) 18%);
+  color: var(--text, #eee);
+  font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  border: none;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, var(--accent) 30%);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 35%, transparent);
+  cursor: pointer;
 }
 
 .gallery-goto-btn:hover {
-  background: #ff8a90;
-  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 28%, var(--surface2, #1a1a22));
+  border-color: var(--accent);
+  color: var(--accent-contrast, #12040c);
 }
 
 .search-browse-layout .gallery-web-btn {
@@ -4960,6 +4995,14 @@ select.browse-content-filter {
 .app.blur-previews .preview-modal-img,
 .app.blur-previews .model-detail-preview-img,
 .app.blur-previews .model-detail-preview-wrap img {
+  filter: blur(22px);
+  transform: scale(1.08);
+}
+
+.app.blur-previews.blur-previews-video video.preview-thumb-video,
+.app.blur-previews.blur-previews-video video.gallery-thumb,
+.app.blur-previews.blur-previews-video .preview-thumb-video,
+.app.blur-previews.blur-previews-video .model-detail-preview-wrap video {
   filter: blur(22px);
   transform: scale(1.08);
 }

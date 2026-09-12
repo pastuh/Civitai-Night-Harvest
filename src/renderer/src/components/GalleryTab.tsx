@@ -75,6 +75,7 @@ import {
 import { compareOptionalCount } from '../list-sort'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import { SkippedTagsPanel } from './SkippedTagsPanel'
+import { ConfirmModal } from './ConfirmModal'
 import { folderLabelForRecord, recordTagsFullyAssigned } from './gallery-card-utils'
 
 interface Props {
@@ -137,6 +138,18 @@ interface Props {
   libraryPreviewCacheBust?: Record<number, number>
   /** Play video preview on hover (Settings). */
   browseVideoPreviews?: boolean
+  /** Notify parent after version-scoped exclude so Browse cards update. */
+  onBannedChange?: (
+    modelId: number,
+    banned: boolean,
+    stub?: {
+      name?: string
+      versionId?: number
+      baseModel?: string
+      creator?: string
+      previewUrl?: string
+    }
+  ) => void
 }
 
 interface ContextMenuState {
@@ -263,7 +276,8 @@ function GalleryTabInner({
   eaFavoriteIds = [],
   onToggleEaFavorite,
   libraryPreviewCacheBust,
-  browseVideoPreviews = false
+  browseVideoPreviews = false,
+  onBannedChange
 }: Props) {
   const t = useT()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
@@ -324,6 +338,14 @@ function GalleryTabInner({
   }, [inventory])
   const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    versionId: number
+    modelId: number
+    modelName: string
+    versionName: string
+    siblingCount: number
+  } | null>(null)
+  const deleteConfirmSkipRef = useRef(false)
   const [assignFolderOpen, setAssignFolderOpen] = useState(false)
   const [assignTagQuery, setAssignTagQuery] = useState('')
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -1167,10 +1189,11 @@ function GalleryTabInner({
   const banModel = useCallback(
     (modelId: number, modelName: string, versionId?: number) => {
       const rec =
-        versionId != null
+        versionId != null && versionId > 0
           ? inventory.find((r) => r.versionId === versionId)
           : inventory.find((r) => r.modelId === modelId)
       const isLocal = rec ? isUnrecognizedInventoryRecord(rec) : modelId <= 0
+      const targetVersionId = rec?.versionId ?? versionId
 
       if (rec) {
         setPendingHiddenVersionIds((prev) => {
@@ -1180,43 +1203,46 @@ function GalleryTabInner({
           return next
         })
       }
-      if (!isLocal && modelId > 0) {
-        setPendingBanIds((prev) => {
-          if (prev.has(modelId)) return prev
-          const next = new Set(prev)
-          next.add(modelId)
-          return next
-        })
-      }
       setContextMenu(null)
       setSelected((prev) => {
         const next = new Set(prev)
-        for (const id of next) {
-          const row = inventory.find((r) => r.versionId === id)
-          if (!row) continue
-          if (isLocal && rec && row.versionId === rec.versionId) next.delete(id)
-          else if (!isLocal && row.modelId === modelId) next.delete(id)
-        }
+        if (targetVersionId && targetVersionId > 0) next.delete(targetVersionId)
         return next
       })
 
-      // Fire-and-forget — do not await before paint (main may unlink files; UI stays responsive).
+      // Fire-and-forget — version-scoped exclude (not whole-model ban).
       const run = async () => {
         try {
           if (isLocal && rec) {
             await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
-          } else {
-            await window.api.banModel(modelId, modelName, {
-              modelName,
-              versionId: rec?.versionId ?? versionId,
-              previewUrl: rec?.previewPath,
-              author: rec?.author,
+          } else if (targetVersionId && targetVersionId > 0 && modelId > 0) {
+            if (typeof window.api.excludeVersion === 'function') {
+              await window.api.excludeVersion({
+                modelId,
+                versionId: targetVersionId,
+                modelName,
+                versionName: rec?.versionName,
+                previewUrl: rec?.previewPath,
+                author: rec?.author,
+                baseModel: rec?.baseModel,
+                sourceDomain: rec?.civitaiDomain,
+                tags: rec?.civitaiTags,
+                modelType: rec?.modelType
+              })
+            } else {
+              // Preload not restarted — delete this version only (no whole-model ban).
+              await window.api.deleteInventoryVersion(targetVersionId, { ban: true })
+            }
+            onBannedChange?.(modelId, true, {
+              name: modelName,
+              versionId: targetVersionId,
               baseModel: rec?.baseModel,
-              sourceDomain: rec?.civitaiDomain,
-              tags: rec?.civitaiTags,
-              downloadCount: rec?.downloadCount,
-              thumbsUpCount: rec?.thumbsUpCount
+              creator: rec?.author,
+              previewUrl: rec?.previewPath
             })
+          } else if (modelId > 0) {
+            await window.api.banModel(modelId, modelName)
+            onBannedChange?.(modelId, true)
           }
           scheduleLibraryRefresh()
         } catch (err) {
@@ -1228,20 +1254,12 @@ function GalleryTabInner({
               return next
             })
           }
-          if (!isLocal && modelId > 0) {
-            setPendingBanIds((prev) => {
-              if (!prev.has(modelId)) return prev
-              const next = new Set(prev)
-              next.delete(modelId)
-              return next
-            })
-          }
           setMessage(err instanceof Error ? err.message : String(err))
         }
       }
       void run()
     },
-    [inventory, scheduleLibraryRefresh]
+    [inventory, onBannedChange, scheduleLibraryRefresh]
   )
 
   const unbanModel = useCallback(
@@ -1297,24 +1315,46 @@ function GalleryTabInner({
     }
   }
 
-  const deleteModel = async (versionId: number, modelId: number, modelName: string) => {
-    const ok = window.confirm(t('gallery.deleteConfirm', { name: modelName }))
-    if (!ok) return
+  const performDelete = async (
+    versionId: number,
+    modelId: number,
+    modelName: string,
+    scope: 'version' | 'all' = 'version'
+  ) => {
+    const rec = inventory.find((r) => r.versionId === versionId)
+    const versionLabel = rec?.versionName || String(versionId)
+    const siblings =
+      modelId > 0 ? inventory.filter((r) => r.modelId === modelId) : rec ? [rec] : []
+    const versionIds =
+      scope === 'all' && siblings.length > 0 ? siblings.map((r) => r.versionId) : [versionId]
+
     setContextMenu(null)
+    setDeleteConfirm(null)
     setMessage('')
 
     const runDelete = async () => {
-      await window.api.deleteInventoryVersion(versionId, { ban: true })
-      setBannedList((prev) => [
-        { modelId, modelName, bannedAt: new Date().toISOString() },
-        ...prev.filter((b) => b.modelId !== modelId)
-      ])
-      setSelected((prev) => {
-        const next = new Set(prev)
-        next.delete(versionId)
-        return next
-      })
-      setMessage(t('gallery.deletedExcluded', { name: modelName }))
+      for (const id of versionIds) {
+        await window.api.deleteInventoryVersion(id, { ban: true })
+        setPendingHiddenVersionIds((prev) => {
+          const next = new Set(prev)
+          next.add(id)
+          return next
+        })
+        setSelected((prev) => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+        onBannedChange?.(modelId, true, { name: modelName, versionId: id })
+      }
+      setMessage(
+        scope === 'all'
+          ? t('gallery.deletedExcludedAllVersions', {
+              name: modelName,
+              count: String(versionIds.length)
+            })
+          : t('gallery.deletedExcludedVersion', { name: modelName, version: versionLabel })
+      )
       await onRefresh()
     }
 
@@ -1330,6 +1370,36 @@ function GalleryTabInner({
     } finally {
       setMoving(false)
     }
+  }
+
+  const deleteModel = async (versionId: number, modelId: number, modelName: string) => {
+    const rec = inventory.find((r) => r.versionId === versionId)
+    const versionLabel = rec?.versionName || String(versionId)
+    const siblings =
+      modelId > 0 ? inventory.filter((r) => r.modelId === modelId) : rec ? [rec] : []
+    const hasMultiple = siblings.length > 1
+
+    if (hasMultiple && !deleteConfirmSkipRef.current) {
+      setDeleteConfirm({
+        versionId,
+        modelId,
+        modelName,
+        versionName: versionLabel,
+        siblingCount: siblings.length
+      })
+      setContextMenu(null)
+      return
+    }
+
+    if (!hasMultiple && !deleteConfirmSkipRef.current) {
+      const ok = window.confirm(
+        t('gallery.deleteConfirmVersion', { name: modelName, version: versionLabel })
+      )
+      if (!ok) return
+    }
+
+    // Session "don't ask": always this version only (not all versions).
+    await performDelete(versionId, modelId, modelName, 'version')
   }
 
   const toggleSelect = useCallback((versionId: number) => {
@@ -2516,6 +2586,34 @@ function GalleryTabInner({
           onSaveTagRules={onSaveTagRules}
           onRefresh={onRefresh}
           onDone={(msg) => setMessage(msg)}
+        />
+      )}
+      {deleteConfirm && (
+        <ConfirmModal
+          title={t('gallery.deleteFilesExclude')}
+          message={t('gallery.deleteConfirmVersionOrAll', {
+            name: deleteConfirm.modelName,
+            version: deleteConfirm.versionName,
+            count: String(deleteConfirm.siblingCount)
+          })}
+          confirmLabel={t('gallery.deleteThisVersion')}
+          secondaryConfirmLabel={t('gallery.deleteAllVersions', {
+            count: String(deleteConfirm.siblingCount)
+          })}
+          onSecondaryConfirm={() => {
+            const pending = deleteConfirm
+            void performDelete(pending.versionId, pending.modelId, pending.modelName, 'all')
+          }}
+          danger
+          dontAskAgainLabel={t('gallery.deleteConfirmDontAsk')}
+          onDontAskAgainChange={(checked) => {
+            deleteConfirmSkipRef.current = checked
+          }}
+          onConfirm={() => {
+            const pending = deleteConfirm
+            void performDelete(pending.versionId, pending.modelId, pending.modelName, 'version')
+          }}
+          onCancel={() => setDeleteConfirm(null)}
         />
       )}
     </div>

@@ -65,7 +65,7 @@ export function useQueuedMembership(): {
     for (const i of items) {
       if (i.status !== 'queued' && i.status !== 'downloading' && i.status !== 'failed') continue
       if (i.versionId > 0) byVersion.add(i.versionId)
-      if (i.modelId > 0) byModel.add(i.modelId)
+      else if (i.modelId > 0) byModel.add(i.modelId)
     }
     return { byVersion, byModel, items, paused }
   }, [key])

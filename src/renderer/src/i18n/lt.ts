@@ -3,6 +3,8 @@ import type { Messages } from './en'
 export const lt: Messages = {
   common: {
     save: 'Išsaugoti nustatymus',
+    saveNow: 'Išsaugoti dabar',
+    saving: 'Saugoma…',
     saved: 'Išsaugota',
     browse: 'Naršyti',
     retry: 'Bandyti dar',
@@ -40,7 +42,7 @@ export const lt: Messages = {
   tabs: {
     browse: 'Naršymas',
     browseBadgeTitle:
-      'Modeliai download eilėje (queued arba siunčiami), įskaitant Harvest Auto ir tavo Queue iš Updates ar Model details.',
+      'Browse eilės pool šią sesiją (kaip Yield): modeliai, kurie gali patekti arba jau pateko į download eilę. Auga kai unban / nauji puslapiai; Pause jo nenuima.',
     library: 'Biblioteka',
     download: 'Atsisiuntimas',
     tagFolders: 'Tag aplankai',
@@ -104,6 +106,7 @@ export const lt: Messages = {
   settings: {
     title: 'Nustatymai',
     lead: 'Naujas? Peržiūrėkite Pagalbos skiltį.',
+    autoSaveHint: 'Pakeitimai išsaugomi automatiškai',
     nsfwCallout:
       'NSFW ir restricted modeliams reikia API rakto. Be jo atsisiuntimai gali nepavykti arba patekti į Early access.',
     sections: {
@@ -140,6 +143,7 @@ export const lt: Messages = {
       scanOnStartup: 'Scan paleidus programą',
       autoRetryDeferred: 'Pakartoti laukiančius po scan',
       blurPreviews: 'Blur preview nuotraukos',
+      blurVideoPreviews: 'Blur ir video preview',
       preserveFilters: 'Išsaugoti filtrus',
       showBannedInGallery: 'Rodyti banned galerijoje',
       banFunctionMode: 'Ban function (× šalia kortelės pavadinimo)',
@@ -282,6 +286,8 @@ export const lt: Messages = {
       showCustomAssignmentSubfolders:
         'Custom folder assignments: kortelėse ir Library šoninėje juostoje rodyti tagą + santykinį subfolderį (pvz. randoms/cars). Išjungta = tik custom tago vardas. Pagal nutylėjimą įjungta.',
       blur: 'Slėpia thumbnails Browse, Library ir dialoguose. Antraštės Blur irgi.',
+      blurVideoPreviews:
+        'Kai Blur įjungtas — blur’ina ir hover video preview. Išjungta (pagal nutylėjimą) = nuotraukos blur, video hover metu lieka ryškus.',
       downloadStripVisibility:
         'Pagal nutylėjimą juostos nėra — Clear queue dešinėje prie tabų. Įjunkite Browse / Browse+Library / Visus tabus, kad matytumėte pilną download juostą (Clear queue tada bus juostoje).',
       downloadStripLayout:
@@ -446,7 +452,7 @@ export const lt: Messages = {
     missingForget:
       '**Forget On** — × ant kortelių slepia modelį visur ir nebesiūlo; **Show forgotten** peržiūrai; × vėl = Unforget',
     missingMarkSeen:
-      '**Mark seen on** — perkelkite žymeklį horizontaliai nuo ban/pause kortelės, kad pažymėtumėte kaip matytą (žalia titulinė linija). **Hide seen** checkbox paslepia pažymėtas korteles. **Unseen bans** sidebar filtras rodo tik nematytus; ką tik pažymėti lieka matomi, kol nepažymite Hide seen.',
+      '**Mark seen on** — perkelkite žymeklį horizontaliai nuo ban/pause/exclude kortelės (žalia titulinė linija). **Hide seen** slepia jas. Sidebar **Unseen bans** / **Seen bans** — sąrašas (ne Missing 404). Unseen + Seen = dabartinės ban peržiūros kortelės.',
     missingContextMenu:
       '**Dešinio pelės mygtuko meniu** → Mark seen, Forget, Unban, Allow, Acknowledge, Open on Civitai — nereikia pirma įjungti toggle mygtukų.',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
@@ -491,8 +497,8 @@ export const lt: Messages = {
         'Išjungus (aktyvus Pause) vykdomi siuntimai sustabdomi; Harvest vis tiek gali pildyti eilę. Išjunkite Pause, kad pradėtų siųsti. Auto/Manual valdo ar Harvest deda modelius į eilę.',
       autoDownloadNewVersions:
         'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda Atnaujinimai — Download / Visada atnaujinti / Skip / Ban — arba Visada atnaujinti tik tam modeliui. Visiškai nauji Browse modeliai tvarkomi atskirai.',
-      scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = off (night mode nustato 60 min jei reikia).',
-      parallelDownloads: 'Kiek modelių siunčiama vienu metu. 1 = vienas failas pilnu greičiu.',
+      scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = Off. Įjungiant Night nustato 60 min tik jei dabar Off.',
+      parallelDownloads: 'Kiek modelių siunčiama vienu metu (1–6). 1 = vienas failas pilnu greičiu.',
       domain:
         'API hostas fiksuotas: civitai.red. SFW/NSFW — per Browse taisyklės content filter.',
       backfill: 'Peržiūri visą katalogą kartą, tada tik newest puslapį. Atsisiuntimai tarp puslapių.',
@@ -708,7 +714,7 @@ export const lt: Messages = {
     contentAll: 'All',
     contentSfw: 'SFW',
     contentNsfw: 'NSFW',
-    searchPlaceholder: 'Ieškoti pavadinimo, autoriaus ar model/version ID…',
+    searchPlaceholder: 'Ieškoti pavadinimo, autoriaus, tagų, ID — gallery + Civitai + lokali biblioteka (net jei Civitai jau nėra)',
     searchTitle:
       'Filtruoti įkeltus modelius pagal pavadinimą, kūrėją ar tikslų model/version ID (skaičius ieško ir Civitai)',
     idLookupLoading: 'Ieškoma ID Civitai…',
@@ -774,11 +780,11 @@ export const lt: Messages = {
   },
   downloadsStrip: {
     banFunction: 'Ban režimas',
-    excludeBan: 'Blokuoti / ban modelį',
+    excludeBan: 'Blokuoti / ban versiją',
     openCivitai: 'Atidaryti Civitai',
     modelDetails: 'Modelio informacija (licencija, statistika)',
     unban: 'Atbaninti — leisti siųsti',
-    exclude: 'Blokuoti / ban modelį',
+    exclude: 'Blokuoti / ban versiją',
     removeFromQueue: 'Pašalinti ir exclude (be auto re-queue)',
     retryDownload: 'Bandyti atsisiųsti dar',
     priorityDownload: 'Prioritetinis atsisiuntimas',
@@ -909,10 +915,13 @@ export const lt: Messages = {
     baseFilterHint:
       'Rodomos visos trūkstamos versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
     actionsHint:
-      'Skip = ši versija vėliau. Įjunkite Mark seen, tada išeikite kairėn/dešinėn nuo kortelės (Hide seen). Forget = niekada neatnaujinti. Show forgotten = tik forgotten, kuriuos dar turite Library.',
+      'Skip = ši versija vėliau. Mark seen = peržiūrėta. Forget / Ban = tik ši versija (kitos lieka). Show forgotten = peržiūrėti forgotten versijas.',
     searchPlaceholder: 'Ieškoti atnaujinimų…',
     hideSeen: 'Slėpti seen',
     hideSeenHint: 'Slėpti atnaujinimus, kuriuos pažymėjote kaip seen (įskaitant skipped)',
+    hideConfirmed: 'Slėpti confirmed',
+    hideConfirmedHint:
+      'Slepia Done korteles ir jau į eilę įdėtas versijas — kad nauji atnaujinimai liktų matomi',
     markSeen: 'Mark seen',
     markSeenModeOff: 'Mark seen Off',
     markSeenModeOn: 'Mark seen On',
@@ -940,9 +949,10 @@ export const lt: Messages = {
     showSkippedTitle: 'Rodyti versijas, kurias anksčiau praleidote šiame puslapyje',
     skippedBadge: 'Skipped',
     ban: 'Ban',
-    banHint: 'Ištrina visas turimas šio modelio versijas ir exclude’ina nuo būsimų siuntimų',
+    banHint:
+      'Exclude tik šią versiją — išimti iš Updates ir niekada neauto-siųsti. Kitos modelio versijos lieka. Jei šią versiją jau turite — jos failai ištrinami.',
     banConfirm:
-      'Ban „{name}“? Bus ištrintos visos {count} turimos versijos iš bibliotekos/disko ir modelis exclude’intas.',
+      'Ban versiją „{version}“ modelio „{name}“? Tik ši versija — sibling’ai lieka. Nebe auto-siunčiama; jei turite failus šiai versijai — jie pašalinami.',
     queueDownload: 'Download',
     queueHint: 'Atsisiųsti šią naujesnę versiją; jau turimas palikti',
     alwaysUpdate: 'Visada atnaujinti',
@@ -1270,7 +1280,16 @@ export const lt: Messages = {
     unbanned: 'Unban: {name}',
     deleteConfirm:
       'Ištrinti „{name}“ iš disko (modelis, preview, swarm.json) ir neleisti ateities atsisiuntimų?',
+    deleteConfirmVersion:
+      'Ištrinti versiją „{version}“ modelio „{name}“ iš disko (modelis, preview, swarm.json)? Kitos versijos lieka bibliotekoje. Ši versija nebebus auto-siunčiama.',
+    deleteConfirmVersionOrAll:
+      'Ištrinti versiją „{version}“ modelio „{name}“ — ar visas {count} turimas šio modelio versijas? Excluded versijos nebebus auto-siunčiamos.',
+    deleteThisVersion: 'Tik ši versija',
+    deleteAllVersions: 'Visos {count} versijos',
+    deleteConfirmDontAsk: 'Daugiau neklausti (šią sesiją)',
     deletedExcluded: 'Ištrinta ir excluded: {name}',
+    deletedExcludedVersion: 'Ištrinta ir excluded versija: {name} → {version}',
+    deletedExcludedAllVersions: 'Ištrinta ir excluded {count} versija(-os) modelio {name}',
     deleting: 'Trinama {name}…',
     removingFromDisk: 'Šalinami failai iš disko',
     movedTo: 'Perkelta {count} modelių į „{tag}"',
@@ -1368,7 +1387,7 @@ export const lt: Messages = {
     markSfw: 'Pažymėti kaip SFW',
     markNsfw: 'Pažymėti kaip NSFW',
     unbanAllow: 'Unban — leisti atsisiuntimus',
-    excludeBan: 'Exclude / ban modelį',
+    excludeBan: 'Exclude / ban versiją',
     deleteFilesExclude: 'Ištrinti failus ir exclude'
   },
   downloadTab: {
@@ -1633,6 +1652,12 @@ export const lt: Messages = {
     openTagFoldersHint: 'Filtruoti modelius su „{tag}“',
     clearSideFilter: 'Išvalyti sidebar filtrą',
     unseenBans: 'Neperžiūrėti banai',
+    unseenBansHint: 'Ban / pause / exclude kortelės be seen žymės. Neįeina Missing (404).',
+    seenBans: 'Seen banai',
+    seenBansHint: 'Ban / pause / exclude kortelės su seen (žalias title). Spausk — pamatysi sąrašą. Ne Missing (404).',
+    banReviewSummary: 'peržiūra {unseen}+{seen}={total}',
+    banReviewHint:
+      'Unseen + Seen = ban/pause/exclude kortelės šiame puslapyje dabar. Missing (404) — atskiras filtras.',
     seenToday: 'Šiandienos seen',
     seenByDay: 'Seen {day}',
     seenTotal: 'Seen: {count}',
@@ -1649,6 +1674,8 @@ export const lt: Messages = {
     kindPausedByTag: 'Paused by tag',
     kindForgotten: 'Forgotten',
     filterForgotten: 'Forgotten',
+    kindExcludedVersion: 'Excluded versija',
+    filterExcludedVersion: 'Excluded versijos',
     forget: 'Forget',
     forgetHint: 'Forget — slėpti visur ir niekada nesiūlyti (peržiūrai: Show forgotten)',
     forgetMsg: 'Pamiršta „{name}“',
@@ -1656,6 +1683,9 @@ export const lt: Messages = {
     forgetModeOn: 'Forget On',
     forgetModeTitle: 'Rodo × šalia pavadinimų — Forget (slėpti visur)',
     unforgetHint: 'Unforget — vėl leisti šį modelį',
+    allowVersion: 'Leisti versiją',
+    allowVersionHint: 'Vėl leisti šią versiją — sibling’ai lieka excluded jei buvo',
+    allowedBadge: 'Allowed',
     allow: 'Allow',
     blockedTagLine: 'Blokuotas tagas: {tag}',
     blockedMatchLine: 'Block „{blocked}“ sutapo su modelio tagu „{matched}“',
@@ -1679,9 +1709,9 @@ export const lt: Messages = {
       'Patikrinta {checked}: {recovered} atsigavo, {confirmed} dabar Unavailable',
     emptyFiltered: 'Nėra modelių pagal šį filtrą.',
     openCivitai: 'Civitai ↗',
-    confirm: 'Mark seen',
+    confirm: 'Acknowledge',
     confirmHint:
-      'Tik 404 — pažymėti kaip matytą (badge). Lieka Missing ir toliau tikrinamas iki Unavailable'
+      'Tik 404 — patvirtinti Missing kortelę (badge). Lieka Missing ir toliau tikrinamas iki Unavailable'
   },
   globalStatus: {
     preparingDownloads: 'Ruošiami atsisiuntimai…',

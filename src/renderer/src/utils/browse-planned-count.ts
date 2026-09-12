@@ -19,49 +19,36 @@ export interface BrowsePlannedCountInput {
   bannedModelIds: Set<number>
   hiddenTags: string[]
   bannedTags?: string[]
-  manualQueueMode: boolean
-  nightMode: boolean
-  crawlAutoDownload: boolean
-  updateBrowseOnCrawl: boolean
-  allowQuietBrowseCards: boolean
 }
 
 /**
- * Browse tab badge: pipeline (queued/downloading) + Harvest Auto-New backlog that
- * reconcileBrowseDownloadQueue would actually enqueue (not stale gallery / Updates / ban ghosts).
+ * Version IDs that can enter (or already sit in) the Browse download queue —
+ * the Yield-style intake pool. Independent of Pause / Harvest / quiet gallery.
  */
-export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): number {
+export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): Set<number> {
   const ownedVersionIds = new Set(input.inventory.map((r) => r.versionId))
   const ownedModelIds = new Set(input.inventory.map((r) => r.modelId).filter((id) => id > 0))
-  const activePending = input.pending.filter((p) => !p.skipped)
+  const activePending = input.pending.filter((p) => !p.skipped && !p.forgotten)
   const pendingVersionIds = new Set(activePending.map((p) => p.versionId).filter((id) => id > 0))
   const pendingModelIds = new Set(activePending.map((p) => p.modelId).filter((id) => id > 0))
   const deferredIds = new Set(input.deferred.map((d) => d.versionId))
   const ids = new Set<number>()
 
   for (const item of input.queueItems) {
-    if (item.status !== 'queued' && item.status !== 'downloading') continue
+    if (item.status !== 'queued' && item.status !== 'downloading' && item.status !== 'done') {
+      continue
+    }
     if (item.versionId <= 0) continue
     if (ownedVersionIds.has(item.versionId)) continue
     if (input.bannedModelIds.has(item.modelId)) continue
     const isUpdatesPending =
       pendingVersionIds.has(item.versionId) || pendingModelIds.has(item.modelId)
+    // Updates queue traffic belongs on the Updates badge, not Browse Yield-style badge.
     if (isUpdatesPending && !item.manual) continue
     ids.add(item.versionId)
   }
 
-  // Auto Browse-New backlog is filled only during Harvest (nightMode) reconcile.
-  const quietHideGallery =
-    input.updateBrowseOnCrawl === false && !input.allowQuietBrowseCards
-  const canCountAutoNewBacklog =
-    !input.manualQueueMode &&
-    input.nightMode &&
-    !quietHideGallery &&
-    input.crawlAutoDownload !== false
-
-  if (!canCountAutoNewBacklog || !input.browseModels?.length) {
-    return ids.size
-  }
+  if (!input.browseModels?.length) return ids
 
   const enabledRules = input.watchRules.filter((r) => r.enabled)
 
@@ -78,5 +65,10 @@ export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): num
     ids.add(m.versionId)
   }
 
-  return ids.size
+  return ids
+}
+
+/** Browse tab badge count from the current eligible set (prefer sticky session union in App). */
+export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): number {
+  return collectBrowseQueueEligibleIds(input).size
 }

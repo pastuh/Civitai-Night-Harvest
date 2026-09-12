@@ -247,8 +247,9 @@ export async function reconcileLibraryTagFolders(
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i]
+    // Emit before the first move too — otherwise the status bar stays empty during a long first rename.
+    onProgress?.({ current: i, total, moved, modelName: record.modelName })
     if (i > 0 && i % yieldEvery === 0) {
-      onProgress?.({ current: i, total, moved, modelName: record.modelName })
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
     }
 

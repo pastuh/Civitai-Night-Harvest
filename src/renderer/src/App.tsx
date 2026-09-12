@@ -56,12 +56,12 @@ import {
   type PendingViewPrefs
 } from './view-prefs'
 import { I18nProvider, getMessages, translate } from './i18n/context'
-import { hasAllOutputFolders } from '../../shared/utils'
+import { aggregateResultTags, browseModelDedupeKey, hasAllOutputFolders, preferBrowseModel } from '../../shared/utils'
 import { formatLibrarySyncSummary } from './utils/library-sync-summary'
 import { mergeInventoryPreserveIdentity } from './utils/inventory-merge'
 import { patchBrowseModelPreview } from './utils/browse-preview-patch'
 import { applyCrawlPageToLiveGallery } from './utils/crawl-gallery-merge'
-import { countBrowsePlannedDownloads } from './utils/browse-planned-count'
+import { collectBrowseQueueEligibleIds } from './utils/browse-planned-count'
 import {
   setDownloadQueueState,
   useHasPipelineQueue,
@@ -152,6 +152,14 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [storageErrorModal, setStorageErrorModal] = useState<string | null>(null)
+  const [libraryDeleteConfirm, setLibraryDeleteConfirm] = useState<{
+    versionId: number
+    modelId: number
+    modelName: string
+    versionName: string
+    siblingCount: number
+  } | null>(null)
+  const [libraryDeleteSkipForSession, setLibraryDeleteSkipForSession] = useState(false)
   const [storageOffline, setStorageOffline] = useState(false)
   const [galleryFocusModelId, setGalleryFocusModelId] = useState<number | null>(null)
   const [galleryFocusModelName, setGalleryFocusModelName] = useState<string | null>(null)
@@ -217,6 +225,7 @@ export default function App() {
   const onPendingViewPrefsChange = useCallback((prefs: PendingViewPrefs) => {
     setPendingViewPrefs((prev) =>
       prev.hideSeen === prefs.hideSeen &&
+      prev.hideConfirmed === prefs.hideConfirmed &&
       prev.markSeenMode === prefs.markSeenMode &&
       prev.showForgotten === prefs.showForgotten &&
       prev.showSkipped === prefs.showSkipped &&
@@ -283,6 +292,9 @@ export default function App() {
   /** Session Yield: versionIds that entered the download pipeline (only grows). */
   const sessionYieldIdsRef = useRef<Set<number>>(new Set())
   const [sessionYieldCount, setSessionYieldCount] = useState(0)
+  /** Browse badge sticky pool — only grows this session (Yield-style; no Pause flicker). */
+  const browseBadgeStickyRef = useRef<Set<number>>(new Set())
+  const [browseBadgeStickyCount, setBrowseBadgeStickyCount] = useState(0)
   const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
 
   const noteSessionYield = useCallback((items: DownloadQueueItem[]) => {
@@ -836,6 +848,12 @@ export default function App() {
         } else {
           browseGalleryGenerationRef.current += 1
         }
+        if (payload?.keepGallery) {
+          setCrawlPageMeta(null)
+          setCrawlProgress(null)
+          setBrowseGalleryAwaiting(false)
+          return
+        }
         setLiveCrawlBrowse(null)
         setCrawlPageMeta(null)
         setCrawlProgress(null)
@@ -910,6 +928,7 @@ export default function App() {
         setForgottenModelIds(
           new Set(items.filter((i) => i.kind === 'forgotten').map((i) => i.modelId))
         )
+        // Merge — never replace the full ban set from the review list alone (GitHub behavior).
         setBannedModelIds((prev) => {
           const next = new Set(prev)
           for (const i of items) {
@@ -917,6 +936,35 @@ export default function App() {
           }
           return next
         })
+      }),
+      window.api.onExclusionsRemoved((payload) => {
+        const modelId = payload?.modelId ?? 0
+        if (modelId <= 0) return
+        const versionId = payload.versionId
+        const kinds = payload.kinds?.length ? new Set(payload.kinds) : null
+        setExclusions((prev) => {
+          const next = prev.filter((i) => {
+            if (i.modelId !== modelId) return true
+            if (kinds && !kinds.has(i.kind)) return true
+            if (versionId != null && versionId > 0 && i.versionId !== versionId) return true
+            return false
+          })
+          return next.length === prev.length ? prev : next
+        })
+        if (!kinds || kinds.has('bannedManual') || kinds.has('forgotten')) {
+          setBannedModelIds((prev) => {
+            if (!prev.has(modelId)) return prev
+            const n = new Set(prev)
+            n.delete(modelId)
+            return n
+          })
+          setForgottenModelIds((prev) => {
+            if (!prev.has(modelId)) return prev
+            const n = new Set(prev)
+            n.delete(modelId)
+            return n
+          })
+        }
       }),
       window.api.onHiddenTagApplyProgress((payload) => {
         if (payload.phase === 'done') {
@@ -1121,26 +1169,32 @@ export default function App() {
     setTab('settings')
   }
 
-  const toggleNightMode = async () => {
-    if (!settings) return
-    const enabling = !settings.nightMode
+  const setNightMode = async (enabling: boolean): Promise<boolean> => {
+    if (!settings) return false
     if (enabling && storageOffline) {
       promptOutputFolders()
-      return
+      return false
     }
     if (enabling && !foldersConfigured) {
       promptOutputFolders()
-      return
+      return false
     }
     const partial: AppSettingsSave = { nightMode: enabling }
     if (enabling) {
       partial.nightDownloadAll = true
     }
+    // Default only when interval is Off — never override a user-chosen value.
     if (enabling && settings.scanIntervalMinutes <= 0) {
       partial.scanIntervalMinutes = 60
     }
     await saveSettings(partial)
     setBrowseGalleryAwaiting(enabling && watchRules.some((r) => r.enabled))
+    return true
+  }
+
+  const toggleNightMode = async () => {
+    if (!settings) return
+    await setNightMode(!settings.nightMode)
   }
 
   const refreshDownloadQueueState = async () => {
@@ -1273,34 +1327,98 @@ export default function App() {
         tags?: string[]
       }
     ) => {
-      setBannedModelIds((prev) => {
-        const next = new Set(prev)
-        if (banned) next.add(modelId)
-        else next.delete(modelId)
-        return next
-      })
-      if (banned) {
-        bannedPendingModelIdsRef.current.add(modelId)
-        setSessionBanModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]))
+      const versionId = stub?.versionId && stub.versionId > 0 ? stub.versionId : 0
+      // Whole-model ban still tracks modelId; version-scoped exclude does not.
+      if (!versionId) {
+        setBannedModelIds((prev) => {
+          const next = new Set(prev)
+          if (banned) next.add(modelId)
+          else next.delete(modelId)
+          return next
+        })
+        if (banned) {
+          bannedPendingModelIdsRef.current.add(modelId)
+          setSessionBanModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]))
+        }
       }
       setLiveCrawlBrowse((prev) => {
         if (!prev?.sampleModels?.length) {
           return prev
         }
-        const idx = prev.sampleModels.findIndex((m) => m.id === modelId)
-        const sampleModels = prev.sampleModels.slice()
-        if (banned) {
-          // Only update an existing gallery card — never push a new one (causes hideBanned blink).
-          if (idx >= 0) sampleModels[idx] = { ...sampleModels[idx], isBanned: true }
-          return { ...prev, sampleModels }
-        }
-        if (idx < 0) return prev
-        sampleModels[idx] = { ...sampleModels[idx], isBanned: false }
+        let changed = false
+        const sampleModels = prev.sampleModels.map((m) => {
+          if (m.id !== modelId) return m
+          if (versionId > 0 && m.versionId !== versionId) return m
+          if (m.isBanned === banned) return m
+          changed = true
+          return { ...m, isBanned: banned }
+        })
+        if (!changed) return prev
         return { ...prev, sampleModels }
       })
     },
     []
   )
+
+  const seedBrowseModels = useCallback((models: WatchRuleTestModel[]) => {
+    if (!models.length) return
+    setLiveCrawlBrowse((prev) => {
+      if (!prev?.sampleModels?.length) {
+        return {
+          sampleModels: models,
+          pageSize: models.length,
+          currentPage: 1,
+          nextCursor: null,
+          totalItems: models.length,
+          tagsInResults: aggregateResultTags(models),
+          baseModelsInResults: [...new Set(models.map((m) => m.baseModel).filter(Boolean))],
+          enums: prev?.enums ?? {
+            modelTypes: [],
+            baseModels: [],
+            sortOptions: []
+          },
+          crawlSource: 'night'
+        }
+      }
+      const byKey = new Map(
+        prev.sampleModels.map((m) => [browseModelDedupeKey(m), m] as const)
+      )
+      let changed = false
+      for (const m of models) {
+        const key = browseModelDedupeKey(m)
+        const existing = byKey.get(key)
+        if (!existing) {
+          byKey.set(key, m)
+          changed = true
+          continue
+        }
+        const merged = preferBrowseModel(existing, m)
+        if (merged !== existing) {
+          byKey.set(key, merged)
+          changed = true
+        }
+      }
+      if (!changed) return prev
+      const sampleModels = [...prev.sampleModels]
+      const seen = new Set(sampleModels.map((m) => browseModelDedupeKey(m)))
+      for (const m of models) {
+        const key = browseModelDedupeKey(m)
+        if (seen.has(key)) {
+          const idx = sampleModels.findIndex((x) => browseModelDedupeKey(x) === key)
+          if (idx >= 0) sampleModels[idx] = byKey.get(key)!
+          continue
+        }
+        sampleModels.push(byKey.get(key)!)
+        seen.add(key)
+      }
+      return {
+        ...prev,
+        sampleModels,
+        totalItems: sampleModels.length,
+        tagsInResults: aggregateResultTags(sampleModels)
+      }
+    })
+  }, [])
 
   const jumpToGallery = useCallback((modelId: number, modelName?: string) => {
     // Show List / Open in Library — pin model under All models, never Session.
@@ -1415,12 +1533,33 @@ export default function App() {
     [inventory]
   )
 
+  /** Updates already handled this session — exclude so badge does not bounce done→inventory lag. */
   const pendingBadgeCount = useMemo(() => {
+    void queueStructureKeyForBadge
+    void sessionYieldCount
+    const inPipeline = new Set<number>()
+    for (const item of getDownloadQueueSnapshot().items) {
+      if (item.versionId <= 0) continue
+      if (
+        item.status === 'queued' ||
+        item.status === 'downloading' ||
+        item.status === 'done'
+      ) {
+        inPipeline.add(item.versionId)
+      }
+    }
+    const yielded = sessionYieldIdsRef.current
     const n = pending.filter(
-      (p) => !p.skipped && !p.forgotten && !ownedVersionIds.has(p.versionId)
+      (p) =>
+        !p.skipped &&
+        !p.forgotten &&
+        !ownedVersionIds.has(p.versionId) &&
+        !inPipeline.has(p.versionId) &&
+        !yielded.has(p.versionId) &&
+        !bannedModelIds.has(p.modelId)
     ).length
     return n || undefined
-  }, [pending, ownedVersionIds])
+  }, [pending, ownedVersionIds, queueStructureKeyForBadge, bannedModelIds, sessionYieldCount])
 
   const skippedPendingVersionIds = useMemo(() => {
     const ids = new Set<number>()
@@ -1472,7 +1611,49 @@ export default function App() {
     if (!(settings?.updateBrowseOnCrawl ?? false)) return
     let cancelled = false
     void window.api.getBrowseGallery().then((gallery) => {
-      if (!cancelled && gallery) setLiveCrawlBrowse(gallery)
+      if (cancelled || !gallery) return
+      setLiveCrawlBrowse((prev) => {
+        if (!prev?.sampleModels?.length) return gallery
+        // Merge — never wipe pack sibling cards that live UI still has if main snapshot is thinner.
+        const fromGallery = new Map(
+          gallery.sampleModels.map((m) => [browseModelDedupeKey(m), m] as const)
+        )
+        const seen = new Set<string>()
+        const merged: typeof gallery.sampleModels = []
+        for (const m of prev.sampleModels) {
+          const key = browseModelDedupeKey(m)
+          seen.add(key)
+          const g = fromGallery.get(key)
+          if (!g) {
+            merged.push(m)
+            continue
+          }
+          merged.push({
+            ...m,
+            ...g,
+            // Keep richer live metadata when snapshot is sparse
+            name: g.name || m.name,
+            versionName: g.versionName || m.versionName,
+            tags: g.tags?.length ? g.tags : m.tags,
+            previewUrl: g.previewUrl || m.previewUrl,
+            previewUrls: g.previewUrls?.length ? g.previewUrls : m.previewUrls,
+            isBanned: g.isBanned,
+            inInventory: g.inInventory
+          })
+        }
+        for (const g of gallery.sampleModels) {
+          const key = browseModelDedupeKey(g)
+          if (seen.has(key)) continue
+          merged.push(g)
+          seen.add(key)
+        }
+        return {
+          ...gallery,
+          sampleModels: merged,
+          totalItems: merged.length,
+          tagsInResults: aggregateResultTags(merged)
+        }
+      })
     })
     return () => {
       cancelled = true
@@ -1659,41 +1840,45 @@ export default function App() {
     Boolean(tagFoldersReturnTo) ||
     Boolean(modelDetailTarget)
 
-  const browsePlannedDownloadCount = useMemo(() => {
+  const browseEligibleNow = useMemo(() => {
     void queueStructureKeyForBadge
-    return countBrowsePlannedDownloads({
-        queueItems: getDownloadQueueSnapshot().items,
-        browseModels: liveCrawlBrowse?.sampleModels,
-        watchRules,
-        inventory,
-        pending,
-        deferred,
-        bannedModelIds,
-        hiddenTags: settings?.hiddenTags ?? [],
-        bannedTags: settings?.bannedTags ?? [],
-        manualQueueMode: settings?.manualQueueMode ?? false,
-        nightMode: settings?.nightMode === true,
-        crawlAutoDownload: settings?.crawlAutoDownload ?? true,
-        updateBrowseOnCrawl: settings?.updateBrowseOnCrawl ?? false,
-        allowQuietBrowseCards
-      })
-  }, [
-      liveCrawlBrowse?.sampleModels,
+    return collectBrowseQueueEligibleIds({
+      queueItems: getDownloadQueueSnapshot().items,
+      browseModels: liveCrawlBrowse?.sampleModels,
       watchRules,
       inventory,
       pending,
       deferred,
       bannedModelIds,
-      settings?.hiddenTags,
-      settings?.bannedTags,
-      settings?.manualQueueMode,
-      settings?.nightMode,
-      settings?.crawlAutoDownload,
-      settings?.updateBrowseOnCrawl,
-      allowQuietBrowseCards,
-      queueStructureKeyForBadge
-    ]
-  )
+      hiddenTags: settings?.hiddenTags ?? [],
+      bannedTags: settings?.bannedTags ?? []
+    })
+  }, [
+    liveCrawlBrowse?.sampleModels,
+    watchRules,
+    inventory,
+    pending,
+    deferred,
+    bannedModelIds,
+    settings?.hiddenTags,
+    settings?.bannedTags,
+    queueStructureKeyForBadge
+  ])
+
+  useEffect(() => {
+    const sticky = browseBadgeStickyRef.current
+    let added = 0
+    for (const id of browseEligibleNow) {
+      if (sticky.has(id)) continue
+      sticky.add(id)
+      added++
+    }
+    if (added > 0) setBrowseBadgeStickyCount(sticky.size)
+  }, [browseEligibleNow])
+
+  // Yield-style Browse badge: session sticky pool (grows on unban / new pages; no Pause flicker).
+  const browsePlannedDownloadCount =
+    browseBadgeStickyCount || browseEligibleNow.size || undefined
 
   const awaitingBadgeCount = useMemo(
     () =>
@@ -1734,8 +1919,10 @@ export default function App() {
     tagFoldersReturnTo?.kind === 'gallery' ||
     (tagFoldersReturnTo?.kind === 'modelDetail' &&
       tagFoldersReturnTo.target.kind === 'library')
+  // Keep Browse mounted on Settings so Unban optimistic state / scroll survive a round-trip.
   const keepWatchMounted =
     tab === 'watch' ||
+    tab === 'settings' ||
     (tagFoldersReturnTo?.kind === 'modelDetail' &&
       tagFoldersReturnTo.target.kind === 'browse')
   const keepMissingMounted =
@@ -1815,7 +2002,7 @@ export default function App() {
         await saveSettings({ bannedTags: tags })
       }}
       onSave={saveTagRules}
-      onRefresh={refresh}
+      onRefresh={refreshInventory}
       onMoveStatus={setBackgroundStatus}
       focusSearchTag={tagsFocusSearch}
       onFocusSearchHandled={() => setTagsFocusSearch(null)}
@@ -1839,7 +2026,9 @@ export default function App() {
       )}
       {settings && (
     <div
-      className={`app ${settings.blurPreviews ? 'blur-previews' : ''} ${theme === 'light' ? 'theme-light' : theme === 'gothic' ? 'theme-gothic' : theme === 'candy' ? 'theme-candy' : theme === 'aroma' ? 'theme-aroma' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}`}
+      className={`app ${settings.blurPreviews ? 'blur-previews' : ''}${
+        settings.blurPreviews && settings.blurVideoPreviews ? ' blur-previews-video' : ''
+      } ${theme === 'light' ? 'theme-light' : theme === 'gothic' ? 'theme-gothic' : theme === 'candy' ? 'theme-candy' : theme === 'aroma' ? 'theme-aroma' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}`}
     >
       <header className="header">
         <div className="header-brand">
@@ -2167,6 +2356,9 @@ export default function App() {
               onToggleEaFavorite={toggleEaFavorite}
               libraryPreviewCacheBust={libraryPreviewCacheBust}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
+              onBannedChange={(modelId, banned, stub) =>
+                markBrowseModelBan(modelId, banned, stub)
+              }
             />
           </div>
         ) : null}
@@ -2208,6 +2400,7 @@ export default function App() {
               onSaveSettings={saveSettings}
               forgottenModelIds={forgottenModelIds}
               onBrowseModelBanChange={markBrowseModelBan}
+              onSeedBrowseModels={seedBrowseModels}
               onBrowseSnapshot={applyBrowseSnapshot}
               browseGalleryAwaiting={browseGalleryAwaiting && !storageOffline}
               onSaveStateChange={setWatchRulesSaveState}
@@ -2289,26 +2482,34 @@ export default function App() {
                 modelDetailTarget.kind === 'library'
                   ? () => {
                       const rec = modelDetailTarget.record
-                      const ok = window.confirm(
-                        translate(settings.locale ?? 'en', 'gallery.deleteConfirm', {
-                          name: rec.modelName
-                        })
-                      )
-                      if (!ok) return
-                      void (async () => {
-                        await window.api.deleteInventoryVersion(rec.versionId, { ban: true })
-                        markBrowseModelBan(rec.modelId, true, {
-                          name: rec.modelName,
-                          versionId: rec.versionId,
-                          baseModel: rec.baseModel,
-                          creator: rec.author,
-                          previewUrl: rec.previewPath
-                            ? window.api.toMediaUrl(rec.previewPath)
-                            : undefined
-                        })
-                        closeModelDetail()
-                        await refreshInventory()
-                      })()
+                      const siblingCount =
+                        rec.modelId > 0
+                          ? inventory.filter((r) => r.modelId === rec.modelId).length
+                          : 1
+                      const pending = {
+                        versionId: rec.versionId,
+                        modelId: rec.modelId,
+                        modelName: rec.modelName,
+                        versionName: rec.versionName || String(rec.versionId),
+                        siblingCount
+                      }
+                      if (libraryDeleteSkipForSession) {
+                        void (async () => {
+                          try {
+                            await window.api.deleteInventoryVersion(pending.versionId, { ban: true })
+                            markBrowseModelBan(pending.modelId, true, {
+                              name: pending.modelName,
+                              versionId: pending.versionId
+                            })
+                            closeModelDetail()
+                            await refreshInventory()
+                          } catch (err) {
+                            setBackgroundStatus(err instanceof Error ? err.message : String(err))
+                          }
+                        })()
+                        return
+                      }
+                      setLibraryDeleteConfirm(pending)
                     }
                   : undefined
               }
@@ -2355,6 +2556,7 @@ export default function App() {
               isActive={!modelDetailTarget}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
               showTemporaryUpdates={settings.showTemporaryUpdates !== false}
+              badgeCount={pendingBadgeCount}
             />
           </div>
         ) : null}
@@ -2466,6 +2668,7 @@ export default function App() {
           <SettingsTab
             settings={settings}
             onSave={saveSettings}
+            onSetNightMode={setNightMode}
             onOpenHelp={() => setTab('help')}
             onRefreshInventory={refreshInventory}
             onWithBusy={withBusy}
@@ -2556,6 +2759,77 @@ export default function App() {
             setTab('settings')
           }}
           onCancel={() => setStorageErrorModal(null)}
+        />
+      )}
+      {libraryDeleteConfirm && (
+        <ConfirmModal
+          title={translate(settings.locale ?? 'en', 'gallery.deleteFilesExclude')}
+          message={
+            libraryDeleteConfirm.siblingCount > 1
+              ? translate(settings.locale ?? 'en', 'gallery.deleteConfirmVersionOrAll', {
+                  name: libraryDeleteConfirm.modelName,
+                  version: libraryDeleteConfirm.versionName,
+                  count: String(libraryDeleteConfirm.siblingCount)
+                })
+              : translate(settings.locale ?? 'en', 'gallery.deleteConfirmVersion', {
+                  name: libraryDeleteConfirm.modelName,
+                  version: libraryDeleteConfirm.versionName
+                })
+          }
+          confirmLabel={translate(settings.locale ?? 'en', 'gallery.deleteThisVersion')}
+          secondaryConfirmLabel={
+            libraryDeleteConfirm.siblingCount > 1
+              ? translate(settings.locale ?? 'en', 'gallery.deleteAllVersions', {
+                  count: String(libraryDeleteConfirm.siblingCount)
+                })
+              : undefined
+          }
+          onSecondaryConfirm={
+            libraryDeleteConfirm.siblingCount > 1
+              ? () => {
+                  const pending = libraryDeleteConfirm
+                  setLibraryDeleteConfirm(null)
+                  void (async () => {
+                    try {
+                      const rows = inventory.filter((r) => r.modelId === pending.modelId)
+                      const ids = rows.length ? rows.map((r) => r.versionId) : [pending.versionId]
+                      for (const id of ids) {
+                        await window.api.deleteInventoryVersion(id, { ban: true })
+                        markBrowseModelBan(pending.modelId, true, {
+                          name: pending.modelName,
+                          versionId: id
+                        })
+                      }
+                      closeModelDetail()
+                      await refreshInventory()
+                    } catch (err) {
+                      setBackgroundStatus(err instanceof Error ? err.message : String(err))
+                    }
+                  })()
+                }
+              : undefined
+          }
+          danger
+          dontAskAgainLabel={translate(settings.locale ?? 'en', 'gallery.deleteConfirmDontAsk')}
+          onDontAskAgainChange={setLibraryDeleteSkipForSession}
+          onConfirm={() => {
+            const pending = libraryDeleteConfirm
+            setLibraryDeleteConfirm(null)
+            void (async () => {
+              try {
+                await window.api.deleteInventoryVersion(pending.versionId, { ban: true })
+                markBrowseModelBan(pending.modelId, true, {
+                  name: pending.modelName,
+                  versionId: pending.versionId
+                })
+                closeModelDetail()
+                await refreshInventory()
+              } catch (err) {
+                setBackgroundStatus(err instanceof Error ? err.message : String(err))
+              }
+            })()
+          }}
+          onCancel={() => setLibraryDeleteConfirm(null)}
         />
       )}
       <ScrollToTopButton />

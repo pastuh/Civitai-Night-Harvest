@@ -115,8 +115,11 @@ export class ScanScheduler {
     return this.browseGalleryGeneration
   }
 
-  private emitBrowseGalleryReset(): void {
-    this.emit('crawl:browseReset', { galleryGeneration: this.browseGalleryGeneration })
+  private emitBrowseGalleryReset(opts?: { keepGallery?: boolean }): void {
+    this.emit('crawl:browseReset', {
+      galleryGeneration: this.browseGalleryGeneration,
+      keepGallery: opts?.keepGallery === true
+    })
   }
 
   private isBrowseGalleryGenerationCurrent(generation: number): boolean {
@@ -175,7 +178,16 @@ export class ScanScheduler {
         }
       }
     }
-    return models.map((m) => inventory.applyPreferredPreviewToModel(m))
+    // Ban flags from DB — in-memory isBanned goes stale after Unban + Settings round-trip
+    // (or when crawl deltas overwrite version excludes with model-level bannedIds).
+    const bannedIds = inventory.getBannedModelIds()
+    const forgottenVersions = inventory.getForgottenVersionIds()
+    return models.map((m) => {
+      const withPreview = inventory.applyPreferredPreviewToModel(m)
+      const isBanned =
+        bannedIds.has(m.id) || (m.versionId > 0 && forgottenVersions.has(m.versionId))
+      return withPreview.isBanned === isBanned ? withPreview : { ...withPreview, isBanned }
+    })
   }
 
   /** Keep in-memory browse cards aligned after a saved preview preference. */
@@ -1515,9 +1527,10 @@ export class ScanScheduler {
     } else {
       void this.stopContinuousCrawl()
       if (nightTurnedOff) {
+        // Keep already-loaded Browse cards so the user can Queue / Ban / group manually.
+        // Bump generation + notify renderer (keepGallery) so late crawl pages are ignored.
         this.bumpBrowseGalleryGeneration()
-        this.clearCrawlBrowseAccum()
-        this.emitBrowseGalleryReset()
+        this.emitBrowseGalleryReset({ keepGallery: true })
         this.cancelPendingFetchingStatus()
         this.emitCrawlProgress(null)
       }
@@ -1668,9 +1681,8 @@ export class ScanScheduler {
 
   private effectiveScanIntervalMinutes(): number {
     const settings = getSettings()
-    let minutes = settings.scanIntervalMinutes
-    if (settings.nightMode && minutes <= 0) minutes = 60
-    return minutes
+    // Honor Settings exactly. 0 = timer off. Enabling Night writes 60 as default when was Off.
+    return settings.scanIntervalMinutes
   }
 
   private ruleSearchDomains(_rule: WatchRule): CivitaiDomain[] {
@@ -3127,6 +3139,174 @@ export class ScanScheduler {
     this.emit('crawl:page', {
       ruleId: rule?.id ?? '__banned__',
       ruleName: rule?.name ?? 'Banned',
+      pageNumber: 1,
+      pageModelsAdded: models.length,
+      pageModelsOnPage: models.length,
+      galleryTotal: this.crawlBrowseModels().length,
+      galleryStats: stats,
+      galleryMode: 'delta',
+      galleryGeneration: this.browseGalleryGeneration,
+      result
+    })
+  }
+
+  /** Clear banned flag on every version card for this model in the live Browse gallery. */
+  markModelUnbannedInBrowseGallery(modelId: number): void {
+    if (modelId <= 0) return
+    let found = false
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const [key, m] of bucket) {
+        if (m.id !== modelId || !m.isBanned) continue
+        bucket.set(key, { ...m, isBanned: false })
+        found = true
+      }
+    }
+    if (!found) return
+    const enabled = getWatchRules().filter((r) => r.enabled)
+    const models = this.crawlBrowseModels().filter((m) => m.id === modelId)
+    const stats = this.browseGalleryStats(this.crawlBrowseModels())
+    const rule = enabled[0] ?? getWatchRules()[0]
+    const result = buildWatchRuleTestResult(
+      models,
+      {
+        pageSize: models.length,
+        currentPage: 1,
+        nextCursor: null,
+        totalItems: this.crawlBrowseModels().length
+      },
+      this.browseEnumsOrFallback()
+    )
+    result.crawlSource = 'night'
+    this.emit('crawl:page', {
+      ruleId: rule?.id ?? '__unbanned__',
+      ruleName: rule?.name ?? 'Unbanned',
+      pageNumber: 1,
+      pageModelsAdded: models.length,
+      pageModelsOnPage: models.length,
+      galleryTotal: this.crawlBrowseModels().length,
+      galleryStats: stats,
+      galleryMode: 'delta',
+      galleryGeneration: this.browseGalleryGeneration,
+      result
+    })
+  }
+
+  /** After deleting one library version — clear Owned on that card only (siblings stay). */
+  markVersionRemovedFromBrowseGallery(modelId: number, versionId: number): void {
+    if (modelId <= 0 || versionId <= 0) return
+    let found = false
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const [key, m] of bucket) {
+        if (m.id !== modelId || m.versionId !== versionId) continue
+        if (!m.inInventory) continue
+        bucket.set(key, { ...m, inInventory: false })
+        found = true
+      }
+    }
+    if (!found) return
+    this.emitBrowseVersionDelta(modelId, versionId, '__version-removed__', 'Removed')
+  }
+
+  /** Set isBanned on one version card only (Browse multi-version packs). */
+  markVersionBannedInBrowseGallery(modelId: number, versionId: number, banned: boolean): void {
+    if (modelId <= 0 || versionId <= 0) return
+    let found = false
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const [key, m] of bucket) {
+        if (m.id !== modelId || m.versionId !== versionId) continue
+        if (m.isBanned === banned) continue
+        bucket.set(key, { ...m, isBanned: banned })
+        found = true
+      }
+    }
+    if (!found) return
+    this.emitBrowseVersionDelta(
+      modelId,
+      versionId,
+      banned ? '__version-banned__' : '__version-allowed__',
+      banned ? 'Banned' : 'Allowed'
+    )
+  }
+
+  /**
+   * After allowing one version: clear model-level ban flags, allow `versionId`,
+   * keep `siblingVersionIds` marked banned — one gallery emit.
+   */
+  applyVersionBanFlags(modelId: number, allowedVersionId: number, siblingVersionIds: number[]): void {
+    if (modelId <= 0 || allowedVersionId <= 0) return
+    const siblingSet = new Set(siblingVersionIds.filter((id) => id > 0 && id !== allowedVersionId))
+    const touched: WatchRuleTestModel[] = []
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const [key, m] of bucket) {
+        if (m.id !== modelId) continue
+        let nextBanned = m.isBanned
+        if (m.versionId === allowedVersionId) nextBanned = false
+        else if (siblingSet.has(m.versionId)) nextBanned = true
+        else nextBanned = false
+        if (m.isBanned === nextBanned) {
+          touched.push(m)
+          continue
+        }
+        const updated = { ...m, isBanned: nextBanned }
+        bucket.set(key, updated)
+        touched.push(updated)
+      }
+    }
+    if (!touched.length) return
+    const enabled = getWatchRules().filter((r) => r.enabled)
+    const stats = this.browseGalleryStats(this.crawlBrowseModels())
+    const rule = enabled[0] ?? getWatchRules()[0]
+    const result = buildWatchRuleTestResult(
+      touched,
+      {
+        pageSize: touched.length,
+        currentPage: 1,
+        nextCursor: null,
+        totalItems: this.crawlBrowseModels().length
+      },
+      this.browseEnumsOrFallback()
+    )
+    result.crawlSource = 'night'
+    this.emit('crawl:page', {
+      ruleId: rule?.id ?? '__version-allow__',
+      ruleName: rule?.name ?? 'Allow version',
+      pageNumber: 1,
+      pageModelsAdded: touched.length,
+      pageModelsOnPage: touched.length,
+      galleryTotal: this.crawlBrowseModels().length,
+      galleryStats: stats,
+      galleryMode: 'delta',
+      galleryGeneration: this.browseGalleryGeneration,
+      result
+    })
+  }
+
+  private emitBrowseVersionDelta(
+    modelId: number,
+    versionId: number,
+    ruleId: string,
+    ruleName: string
+  ): void {
+    const enabled = getWatchRules().filter((r) => r.enabled)
+    const models = this.crawlBrowseModels().filter(
+      (m) => m.id === modelId && m.versionId === versionId
+    )
+    const stats = this.browseGalleryStats(this.crawlBrowseModels())
+    const rule = enabled[0] ?? getWatchRules()[0]
+    const result = buildWatchRuleTestResult(
+      models,
+      {
+        pageSize: models.length,
+        currentPage: 1,
+        nextCursor: null,
+        totalItems: this.crawlBrowseModels().length
+      },
+      this.browseEnumsOrFallback()
+    )
+    result.crawlSource = 'night'
+    this.emit('crawl:page', {
+      ruleId: rule?.id ?? ruleId,
+      ruleName: rule?.name ?? ruleName,
       pageNumber: 1,
       pageModelsAdded: models.length,
       pageModelsOnPage: models.length,

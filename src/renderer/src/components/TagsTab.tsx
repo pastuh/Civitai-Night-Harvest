@@ -1137,7 +1137,7 @@ export function TagsTab({
         return next.size === prev.size && next.size === 0 ? prev : next
       })
       setSaveState('saved')
-      await onRefresh?.()
+      // Do not refresh inventory here — rule save is metadata only. Refresh after file moves.
     } catch (err) {
       setSaveState('error')
       setSaveError(err instanceof Error ? err.message : String(err))

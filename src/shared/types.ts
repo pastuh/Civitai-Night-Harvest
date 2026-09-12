@@ -63,6 +63,11 @@ export interface AppSettings {
   /** Blur preview thumbnails in the UI */
   blurPreviews: boolean
   /**
+   * When blurPreviews is on, also blur hover video previews.
+   * Default off — images stay blurred, video can still play clear on hover.
+   */
+  blurVideoPreviews: boolean
+  /**
    * Keep Browse / Library filter, sort, and show/hide checkboxes when switching tabs
    * (until you change them yourself).
    */
@@ -193,6 +198,7 @@ export interface AppSettingsPublic {
   crawlAutoDownload: boolean
   manualQueueMode: boolean
   blurPreviews: boolean
+  blurVideoPreviews: boolean
   preserveFilters: boolean
   banFunctionMode: boolean
   confirmTagFolderMoves: boolean
@@ -255,6 +261,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   crawlAutoDownload: true,
   manualQueueMode: false,
   blurPreviews: false,
+  blurVideoPreviews: false,
   preserveFilters: false,
   banFunctionMode: false,
   confirmTagFolderMoves: true,
@@ -904,12 +911,16 @@ export type ExclusionKind =
   | 'bannedByTag'
   | 'pausedByTag'
   | 'forgotten'
+  /** Browse / Updates version-scoped exclude (skipped_pending_versions.forgotten=1). */
+  | 'excludedVersion'
 
-/** Unified Missing-page row: 404 missing, manual ban, or tag-skip review. */
+/** Unified Missing-page row: 404 missing, manual ban, tag-skip, or version exclude. */
 export interface ExclusionReviewItem {
   kind: ExclusionKind
   modelId: number
   versionId?: number
+  /** Civitai version title when known (version excludes). */
+  versionName?: string
   modelName: string
   modelType?: string
   author?: string

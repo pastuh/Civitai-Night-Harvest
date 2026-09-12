@@ -1,6 +1,8 @@
 export const en = {
   common: {
     save: 'Save settings',
+    saveNow: 'Save now',
+    saving: 'Saving…',
     saved: 'Saved',
     browse: 'Browse',
     retry: 'Retry',
@@ -38,7 +40,7 @@ export const en = {
   tabs: {
     browse: 'Browse',
     browseBadgeTitle:
-      'Models in the download pipeline (queued or downloading), including Harvest Auto and your Queue from Updates or Model details.',
+      'Browse queue pool this session (Yield-style): models that can enter or already entered the download queue. Grows when you unban / new pages load; Pause does not clear it.',
     library: 'Library',
     download: 'Download',
     tagFolders: 'Tag Folders',
@@ -102,6 +104,7 @@ export const en = {
   settings: {
     title: 'Settings',
     lead: 'New here? See the Help tab for a quick start.',
+    autoSaveHint: 'Changes save automatically',
     nsfwCallout:
       'NSFW & restricted models need an API key. Without it, downloads may fail or land in Early access.',
     sections: {
@@ -138,6 +141,7 @@ export const en = {
       scanOnStartup: 'Scan on startup',
       autoRetryDeferred: 'Re-queue awaiting-access after scan',
       blurPreviews: 'Blur preview images',
+      blurVideoPreviews: 'Also blur video previews',
       preserveFilters: 'Preserve filters',
       showBannedInGallery: 'Show banned in gallery',
       banFunctionMode: 'Ban function (× next to card title)',
@@ -280,6 +284,8 @@ export const en = {
       showCustomAssignmentSubfolders:
         'For Custom folder assignments, show tag + relative subfolder on cards and in the Library sidebar (e.g. randoms/cars). Off = show only the custom tag name. Default on.',
       blur: 'Hide thumbnails in Browse, Library, and dialogs. Header Blur toggles too.',
+      blurVideoPreviews:
+        'When Blur is on, also blur hover video previews. Off (default) = images stay blurred, video can play clear on hover.',
       downloadStripVisibility:
         'Default Hidden: no top queue strip — Clear queue sits on the right of the tab bar. Enable Browse / Browse+Library / All tabs to show the full download strip (Clear queue moves into the strip).',
       downloadStripLayout:
@@ -443,7 +449,7 @@ export const en = {
     missingForget:
       '**Forget On** — × on cards hides the model everywhere and stops suggestions; **Show forgotten** to review; × again = Unforget',
     missingMarkSeen:
-      '**Mark seen on** — move pointer left/right off a ban/pause card to mark seen (green title border). **Hide seen** checkbox removes marked cards. **Unseen bans** sidebar filter shows only unseen; newly marked items stay visible until you check Hide seen.',
+      '**Mark seen on** — move pointer left/right off a ban/pause/exclude card to mark seen (green title). **Hide seen** hides those cards. Sidebar **Unseen bans** / **Seen bans** list them (not Missing 404). Unseen + Seen = current ban review cards.',
     missingContextMenu:
       '**Right-click** a card → Mark seen, Forget, Unban, Allow, Acknowledge, or Open on Civitai — no need to toggle the toolbar buttons first.',
     edgeOwned: 'Green top border — already in your library',
@@ -484,8 +490,8 @@ export const en = {
         'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
       autoDownloadNewVersions:
         'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Download / Always update / Skip / Ban — or use Always update on a card (queues all current offers for that model + future ones). Turn off via Always on again or Library → Always update. Brand-new Browse models are always eligible separately.',
-      scanInterval: 'Background API check interval per enabled rule. 0 = off (night mode sets 60 min if needed).',
-      parallelDownloads: 'How many models download at once. Use 1 for one file at full speed.',
+      scanInterval: 'Background API check interval per enabled rule. 0 = Off. Enabling Night sets 60 min only if currently Off.',
+      parallelDownloads: 'How many models download at once (1–6). Use 1 for one file at full speed.',
       domain:
         'API host is fixed to civitai.red. Use each Browse rule’s content filter for SFW vs NSFW.',
       backfill: 'Walk full catalog once, then peek newest page only. Downloads run between pages.',
@@ -700,7 +706,7 @@ export const en = {
     contentAll: 'All',
     contentSfw: 'SFW',
     contentNsfw: 'NSFW',
-    searchPlaceholder: 'Search name, author, or model/version ID…',
+    searchPlaceholder: 'Search name, author, tags, ID — gallery + Civitai + local library (even if gone from Civitai)',
     searchTitle:
       'Filter loaded models by title, creator, or exact model/version ID (numeric ID also looks up on Civitai)',
     idLookupLoading: 'Looking up ID on Civitai…',
@@ -764,11 +770,11 @@ export const en = {
   },
   downloadsStrip: {
     banFunction: 'Ban function',
-    excludeBan: 'Exclude / ban model',
+    excludeBan: 'Exclude / ban version',
     openCivitai: 'Open on Civitai',
     modelDetails: 'Model details (license, stats)',
     unban: 'Unban — allow downloads',
-    exclude: 'Exclude / ban model',
+    exclude: 'Exclude / ban version',
     removeFromQueue: 'Remove & exclude (no auto re-queue)',
     retryDownload: 'Retry download',
     priorityDownload: 'Priority download',
@@ -898,10 +904,13 @@ export const en = {
     baseFilterHint:
       'Lists every missing version whose base model matches one you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
     actionsHint:
-      'Skip = this version later. Turn on Mark seen, then leave a card left/right to mark reviewed (Hide seen). Forget = never update this model. Show forgotten = only forgotten models you still own.',
+      'Skip = this version later. Mark seen = reviewed. Forget / Ban = this version only (other versions stay). Show forgotten = review forgotten versions.',
     searchPlaceholder: 'Search updates…',
     hideSeen: 'Hide seen',
     hideSeenHint: 'Hide update offers you marked as seen (including skipped)',
+    hideConfirmed: 'Hide confirmed',
+    hideConfirmedHint:
+      'Hide Done cards and versions already queued for download — so new updates stay visible',
     markSeen: 'Mark seen',
     markSeenModeOff: 'Mark seen Off',
     markSeenModeOn: 'Mark seen On',
@@ -928,9 +937,10 @@ export const en = {
     showSkippedTitle: 'Show versions you previously skipped on this page',
     skippedBadge: 'Skipped',
     ban: 'Ban',
-    banHint: 'Delete all owned versions of this model and exclude it from future downloads',
+    banHint:
+      'Exclude this version only — remove it from Updates and never auto-download it again. Other versions of the model stay. If you already own this version, its files are deleted.',
     banConfirm:
-      'Ban “{name}”? Deletes all {count} owned version(s) from library/disk and excludes the model.',
+      'Ban version “{version}” of “{name}”? This version only — siblings stay. Excluded from auto-download; owned files for this version are removed if present.',
     queueDownload: 'Download',
     queueHint: 'Download this newer version; keep versions you already own',
     alwaysUpdate: 'Always update',
@@ -1257,7 +1267,16 @@ export const en = {
     unbanned: 'Unbanned: {name}',
     deleteConfirm:
       'Delete "{name}" from disk (model, preview, swarm.json) and exclude from future downloads?',
+    deleteConfirmVersion:
+      'Delete version "{version}" of "{name}" from disk (model, preview, swarm.json)? Other versions stay in your library. This version will not auto-download again.',
+    deleteConfirmVersionOrAll:
+      'Delete version "{version}" of "{name}" — or all {count} owned versions of this model? Excluded versions will not auto-download again.',
+    deleteThisVersion: 'This version only',
+    deleteAllVersions: 'All {count} versions',
+    deleteConfirmDontAsk: "Don't ask me again (this session)",
     deletedExcluded: 'Deleted and excluded: {name}',
+    deletedExcludedVersion: 'Deleted and excluded version: {name} → {version}',
+    deletedExcludedAllVersions: 'Deleted and excluded {count} version(s) of {name}',
     deleting: 'Deleting {name}…',
     removingFromDisk: 'Removing files from disk',
     movedTo: 'Moved {count} model(s) to "{tag}"',
@@ -1355,7 +1374,7 @@ export const en = {
     markSfw: 'Mark as SFW',
     markNsfw: 'Mark as NSFW',
     unbanAllow: 'Unban — allow downloads',
-    excludeBan: 'Exclude / ban model',
+    excludeBan: 'Exclude / ban version',
     deleteFilesExclude: 'Delete files & exclude'
   },
   downloadTab: {
@@ -1615,6 +1634,12 @@ export const en = {
     openTagFoldersHint: 'Filter models with “{tag}”',
     clearSideFilter: 'Clear sidebar filter',
     unseenBans: 'Unseen bans',
+    unseenBansHint: 'Ban / pause / exclude cards not marked seen yet. Does not include Missing (404).',
+    seenBans: 'Seen bans',
+    seenBansHint: 'Ban / pause / exclude cards you marked seen (green title). Click to list them. Not Missing (404).',
+    banReviewSummary: 'review {unseen}+{seen}={total}',
+    banReviewHint:
+      'Unseen + Seen = ban/pause/exclude cards currently on this page. Missing (404) is a separate filter.',
     seenToday: 'Seen today',
     seenByDay: 'Seen {day}',
     seenTotal: 'Seen: {count}',
@@ -1631,6 +1656,8 @@ export const en = {
     kindPausedByTag: 'Paused by tag',
     kindForgotten: 'Forgotten',
     filterForgotten: 'Forgotten',
+    kindExcludedVersion: 'Excluded version',
+    filterExcludedVersion: 'Excluded versions',
     forget: 'Forget',
     forgetHint: 'Forget — hide everywhere and never suggest again (Show forgotten to review)',
     forgetMsg: 'Forgot “{name}”',
@@ -1638,6 +1665,9 @@ export const en = {
     forgetModeOn: 'Forget On',
     forgetModeTitle: 'Show × next to titles to forget models (hide everywhere)',
     unforgetHint: 'Unforget — allow this model again',
+    allowVersion: 'Allow version',
+    allowVersionHint: 'Allow this version again — siblings stay excluded if they were',
+    allowedBadge: 'Allowed',
     allow: 'Allow',
     blockedTagLine: 'Blocked tag: {tag}',
     blockedMatchLine: 'Block “{blocked}” matched model tag “{matched}”',
@@ -1661,9 +1691,9 @@ export const en = {
       'Checked {checked}: {recovered} recovered, {confirmed} now Unavailable',
     emptyFiltered: 'No models match this filter.',
     openCivitai: 'Civitai ↗',
-    confirm: 'Mark seen',
+    confirm: 'Acknowledge',
     confirmHint:
-      '404 only — mark as seen (badge). Stays in Missing and keeps verifying until Unavailable'
+      '404 only — acknowledge this Missing card (badge). Stays in Missing and keeps verifying until Unavailable'
   },
   globalStatus: {
     preparingDownloads: 'Preparing downloads…',

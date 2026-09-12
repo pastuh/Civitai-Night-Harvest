@@ -197,7 +197,9 @@ function browseModelRichness(m: WatchRuleTestModel): number {
   return score
 }
 
-/** Merge duplicate versions from .com and .red — keep richer metadata, don't drop flags. */
+/** Merge two cards for the SAME version only (same browseModelDedupeKey).
+ * Never mixes sibling versions — Gold and Red are different keys (`v:123` vs `v:456`).
+ * isBanned here is only for that one versionId (incoming/fresher flag wins after Unban). */
 export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel): WatchRuleTestModel {
   const primary = browseModelRichness(a) >= browseModelRichness(b) ? a : b
   const secondary = primary === a ? b : a
@@ -208,7 +210,7 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
   return {
     ...primary,
     name: primary.name || secondary.name,
-    versionName: primary.versionName || secondary.versionName,
+    versionName: a.versionName?.trim() || b.versionName?.trim() || primary.versionName,
     type: primary.type || secondary.type,
     baseModel: primary.baseModel || secondary.baseModel,
     baseModelType: primary.baseModelType || secondary.baseModelType,
@@ -220,7 +222,10 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
     tags,
     creator: primary.creator || secondary.creator,
     inInventory: a.inInventory || b.inInventory,
-    isBanned: a.isBanned || b.isBanned,
+    // a and b share the same browseModelDedupeKey ⇒ same versionId (or same model if no version).
+    // Call sites pass (existing, incoming); incoming wins so Unban on THIS version sticks.
+    // Sibling versions are never merged here — they have different keys (v:111 vs v:222).
+    isBanned: b.isBanned,
     isEarlyAccess: a.isEarlyAccess || b.isEarlyAccess,
     earlyAccessEndsAt: primary.earlyAccessEndsAt || secondary.earlyAccessEndsAt,
     publishedAt: primary.publishedAt ?? secondary.publishedAt,

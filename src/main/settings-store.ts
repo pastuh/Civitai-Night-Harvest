@@ -126,6 +126,9 @@ export function getSettings(): AppSettings {
   if (raw.blurPreviews === undefined) {
     raw.blurPreviews = false
   }
+  if (raw.blurVideoPreviews === undefined) {
+    raw.blurVideoPreviews = false
+  }
   if (raw.preserveFilters === undefined) {
     raw.preserveFilters = false
   }
@@ -399,6 +402,13 @@ export function saveSettingsFromUi(partial: AppSettingsSave): AppSettings {
   )
   if (rest.libraryExcludedTags !== undefined) {
     next.libraryExcludedTags = normalizeHiddenTags(rest.libraryExcludedTags)
+  }
+  // Keep UI and runtime aligned (Settings slider max is 6).
+  const MAX_DOWNLOAD_CONCURRENCY = 6
+  if (!next.downloadConcurrency || next.downloadConcurrency < 1) {
+    next.downloadConcurrency = 2
+  } else if (next.downloadConcurrency > MAX_DOWNLOAD_CONCURRENCY) {
+    next.downloadConcurrency = MAX_DOWNLOAD_CONCURRENCY
   }
   store.set('settings', next)
   applyLaunchAtLogin(next.launchAtLogin)

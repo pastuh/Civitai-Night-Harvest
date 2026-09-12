@@ -312,6 +312,11 @@ const api = {
     ipcRenderer.invoke('browse:getCardCache', versionIds),
   lookupBrowseId: (id: number | string): Promise<WatchRuleTestModel | null> =>
     ipcRenderer.invoke('browse:lookupId', id),
+  lookupBrowsePack: (id: number | string): Promise<WatchRuleTestModel[]> =>
+    ipcRenderer.invoke('browse:lookupPack', id),
+  /** Text search against Civitai — full same-base version packs; not gated by Browse hide filters. */
+  searchBrowseText: (query: string): Promise<WatchRuleTestModel[]> =>
+    ipcRenderer.invoke('browse:searchText', query),
   approvePending: (payload: {
     modelId: number
     versionId: number
@@ -338,6 +343,38 @@ const api = {
     ipcRenderer.invoke('model:forget', { modelId, modelName, ...stub }),
   unbanModel: (modelId: number): Promise<{ modelId: number; queued?: boolean }> =>
     ipcRenderer.invoke('model:unban', modelId),
+  excludeVersion: (payload: {
+    modelId: number
+    versionId: number
+    modelName?: string
+    versionName?: string
+    baseModel?: string
+    author?: string
+    previewUrl?: string
+    modelType?: string
+    tags?: string[]
+    sourceDomain?: import('../shared/types').CivitaiDomain
+  }): Promise<{ modelId: number; versionId: number }> =>
+    ipcRenderer.invoke('model:excludeVersion', payload),
+  allowVersion: (payload: {
+    modelId: number
+    versionId: number
+    siblings?: Array<{
+      versionId: number
+      modelName?: string
+      versionName?: string
+      baseModel?: string
+      author?: string
+      previewUrl?: string
+      modelType?: string
+      tags?: string[]
+    }>
+  }): Promise<{
+    modelId: number
+    versionId: number
+    wasModelBanned: boolean
+    siblingExcludedIds: number[]
+  }> => ipcRenderer.invoke('model:allowVersion', payload),
   getBannedModels: () => ipcRenderer.invoke('model:getBanned'),
   getExclusions: (): Promise<ExclusionReviewItem[]> => ipcRenderer.invoke('exclusions:get'),
   dismissTagSkip: (modelId: number): Promise<ExclusionReviewItem[]> =>
@@ -366,6 +403,12 @@ const api = {
     byModelId: Record<number, string>
     countByDay: Record<string, number>
   }> => ipcRenderer.invoke('exclusions:clearBanSeen', day ? { day } : {}),
+  pruneMissingBanSeen: (
+    keepModelIds: number[]
+  ): Promise<{
+    byModelId: Record<number, string>
+    countByDay: Record<string, number>
+  }> => ipcRenderer.invoke('exclusions:pruneBanSeen', { keepModelIds }),
   setModelAutoUpdate: (modelId: number, enabled: boolean, modelName?: string) =>
     ipcRenderer.invoke('model:setAutoUpdate', { modelId, enabled, modelName }),
   getAutoUpdateModels: () => ipcRenderer.invoke('model:getAutoUpdate'),
@@ -437,6 +480,8 @@ const api = {
     ipcRenderer.invoke('missing:dismiss', modelId),
   acknowledgeMissing: (modelId: number): Promise<MissingModel[]> =>
     ipcRenderer.invoke('missing:acknowledge', modelId),
+  acknowledgeUnackedMissing: (): Promise<{ acknowledged: number; items: MissingModel[] }> =>
+    ipcRenderer.invoke('missing:acknowledgeUnacked'),
 
   toMediaUrl: (filePath: string): string => `media://${encodeURIComponent(filePath)}`,
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showInFolder', filePath),
@@ -495,6 +540,16 @@ const api = {
     ipcRenderer.on('exclusions:list', handler)
     return () => ipcRenderer.removeListener('exclusions:list', handler)
   },
+  onExclusionsRemoved: (
+    cb: (payload: { modelId: number; versionId?: number; kinds?: string[] }) => void
+  ) => {
+    const handler = (
+      _: unknown,
+      payload: { modelId: number; versionId?: number; kinds?: string[] }
+    ) => cb(payload)
+    ipcRenderer.on('exclusions:removed', handler)
+    return () => ipcRenderer.removeListener('exclusions:removed', handler)
+  },
   onHiddenTagApplyProgress: (cb: (payload: HiddenTagApplyProgress) => void) => {
     const handler = (_: unknown, payload: HiddenTagApplyProgress) => cb(payload)
     ipcRenderer.on('hiddenTags:applyProgress', handler)
@@ -537,8 +592,11 @@ const api = {
     ipcRenderer.on('crawl:page', handler)
     return () => ipcRenderer.removeListener('crawl:page', handler)
   },
-  onCrawlBrowseReset: (cb: (payload?: { galleryGeneration?: number }) => void) => {
-    const handler = (_: unknown, payload?: { galleryGeneration?: number }) => cb(payload)
+  onCrawlBrowseReset: (cb: (payload?: { galleryGeneration?: number; keepGallery?: boolean }) => void) => {
+    const handler = (
+      _: unknown,
+      payload?: { galleryGeneration?: number; keepGallery?: boolean }
+    ) => cb(payload)
     ipcRenderer.on('crawl:browseReset', handler)
     return () => ipcRenderer.removeListener('crawl:browseReset', handler)
   },

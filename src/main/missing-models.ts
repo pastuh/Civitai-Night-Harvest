@@ -28,6 +28,14 @@ export function emitMissingList(getWindow: () => BrowserWindow | null): void {
   sendToRenderer(getWindow, 'exclusions:list', inventory.getExclusionReviewItems())
 }
 
+/** Soft remove one exclusion card — avoids rebuilding the whole Missing grid. */
+export function emitExclusionRemoved(
+  getWindow: () => BrowserWindow | null,
+  payload: { modelId: number; versionId?: number; kinds?: string[] }
+): void {
+  sendToRenderer(getWindow, 'exclusions:removed', payload)
+}
+
 export function noteMissingModel404(
   getWindow: (() => BrowserWindow | null) | null,
   hint: MissingHitHint

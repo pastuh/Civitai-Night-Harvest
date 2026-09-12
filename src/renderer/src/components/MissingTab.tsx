@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type {
   ExclusionKind,
@@ -49,6 +49,7 @@ type SortMode = MissingSort
 type SideFilter =
   | { type: 'all' }
   | { type: 'unseen' }
+  | { type: 'seen' }
   | { type: 'sessionBans' }
   | { type: 'sessionPause' }
   | { type: 'byDate'; day: string }
@@ -79,6 +80,10 @@ interface Props {
   jumpSideFilter?: { type: 'sessionBans' } | { type: 'sessionPause' } | null
   onJumpSideFilterConsumed?: () => void
   browseVideoPreviews?: boolean
+}
+
+function exclusionItemKey(item: ExclusionReviewItem): string {
+  return `${item.kind}:${item.modelId}:${item.versionId ?? 0}`
 }
 
 /** Normalize Civitai / inventory model types for Missing sidebar (same labels as Updates). */
@@ -149,7 +154,8 @@ function isBannedKind(kind: ExclusionKind): boolean {
     kind === 'bannedManual' ||
     kind === 'bannedByTag' ||
     kind === 'pausedByTag' ||
-    kind === 'forgotten'
+    kind === 'forgotten' ||
+    kind === 'excludedVersion'
   )
 }
 
@@ -158,12 +164,40 @@ function isTagSkipKind(kind: ExclusionKind): boolean {
 }
 
 function isManualOrTagBanKind(kind: ExclusionKind): boolean {
-  return kind === 'bannedManual' || kind === 'bannedByTag'
+  return kind === 'bannedManual' || kind === 'bannedByTag' || kind === 'excludedVersion'
 }
 
 /** Ban + pause stubs on Missing can be marked seen / hidden via Hide seen. */
 function canMarkExclusionSeen(kind: ExclusionKind): boolean {
-  return kind === 'bannedManual' || kind === 'bannedByTag' || kind === 'pausedByTag'
+  return (
+    kind === 'bannedManual' ||
+    kind === 'bannedByTag' ||
+    kind === 'pausedByTag' ||
+    kind === 'excludedVersion'
+  )
+}
+
+/** Token search — "krea identity" matches "Krea 2 Identity Edit". */
+function exclusionItemMatchesSearch(m: ExclusionReviewItem, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  if (String(m.modelId).includes(q)) return true
+  if (m.versionId != null && String(m.versionId).includes(q)) return true
+  const haystack = [
+    m.modelName,
+    m.versionName ?? '',
+    m.author ?? '',
+    m.baseModel ?? '',
+    m.modelType ?? '',
+    m.blockedTag ?? '',
+    ...(m.tags ?? [])
+  ]
+    .join(' ')
+    .toLowerCase()
+  if (haystack.includes(q)) return true
+  const tokens = q.split(/\s+/).filter(Boolean)
+  if (tokens.length > 1) return tokens.every((t) => haystack.includes(t))
+  return false
 }
 
 export const MissingTab = memo(function MissingTab({
@@ -190,6 +224,42 @@ export const MissingTab = memo(function MissingTab({
   const normalizedDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const displayMode = normalizedDisplayMode === 'autoAdvance' ? 'lazy' : normalizedDisplayMode
   const initial = viewPrefs ?? DEFAULT_MISSING_VIEW_PREFS
+  /** Forget still removes immediately; Allow/Unban stay until leaving the tab. */
+  const [optimisticRemovedKeys, setOptimisticRemovedKeys] = useState(() => new Set<string>())
+  /** Allowed/unbanned cards kept in-grid until Missing tab is left (no jump). */
+  const [temporaryAllowedByKey, setTemporaryAllowedByKey] = useState(
+    () => new Map<string, ExclusionReviewItem>()
+  )
+  const sessionOrderRef = useRef<string[]>([])
+  const mainScrollRef = useRef<HTMLDivElement>(null)
+  const savedScrollTopRef = useRef<number | null>(null)
+
+  const workingItems = useMemo(() => {
+    const byKey = new Map<string, ExclusionReviewItem>()
+    for (const m of items) {
+      const key = exclusionItemKey(m)
+      if (optimisticRemovedKeys.has(key)) continue
+      byKey.set(key, m)
+    }
+    for (const [key, held] of temporaryAllowedByKey) {
+      if (!byKey.has(key)) byKey.set(key, held)
+    }
+    const order = sessionOrderRef.current
+    const seen = new Set(order)
+    for (const key of byKey.keys()) {
+      if (!seen.has(key)) {
+        order.push(key)
+        seen.add(key)
+      }
+    }
+    const out: ExclusionReviewItem[] = []
+    for (const key of order) {
+      const item = byKey.get(key)
+      if (item) out.push(item)
+    }
+    return out
+  }, [items, optimisticRemovedKeys, temporaryAllowedByKey])
+
   const localPreviewByModelId = useMemo(() => {
     const map = new Map<number, string>()
     for (const r of inventory) {
@@ -253,8 +323,8 @@ export const MissingTab = memo(function MissingTab({
   const armedSeenIdRef = useRef<number | null>(null)
   const armedSeenAtRef = useRef(0)
   const armedSeenPosRef = useRef({ x: 0, y: 0 })
-  const itemsRef = useRef(items)
-  itemsRef.current = items
+  const itemsRef = useRef(workingItems)
+  itemsRef.current = workingItems
   /** Model IDs that were unseen when the user entered the 'unseen' sidebar filter —
    *  so they stay visible after being marked seen (until hideSeen is checked). */
   const unseenSnapshotRef = useRef<Set<number>>(new Set())
@@ -263,14 +333,74 @@ export const MissingTab = memo(function MissingTab({
   } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
 
+  // Drop optimistic hides once the server list no longer contains those cards.
+  useEffect(() => {
+    setOptimisticRemovedKeys((prev) => {
+      if (!prev.size) return prev
+      const present = new Set(items.map(exclusionItemKey))
+      let changed = false
+      const next = new Set<string>()
+      for (const key of prev) {
+        if (present.has(key)) next.add(key)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [items])
+
+  useLayoutEffect(() => {
+    if (savedScrollTopRef.current == null) return
+    const el = mainScrollRef.current
+    if (el) el.scrollTop = savedScrollTopRef.current
+    savedScrollTopRef.current = null
+  }, [workingItems])
+
+  const rememberScrollAndHide = useCallback((item: ExclusionReviewItem) => {
+    savedScrollTopRef.current = mainScrollRef.current?.scrollTop ?? null
+    const key = exclusionItemKey(item)
+    setOptimisticRemovedKeys((prev) => {
+      if (prev.has(key)) return prev
+      const next = new Set(prev)
+      next.add(key)
+      return next
+    })
+  }, [])
+
+  const undoOptimisticHide = useCallback((item: ExclusionReviewItem) => {
+    const key = exclusionItemKey(item)
+    setOptimisticRemovedKeys((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }, [])
+
+  const holdAllowedUntilLeave = useCallback((item: ExclusionReviewItem) => {
+    const key = exclusionItemKey(item)
+    setTemporaryAllowedByKey((prev) => {
+      if (prev.get(key) === item) return prev
+      const next = new Map(prev)
+      next.set(key, item)
+      return next
+    })
+  }, [])
+
   // Refresh only when the tab becomes active — not whenever onRefresh identity changes
   // (inline App callbacks would otherwise cause a fetch→setState→re-render loop).
   useEffect(() => {
     const justOpened = isActive && !wasActiveRef.current
     wasActiveRef.current = isActive
+    if (!isActive) {
+      // Leaving Missing clears temporary Allowed cards and session order.
+      setTemporaryAllowedByKey(new Map())
+      setOptimisticRemovedKeys(new Set())
+      sessionOrderRef.current = []
+      return
+    }
     if (!justOpened) return
     void onRefreshRef.current()
-    // Default: All + Hide banned/paused prefs (sidebar Unseen is one click).
+    // Default: All + Hide banned/paused prefs — user picks sidebar filters.
     setSideFilter({ type: 'all' })
     setModelTypeFilter(null)
     setHideBanned(initial.hideBanned)
@@ -305,6 +435,34 @@ export const MissingTab = memo(function MissingTab({
     } catch {
       loadSeen()
     }
+  }, [isActive])
+
+  // Keep Seen marks aligned with cards still on Missing (ban/pause/exclude only).
+  // Only when the tab opens — not after every Allow (that re-rendered the whole grid).
+  useEffect(() => {
+    if (!isActive) return
+    if (typeof window.api.pruneMissingBanSeen !== 'function') return
+    const keep = [
+      ...new Set(
+        items.filter((m) => canMarkExclusionSeen(m.kind) && m.modelId > 0).map((m) => m.modelId)
+      )
+    ]
+    const keepSet = new Set(keep)
+    const hasStale = Object.keys(banSeenByModelIdRef.current).some((id) => !keepSet.has(Number(id)))
+    if (!hasStale) return
+    let cancelled = false
+    void window.api.pruneMissingBanSeen(keep).then((snap) => {
+      if (cancelled) return
+      const byId = snap.byModelId ?? {}
+      banSeenByModelIdRef.current = byId
+      setBanSeenByModelId(byId)
+      setBanSeenCountByDay(snap.countByDay ?? {})
+    })
+    return () => {
+      cancelled = true
+    }
+    // intentionally only when Missing becomes active
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prune on open, not each Allow
   }, [isActive])
 
   useEffect(() => {
@@ -348,8 +506,8 @@ export const MissingTab = memo(function MissingTab({
 
   /** Main sidebar counts follow model type; Model types section keeps global totals. */
   const itemsForMainCounts = useMemo(
-    () => (modelTypeFilter ? items.filter(matchesModelTypeFilter) : items),
-    [items, modelTypeFilter, matchesModelTypeFilter]
+    () => (modelTypeFilter ? workingItems.filter(matchesModelTypeFilter) : workingItems),
+    [workingItems, modelTypeFilter, matchesModelTypeFilter]
   )
 
   const counts = useMemo(() => {
@@ -358,12 +516,14 @@ export const MissingTab = memo(function MissingTab({
     let bannedByTag = 0
     let pausedByTag = 0
     let forgotten = 0
+    let excludedVersion = 0
     for (const m of itemsForMainCounts) {
       if (m.kind === 'missing') missing++
       else if (m.kind === 'bannedManual') bannedManual++
       else if (m.kind === 'pausedByTag') pausedByTag++
       else if (m.kind === 'bannedByTag') bannedByTag++
       else if (m.kind === 'forgotten') forgotten++
+      else if (m.kind === 'excludedVersion') excludedVersion++
     }
     return {
       missing,
@@ -371,6 +531,7 @@ export const MissingTab = memo(function MissingTab({
       bannedByTag,
       pausedByTag,
       forgotten,
+      excludedVersion,
       all: itemsForMainCounts.length
     }
   }, [itemsForMainCounts])
@@ -485,10 +646,17 @@ export const MissingTab = memo(function MissingTab({
     return n
   }, [itemsForMainCounts, banSeenByModelId])
 
-  const totalSeenCount = useMemo(
-    () => Object.keys(banSeenByModelId).length,
-    [banSeenByModelId]
-  )
+  /** Current ban/pause/exclude cards marked seen — not 404 Missing, not stale DB leftovers. */
+  const seenBanCount = useMemo(() => {
+    let n = 0
+    for (const m of itemsForMainCounts) {
+      if (!canMarkExclusionSeen(m.kind)) continue
+      if (banSeenByModelId[m.modelId]) n++
+    }
+    return n
+  }, [itemsForMainCounts, banSeenByModelId])
+
+  const reviewableBanCount = unseenBanCount + seenBanCount
 
   const banDayCounts = useMemo(
     () => [...banCountByDay.entries()].sort((a, b) => b[0].localeCompare(a[0])),
@@ -540,6 +708,12 @@ export const MissingTab = memo(function MissingTab({
       }
       unseenSnapshotRef.current = snapshot
     }
+    if (next.type === 'seen') {
+      // Seen filter must show marked cards — Hide seen / Hide banned would empty it.
+      setHideSeen(false)
+      setHideBanned(false)
+      setHidePaused(false)
+    }
   }, [])
 
   const applyKindFilter = useCallback((next: KindFilter) => {
@@ -563,7 +737,12 @@ export const MissingTab = memo(function MissingTab({
 
   const onHideBannedChange = useCallback((checked: boolean) => {
     setHideBanned(checked)
-    if (checked && (kindFilter === 'bannedManual' || kindFilter === 'bannedByTag')) {
+    if (
+      checked &&
+      (kindFilter === 'bannedManual' ||
+        kindFilter === 'bannedByTag' ||
+        kindFilter === 'excludedVersion')
+    ) {
       setKindFilter('all')
     }
   }, [kindFilter])
@@ -614,6 +793,7 @@ export const MissingTab = memo(function MissingTab({
       if (
         f.type === 'all' ||
         f.type === 'unseen' ||
+        f.type === 'seen' ||
         f.type === 'sessionBans' ||
         f.type === 'sessionPause'
       ) {
@@ -640,26 +820,26 @@ export const MissingTab = memo(function MissingTab({
   // Model types: always global totals (don't shrink when a type or status is selected).
   const typeCounts = useMemo(() => {
     const map = new Map<string, number>()
-    for (const m of items) {
+    for (const m of workingItems) {
       if (m.kind === 'forgotten' && !showForgotten) continue
       const mt = resolveExclusionModelType(m, ownedPrimaryByModel.get(m.modelId))
       map.set(mt, (map.get(mt) ?? 0) + 1)
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-  }, [items, showForgotten, ownedPrimaryByModel])
+  }, [workingItems, showForgotten, ownedPrimaryByModel])
 
   const baseModelOptions = useMemo(() => {
     return aggregateBaseModelOptions(
-      items
+      workingItems
         .filter((m) => !(m.kind === 'forgotten' && !showForgotten))
         .map((m) => m.baseModel)
         .filter(Boolean) as string[]
     )
-  }, [items, showForgotten])
+  }, [workingItems, showForgotten])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    let list = items.filter((m) => {
+    let list = workingItems.filter((m) => {
       // Sidebar exclusive modes win over Hide banned / kind toolbar.
       if (sideFilter.type === 'unseen') {
         if (!canMarkExclusionSeen(m.kind)) return false
@@ -667,6 +847,10 @@ export const MissingTab = memo(function MissingTab({
           if (hideSeen) return false
           if (!unseenSnapshotRef.current.has(m.modelId)) return false
         }
+      } else if (sideFilter.type === 'seen') {
+        // Ban/pause/exclude marked seen only — never 404 Missing.
+        if (!canMarkExclusionSeen(m.kind)) return false
+        if (!banSeenByModelId[m.modelId]) return false
       } else if (sideFilter.type === 'sessionBans') {
         if (!isSessionBan(m)) return false
       } else if (sideFilter.type === 'sessionPause') {
@@ -703,37 +887,40 @@ export const MissingTab = memo(function MissingTab({
       }
 
       // Hide banned / paused apply only on the plain All view (no kind/side/type pick).
-      if (kindFilter === 'all' && sideFilter.type === 'all' && !modelTypeFilter && !baseModelFilter) {
-        if (hideBanned && (m.kind === 'bannedManual' || m.kind === 'bannedByTag')) return false
-        if (hidePaused && m.kind === 'pausedByTag') return false
-      }
-      // Hide Missing (404) unless a kind / model-type sidebar pick is active.
-      if (
-        hideMissing &&
-        m.kind === 'missing' &&
-        kindFilter === 'all' &&
-        sideFilter.type === 'all' &&
-        !modelTypeFilter &&
-        !baseModelFilter
-      ) {
-        return false
-      }
+      // Active search shows matches even when Hide banned / Missing is on.
+      if (!q) {
+        if (kindFilter === 'all' && sideFilter.type === 'all' && !modelTypeFilter && !baseModelFilter) {
+          if (
+            hideBanned &&
+            (m.kind === 'bannedManual' || m.kind === 'bannedByTag' || m.kind === 'excludedVersion')
+          ) {
+            return false
+          }
+          if (hidePaused && m.kind === 'pausedByTag') return false
+        }
+        // Hide Missing (404) unless a kind / model-type sidebar pick is active.
+        if (
+          hideMissing &&
+          m.kind === 'missing' &&
+          kindFilter === 'all' &&
+          sideFilter.type === 'all' &&
+          !modelTypeFilter &&
+          !baseModelFilter
+        ) {
+          return false
+        }
 
-      if (hideSeen && canMarkExclusionSeen(m.kind) && banSeenByModelId[m.modelId]) {
-        return false
+        if (
+          hideSeen &&
+          sideFilter.type !== 'seen' &&
+          canMarkExclusionSeen(m.kind) &&
+          banSeenByModelId[m.modelId]
+        ) {
+          return false
+        }
+        return true
       }
-
-      if (!q) return true
-      return (
-        m.modelName.toLowerCase().includes(q) ||
-        (m.author ?? '').toLowerCase().includes(q) ||
-        (m.baseModel ?? '').toLowerCase().includes(q) ||
-        (m.modelType ?? '').toLowerCase().includes(q) ||
-        (m.blockedTag ?? '').toLowerCase().includes(q) ||
-        (m.tags ?? []).some((tag) => tag.toLowerCase().includes(q)) ||
-        String(m.modelId).includes(q) ||
-        (m.versionId != null && String(m.versionId).includes(q))
-      )
+      return exclusionItemMatchesSearch(m, q)
     })
     list = [...list]
     // Do NOT sort by seen — that made Session bans cards jump when the green border applied.
@@ -782,7 +969,7 @@ export const MissingTab = memo(function MissingTab({
     }
     return list
   }, [
-    items,
+    workingItems,
     kindFilter,
     hideBanned,
     hidePaused,
@@ -847,13 +1034,13 @@ export const MissingTab = memo(function MissingTab({
 
   const previewSources = useMemo(
     () =>
-      filtered.map((item) =>
+      visibleItems.map((item) =>
         exclusionCardPreviewSource(item, {
           localPreviewPath: localPreviewByModelId.get(item.modelId),
           owned: ownedPrimaryByModel.get(item.modelId)
         })
       ),
-    [filtered, localPreviewByModelId, ownedPrimaryByModel]
+    [visibleItems, localPreviewByModelId, ownedPrimaryByModel]
   )
 
   const { overrides: previewOverrides, browseCards, markPreviewBroken } =
@@ -995,50 +1182,105 @@ export const MissingTab = memo(function MissingTab({
       setBusyId(item.modelId)
       try {
         await window.api.acknowledgeMissing(item.modelId)
-        await onRefresh()
+        // exclusions:list updates the same card in place — keep scroll / no full refresh.
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : String(err))
       } finally {
         setBusyId(null)
       }
     },
-    [onRefresh]
+    []
   )
 
   const unban = useCallback(
     async (modelId: number) => {
+      const item =
+        workingItems.find((m) => m.modelId === modelId) ??
+        items.find((m) => m.modelId === modelId)
       setBusyId(modelId)
       setMessage(null)
+      if (item) holdAllowedUntilLeave(item)
       try {
         const result = await window.api.unbanModel(modelId)
         if (result && typeof result === 'object' && 'queued' in result && result.queued) {
           setMessage(t('missingTab.unbanQueued'))
         }
-        await onRefresh()
+      } catch (err) {
+        if (item) {
+          setTemporaryAllowedByKey((prev) => {
+            const next = new Map(prev)
+            next.delete(exclusionItemKey(item))
+            return next
+          })
+        }
+        setMessage(err instanceof Error ? err.message : String(err))
       } finally {
         setBusyId(null)
       }
     },
-    [onRefresh, t]
+    [items, workingItems, holdAllowedUntilLeave, t]
+  )
+
+  const allowExcludedVersion = useCallback(
+    async (item: ExclusionReviewItem) => {
+      const versionId = item.versionId
+      if (!versionId || versionId <= 0 || item.modelId <= 0) return
+      setBusyId(item.modelId)
+      setMessage(null)
+      holdAllowedUntilLeave(item)
+      try {
+        if (typeof window.api.allowVersion === 'function') {
+          await window.api.allowVersion({ modelId: item.modelId, versionId })
+        } else {
+          await window.api.unforgetPendingVersion(versionId)
+        }
+        setMessage(t('missingTab.allowVersionHint'))
+      } catch (err) {
+        setTemporaryAllowedByKey((prev) => {
+          const next = new Map(prev)
+          next.delete(exclusionItemKey(item))
+          return next
+        })
+        setMessage(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [holdAllowedUntilLeave, t]
   )
 
   const allowTagSkip = useCallback(
     async (modelId: number) => {
+      const item =
+        workingItems.find((m) => m.modelId === modelId && isTagSkipKind(m.kind)) ??
+        items.find((m) => m.modelId === modelId && isTagSkipKind(m.kind))
       setBusyId(modelId)
       setMessage(null)
+      if (item) holdAllowedUntilLeave(item)
       try {
         const result = await window.api.allowTagSkip(modelId)
         if (result.queued) setMessage(t('missingTab.unbanQueued'))
-        await onRefresh()
+      } catch (err) {
+        if (item) {
+          setTemporaryAllowedByKey((prev) => {
+            const next = new Map(prev)
+            next.delete(exclusionItemKey(item))
+            return next
+          })
+        }
+        setMessage(err instanceof Error ? err.message : String(err))
       } finally {
         setBusyId(null)
       }
     },
-    [onRefresh, t]
+    [items, workingItems, holdAllowedUntilLeave, t]
   )
 
   const forget = useCallback(
     async (item: ExclusionReviewItem) => {
       setBusyId(item.modelId)
       setMessage(null)
+      rememberScrollAndHide(item)
       try {
         await window.api.forgetModel(item.modelId, item.modelName, {
           versionId: item.versionId,
@@ -1051,14 +1293,14 @@ export const MissingTab = memo(function MissingTab({
           tags: item.tags
         })
         setMessage(t('missingTab.forgetMsg', { name: item.modelName }))
-        await onRefresh()
       } catch (err) {
+        undoOptimisticHide(item)
         setMessage(err instanceof Error ? err.message : String(err))
       } finally {
         setBusyId(null)
       }
     },
-    [onRefresh, t]
+    [rememberScrollAndHide, undoOptimisticHide, t]
   )
 
   const filterByTag = useCallback((tag: string) => {
@@ -1104,6 +1346,7 @@ export const MissingTab = memo(function MissingTab({
     if (kind === 'bannedByTag') return t('missingTab.kindBannedByTag')
     if (kind === 'pausedByTag') return t('missingTab.kindPausedByTag')
     if (kind === 'forgotten') return t('missingTab.kindForgotten')
+    if (kind === 'excludedVersion') return t('missingTab.kindExcludedVersion')
     return t('missingTab.kindMissing')
   }
 
@@ -1154,7 +1397,13 @@ export const MissingTab = memo(function MissingTab({
               <input
                 type="checkbox"
                 checked={hideSeen}
-                onChange={(e) => setHideSeen(e.target.checked)}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  setHideSeen(checked)
+                  if (checked && sideFilter.type === 'seen') {
+                    setSideFilter({ type: 'all' })
+                  }
+                }}
               />
               {t('missingTab.hideSeen')}
             </label>
@@ -1246,7 +1495,12 @@ export const MissingTab = memo(function MissingTab({
                 sideFilter.type === 'all' &&
                 !modelTypeFilter &&
                 counts.missing > 0 &&
-                counts.bannedManual + counts.bannedByTag + counts.pausedByTag + counts.forgotten === 0
+                counts.bannedManual +
+                  counts.bannedByTag +
+                  counts.pausedByTag +
+                  counts.forgotten +
+                  counts.excludedVersion ===
+                  0
               ? t('missingTab.emptyHiddenMissing', { missing: counts.missing })
               : (hideBanned || hidePaused) &&
                   kindFilter === 'all' &&
@@ -1264,19 +1518,26 @@ export const MissingTab = memo(function MissingTab({
           <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
           <div className="gallery-grid status-card-grid">
             {visibleItems.map((item) => {
+            const itemKey = exclusionItemKey(item)
+            const temporaryAllowed = temporaryAllowedByKey.has(itemKey)
             const status: MissingModelStatus | undefined = item.status
             const isBanSeen =
-              canMarkExclusionSeen(item.kind) && Boolean(banSeenByModelId[item.modelId])
+              !temporaryAllowed &&
+              canMarkExclusionSeen(item.kind) &&
+              Boolean(banSeenByModelId[item.modelId])
             const pendingSeen =
+              !temporaryAllowed &&
               markSeenMode &&
               canMarkExclusionSeen(item.kind) &&
               !banSeenByModelId[item.modelId]
             const cardClass = [
-              item.kind === 'missing'
+              temporaryAllowed
+                ? 'pending-card-temporary'
+                : item.kind === 'missing'
                 ? status === 'unavailable'
                   ? 'missing-card-unavailable'
                   : 'missing-card-suspect'
-                : item.kind === 'bannedManual'
+                : item.kind === 'bannedManual' || item.kind === 'excludedVersion'
                   ? 'missing-card-banned-manual'
                   : item.kind === 'forgotten'
                     ? 'missing-card-forgotten'
@@ -1284,11 +1545,16 @@ export const MissingTab = memo(function MissingTab({
                       ? 'missing-card-paused-tag'
                       : 'missing-card-banned-tag',
               item.fromEarlyAccess ? 'is-from-early-access' : '',
+              !temporaryAllowed &&
               item.kind !== 'bannedManual' &&
               item.kind !== 'forgotten' &&
+              item.kind !== 'excludedVersion' &&
               item.acknowledged
                 ? 'is-acknowledged'
-                : item.kind !== 'bannedManual' && item.kind !== 'forgotten'
+                : !temporaryAllowed &&
+                    item.kind !== 'bannedManual' &&
+                    item.kind !== 'forgotten' &&
+                    item.kind !== 'excludedVersion'
                   ? 'is-new-missing'
                   : '',
               isBanSeen ? 'is-ban-seen' : ''
@@ -1297,28 +1563,39 @@ export const MissingTab = memo(function MissingTab({
               .join(' ')
             const owned = ownedPrimaryByModel.get(item.modelId)
             const versionId = item.versionId ?? owned?.versionId ?? 0
+            const browseCard = versionId > 0 ? browseCards[versionId] : undefined
+            const versionLabel =
+              (item.versionName ?? '').trim() ||
+              (browseCard?.versionName ?? '').trim() ||
+              (owned?.versionName ?? '').trim() ||
+              (versionId > 0 ? `v${versionId}` : '')
+            const showKindChip =
+              temporaryAllowed ||
+              item.kind === 'missing' ||
+              item.kind === 'bannedManual' ||
+              item.kind === 'forgotten' ||
+              item.kind === 'excludedVersion'
             const previewSource = exclusionCardPreviewSource(item, {
               localPreviewPath: localPreviewByModelId.get(item.modelId),
               owned,
-              browseCard: versionId > 0 ? browseCards[versionId] : undefined
+              browseCard
             })
             const cardThumb = resolveModelCardThumb(
               previewSource,
               versionId > 0 ? previewOverrides[versionId] : undefined,
-              versionId > 0 ? browseCards[versionId] : undefined
+              browseCard
             )
             const videoAvailability = videoPreviewAvailabilityFor(
               previewSource,
               versionId > 0 ? previewOverrides[versionId] : undefined
             )
-            const browseCard = versionId > 0 ? browseCards[versionId] : undefined
             const ratingInfo = describeNsfwRatingForCard(
               browseCard?.nsfw ?? owned?.isNsfw,
               browseCard?.nsfwLevel ?? owned?.nsfwLevel
             )
             return (
               <StatusModelCard
-                key={`${item.kind}:${item.modelId}`}
+                key={`${item.kind}:${item.modelId}:${item.versionId ?? 0}`}
                 className={cardClass}
                 dataBanSeenPending={pendingSeen ? item.modelId : undefined}
                 onPointerEnter={
@@ -1379,7 +1656,7 @@ export const MissingTab = memo(function MissingTab({
                         ↗
                       </button>
                     ) : null}
-                    {forgetFunctionMode ? (
+                    {!temporaryAllowed && forgetFunctionMode ? (
                       item.kind === 'forgotten' ? (
                         <button
                           type="button"
@@ -1391,6 +1668,20 @@ export const MissingTab = memo(function MissingTab({
                           }}
                           title={t('missingTab.unforgetHint')}
                           aria-label={t('missingTab.unforgetHint')}
+                        >
+                          ×
+                        </button>
+                      ) : item.kind === 'excludedVersion' ? (
+                        <button
+                          type="button"
+                          className="gallery-ban-inline-btn is-unban electron-no-drag"
+                          disabled={busyId === item.modelId}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void allowExcludedVersion(item)
+                          }}
+                          title={t('missingTab.allowVersionHint')}
+                          aria-label={t('missingTab.allowVersion')}
                         >
                           ×
                         </button>
@@ -1419,11 +1710,21 @@ export const MissingTab = memo(function MissingTab({
                     downloadCount={item.downloadCount}
                     thumbsUpCount={item.thumbsUpCount}
                     authorLine={item.author || undefined}
+                    versionName={versionLabel || undefined}
+                    versionSource={{
+                      modelName: item.modelName,
+                      versionName: versionLabel || undefined,
+                      baseModel: item.baseModel
+                    }}
                     statusChips={
-                      <span className="missing-kind-badge">{kindLabel(item.kind)}</span>
+                      temporaryAllowed ? (
+                        <span className="missing-kind-badge">{t('missingTab.allowedBadge')}</span>
+                      ) : showKindChip ? (
+                        <span className="missing-kind-badge">{kindLabel(item.kind)}</span>
+                      ) : undefined
                     }
                   >
-                    {item.kind === 'missing' ? (
+                    {item.kind === 'missing' && !temporaryAllowed ? (
                       <>
                         <div className="muted status-card-detail">
                           ID #{item.modelId}
@@ -1437,9 +1738,6 @@ export const MissingTab = memo(function MissingTab({
                       </>
                     ) : (
                       <>
-                        <div className="muted status-card-detail">
-                          {t('missingTab.whenLine', { when: formatWhen(item.at) })}
-                        </div>
                         {(item.tags?.length ?? 0) > 0 ? (
                           <div
                             className="tag-row library-card-tags"
@@ -1479,6 +1777,7 @@ export const MissingTab = memo(function MissingTab({
                   </ModelCardInfo>
                 }
                 actions={
+                  temporaryAllowed ? null : (
                   <>
                     {item.kind === 'bannedManual' ? (
                       <button
@@ -1489,6 +1788,17 @@ export const MissingTab = memo(function MissingTab({
                         title={t('missingTab.unbanHint')}
                       >
                         {t('missingTab.unban')}
+                      </button>
+                    ) : null}
+                    {item.kind === 'excludedVersion' ? (
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        disabled={busyId === item.modelId}
+                        onClick={() => void allowExcludedVersion(item)}
+                        title={t('missingTab.allowVersionHint')}
+                      >
+                        {t('missingTab.allowVersion')}
                       </button>
                     ) : null}
                     {isTagSkipKind(item.kind) ? (
@@ -1514,6 +1824,7 @@ export const MissingTab = memo(function MissingTab({
                       </button>
                     ) : null}
                   </>
+                  )
                 }
               />
             )
@@ -1564,7 +1875,7 @@ export const MissingTab = memo(function MissingTab({
         <div className="gallery-body-row">
           <div className="gallery-main">
             <div className="gallery-panel">
-              <div className="gallery-main-scroll missing-main-scroll">
+              <div ref={mainScrollRef} className="gallery-main-scroll missing-main-scroll">
                 {cardGrid}
               </div>
             </div>
@@ -1576,8 +1887,12 @@ export const MissingTab = memo(function MissingTab({
             <div className="tag-sidebar-head-row">
               <h3>
                 {t('missingTab.sidebarTitle')}
-                <span className="muted tag-count-inline">
-                  {t('missingTab.seenTotal', { count: totalSeenCount })}
+                <span className="muted tag-count-inline" title={t('missingTab.banReviewHint')}>
+                  {t('missingTab.banReviewSummary', {
+                    unseen: unseenBanCount,
+                    seen: seenBanCount,
+                    total: reviewableBanCount
+                  })}
                 </span>
               </h3>
               <button
@@ -1623,9 +1938,20 @@ export const MissingTab = memo(function MissingTab({
               type="button"
               className={`sidebar-tag ${sideFilterActive({ type: 'unseen' }) ? 'active' : ''}`}
               onClick={() => applySideFilter({ type: 'unseen' })}
+              title={t('missingTab.unseenBansHint')}
             >
               <span className="tag-name">{t('missingTab.unseenBans')}</span>
               <span className="muted tag-count-inline">{unseenBanCount}</span>
+            </button>
+
+            <button
+              type="button"
+              className={`sidebar-tag ${sideFilterActive({ type: 'seen' }) ? 'active' : ''}`}
+              onClick={() => applySideFilter({ type: 'seen' })}
+              title={t('missingTab.seenBansHint')}
+            >
+              <span className="tag-name">{t('missingTab.seenBans')}</span>
+              <span className="muted tag-count-inline">{seenBanCount}</span>
             </button>
 
             <button
@@ -1654,6 +1980,16 @@ export const MissingTab = memo(function MissingTab({
             >
               <span className="tag-name">{t('missingTab.filterBannedManual')}</span>
               <span className="muted tag-count-inline">{counts.bannedManual}</span>
+            </button>
+            <button
+              type="button"
+              className={`sidebar-tag ${
+                kindFilter === 'excludedVersion' && sideFilter.type === 'all' ? 'active' : ''
+              }`}
+              onClick={() => applyKindFilter('excludedVersion')}
+            >
+              <span className="tag-name">{t('missingTab.filterExcludedVersion')}</span>
+              <span className="muted tag-count-inline">{counts.excludedVersion}</span>
             </button>
             <button
               type="button"
@@ -1863,7 +2199,8 @@ export const MissingTab = memo(function MissingTab({
               {t('missingTab.markSeenModeOn')}
             </button>
           )}
-          {contextMenu.item.kind !== 'forgotten' && (
+          {contextMenu.item.kind !== 'forgotten' &&
+            contextMenu.item.kind !== 'excludedVersion' && (
             <button
               {...contextMenuButtonProps(() => {
                 void forget(contextMenu.item)
@@ -1889,6 +2226,15 @@ export const MissingTab = memo(function MissingTab({
               }, () => setContextMenu(null))}
             >
               {t('missingTab.unban')}
+            </button>
+          )}
+          {contextMenu.item.kind === 'excludedVersion' && (
+            <button
+              {...contextMenuButtonProps(() => {
+                void allowExcludedVersion(contextMenu.item)
+              }, () => setContextMenu(null))}
+            >
+              {t('missingTab.allowVersion')}
             </button>
           )}
           {isTagSkipKind(contextMenu.item.kind) && (
