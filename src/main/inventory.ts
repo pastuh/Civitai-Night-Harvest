@@ -1763,6 +1763,8 @@ export function getAllVersions(): InventoryRecord[] {
 
 /** Fill empty baseModel / modelType / routingTag from custom folder assignment rules. Returns patched count. */
 export function applyCustomAssignmentDefaults(tagRules: TagFolderRule[]): number {
+  // Normal Tag folders saves must stay instant — only custom path rules need a library walk.
+  if (!tagRules.some((r) => r.customAssignment)) return 0
   let updated = 0
   for (const record of getAllVersions()) {
     const next = applyCustomAssignmentDefaultsToRecord(record, tagRules)

@@ -131,43 +131,14 @@ const api = {
   ): Promise<{ moved: number; skipped: number; queueUpdated: number; versionIds: number[] }> =>
     ipcRenderer.invoke('inventory:assignByCivitaiTag', { civitaiTag, routingTag }),
 
-  reconcileTagFolders: (): Promise<{
+  reconcileTagFolders: (opts?: {
+    onlyCivitaiTags?: string[]
+  }): Promise<{
     moved: number
     skipped: number
     queueUpdated: number
     versionIds: number[]
-  }> =>
-    new Promise((resolve, reject) => {
-      const onDone = (
-        _: unknown,
-        payload: {
-          moved: number
-          skipped: number
-          queueUpdated: number
-          versionIds: number[]
-        }
-      ) => {
-        cleanup()
-        resolve(payload)
-      }
-      const onError = (_: unknown, payload: { message: string }) => {
-        cleanup()
-        reject(new Error(payload?.message || 'Tag folder move failed'))
-      }
-      const cleanup = () => {
-        ipcRenderer.removeListener('tagFolders:reconcileDone', onDone)
-        ipcRenderer.removeListener('tagFolders:reconcileError', onError)
-      }
-      ipcRenderer.on('tagFolders:reconcileDone', onDone)
-      ipcRenderer.on('tagFolders:reconcileError', onError)
-      void ipcRenderer.invoke('inventory:reconcileTagFolders').then(
-        undefined,
-        (err) => {
-          cleanup()
-          reject(err)
-        }
-      )
-    }),
+  }> => ipcRenderer.invoke('inventory:reconcileTagFolders', opts),
 
   deleteInventoryVersion: (
     versionId: number,

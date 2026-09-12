@@ -9,7 +9,7 @@ import {
   isCustomTagFolderRule,
   parseTagRuleNames,
   ruleCoversTag,
-  countLibraryTagFolderReconcile,
+  countLibraryTagFolderReconcileAsync,
   countInventoryUnderFolderPath,
   expandCivitaiTagNames,
   tagFolderFilterMatch,
@@ -353,6 +353,12 @@ export function TagsTab({
   const [massFolderName, setMassFolderName] = useState('')
   const [hideAssigned, setHideAssigned] = useState(false)
   const [hideSingles, setHideSingles] = useState(false)
+
+  useEffect(() => {
+    if (showTagStats) return
+    setHideSingles(false)
+    setSortKey((key) => (key === 'count' ? 'name' : key))
+  }, [showTagStats])
   /** Exact tag label(s) pinned in the table after assign — cleared by search or next assign. */
   const [pinnedAssignLabels, setPinnedAssignLabels] = useState<string[]>([])
   /** Tags added manually via search Add — shown in table even when not in library yet. */
@@ -550,14 +556,17 @@ export function TagsTab({
     setLibrarySearch(canonical)
     setLetterFilter(null)
     setFolderFilter('')
-    pinAssignLabels([canonical])
+    // Opening from Library/Browse to assign — show the row even if Hide assigned is on.
+    setHideAssigned(false)
+    setPinnedAssignLabels([canonical])
     setManualTableTags((prev) => {
       if (prev.some((t) => tagsEqual(t, canonical))) return prev
-      if (pool.has(tagPinKey(canonical))) return prev
       return [...prev, canonical]
     })
     onFocusSearchHandled?.()
-  }, [focusSearchTag, onFocusSearchHandled, pinAssignLabels, tableTagPool])
+    // Only react to a new focus token — not tableTagPool churn (that cleared focus before paint).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: process each focusSearchTag once
+  }, [focusSearchTag])
 
   useEffect(() => {
     if (saveState !== 'saved') return
@@ -629,26 +638,50 @@ export function TagsTab({
   )
 
   const libraryTags = useMemo(() => {
-    const searchNeedles = parseTagRuleNames(deferredLibrarySearch).map((n) => n.toLowerCase())
+    // Live search while a Library→assign pin is active — deferred search lagged the row ~1 frame
+    // and could still trigger a full-pool scan before the needle landed.
+    const searchText =
+      pinnedAssignLabels.length > 0 ? librarySearch : deferredLibrarySearch
+    const searchNeedles = parseTagRuleNames(searchText).map((n) => n.toLowerCase())
+    const hasSearch = searchNeedles.length > 0
+    const assignFocus = pinnedAssignLabels.length > 0 && hasSearch
+
     const matchesTagSearch = (tag: string) => {
       if (letterFilter && !tag.toLowerCase().startsWith(letterFilter)) return false
-      if (!searchNeedles.length) return true
+      if (!hasSearch) return true
       const lower = tag.toLowerCase()
       const label = displayNameFor(tag)
       const labelLower = label.toLowerCase()
-      return searchNeedles.some(
-        (q) =>
+      return searchNeedles.some((q) => {
+        // Cheap path first — fuzzy over a huge pool is what froze Tag folders for seconds.
+        if (lower.includes(q) || labelLower.includes(q)) return true
+        if (lower.startsWith(q) || labelLower.startsWith(q)) return true
+        // Assign-from-card: pin is enough; skip fuzzy so the target row paints instantly.
+        if (assignFocus) return false
+        return (
           fuzzyTagMatch(q, tag) ||
           fuzzyTagMatch(q, label) ||
-          lower.includes(q) ||
-          labelLower.includes(q) ||
           tagAliasMatch(q, tag) ||
           tagAliasMatch(q, label)
-      )
+        )
+      })
     }
 
     const rowMap = new Map<string, { tag: string; count: number }>()
+
+    // Assign-from-card: pinned rows first so the target tag appears without waiting on a full pool scan.
+    for (const tag of pinnedAssignLabels) {
+      if (folderFilterActive && !tagMatchesFolderFilter(tag)) continue
+      rowMap.set(tagPinKey(tag), { tag, count: countForTag(tag) })
+    }
+
+    // With an active search, only scan the pool for matches (still capped for safety).
+    // Assign focus: tiny scan — pinned row is already in the table.
+    const poolScanLimit = assignFocus ? 250 : hasSearch ? 4_000 : tableTagPool.length
+    let scanned = 0
     for (const tag of tableTagPool) {
+      if (scanned >= poolScanLimit) break
+      scanned++
       if (folderFilterActive) {
         if (!tagMatchesFolderFilter(tag)) continue
       } else if (isHiddenByHideAssigned(tag)) {
@@ -660,12 +693,6 @@ export function TagsTab({
       rowMap.set(tagPinKey(tag), { tag, count })
     }
 
-    for (const tag of pinnedAssignLabels) {
-      if (folderFilterActive && !tagMatchesFolderFilter(tag)) continue
-      if (!matchesTagSearch(tag)) continue
-      rowMap.set(tagPinKey(tag), { tag, count: countForTag(tag) })
-    }
-
     for (const tag of manualTableTags) {
       if (folderFilterActive && !tagMatchesFolderFilter(tag)) continue
       if (!matchesTagSearch(tag)) continue
@@ -675,7 +702,11 @@ export function TagsTab({
     }
 
     const rows = [...rowMap.values()]
+    const pinKeys = new Set(pinnedAssignLabels.map(tagPinKey))
     rows.sort((a, b) => {
+      const aPin = pinKeys.has(tagPinKey(a.tag))
+      const bPin = pinKeys.has(tagPinKey(b.tag))
+      if (aPin !== bPin) return aPin ? -1 : 1
       if (sortKey === 'count') {
         const diff = a.count - b.count
         return sortDir === 'asc' ? diff : -diff
@@ -686,6 +717,7 @@ export function TagsTab({
     return rows
   }, [
     tableTagPool,
+    librarySearch,
     deferredLibrarySearch,
     folderFilterActive,
     tagMatchesFolderFilter,
@@ -698,8 +730,7 @@ export function TagsTab({
     hideSingles,
     displayNameFor,
     pinnedAssignLabels,
-    manualTableTags,
-    draft
+    manualTableTags
   ])
 
   const tagPoolCount = useMemo(() => {
@@ -923,9 +954,16 @@ export function TagsTab({
     }
   }
 
-  const moveTagsAfterRuleChange = async (_tagsInRule: string[], _routingTag: string) => {
-    // Full library reconcile — priority / folder edits can change winners across many tags.
-    const result = await window.api.reconcileTagFolders()
+  const moveTagsAfterRuleChange = async (
+    _tagsInRule: string[],
+    _routingTag: string,
+    scopeToCivitaiTags?: string[]
+  ) => {
+    // Default: full library (folder / priority edits can change winners widely).
+    // Pass scopeToCivitaiTags for fresh tag assign / mass assign.
+    const result = await window.api.reconcileTagFolders(
+      scopeToCivitaiTags?.length ? { onlyCivitaiTags: scopeToCivitaiTags } : undefined
+    )
     return {
       moved: result.moved,
       skipped: result.skipped,
@@ -933,15 +971,40 @@ export function TagsTab({
     }
   }
 
-  // Defer heavy inventory walk — must not run synchronously on every draft keystroke.
+  // Heavy O(library × rules) walk — never run synchronously on Tags open / search paint.
   const deferredDraft = useDeferredValue(draft)
-  const reconcilePendingCount = useMemo(
-    () => countLibraryTagFolderReconcile(inventory, deferredDraft, loraFolder, checkpointFolder),
-    [inventory, deferredDraft, loraFolder, checkpointFolder]
-  )
+  const [reconcilePendingCount, setReconcilePendingCount] = useState(0)
+  const [reconcileCountReady, setReconcileCountReady] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setReconcileCountReady(false)
+    const run = async () => {
+      const n = await countLibraryTagFolderReconcileAsync(
+        inventory,
+        deferredDraft,
+        loraFolder,
+        checkpointFolder,
+        { cancelled: () => cancelled }
+      )
+      if (cancelled) return
+      setReconcilePendingCount(n)
+      setReconcileCountReady(true)
+    }
+    // Yield so Library → Tag folders can paint the search + pinned row first.
+    const timer = window.setTimeout(() => {
+      void run()
+    }, 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [inventory, deferredDraft, loraFolder, checkpointFolder])
 
   const runLibraryReconcile = async (opts?: { confirm?: boolean }) => {
-    const count = reconcilePendingCount
+    const count = reconcileCountReady
+      ? reconcilePendingCount
+      : await countLibraryTagFolderReconcileAsync(inventory, draft, loraFolder, checkpointFolder)
     if (count === 0) {
       setStatusMessage(t('tagsTab.reconcileNone'), 5000)
       return null
@@ -1161,7 +1224,8 @@ export function TagsTab({
     try {
       await persistRules(next)
       pinAssignLabels([tag])
-      const pending = countLibraryTagFolderReconcile(
+      // Async + indexed — sync full-library count here used to freeze the whole app.
+      const pending = await countLibraryTagFolderReconcileAsync(
         inventory,
         next,
         loraFolder,
@@ -1179,7 +1243,7 @@ export function TagsTab({
         setStatusMessage(t('tagsTab.ruleSaved', { tag }), 5000)
         return
       }
-      const result = await window.api.reconcileTagFolders()
+      const result = await window.api.reconcileTagFolders({ onlyCivitaiTags: [tag] })
       if (result.moved > 0) await onRefresh?.()
       setStatusMessage(
         t('tagsTab.assignedMany', {
@@ -1246,7 +1310,7 @@ export function TagsTab({
       pinAssignLabels(tags)
       setMassSelected(new Set())
       setMassFolderName('')
-      const { moved, skipped } = await moveTagsAfterRuleChange(tags, routingTag)
+      const { moved, skipped } = await moveTagsAfterRuleChange(tags, routingTag, tags)
       setStatusMessage(
         t('tagsTab.massAssignedMove', {
           count: tags.length,
@@ -1432,13 +1496,17 @@ const dirty = useMemo(() => {
           <button
             type="button"
             className="primary"
-            disabled={Boolean(backgroundMoving) || reconcilePendingCount === 0}
+            disabled={
+              Boolean(backgroundMoving) || !reconcileCountReady || reconcilePendingCount === 0
+            }
             title={t('tagsTab.reconcileHint')}
             onClick={() => void runLibraryReconcile()}
           >
             {backgroundMoving
               ? t('tagsTab.transferring')
-              : t('tagsTab.reconcileApply', { count: reconcilePendingCount })}
+              : !reconcileCountReady
+                ? t('tagsTab.reconcileApply', { count: '…' })
+                : t('tagsTab.reconcileApply', { count: reconcilePendingCount })}
           </button>
           <label className="tags-hide-assigned-toggle">
             <input
@@ -1451,14 +1519,16 @@ const dirty = useMemo(() => {
             />
             {t('tagsTab.hideAssigned')}
           </label>
-          <label className="tags-hide-assigned-toggle">
-            <input
-              type="checkbox"
-              checked={hideSingles}
-              onChange={(e) => setHideSingles(e.target.checked)}
-            />
-            {t('tagsTab.hideSingles')}
-          </label>
+          {showTagStats && (
+            <label className="tags-hide-assigned-toggle">
+              <input
+                type="checkbox"
+                checked={hideSingles}
+                onChange={(e) => setHideSingles(e.target.checked)}
+              />
+              {t('tagsTab.hideSingles')}
+            </label>
+          )}
           <div className="tags-toolbar-end">
             {massAssign && (
               <>
@@ -1552,12 +1622,18 @@ const dirty = useMemo(() => {
                     {sortKey === 'name' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
                   </button>
                 </th>
-                <th className="tags-col-count">
-                  <button type="button" className="tags-sort-btn" onClick={() => toggleSort('count')}>
-                    {t('tagsTab.colCount')}
-                    {sortKey === 'count' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-                  </button>
-                </th>
+                {showTagStats && (
+                  <th className="tags-col-count">
+                    <button
+                      type="button"
+                      className="tags-sort-btn"
+                      onClick={() => toggleSort('count')}
+                    >
+                      {t('tagsTab.colCount')}
+                      {sortKey === 'count' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                    </button>
+                  </th>
+                )}
                 <th>{t('tagsTab.colFolder')}</th>
                 <th className="tags-col-priority" title={t('tagsTab.priorityHint')}>
                   {t('tagsTab.colPriority')}
@@ -1635,7 +1711,9 @@ const dirty = useMemo(() => {
                         </button>
                       )}
                     </td>
-                    <td className="tags-col-count muted">{count || '—'}</td>
+                    {showTagStats && (
+                      <td className="tags-col-count muted">{count || '—'}</td>
+                    )}
                     <td className="tags-col-folder">
                       {folderEditTag === tag ? (
                         <TagAutocompleteInput

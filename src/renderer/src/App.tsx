@@ -240,6 +240,7 @@ export default function App() {
     )
   }, [])
   const clearPreferLibrarySession = useCallback(() => setPreferLibrarySession(false), [])
+  const clearTagsFocusSearch = useCallback(() => setTagsFocusSearch(null), [])
   const [startupReady, setStartupReady] = useState(false)
   const [browseGalleryAwaiting, setBrowseGalleryAwaiting] = useState(true)
   const [watchRulesSaveState, setWatchRulesSaveState] = useState<'saved' | 'saving' | 'unsaved'>('saved')
@@ -2003,7 +2004,7 @@ export default function App() {
       onRefresh={refreshInventory}
       onMoveStatus={setBackgroundStatus}
       focusSearchTag={tagsFocusSearch}
-      onFocusSearchHandled={() => setTagsFocusSearch(null)}
+      onFocusSearchHandled={clearTagsFocusSearch}
       onFilterLibrary={(tag) => {
         setPreferLibrarySession(false)
         setGalleryFocusCivitaiTag(tag)

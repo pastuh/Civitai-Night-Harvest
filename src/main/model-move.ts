@@ -3,8 +3,9 @@ import { rename } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import type { InventoryRecord, TagFolderRule } from '../shared/types'
 import { resolveUniqueSlug } from '../shared/utils'
-import { tagsEqual } from '../shared/tag-fuzzy'
+import { modelHasExactTag, tagsEqual } from '../shared/tag-fuzzy'
 import {
+  buildTagRuleMatchIndex,
   findRuleForTag,
   pickBestMatchingFolderTag,
   resolveTagRuleFolderPath,
@@ -222,13 +223,15 @@ export async function moveRecordsToTagFolder(
 }
 
 /**
- * Apply current tag-folder rules to the whole library: pick each model's winning
+ * Apply current tag-folder rules to the library: pick each model's winning
  * tag and move / fix routingTag when needed. Skips manual (routingLocked) and
- * already-correct placements. Yields between chunks so the UI stays responsive.
+ * already-correct placements. Yields between items so other IPC (rule save, UI)
+ * stays responsive.
  */
 export async function reconcileLibraryTagFolders(
   tagRules: TagFolderRule[],
-  onProgress?: (p: { current: number; total: number; moved: number; modelName?: string }) => void
+  onProgress?: (p: { current: number; total: number; moved: number; modelName?: string }) => void,
+  options?: { onlyCivitaiTags?: string[] }
 ): Promise<{
   moved: number
   skipped: number
@@ -241,17 +244,33 @@ export async function reconcileLibraryTagFolders(
   let skipped = 0
   const versionIds: number[] = []
 
-  const records = inventory.getAllVersions()
+  const onlyTags = (options?.onlyCivitaiTags ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+
+  let records = inventory.getAllVersions()
+  if (onlyTags.length > 0) {
+    records = records.filter((r) =>
+      onlyTags.some((needle) => modelHasExactTag(r.civitaiTags, needle))
+    )
+  }
+
   const total = records.length
-  const yieldEvery = 1
+  const ruleIndex = buildTagRuleMatchIndex(tagRules)
+  let lastProgressAt = 0
+
+  const emitProgress = (i: number, modelName?: string, force = false) => {
+    const now = Date.now()
+    if (!force && i < total && now - lastProgressAt < 250) return
+    lastProgressAt = now
+    onProgress?.({ current: i, total, moved, modelName })
+  }
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i]
-    // Emit before the first move too — otherwise the status bar stays empty during a long first rename.
-    onProgress?.({ current: i, total, moved, modelName: record.modelName })
-    if (i > 0 && i % yieldEvery === 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    }
+    emitProgress(i, record.modelName)
+    // Yield every item so tagRules:save / UI IPC are not starved during a long scan.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
     // Checkpoints are never bulk-routed by Civitai tags (base folder or custom only).
     const mt = (record.modelType || '').toUpperCase()
@@ -260,13 +279,13 @@ export async function reconcileLibraryTagFolders(
       continue
     }
 
-    const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules)
+    const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules, ruleIndex)
     if (!winner) continue
-    if (shouldSkipTagBulkMove(record, tagRules, loraFolder, checkpointFolder)) {
+    if (shouldSkipTagBulkMove(record, tagRules, loraFolder, checkpointFolder, winner, ruleIndex)) {
       skipped++
       continue
     }
-    if (!findRuleForTag(winner, tagRules)) {
+    if (!findRuleForTag(winner, tagRules, ruleIndex)) {
       skipped++
       continue
     }
@@ -287,6 +306,6 @@ export async function reconcileLibraryTagFolders(
     }
   }
 
-  onProgress?.({ current: total, total, moved })
+  emitProgress(total, undefined, true)
   return { moved, skipped, versionIds }
 }

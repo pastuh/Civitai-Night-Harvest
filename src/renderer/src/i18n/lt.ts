@@ -277,7 +277,7 @@ export const lt: Messages = {
       updateBrowseOnCrawl:
         'Rodyti Browse korteles harvest metu. Off = slėpti korteles (tylesnis UI; siuntimai tęsiasi).',
       showTagStats:
-        'Rodyti tagų skaičius Library šoninėje juostoje ir Browse Tags. Off (numatytai) = lengvesnis UI su didele biblioteka.',
+        'Rodyti tagų skaičius Library šoninėje juostoje, Browse Tags ir Tag folders Count stulpelyje. Off (numatytai) = lengvesnis UI su didele biblioteka.',
       domain:
         'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.',
       preserveFilters:

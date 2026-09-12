@@ -1778,68 +1778,111 @@ export function initIpc(): void {
     }
   )
 
-  let tagFolderReconcileJob: Promise<{
+  let tagFolderReconcileChain: Promise<{
     moved: number
     skipped: number
     queueUpdated: number
     versionIds: number[]
   }> | null = null
+  let tagFolderReconcileNeedsRerun = false
+  /** null = unset; 'full' = whole library; Set = scoped civitai tags */
+  let tagFolderReconcileScope: 'full' | Set<string> | null = null
 
-  ipcMain.handle('inventory:reconcileTagFolders', async () => {
-    if (tagFolderReconcileJob) {
-      return { started: true as const, alreadyRunning: true as const }
+  const addTagFolderReconcileScope = (onlyCivitaiTags?: string[]) => {
+    const tags = (onlyCivitaiTags ?? []).map((t) => t.trim()).filter(Boolean)
+    if (!tags.length) {
+      tagFolderReconcileScope = 'full'
+      return
     }
+    if (tagFolderReconcileScope === 'full') return
+    if (!tagFolderReconcileScope) tagFolderReconcileScope = new Set()
+    for (const tag of tags) tagFolderReconcileScope.add(tag)
+  }
 
-    tagFolderReconcileJob = (async () => {
-      const tagRules = getTagRules()
-      try {
-        const result = await reconcileLibraryTagFolders(tagRules, (p) => {
-          sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
-            phase: p.current >= p.total && p.total > 0 ? 'done' : 'moving',
-            current: p.current,
-            total: p.total,
-            moved: p.moved,
-            message:
-              p.total > 0
-                ? `Moving tag folders… ${p.current}/${p.total}` +
-                  (p.modelName ? ` · ${p.modelName}` : '')
-                : 'Moving tag folders…'
-          })
-        })
-        let queueUpdated = 0
-        const seen = new Set<string>()
-        for (const rule of tagRules) {
-          for (const name of parseTagRuleNames(rule.tagName)) {
-            const key = name.toLowerCase()
-            if (seen.has(key)) continue
-            seen.add(key)
-            queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
+  ipcMain.handle(
+    'inventory:reconcileTagFolders',
+    async (
+      _e,
+      opts?: { onlyCivitaiTags?: string[] }
+    ): Promise<{
+      moved: number
+      skipped: number
+      queueUpdated: number
+      versionIds: number[]
+    }> => {
+      addTagFolderReconcileScope(opts?.onlyCivitaiTags)
+      tagFolderReconcileNeedsRerun = true
+
+      if (!tagFolderReconcileChain) {
+        tagFolderReconcileChain = (async () => {
+          let last = {
+            moved: 0,
+            skipped: 0,
+            queueUpdated: 0,
+            versionIds: [] as number[]
           }
-        }
-        const payload = { ...result, queueUpdated }
-        sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
-          phase: 'done',
-          current: result.moved + result.skipped,
-          total: result.moved + result.skipped,
-          moved: result.moved,
-          message: `Tag folders: moved ${result.moved}, skipped ${result.skipped}`
-        })
-        sendToRenderer(() => mainWindow, 'tagFolders:reconcileDone', payload)
-        return payload
-      } catch (err) {
-        sendToRenderer(() => mainWindow, 'tagFolders:reconcileError', {
-          message: err instanceof Error ? err.message : String(err)
-        })
-        throw err
-      } finally {
-        tagFolderReconcileJob = null
-      }
-    })()
+          try {
+            while (tagFolderReconcileNeedsRerun) {
+              tagFolderReconcileNeedsRerun = false
+              const scopeSnap = tagFolderReconcileScope
+              tagFolderReconcileScope = null
+              const onlyCivitaiTags =
+                !scopeSnap || scopeSnap === 'full' ? undefined : [...scopeSnap]
 
-    // Return immediately so other IPC (ban, inventory, UI) stays responsive while files move.
-    void tagFolderReconcileJob
-    return { started: true as const, alreadyRunning: false as const }
-  })
+              const tagRules = getTagRules()
+              const result = await reconcileLibraryTagFolders(
+                tagRules,
+                (p) => {
+                  sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+                    phase: p.current >= p.total && p.total > 0 ? 'done' : 'moving',
+                    current: p.current,
+                    total: p.total,
+                    moved: p.moved,
+                    message:
+                      p.total > 0
+                        ? `Moving tag folders… ${p.current}/${p.total}` +
+                          (p.modelName ? ` · ${p.modelName}` : '')
+                        : 'Moving tag folders…'
+                  })
+                },
+                onlyCivitaiTags?.length ? { onlyCivitaiTags } : undefined
+              )
+              let queueUpdated = 0
+              const seen = new Set<string>()
+              const queueTags = onlyCivitaiTags?.length
+                ? onlyCivitaiTags
+                : tagRules.flatMap((rule) => parseTagRuleNames(rule.tagName))
+              for (const name of queueTags) {
+                const key = name.toLowerCase()
+                if (seen.has(key)) continue
+                seen.add(key)
+                queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
+              }
+              last = { ...result, queueUpdated }
+              sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
+                phase: 'done',
+                current: result.moved + result.skipped,
+                total: result.moved + result.skipped,
+                moved: result.moved,
+                message: `Tag folders: moved ${result.moved}, skipped ${result.skipped}`
+              })
+              sendToRenderer(() => mainWindow, 'tagFolders:reconcileDone', last)
+            }
+            return last
+          } catch (err) {
+            sendToRenderer(() => mainWindow, 'tagFolders:reconcileError', {
+              message: err instanceof Error ? err.message : String(err)
+            })
+            throw err
+          } finally {
+            tagFolderReconcileChain = null
+          }
+        })()
+      }
+
+      return tagFolderReconcileChain
+    }
+  )
 
   ipcMain.handle('model:preview', async (_e, input: string) => {
     const modelId = parseModelId(input)

@@ -3,5 +3,6 @@ out/
 dist/
 .tmp-test/
 *.log
+*.tsbuildinfo
 .DS_Store
 Thumbs.db

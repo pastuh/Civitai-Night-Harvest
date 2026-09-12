@@ -1,4 +1,4 @@
-import { fuzzyTagMatch, tagAliasMatch, modelHasExactTag, tagsEqual } from './tag-fuzzy'
+import { fuzzyTagMatch, tagAliasMatch, modelHasExactTag, tagsEqual, pluralVariants } from './tag-fuzzy'
 import type { TagFolderRule, TagPolicyKind } from './types'
 import { getDefaultFolderForType, joinFolderPath } from './utils'
 
@@ -205,10 +205,18 @@ export function hasTagFolderRule(tagName: string, tagRules: TagFolderRule[]): bo
 
 export function findRuleForTag(
   tagName: string,
-  tagRules: TagFolderRule[]
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
 ): TagFolderRule | undefined {
   const needle = tagName.trim()
   if (!needle) return undefined
+  if (ruleIndex) {
+    for (const key of aliasKeysForTag(needle)) {
+      const hit = ruleIndex.byAlias.get(key)
+      if (hit) return hit.rule
+    }
+    return undefined
+  }
   const needleLower = needle.toLowerCase()
   return tagRules.find((r) => {
     if (ruleCoversTag(r, needle)) return true
@@ -373,7 +381,10 @@ export function shouldSkipTagBulkMove(
   },
   tagRules: TagFolderRule[],
   loraFolder: string,
-  checkpointFolder: string
+  checkpointFolder: string,
+  /** When known, skip a second full rule scan (count / reconcile hot path). */
+  precomputedWinner?: string | null,
+  ruleIndex?: TagRuleMatchIndex
 ): boolean {
   // Checkpoints are never bulk-moved by Civitai tag rules.
   if ((record.modelType || '').toUpperCase() === 'CHECKPOINT') return true
@@ -382,13 +393,16 @@ export function shouldSkipTagBulkMove(
 
   if (record.routingLocked) return true
 
-  const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules)
+  const winner =
+    precomputedWinner !== undefined
+      ? precomputedWinner
+      : pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules, ruleIndex)
   if (!winner) return false
 
   const rt = record.routingTag.trim()
   if (!rt || !tagsEqual(rt, winner)) return false
 
-  const rule = findRuleForTag(winner, tagRules)
+  const rule = findRuleForTag(winner, tagRules, ruleIndex)
   if (!rule) return false
 
   const modelType = inferred
@@ -435,17 +449,61 @@ export function countLibraryTagFolderReconcile(
     baseModel?: string
     civitaiTags?: string[]
     routingLocked?: boolean
+    modelType?: string
   }[],
   tagRules: TagFolderRule[],
   loraFolder: string,
   checkpointFolder: string
 ): number {
   if (!tagRules.length) return 0
-  return inventory.filter((r) => {
-    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules)
-    if (!winner) return false
-    return !shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder)
-  }).length
+  const index = buildTagRuleMatchIndex(tagRules)
+  let n = 0
+  for (const r of inventory) {
+    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules, index)
+    if (!winner) continue
+    if (!shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) {
+      n++
+    }
+  }
+  return n
+}
+
+/**
+ * Same as countLibraryTagFolderReconcile, but yields so the renderer stays responsive
+ * (assign-tag / Apply button must not freeze the UI on large libraries).
+ */
+export async function countLibraryTagFolderReconcileAsync(
+  inventory: {
+    routingTag: string
+    outputFolder: string
+    baseModel?: string
+    civitaiTags?: string[]
+    routingLocked?: boolean
+    modelType?: string
+  }[],
+  tagRules: TagFolderRule[],
+  loraFolder: string,
+  checkpointFolder: string,
+  opts?: { cancelled?: () => boolean; yieldEvery?: number }
+): Promise<number> {
+  if (!tagRules.length) return 0
+  const index = buildTagRuleMatchIndex(tagRules)
+  const yieldEvery = opts?.yieldEvery ?? 48
+  let n = 0
+  for (let i = 0; i < inventory.length; i++) {
+    if (opts?.cancelled?.()) return n
+    if (i > 0 && i % yieldEvery === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      if (opts?.cancelled?.()) return n
+    }
+    const r = inventory[i]
+    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules, index)
+    if (!winner) continue
+    if (!shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) {
+      n++
+    }
+  }
+  return n
 }
 
 export function inventoryVersionIdsWithCivitaiTag(
@@ -459,21 +517,59 @@ export function inventoryVersionIdsWithCivitaiTag(
     .map((r) => r.versionId)
 }
 
-export function getMatchingFolderTags(tags: string[], tagRules: TagFolderRule[]): string[] {
+export function getMatchingFolderTags(
+  tags: string[],
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
+): string[] {
+  const index = ruleIndex ?? buildTagRuleMatchIndex(tagRules)
   const result: string[] = []
   const seen = new Set<string>()
   for (const t of expandCivitaiTagNames(tags)) {
-    const rule = findRuleForTag(t, tagRules)
-    if (!rule) continue
-    const canonical =
-      parseTagRuleNames(rule.tagName).find((n) => tagAliasMatch(n, t)) ?? t
-    const key = canonical.toLowerCase()
+    let hit: { rule: TagFolderRule; canonical: string } | undefined
+    for (const key of aliasKeysForTag(t)) {
+      hit = index.byAlias.get(key)
+      if (hit) break
+    }
+    if (!hit) continue
+    const key = hit.canonical.toLowerCase()
     if (!seen.has(key)) {
       seen.add(key)
-      result.push(canonical)
+      result.push(hit.canonical)
     }
   }
   return result
+}
+
+/** Alias keys for O(1) rule lookup (exact + plural/singular). */
+function aliasKeysForTag(tag: string): string[] {
+  const raw = tag.trim()
+  if (!raw) return []
+  const keys = new Set<string>([raw.toLowerCase()])
+  for (const v of pluralVariants(raw)) keys.add(v)
+  return [...keys]
+}
+
+/**
+ * Precompute rule-name aliases so library reconcile/count is O(models × tags)
+ * instead of O(models × tags × rules).
+ */
+export type TagRuleMatchIndex = {
+  byAlias: Map<string, { rule: TagFolderRule; canonical: string }>
+}
+
+export function buildTagRuleMatchIndex(tagRules: TagFolderRule[]): TagRuleMatchIndex {
+  const byAlias = new Map<string, { rule: TagFolderRule; canonical: string }>()
+  for (const rule of tagRules) {
+    for (const name of parseTagRuleNames(rule.tagName)) {
+      const canonical = name.trim()
+      if (!canonical) continue
+      for (const key of aliasKeysForTag(canonical)) {
+        if (!byAlias.has(key)) byAlias.set(key, { rule, canonical })
+      }
+    }
+  }
+  return { byAlias }
 }
 
 /** Default rule priority when unset (first-assigned wins among equals — previous behaviour). */
@@ -533,17 +629,19 @@ export function stepTagPriority(current: number, direction: 1 | -1): number {
  */
 export function pickBestMatchingFolderTag(
   modelTags: string[],
-  tagRules: TagFolderRule[]
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
 ): string | null {
-  const matching = getMatchingFolderTags(modelTags, tagRules)
+  const index = ruleIndex ?? (tagRules.length ? buildTagRuleMatchIndex(tagRules) : undefined)
+  const matching = getMatchingFolderTags(modelTags, tagRules, index)
   if (!matching.length) return null
   if (matching.length === 1) return matching[0]
 
   let best = matching[0]
-  let bestRank = tagPriorityRank(getRulePriority(findRuleForTag(best, tagRules)))
+  let bestRank = tagPriorityRank(getRulePriority(findRuleForTag(best, tagRules, index)))
   for (let i = 1; i < matching.length; i++) {
     const tag = matching[i]
-    const rank = tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules)))
+    const rank = tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules, index)))
     if (rank > bestRank) {
       best = tag
       bestRank = rank

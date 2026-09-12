@@ -275,7 +275,7 @@ export const en = {
       updateBrowseOnCrawl:
         'Show Browse cards while harvest runs. Off = hide cards (quieter UI; downloads continue).',
       showTagStats:
-        'Show per-tag counts in Library sidebar and Browse Tags popover. Off (default) = lighter UI with large libraries.',
+        'Show per-tag counts in Library sidebar, Browse Tags, and the Tag folders Count column. Off (default) = lighter UI with large libraries.',
       domain:
         'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.',
       preserveFilters:
