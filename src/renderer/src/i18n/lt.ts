@@ -1113,9 +1113,15 @@ export const lt: Messages = {
   },
   load: {
     failed: 'Nepavyko įkelti',
-    starting: 'Paleidžiama programa',
-    loadingSettings: 'Kraunami nustatymai ir biblioteka…',
-    loadingSettingsRules: 'Kraunami nustatymai ir Browse taisyklės…'
+    starting: 'Kraunama programa',
+    loadingSettings: 'Skaitomi išsaugoti nustatymai…',
+    loadingSettingsRules: 'Kraunamos Browse taisyklės…',
+    stepSettings: 'Skaitomi išsaugoti nustatymai iš disko…',
+    stepRules: 'Kraunami Tag folders ir Browse harvest taisyklės…',
+    stepLists: 'Kraunami Updates, Early access, Missing ir ban sąrašai…',
+    stepLibrary: 'Kraunama modelių biblioteka iš duomenų bazės…',
+    stepQueue: 'Atkuriama atsisiuntimų eilė…',
+    stepSession: 'Perduodama pagrindiniam langui…'
   },
   app: {
     apiUnavailable: 'Programos API nepasiekiamas — paleiskite programą iš naujo.',
@@ -1160,7 +1166,7 @@ export const lt: Messages = {
     phaseRecognize: 'Atpažįstami custom / vietiniai modeliai',
     phaseRename: 'Pervadinami bibliotekos failai',
     phasePreview: 'Tikrinamos bibliotekos preview',
-    preparingHint: 'Kraunami nustatymai ir inventorius — progress pasirodys, kai prasidės disko tikrinimas.',
+    preparingHint: 'Paleidime disko neskenuojama — skaitomi tik lokalūs duomenys.',
     checkingHint:
       'Tikrinama, ar kiekvienas bibliotekos modelio failas dar yra diske (pvz. 250 / 1200). Ištrinti failai pašalinami iš inventoriaus.',
     renameHint: 'Pervadinami modelių failai diske — baigsis, kai pasirodys santrauka.',

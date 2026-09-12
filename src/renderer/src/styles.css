@@ -1336,6 +1336,29 @@ body.is-app-busy * {
   text-align: center;
 }
 
+.app-busy-card-stable .app-busy-step {
+  text-align: center;
+}
+
+.app-busy-card-simple {
+  min-height: 0;
+}
+
+.app-busy-step {
+  margin: 0.65rem 0 0;
+  font-size: 0.98rem;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.app-busy-simple-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
 .app-busy-card-with-progress {
   text-align: left;
 }

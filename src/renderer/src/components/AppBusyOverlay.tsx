@@ -75,23 +75,20 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
 
   if (progress) {
     stickyPhaseRef.current = phaseLabels[progress.phase]
-  } else if (subMessage?.trim()) {
-    // Keep last real phase label — do not bounce back when only session-prep subMessage remains.
-    stickyPhaseRef.current = stickyPhaseRef.current ?? subMessage.trim()
   }
 
+  const step = subMessage?.trim() || ''
   const total = progress?.total ?? 0
   const current = progress?.current ?? 0
   const hasTotal = Boolean(progress) && total > 0
   const hasWalkCount = Boolean(progress) && !hasTotal && current > 0
   const pct = hasTotal ? Math.min(100, Math.round((current / total) * 100)) : 0
-  const phaseLabel =
-    stickyPhaseRef.current ??
-    subMessage?.trim() ??
-    t('appBusy.phaseStarting')
+  const phaseLabel = stickyPhaseRef.current ?? (progress ? t('appBusy.phaseStarting') : step)
   const modelLine = progress?.modelName?.trim() ? trimBusyLine(progress.modelName) : null
   const actionLine = progress?.action?.trim() ? trimBusyLine(progress.action, 48) : null
-  const showProgressBlock = Boolean(progress) || Boolean(stickyPhaseRef.current) || Boolean(subMessage)
+
+  // Boot / simple busy: no fake progress bar with "—" — only real disk-sync progress uses it.
+  const showSyncProgress = Boolean(progress)
 
   const contextHint =
     progress?.phase === 'rename'
@@ -108,27 +105,34 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
                 ? t('appBusy.identityHint')
                 : progress
                   ? t('appBusy.syncHint')
-                  : subMessage
-                    ? t('appBusy.syncHint')
-                    : t('appBusy.preparingHint')
+                  : t('appBusy.preparingHint')
 
   return (
     <div className="app-busy-overlay" role="alertdialog" aria-modal="true" aria-busy="true">
-      <div className="app-busy-card app-busy-card-stable">
+      <div className={`app-busy-card app-busy-card-stable${showSyncProgress ? '' : ' app-busy-card-simple'}`}>
         <strong>{message}</strong>
-        {subMessage &&
-          subMessage !== phaseLabel &&
-          subMessage !== message &&
-          (!actionLine || subMessage !== actionLine) && (
-          <p className="app-busy-submessage muted">{subMessage}</p>
+
+        {!showSyncProgress && step && step !== message && (
+          <p className="app-busy-step">{step}</p>
         )}
 
-        {showProgressBlock && (
-          <div className={`app-busy-sync-progress${progress ? '' : ' is-preparing'}`}>
+        {!showSyncProgress && (
+          <div className="app-busy-simple-row" aria-hidden>
+            <span className="app-busy-spinner" />
+            <span className="muted">{t('appBusy.waitHint')}</span>
+          </div>
+        )}
+
+        {showSyncProgress && step && step !== phaseLabel && step !== message && (!actionLine || step !== actionLine) && (
+          <p className="app-busy-submessage muted">{step}</p>
+        )}
+
+        {showSyncProgress && (
+          <div className="app-busy-sync-progress">
             <div className="app-busy-sync-head">
               <span className="app-busy-phase-label">{phaseLabel}</span>
               <span className="app-busy-pct">
-                {hasTotal ? `${pct}%` : hasWalkCount ? String(current) : progress ? '…' : '—'}
+                {hasTotal ? `${pct}%` : hasWalkCount ? String(current) : '…'}
               </span>
             </div>
             <div
@@ -149,9 +153,7 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
                   ? `${current} / ${total}`
                   : hasWalkCount
                     ? t('appBusy.filesFound', { count: current })
-                    : progress
-                      ? '…'
-                      : '—'}
+                    : '…'}
               </span>
               {actionLine && actionLine !== phaseLabel && (
                 <span className="muted app-busy-sync-action" title={progress?.action}>
@@ -169,7 +171,7 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
 
         <div className="app-busy-hint-stack">
           {contextHint && <p className="muted app-busy-hint app-busy-sync-why">{contextHint}</p>}
-          <p className="muted app-busy-hint">{t('appBusy.waitHint')}</p>
+          {showSyncProgress && <p className="muted app-busy-hint">{t('appBusy.waitHint')}</p>}
         </div>
       </div>
     </div>

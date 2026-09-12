@@ -1101,9 +1101,15 @@ export const en = {
   },
   load: {
     failed: 'Failed to load',
-    starting: 'Starting application',
-    loadingSettings: 'Loading settings and library…',
-    loadingSettingsRules: 'Loading settings and browse rules…'
+    starting: 'Loading application',
+    loadingSettings: 'Reading saved settings…',
+    loadingSettingsRules: 'Loading Browse rules…',
+    stepSettings: 'Reading saved settings from disk…',
+    stepRules: 'Loading Tag folders and Browse harvest rules…',
+    stepLists: 'Loading Updates, Early access, Missing, and ban lists…',
+    stepLibrary: 'Loading your model library from the database…',
+    stepQueue: 'Restoring the download queue…',
+    stepSession: 'Handing off to the main window…'
   },
   app: {
     apiUnavailable: 'App API not available — restart the application.',
@@ -1148,7 +1154,7 @@ export const en = {
     phaseRecognize: 'Recognizing custom / local models',
     phaseRename: 'Renaming library files',
     phasePreview: 'Checking library previews',
-    preparingHint: 'Loading settings and inventory — progress appears when the disk check starts.',
+    preparingHint: 'No disk scan on startup — only local data is being read.',
     checkingHint:
       'Verifying that each library model file still exists on disk (e.g. 250 / 1200). Deleted files are removed from the inventory.',
     renameHint: 'Renaming model files on disk — this runs once and finishes when the summary appears.',

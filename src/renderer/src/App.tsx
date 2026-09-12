@@ -605,27 +605,36 @@ export default function App() {
       setLoadError(null)
       setSyncProgress(null)
 
-      setBusy({
-        message: translate('en', 'load.starting'),
-        subMessage: translate('en', 'load.loadingSettings')
-      })
-      const [s, tags, watch, act, pend, def, incompleteItems, missingItems, exclusionItems, inv] = await Promise.all([
-        window.api.getSettings(),
+      const setBootPhase = (stepKey: string, loc: 'en' | 'lt' = loadedLocale) => {
+        setBusy({
+          message: translate(loc, 'load.starting'),
+          subMessage: translate(loc, stepKey)
+        })
+      }
+
+      setBootPhase('load.stepSettings', 'en')
+      const s = await window.api.getSettings()
+      loadedLocale = s.locale ?? 'en'
+      const loc = loadedLocale
+      setSettings(s)
+
+      setBootPhase('load.stepRules', loc)
+      const [tags, watch] = await Promise.all([
         window.api.getTagRules(),
-        window.api.getWatchRules(),
+        window.api.getWatchRules()
+      ])
+      setTagRules(tags)
+      setWatchRules(watch)
+
+      setBootPhase('load.stepLists', loc)
+      const [act, pend, def, incompleteItems, missingItems, exclusionItems] = await Promise.all([
         window.api.getActivity(),
         window.api.getPending(),
         window.api.getDeferred(),
         window.api.getIncomplete(),
         window.api.getMissing(),
-        window.api.getExclusions(),
-        window.api.getInventory({ syncDisk: false })
+        window.api.getExclusions()
       ])
-      loadedLocale = s.locale ?? 'en'
-      const loc = loadedLocale
-      setSettings(s)
-      setTagRules(tags)
-      setWatchRules(watch)
       setActivity(act)
       applyPendingVersions(pend)
       setDeferred(def)
@@ -633,23 +642,24 @@ export default function App() {
       setMissing(missingItems)
       setExclusions(exclusionItems)
       setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+
+      setBootPhase('load.stepLibrary', loc)
+      const inv = await window.api.getInventory({ syncDisk: false })
       startTransition(() => {
         setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
       })
       // Only await Civitai crawl UI when Harvest is on AND at least one rule can crawl.
       setBrowseGalleryAwaiting(Boolean(s.nightMode) && watch.some((r) => r.enabled))
+
+      setBootPhase('load.stepQueue', loc)
       const q = await window.api.reconcileDownloadQueue()
       setDownloadQueueState({ items: q.items, paused: q.paused || s.crawlAutoDownload === false })
       setStatus(await window.api.getScanStatus())
 
-      // Disk folder walk is Settings → Sync only (not every launch).
-      setBusy({
-        message: translate(loc, 'app.busyPreparingSession'),
-        subMessage: translate(loc, 'load.loadingSettingsRules')
-      })
+      setBootPhase('load.stepSession', loc)
       await window.api.notifyRendererReady()
       setStartupReady(true)
-    }, translate('en', 'load.loadingSettings'))
+    }, translate('en', 'load.stepSettings'))
       .then(async () => {
         try {
           const enrichedDeferred = await window.api.enrichDeferred()
