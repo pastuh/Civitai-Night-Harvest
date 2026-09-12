@@ -2966,25 +2966,13 @@ export function SearchBrowsePanel({
                 title={t('browse.barSegOwned', { count: catalogBreakdown.owned })}
               />
             )}
-            {catalogBreakdown.excludedPct > 0 && (
+            {sessionYieldCount > 0 && catalogBreakdown.total > 0 && (
               <div
-                className="browse-download-progress-seg browse-download-progress-seg-excluded"
-                style={{ width: `${catalogBreakdown.excludedPct}%` }}
-                title={t('browse.barSegExcluded', { count: catalogBreakdown.excluded })}
-              />
-            )}
-            {catalogBreakdown.skipTagPct > 0 && (
-              <div
-                className="browse-download-progress-seg browse-download-progress-seg-skiptag"
-                style={{ width: `${catalogBreakdown.skipTagPct}%` }}
-                title={t('browse.barSegSkipTag', { count: catalogBreakdown.skipTag })}
-              />
-            )}
-            {catalogBreakdown.awaitingPct > 0 && (
-              <div
-                className="browse-download-progress-seg browse-download-progress-seg-awaiting"
-                style={{ width: `${catalogBreakdown.awaitingPct}%` }}
-                title={t('browse.barSegAwaiting', { count: catalogBreakdown.awaiting })}
+                className="browse-download-progress-seg browse-download-progress-seg-missing"
+                style={{
+                  width: `${Math.min(100, (sessionYieldCount / catalogBreakdown.total) * 100)}%`
+                }}
+                title={t('browse.barSegYield', { count: sessionYieldCount })}
               />
             )}
             {catalogBreakdown.awaitingConfirmPct > 0 && (
@@ -2996,13 +2984,25 @@ export function SearchBrowsePanel({
                 })}
               />
             )}
-            {sessionYieldCount > 0 && catalogBreakdown.total > 0 && (
+            {catalogBreakdown.awaitingPct > 0 && (
               <div
-                className="browse-download-progress-seg browse-download-progress-seg-missing"
-                style={{
-                  width: `${Math.min(100, (sessionYieldCount / catalogBreakdown.total) * 100)}%`
-                }}
-                title={t('browse.barSegYield', { count: sessionYieldCount })}
+                className="browse-download-progress-seg browse-download-progress-seg-awaiting"
+                style={{ width: `${catalogBreakdown.awaitingPct}%` }}
+                title={t('browse.barSegAwaiting', { count: catalogBreakdown.awaiting })}
+              />
+            )}
+            {catalogBreakdown.skipTagPct > 0 && (
+              <div
+                className="browse-download-progress-seg browse-download-progress-seg-skiptag"
+                style={{ width: `${catalogBreakdown.skipTagPct}%` }}
+                title={t('browse.barSegSkipTag', { count: catalogBreakdown.skipTag })}
+              />
+            )}
+            {catalogBreakdown.excludedPct > 0 && (
+              <div
+                className="browse-download-progress-seg browse-download-progress-seg-excluded"
+                style={{ width: `${catalogBreakdown.excludedPct}%` }}
+                title={t('browse.barSegExcluded', { count: catalogBreakdown.excluded })}
               />
             )}
           </div>

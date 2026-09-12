@@ -239,9 +239,9 @@ export function HelpTab({ onOpenSettings }: Props) {
             {t('help.sections.progressBar')}
           </h3>
           <p className="muted">
-            {helpInline(t('help.progressBar.owned'))} · {helpInline(t('help.progressBar.banned'))} ·{' '}
-            {helpInline(t('help.progressBar.blocked'))} · {helpInline(t('help.progressBar.awaiting'))} ·{' '}
-            {helpInline(t('help.progressBar.updates'))} · {helpInline(t('help.progressBar.yield'))}
+            {helpInline(t('help.progressBar.owned'))} · {helpInline(t('help.progressBar.yield'))} ·{' '}
+            {helpInline(t('help.progressBar.updates'))} · {helpInline(t('help.progressBar.awaiting'))} ·{' '}
+            {helpInline(t('help.progressBar.blocked'))} · {helpInline(t('help.progressBar.banned'))}
           </p>
           <p className="muted">{helpInline(t('help.progressBar.yieldNote'))}</p>
         </section>

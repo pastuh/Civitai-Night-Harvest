@@ -78,25 +78,11 @@ export function NightCrawlQuietPanel({
                 title={t('browse.barSegOwned', { count: owned })}
               />
             )}
-            {pct(excluded) > 0 && (
+            {yieldPct > 0 && (
               <div
-                className="browse-download-progress-seg browse-download-progress-seg-excluded"
-                style={{ width: `${pct(excluded)}%` }}
-                title={t('browse.barSegExcluded', { count: excluded })}
-              />
-            )}
-            {pct(skipTag) > 0 && (
-              <div
-                className="browse-download-progress-seg browse-download-progress-seg-skiptag"
-                style={{ width: `${pct(skipTag)}%` }}
-                title={t('browse.barSegSkipTag', { count: skipTag })}
-              />
-            )}
-            {pct(awaiting) > 0 && (
-              <div
-                className="browse-download-progress-seg browse-download-progress-seg-awaiting"
-                style={{ width: `${pct(awaiting)}%` }}
-                title={t('browse.barSegAwaiting', { count: awaiting })}
+                className="browse-download-progress-seg browse-download-progress-seg-missing"
+                style={{ width: `${yieldPct}%` }}
+                title={t('browse.barSegYield', { count: sessionYieldCount })}
               />
             )}
             {pct(awaitingConfirm) > 0 && (
@@ -106,11 +92,25 @@ export function NightCrawlQuietPanel({
                 title={t('browse.barSegAwaitingConfirm', { count: awaitingConfirm })}
               />
             )}
-            {yieldPct > 0 && (
+            {pct(awaiting) > 0 && (
               <div
-                className="browse-download-progress-seg browse-download-progress-seg-missing"
-                style={{ width: `${yieldPct}%` }}
-                title={t('browse.barSegYield', { count: sessionYieldCount })}
+                className="browse-download-progress-seg browse-download-progress-seg-awaiting"
+                style={{ width: `${pct(awaiting)}%` }}
+                title={t('browse.barSegAwaiting', { count: awaiting })}
+              />
+            )}
+            {pct(skipTag) > 0 && (
+              <div
+                className="browse-download-progress-seg browse-download-progress-seg-skiptag"
+                style={{ width: `${pct(skipTag)}%` }}
+                title={t('browse.barSegSkipTag', { count: skipTag })}
+              />
+            )}
+            {pct(excluded) > 0 && (
+              <div
+                className="browse-download-progress-seg browse-download-progress-seg-excluded"
+                style={{ width: `${pct(excluded)}%` }}
+                title={t('browse.barSegExcluded', { count: excluded })}
               />
             )}
           </div>
