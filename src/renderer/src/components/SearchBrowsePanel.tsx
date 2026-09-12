@@ -164,6 +164,8 @@ interface Props {
   nightMode?: boolean
   backfillCatalog?: boolean
   updateBrowseOnCrawl?: boolean
+  /** Browse Tags popover counts (Settings → Tag stats). Default off. */
+  showTagStats?: boolean
   deferredAwaitingCount?: number
   deferredVersionIds?: Set<number>
   /** Deferred versions that will unlock for free (wait). */
@@ -257,6 +259,7 @@ export function SearchBrowsePanel({
   backfillCatalog = true,
   nightMode = false,
   updateBrowseOnCrawl = false,
+  showTagStats = false,
   deferredAwaitingCount = 0,
   deferredVersionIds,
   deferredWaitVersionIds,
@@ -1535,6 +1538,7 @@ export function SearchBrowsePanel({
   ])
 
   const tagCatalog = useMemo((): TagCount[] => {
+    if (!showTagStats) return []
     const models: WatchRuleTestModel[] = [...tagCatalogRef.current.values()].map((m) => ({
       ...m,
       isBanned: isBanned(m),
@@ -1550,7 +1554,7 @@ export function SearchBrowsePanel({
     }
     return aggregateResultTags(models)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tagCatalogTick bumps when pages merge
-  }, [tagCatalogTick, localBanned, localUnbanned, ownedVersionIds, queue, isBanned])
+  }, [showTagStats, tagCatalogTick, localBanned, localUnbanned, ownedVersionIds, queue, isBanned])
 
   const filteredTagCatalog = useMemo(() => {
     const q = tagSearch.trim()
@@ -2606,7 +2610,7 @@ export function SearchBrowsePanel({
                     title={t('browse.tagsToggleTitle')}
                   >
                     {tagFilter ? t('browse.tagsFilterActive', { tag: tagFilter }) : t('browse.tagsToggleShort')}
-                    {' '}({tagCatalog.length})
+                    {showTagStats ? ` (${tagCatalog.length})` : ''}
                   </button>
                   {tagFilter && (
                     <button
@@ -2795,7 +2799,11 @@ export function SearchBrowsePanel({
                         )
                       })}
                       {!tagCatalog.length && (
-                        <p className="muted tags-popover-empty">{t('browse.tagEmptyCatalog')}</p>
+                        <p className="muted tags-popover-empty">
+                          {showTagStats
+                            ? t('browse.tagEmptyCatalog')
+                            : t('browse.tagStatsDisabled')}
+                        </p>
                       )}
                       {tagCatalog.length > 0 && !filteredTagCatalog.length && (
                         <p className="muted tags-popover-empty">

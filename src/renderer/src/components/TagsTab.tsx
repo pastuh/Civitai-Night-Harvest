@@ -34,6 +34,8 @@ interface Props {
   /** Permanent ban-by-tag — skip auto-download (same as permanent ban list). */
   bannedTags?: string[]
   onBannedTagsChange?: (tags: string[]) => Promise<void>
+  /** Library tag counts in the table (Settings → Tag stats). Default off. */
+  showTagStats?: boolean
   onSave: (rules: TagFolderRule[]) => Promise<void>
   onFilterLibrary?: (tag: string) => void
   onRefresh?: () => Promise<void>
@@ -292,6 +294,7 @@ export function TagsTab({
   confirmTagFolderMoves = true,
   bannedTags = [],
   onBannedTagsChange,
+  showTagStats = false,
   onSave,
   onFilterLibrary,
   onRefresh,
@@ -426,6 +429,7 @@ export function TagsTab({
 
   const tagCountMap = useMemo(() => {
     const map = new Map<string, number>()
+    if (!showTagStats) return map
     for (const rec of inventory) {
       for (const raw of expandCivitaiTagNames(rec.civitaiTags)) {
         const key = raw.trim().toLowerCase()
@@ -434,7 +438,7 @@ export function TagsTab({
       }
     }
     return map
-  }, [inventory])
+  }, [inventory, showTagStats])
 
   const countForTag = useCallback(
     (tag: string) => tagCountMap.get(tag.trim().toLowerCase()) ?? 0,
@@ -1833,7 +1837,7 @@ const dirty = useMemo(() => {
                   key={rule.id}
                   rule={rule}
                   folderCount={customFolderCounts[rule.id] ?? 0}
-                  showLibraryCount={inventory.length > 0}
+                  showLibraryCount={showTagStats && inventory.length > 0}
                   baseModelSuggestions={baseModelSuggestions}
                   onCommit={update}
                   onPickFolder={(id) => void pickFolder(id)}

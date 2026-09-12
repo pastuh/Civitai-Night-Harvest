@@ -138,6 +138,11 @@ interface Props {
   libraryPreviewCacheBust?: Record<number, number>
   /** Play video preview on hover (Settings). */
   browseVideoPreviews?: boolean
+  /**
+   * Library sidebar tag counts / clusters (Settings → Tag stats).
+   * Default off — expensive with large libraries.
+   */
+  showTagStats?: boolean
   /** Notify parent after version-scoped exclude so Browse cards update. */
   onBannedChange?: (
     modelId: number,
@@ -277,6 +282,7 @@ function GalleryTabInner({
   onToggleEaFavorite,
   libraryPreviewCacheBust,
   browseVideoPreviews = false,
+  showTagStats = false,
   onBannedChange
 }: Props) {
   const t = useT()
@@ -360,6 +366,8 @@ function GalleryTabInner({
   const [pinEaFavoriteIds, setPinEaFavoriteIds] = useState<number[]>(eaFavoriteIds)
   const pinEaFavoriteSet = useMemo(() => new Set(pinEaFavoriteIds), [pinEaFavoriteIds])
   const libraryWasActiveRef = useRef(false)
+  /** Session filter was applied via Library badge (+N) — clear on next open without new downloads. */
+  const sessionFilterFromBadgeRef = useRef(false)
 
   // Auto-select session downloads only when the user opens the Library tab with
   // an explicit preferSessionFilter (badge click). Do not use highlightVersionIds —
@@ -376,7 +384,14 @@ function GalleryTabInner({
     }
     if (preferSessionFilter) {
       setLibraryFilter({ type: 'session' })
+      sessionFilterFromBadgeRef.current = true
       onPreferSessionHandled?.()
+      return
+    }
+    // Badge already cleared (no new downloads) — don't keep Session from the prior badge jump.
+    if (sessionFilterFromBadgeRef.current) {
+      sessionFilterFromBadgeRef.current = false
+      setLibraryFilter({ type: 'all' })
     }
   }, [isActive, eaFavoriteIds, focusModelId, preferSessionFilter, onPreferSessionHandled])
 
@@ -417,7 +432,10 @@ function GalleryTabInner({
     for (const id of pendingBanIds) merged.add(id)
     return merged
   }, [bannedIds, pendingBanIds])
-  const modelTags = useMemo(() => aggregateModelTags(inventory), [inventory])
+  const modelTags = useMemo(
+    () => (showTagStats ? aggregateModelTags(inventory) : []),
+    [inventory, showTagStats]
+  )
   const tagClusters = useMemo(() => buildTagClusters(modelTags), [modelTags])
 
   const inventoryForMainCounts = useMemo(() => {
@@ -503,6 +521,8 @@ function GalleryTabInner({
   }, [dateRangeAnchor])
 
   const applyLibraryFilter = useCallback((next: LibraryFilter) => {
+    // Manual sidebar choice is not a badge jump — keep it across tab switches.
+    sessionFilterFromBadgeRef.current = false
     setLibraryFilter(next)
     // Tag/folder filters show everything for that tag — clear model type.
     if (isLibraryTagStyleFilter(next)) {
@@ -601,6 +621,7 @@ function GalleryTabInner({
 
   const routingTagCounts = useMemo(() => {
     const map = new Map<string, number>()
+    if (!showTagStats) return map
     for (const r of inventory) {
       const tag = r.routingTag?.trim()
       if (!tag) continue
@@ -608,7 +629,7 @@ function GalleryTabInner({
       map.set(key, (map.get(key) ?? 0) + 1)
     }
     return map
-  }, [inventory])
+  }, [inventory, showTagStats])
 
   const allTagSubfolderRoutes = useMemo(
     () => collectTagSubfolderRoutes(tagRules, loraFolder, checkpointFolder),
@@ -633,6 +654,7 @@ function GalleryTabInner({
   /** Counts for all routes — independent of sidebar search (search must stay cheap). */
   const tagSubfolderCounts = useMemo(() => {
     const map = new Map<string, number>()
+    if (!showTagStats) return map
     for (const route of allTagSubfolderRoutes) {
       map.set(
         route.name,
@@ -646,7 +668,7 @@ function GalleryTabInner({
       )
     }
     return map
-  }, [allTagSubfolderRoutes, inventory, tagRules, loraFolder, checkpointFolder])
+  }, [allTagSubfolderRoutes, inventory, tagRules, loraFolder, checkpointFolder, showTagStats])
 
   const modelSearchLetters = useMemo(() => {
     const set = new Set<string>()
@@ -1617,7 +1639,7 @@ function GalleryTabInner({
           onClick={() => applyLibraryFilter({ type: 'civitai', name: tag.name })}
         >
           <span className="tag-name">{tag.name}</span>
-          <span className="muted tag-count-inline">{tag.count}</span>
+          {showTagStats && <span className="muted tag-count-inline">{tag.count}</span>}
         </button>
         {selected.size > 0 && (
           <button
@@ -2185,9 +2207,11 @@ function GalleryTabInner({
                             title={route.display}
                           >
                             <span className="tag-name">{route.name}</span>
-                            <span className="muted tag-count-inline">
-                              {tagSubfolderCounts.get(route.name) ?? 0}
-                            </span>
+                            {showTagStats && (
+                              <span className="muted tag-count-inline">
+                                {tagSubfolderCounts.get(route.name) ?? 0}
+                              </span>
+                            )}
                           </button>
                           {selected.size > 0 && (
                             <button
@@ -2221,9 +2245,11 @@ function GalleryTabInner({
                                   }
                                 >
                                   <span className="tag-name">{tag}</span>
-                                  <span className="muted tag-count-inline">
-                                    {routingTagCounts.get(tag.toLowerCase()) ?? 0}
-                                  </span>
+                                  {showTagStats && (
+                                    <span className="muted tag-count-inline">
+                                      {routingTagCounts.get(tag.toLowerCase()) ?? 0}
+                                    </span>
+                                  )}
                                 </button>
                                 {selected.size > 0 && (
                                   <button
@@ -2265,7 +2291,9 @@ function GalleryTabInner({
                           }
                         >
                           <span className="tag-name">{entry.label}</span>
-                          <span className="muted tag-count-inline">{entry.count}</span>
+                          {showTagStats && (
+                            <span className="muted tag-count-inline">{entry.count}</span>
+                          )}
                         </button>
                         {selected.size > 0 && entry.isRoot && (
                           <button
@@ -2336,7 +2364,9 @@ function GalleryTabInner({
                       title={t('gallery.relatedTags', { count: cluster.variants.length })}
                     >
                       <span className="tag-name">{cluster.label}</span>
-                      <span className="muted tag-count-inline">{cluster.total}</span>
+                      {showTagStats && (
+                        <span className="muted tag-count-inline">{cluster.total}</span>
+                      )}
                     </button>
                   </div>
                   {expanded && (

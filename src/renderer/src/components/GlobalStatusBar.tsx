@@ -259,6 +259,15 @@ function primaryActivityLabel(
 
     if (crawlProgress?.phase === 'fetching') {
       const fetchPage = crawlProgress.pageNumber ?? page ?? 1
+      if (total > 0) {
+        return rules
+          ? t('globalStatus.scanningApiFetchingWithTotalRule', {
+              page: fetchPage,
+              total,
+              rules
+            })
+          : t('globalStatus.scanningApiFetchingWithTotal', { page: fetchPage, total })
+      }
       return rules
         ? t('globalStatus.scanningApiFetchingRule', { page: fetchPage, rules })
         : t('globalStatus.scanningApiFetching', { page: fetchPage })

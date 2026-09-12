@@ -22,8 +22,8 @@ export interface BrowsePlannedCountInput {
 }
 
 /**
- * Version IDs that can enter (or already sit in) the Browse download queue —
- * the Yield-style intake pool. Independent of Pause / Harvest / quiet gallery.
+ * Version IDs still eligible for the Browse download queue (or currently queued/downloading).
+ * Shrinks as models become owned / banned / awaiting. Independent of Pause / Harvest.
  */
 export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): Set<number> {
   const ownedVersionIds = new Set(input.inventory.map((r) => r.versionId))
@@ -68,7 +68,7 @@ export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): S
   return ids
 }
 
-/** Browse tab badge count from the current eligible set (prefer sticky session union in App). */
+/** Browse tab badge count from the current eligible set. */
 export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): number {
   return collectBrowseQueueEligibleIds(input).size
 }

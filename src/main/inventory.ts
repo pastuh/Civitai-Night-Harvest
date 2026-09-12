@@ -705,6 +705,7 @@ export function banModel(modelId: number, modelName = '', stub?: BanModelStub): 
   clearModelAutoUpdate(modelId)
   removeIncompleteModel(modelId)
   removeTagSkipReview(modelId)
+  invalidateInventorySnapshotCache()
 }
 
 /** Ban + hide everywhere (Missing/Browse/Library) unless Show forgotten. */
@@ -1593,6 +1594,7 @@ export function addVersion(record: InventoryRecord): void {
   if (record.modelId > 0) {
     removeIncompleteModel(record.modelId)
   }
+  invalidateInventorySnapshotCache()
 }
 
 export function patchVersionPrimaryFileName(versionId: number, primaryFileName: string): void {
@@ -1712,6 +1714,7 @@ export function versionIdExists(versionId: number): boolean {
 export function removeVersion(versionId: number): void {
   getDb().prepare('DELETE FROM versions WHERE version_id = ?').run(versionId)
   removePendingVersion(versionId)
+  invalidateInventorySnapshotCache()
 }
 
 export function getVersionByModelPath(modelPath: string): InventoryRecord | null {
@@ -1809,6 +1812,23 @@ export function buildInventorySnapshot(): InventorySnapshot {
   return { versionIds, versionsByModel, ignoredModelIds, slugsByFolder }
 }
 
+/** Harvest pages call this often — reuse snapshot briefly; callers also check hasVersion(). */
+let inventorySnapshotCache: { snap: InventorySnapshot; at: number } | null = null
+
+export function invalidateInventorySnapshotCache(): void {
+  inventorySnapshotCache = null
+}
+
+export function getInventorySnapshotCached(maxAgeMs = 45_000): InventorySnapshot {
+  const now = Date.now()
+  if (inventorySnapshotCache && now - inventorySnapshotCache.at < maxAgeMs) {
+    return inventorySnapshotCache.snap
+  }
+  const snap = buildInventorySnapshot()
+  inventorySnapshotCache = { snap, at: now }
+  return snap
+}
+
 export function getAllPendingVersions(): PendingVersion[] {
   const rows = getDb()
     // Oldest first so newly detected offers appear at the bottom (safer while reviewing).
@@ -1879,6 +1899,27 @@ export function getPreferredPreviewUrl(versionId: number): string | undefined {
   return url || undefined
 }
 
+/** One query for Browse gallery rebuilds — avoids per-model preferred-preview SQL. */
+export function getPreferredPreviewUrlMap(): Map<number, string> {
+  const rows = getDb()
+    .prepare('SELECT version_id, preview_url FROM version_preview_prefs')
+    .all() as Array<{ version_id: number; preview_url: string }>
+  const map = new Map<number, string>()
+  for (const r of rows) {
+    const url = r.preview_url?.trim()
+    if (url && r.version_id > 0) map.set(r.version_id, url)
+  }
+  return map
+}
+
+/** Lightweight owned-model set for Browse gallery stats (no full version rows). */
+export function getOwnedModelIds(): Set<number> {
+  const rows = getDb()
+    .prepare('SELECT DISTINCT model_id FROM versions WHERE model_id > 0')
+    .all() as Array<{ model_id: number }>
+  return new Set(rows.map((r) => r.model_id))
+}
+
 export function setVersionPreferredPreview(
   versionId: number,
   modelId: number,
@@ -1914,10 +1955,16 @@ export function setVersionPreferredPreview(
 }
 
 export function applyPreferredPreviewToModel<T extends { versionId?: number; previewUrl?: string; previewUrls?: string[] }>(
-  model: T
+  model: T,
+  preferredByVersion?: Map<number, string>
 ): T {
   const versionId = model.versionId ?? 0
-  const pref = versionId > 0 ? getPreferredPreviewUrl(versionId) : undefined
+  const pref =
+    versionId > 0
+      ? preferredByVersion
+        ? preferredByVersion.get(versionId)
+        : getPreferredPreviewUrl(versionId)
+      : undefined
   if (!pref) return model
   const previewUrls = [pref, ...(model.previewUrls ?? []).filter((u) => u && u !== pref)]
   return { ...model, previewUrl: pref, previewUrls }

@@ -206,6 +206,9 @@ export function getSettings(): AppSettings {
   if (raw.updateBrowseOnCrawl === undefined) {
     raw.updateBrowseOnCrawl = false
   }
+  if (raw.showTagStats === undefined) {
+    raw.showTagStats = false
+  }
   if (raw.uiMode !== 'minimal' && raw.uiMode !== 'extended') {
     raw.uiMode = 'minimal'
   }

@@ -436,8 +436,11 @@ export class DownloadQueue {
   }
 
   /** Drop queue rows for versions already in library (e.g. after inventory refresh). */
-  syncWithInventory(): void {
-    repairBrokenInventoryPaths()
+  syncWithInventory(options?: { repairPaths?: boolean }): void {
+    // Full disk path repair is O(library) existsSync — never run on every harvest page.
+    if (options?.repairPaths !== false) {
+      repairBrokenInventoryPaths()
+    }
     let changed = this.reconcileOwnedInQueue()
     if (this.pruneFailedNowOwned()) changed = true
     if (this.reclassifyStuckFailures() > 0) changed = true

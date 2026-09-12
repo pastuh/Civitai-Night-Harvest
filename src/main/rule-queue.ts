@@ -33,6 +33,7 @@ import {
   firstPolicyMatch,
   isCustomAssignmentInventoryRecord,
   modelHasPolicyTag,
+  parseTagRuleNames,
   resolveModelRoutingTag
 } from '../shared/tag-routing'
 import { isLocalInventoryRecord } from '../shared/local-inventory'
@@ -92,9 +93,22 @@ function createRuleQueueContext(
 ): RuleQueueContext {
   const settings = getSettings()
   const tagRules = getTagRules()
+  const snapshot = inventory.getInventorySnapshotCached()
+  const usedTags = new Set<string>()
+  for (const records of snapshot.versionsByModel.values()) {
+    for (const r of records) {
+      const t = r.routingTag?.trim()
+      if (t) usedTags.add(t.toLowerCase())
+    }
+  }
+  for (const rule of tagRules) {
+    for (const t of parseTagRuleNames(rule.tagName)) {
+      if (t) usedTags.add(t.toLowerCase())
+    }
+  }
   return {
-    snapshot: inventory.buildInventorySnapshot(),
-    usedTags: collectUsedTags(inventory.getAllVersions(), tagRules),
+    snapshot,
+    usedTags,
     tagRules,
     filter: settings.contentFilter,
     pendingVersionIds: new Set(pendingVersions.map((p) => p.versionId)),
@@ -930,7 +944,11 @@ export function queueEligibleTestModels(
   const pausedTags = settings.hiddenTags ?? []
   const bannedTags = settings.bannedTags ?? []
   const tagRules = getTagRules()
-  const usedTags = collectUsedTags(inventory.getAllVersions(), tagRules)
+  // Harvest always has requireTagMatch=false — skip full-library SELECT * for used tags.
+  const usedTags = options.requireTagMatch
+    ? collectUsedTags(inventory.getAllVersions(), tagRules)
+    : collectUsedTags([], tagRules)
+  const tagSkipAllow = new Set(inventory.getTagSkipAllowlistIds())
   let queued = 0
   const skipped = {
     noVersion: 0,
@@ -978,7 +996,7 @@ export function queueEligibleTestModels(
     }
     // Pause/Ban tags → Missing only. Do not auto-defer EA (manual Allow from Missing can still).
     const policyHit =
-      !inventory.isTagSkipAllowed(m.id) && firstPolicyMatch(m.tags ?? [], pausedTags, bannedTags)
+      !tagSkipAllow.has(m.id) && firstPolicyMatch(m.tags ?? [], pausedTags, bannedTags)
     if (policyHit) {
       inventory.recordTagSkipReview({
         modelId: m.id,

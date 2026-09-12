@@ -292,9 +292,6 @@ export default function App() {
   /** Session Yield: versionIds that entered the download pipeline (only grows). */
   const sessionYieldIdsRef = useRef<Set<number>>(new Set())
   const [sessionYieldCount, setSessionYieldCount] = useState(0)
-  /** Browse badge sticky pool — only grows this session (Yield-style; no Pause flicker). */
-  const browseBadgeStickyRef = useRef<Set<number>>(new Set())
-  const [browseBadgeStickyCount, setBrowseBadgeStickyCount] = useState(0)
   const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
 
   const noteSessionYield = useCallback((items: DownloadQueueItem[]) => {
@@ -812,7 +809,10 @@ export default function App() {
             pageNumber: payload.pageNumber,
             pageModelsAdded: payload.pageModelsAdded ?? 0,
             pageModelsOnPage: payload.pageModelsOnPage ?? 0,
-            galleryTotal: payload.galleryTotal ?? payload.result.sampleModels.length,
+            galleryTotal: Math.max(
+              payload.galleryTotal ?? payload.result.sampleModels.length,
+              prev?.galleryTotal ?? 0
+            ),
             galleryStats: payload.galleryStats ?? prev?.galleryStats,
             catalogComplete,
             hasMorePages,
@@ -870,18 +870,26 @@ export default function App() {
           setBrowseGalleryAwaiting(false)
         }
         if (payload?.phase === 'page-done' || payload?.phase === 'catalog-complete') {
-          setCrawlPageMeta((prev) => ({
-            ruleId: payload.ruleId,
-            ruleName: payload.ruleName,
-            pageNumber: payload.pageNumber ?? prev?.pageNumber ?? 1,
-            pageModelsAdded: prev?.pageModelsAdded ?? 0,
-            pageModelsOnPage: payload.pageModelsOnPage ?? prev?.pageModelsOnPage ?? 0,
-            galleryTotal: payload.galleryTotal ?? prev?.galleryTotal ?? 0,
-            galleryStats: payload.galleryStats ?? prev?.galleryStats,
-            catalogComplete: payload.catalogComplete,
-            hasMorePages: payload.hasMorePages,
-            pageQueued: prev?.pageQueued
-          }))
+          setCrawlPageMeta((prev) => {
+            const incoming = payload.galleryTotal
+            // Never regress gallery total from pre-merge FetchDone (stale length before page merge).
+            const galleryTotal =
+              incoming == null
+                ? (prev?.galleryTotal ?? 0)
+                : Math.max(incoming, prev?.galleryTotal ?? 0)
+            return {
+              ruleId: payload.ruleId,
+              ruleName: payload.ruleName,
+              pageNumber: payload.pageNumber ?? prev?.pageNumber ?? 1,
+              pageModelsAdded: prev?.pageModelsAdded ?? 0,
+              pageModelsOnPage: payload.pageModelsOnPage ?? prev?.pageModelsOnPage ?? 0,
+              galleryTotal,
+              galleryStats: payload.galleryStats ?? prev?.galleryStats,
+              catalogComplete: payload.catalogComplete,
+              hasMorePages: payload.hasMorePages,
+              pageQueued: prev?.pageQueued
+            }
+          })
         }
         // Coalesce fetching ticks — status bar stays live enough without thrashing React.
         if (payload?.phase === 'page-done' || payload?.phase === 'catalog-complete' || payload == null) {
@@ -1865,20 +1873,9 @@ export default function App() {
     queueStructureKeyForBadge
   ])
 
-  useEffect(() => {
-    const sticky = browseBadgeStickyRef.current
-    let added = 0
-    for (const id of browseEligibleNow) {
-      if (sticky.has(id)) continue
-      sticky.add(id)
-      added++
-    }
-    if (added > 0) setBrowseBadgeStickyCount(sticky.size)
-  }, [browseEligibleNow])
-
-  // Yield-style Browse badge: session sticky pool (grows on unban / new pages; no Pause flicker).
-  const browsePlannedDownloadCount =
-    browseBadgeStickyCount || browseEligibleNow.size || undefined
+  // Browse tab badge = still eligible to queue/download (shrinks as Owned / banned / done).
+  // Session Yield under the progress bar stays separate (only grows).
+  const browsePlannedDownloadCount = browseEligibleNow.size || undefined
 
   const awaitingBadgeCount = useMemo(
     () =>
@@ -2001,6 +1998,7 @@ export default function App() {
       onBannedTagsChange={async (tags) => {
         await saveSettings({ bannedTags: tags })
       }}
+      showTagStats={settings?.showTagStats ?? false}
       onSave={saveTagRules}
       onRefresh={refreshInventory}
       onMoveStatus={setBackgroundStatus}
@@ -2356,6 +2354,7 @@ export default function App() {
               onToggleEaFavorite={toggleEaFavorite}
               libraryPreviewCacheBust={libraryPreviewCacheBust}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
+              showTagStats={settings.showTagStats ?? false}
               onBannedChange={(modelId, banned, stub) =>
                 markBrowseModelBan(modelId, banned, stub)
               }

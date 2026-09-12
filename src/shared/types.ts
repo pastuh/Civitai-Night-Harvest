@@ -103,6 +103,11 @@ export interface AppSettings {
   backfillCatalog: boolean
   /** Refresh Browse grid on each automated crawl page (off = Activity log only, less CPU/API) */
   updateBrowseOnCrawl: boolean
+  /**
+   * Library / Browse sidebar tag counts and clusters.
+   * Default off — expensive with large libraries (O(n × tags) + folder route counts).
+   */
+  showTagStats: boolean
   /** Cached from GET /me when API key is set */
   civitaiUsername?: string
   civitaiUserTier?: string
@@ -216,6 +221,7 @@ export interface AppSettingsPublic {
   newestPeekIntervalMinutes: number
   backfillCatalog: boolean
   updateBrowseOnCrawl: boolean
+  showTagStats: boolean
   civitaiUsername?: string
   civitaiUserTier?: string
   uiMode: UiMode
@@ -274,6 +280,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   newestPeekIntervalMinutes: 15,
   backfillCatalog: true,
   updateBrowseOnCrawl: false,
+  showTagStats: false,
   uiMode: 'minimal',
   theme: 'dark',
   locale: 'en',

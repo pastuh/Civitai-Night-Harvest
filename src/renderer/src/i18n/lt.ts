@@ -42,7 +42,7 @@ export const lt: Messages = {
   tabs: {
     browse: 'Naršymas',
     browseBadgeTitle:
-      'Browse eilės pool šią sesiją (kaip Yield): modeliai, kurie gali patekti arba jau pateko į download eilę. Auga kai unban / nauji puslapiai; Pause jo nenuima.',
+      'Modeliai, kurie dar gali patekti į Browse download eilę (ne Owned / banned / awaiting). Mažėja kai atsisiuntimai baigiasi. Pause jo nenuima.',
     library: 'Biblioteka',
     download: 'Atsisiuntimas',
     tagFolders: 'Tag aplankai',
@@ -140,6 +140,7 @@ export const lt: Messages = {
       newestPeek: 'Newest peek (min)',
       connectionsPerFile: 'Ryšiai per failą',
       updateBrowseOnCrawl: 'Atnaujinti Browse tinklelį crawl metu',
+      showTagStats: 'Tagų statistika',
       scanOnStartup: 'Scan paleidus programą',
       autoRetryDeferred: 'Pakartoti laukiančius po scan',
       blurPreviews: 'Blur preview nuotraukos',
@@ -275,6 +276,8 @@ export const lt: Messages = {
       resultsPageSize: 'Kiek kortelių puslapyje (Pages) arba scroll bloke (Lazy / Auto-advance).',
       updateBrowseOnCrawl:
         'Rodyti Browse korteles harvest metu. Off = slėpti korteles (tylesnis UI; siuntimai tęsiasi).',
+      showTagStats:
+        'Rodyti tagų skaičius Library šoninėje juostoje ir Browse Tags. Off (numatytai) = lengvesnis UI su didele biblioteka.',
       domain:
         'civitai.red = pilnas katalogas (SFW+NSFW) vienu API. civitai.com = SFW orientuotas hostas. Brandą ribokite Browse taisyklės filteriu — dvigubas crawl nebereikalingas.',
       preserveFilters:
@@ -681,6 +684,7 @@ export const lt: Messages = {
     tagRouteCreate: 'Sukurti aplanko maršrutą šiam tagui',
     tagRouteTo: 'Siųsti atsisiuntimus į {folder}',
     tagEmptyCatalog: 'Tagų dar nėra — krauti daugiau puslapių.',
+    tagStatsDisabled: 'Tagų statistika išjungta — įjunkite Nustatymuose, kad matytumėte tagus su skaičiais.',
     tagEmptySearch: 'Nėra tagų pagal „{query}“',
     tagEmptySearchShort: 'Nėra atitinkančių tagų',
     tagUniqueCount: '{count} unikalių tagų',
@@ -1723,6 +1727,8 @@ export const lt: Messages = {
     scanningApiRulesMany: 'Skenuojamas Civitai API · {count} taisyklės ({sample})',
     scanningApiFetching: 'Kraunamas Civitai puslapis {page}…',
     scanningApiFetchingRule: 'Kraunamas puslapis {page} · Taisyklė: {rules}',
+    scanningApiFetchingWithTotal: 'Kraunamas puslapis {page} · {total} galerijoje…',
+    scanningApiFetchingWithTotalRule: 'Kraunamas puslapis {page} · {total} galerijoje · {rules}',
     scanningApiFetchingTags: 'Tag paieška {step}/{total}: „{tag}“…',
     scanningApiFetchingTagsRule: 'Tag {step}/{total}: „{tag}“ · Taisyklė: {rules}',
     scanningApiFetchingTagsPrep: 'Ruošiami {total} tag variantai…',

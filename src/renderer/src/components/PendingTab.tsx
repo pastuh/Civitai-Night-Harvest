@@ -411,10 +411,9 @@ export const PendingTab = memo(function PendingTab({
   const forgetVersion = async (item: PendingVersion) => {
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
     markBusy(item.versionId, true)
-    // Optimistic: keep the card under Show forgotten (don't flash an empty filter).
+    // Keep current sidebar filter — only ensure forgotten cards stay visible (Show forgotten).
     onPendingPatched?.(item.versionId, { forgotten: true, skipped: false })
     setShowForgotten(true)
-    setSideFilter({ type: 'forgotten' })
     try {
       await window.api.forgetPendingVersion(item.versionId)
     } catch {
@@ -1179,7 +1178,7 @@ export const PendingTab = memo(function PendingTab({
                       const skipped = Boolean(item.skipped) && !forgotten
                       const isSeen = Boolean(pendingSeenByVersionId[item.versionId])
                       const canMarkSeen =
-                        !temporary && markSeenMode && !isSeen && !forgotten && !skipped
+                        !temporary && markSeenMode && !isSeen && !forgotten
                       const mt = resolveModelType(item, owned)
                       const nsfw = resolveNsfw(item, owned)
                       const ratingInfo = describeNsfwRatingForCard(nsfw.nsfw, nsfw.nsfwLevel)

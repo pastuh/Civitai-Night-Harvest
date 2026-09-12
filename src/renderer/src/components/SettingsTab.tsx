@@ -759,6 +759,17 @@ export function SettingsTab({
           <label>
             <input
               type="checkbox"
+              checked={draft.showTagStats ?? false}
+              onChange={(e) => update('showTagStats', e.target.checked)}
+            />
+            {t('settings.fields.showTagStats')}
+          </label>
+          <p className="muted settings-field-note">{t('settings.notes.showTagStats')}</p>
+        </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
               checked={draft.scanOnStartup}
               onChange={(e) => update('scanOnStartup', e.target.checked)}
             />

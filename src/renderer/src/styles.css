@@ -4613,10 +4613,15 @@ select.browse-content-filter {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 70%, #000 30%);
   border-bottom: 1px solid var(--border);
   max-width: 280px;
   white-space: normal;
   word-break: break-word;
+  pointer-events: none;
+  user-select: text;
+  cursor: default;
 }
 
 .context-menu-divider {
@@ -4716,13 +4721,19 @@ select.browse-content-filter {
   border-radius: 0;
   padding: 10px 12px;
   background: transparent;
+  color: var(--text);
   pointer-events: auto;
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .context-menu button:not(.tag-autocomplete-clear):not(.tag-autocomplete-confirm):not(.context-menu-tag-chip):hover {
-  background: var(--surface2);
-  color: var(--error);
+  background: var(--surface2, color-mix(in srgb, var(--accent, #ffca24) 18%, transparent));
+  color: var(--text);
+}
+
+.context-menu button:not(.tag-autocomplete-clear):not(.tag-autocomplete-confirm):not(.context-menu-tag-chip):active {
+  background: color-mix(in srgb, var(--accent, #ffca24) 28%, transparent);
 }
 
 .gallery-card.highlight {

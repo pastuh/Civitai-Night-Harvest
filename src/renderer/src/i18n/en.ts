@@ -40,7 +40,7 @@ export const en = {
   tabs: {
     browse: 'Browse',
     browseBadgeTitle:
-      'Browse queue pool this session (Yield-style): models that can enter or already entered the download queue. Grows when you unban / new pages load; Pause does not clear it.',
+      'Models still eligible for the Browse download queue (not yet owned / banned / awaiting). Shrinks as downloads finish. Pause does not clear it.',
     library: 'Library',
     download: 'Download',
     tagFolders: 'Tag Folders',
@@ -138,6 +138,7 @@ export const en = {
       newestPeek: 'Newest peek (min)',
       connectionsPerFile: 'Connections per file',
       updateBrowseOnCrawl: 'Update Browse grid during crawl',
+      showTagStats: 'Tag stats',
       scanOnStartup: 'Scan on startup',
       autoRetryDeferred: 'Re-queue awaiting-access after scan',
       blurPreviews: 'Blur preview images',
@@ -273,6 +274,8 @@ export const en = {
       resultsPageSize: 'How many cards per page (Pages) or per scroll chunk (Lazy / Auto-advance).',
       updateBrowseOnCrawl:
         'Show Browse cards while harvest runs. Off = hide cards (quieter UI; downloads continue).',
+      showTagStats:
+        'Show per-tag counts in Library sidebar and Browse Tags popover. Off (default) = lighter UI with large libraries.',
       domain:
         'civitai.red = full catalog (SFW+NSFW) via one API. civitai.com = SFW-oriented host. Filter maturity per Browse rule — dual crawl is obsolete.',
       preserveFilters:
@@ -673,6 +676,7 @@ export const en = {
     tagRouteCreate: 'Create folder route for this tag',
     tagRouteTo: 'Route downloads to {folder}',
     tagEmptyCatalog: 'No tags yet — load more pages.',
+    tagStatsDisabled: 'Tag stats are off — enable in Settings to list tags with counts.',
     tagEmptySearch: 'No tags match “{query}”',
     tagEmptySearchShort: 'No tags match',
     tagUniqueCount: '{count} unique tags',
@@ -1705,6 +1709,8 @@ export const en = {
     scanningApiRulesMany: 'Scanning Civitai API · {count} rules ({sample})',
     scanningApiFetching: 'Fetching Civitai page {page}…',
     scanningApiFetchingRule: 'Fetching page {page} · Rule: {rules}',
+    scanningApiFetchingWithTotal: 'Fetching page {page} · {total} in gallery…',
+    scanningApiFetchingWithTotalRule: 'Fetching page {page} · {total} in gallery · {rules}',
     scanningApiFetchingTags: 'Tag search {step}/{total}: “{tag}”…',
     scanningApiFetchingTagsRule: 'Tag {step}/{total}: “{tag}” · Rule: {rules}',
     scanningApiFetchingTagsPrep: 'Preparing {total} tag search variants…',

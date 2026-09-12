@@ -1056,6 +1056,7 @@ export function WatchRulesTab({
           backfillCatalog={settings.backfillCatalog ?? true}
           nightMode={settings.nightMode ?? false}
           updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? false}
+          showTagStats={settings.showTagStats ?? false}
           deferredAwaitingCount={deferred.length}
           deferredVersionIds={deferredVersionIds}
           deferredWaitVersionIds={deferredWaitVersionIds}
