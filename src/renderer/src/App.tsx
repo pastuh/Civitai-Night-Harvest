@@ -2185,7 +2185,7 @@ export default function App() {
               <span className="muted"> · {m.header.nsfwNeedsKey}</span>
             )}
             <div className="get-started-banner-actions">
-              {!foldersConfigured && (
+              {(!foldersConfigured || !settings.hasApiKey) && (
                 <button type="button" className="btn-sm" onClick={() => setTab('settings')}>
                   {m.common.openSettings}
                 </button>

@@ -91,7 +91,6 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <HelpLi text={t('help.headerHarvest')} />
-            <HelpLi text={t('help.headerNightModes')} />
             <HelpLi text={t('help.headerDownloads')} />
             <HelpLi text={t('help.headerEye')} />
             <HelpLi text={t('help.headerBlur')} />
@@ -120,54 +119,12 @@ export function HelpTab({ onOpenSettings }: Props) {
             <HelpLi text={t('help.browseBan')} />
             <HelpLi text={t('help.browseContextSkipTag')} />
           </ul>
-        </section>
-
-        <section className="help-section">
-          <h3>
-            <span className="help-section-icon" aria-hidden>
-              📚
-            </span>
-            {t('help.sections.library')}
-          </h3>
-          <ul>
-            <HelpLi text={t('help.libraryFolders')} />
-            <HelpLi text={t('help.libraryCustomAssignments')} />
-            <HelpLi text={t('help.libraryPriority')} />
-            <HelpLi text={t('help.libraryTagBan')} />
-            <HelpLi text={t('help.libraryBadge')} />
-            <HelpLi text={t('help.librarySession')} />
-            <HelpLi text={t('help.libraryAlwaysUpdate')} />
-            <HelpLi text={t('help.libraryByDate')} />
-            <HelpLi text={t('help.libraryDetails')} />
-            <HelpLi text={t('help.librarySort')} />
-            <HelpLi text={t('help.libraryContent')} />
-            <HelpLi text={t('help.libraryTypeFilter')} />
-            <HelpLi text={t('help.libraryTags')} />
-            <HelpLi text={t('help.libraryFastTag')} />
-            <HelpLi text={t('help.libraryExcluded')} />
-            <HelpLi text={t('help.libraryManual')} />
-            <HelpLi text={t('help.libraryPreserve')} />
-            <HelpLi text={t('help.libraryConfirmMoves')} />
-            <HelpLi text={t('help.libraryDiskSync')} />
-          </ul>
-        </section>
-
-        <section className="help-section">
-          <h3>
-            <span className="help-section-icon" aria-hidden>
-              📭
-            </span>
-            {t('help.sections.missing')}
-          </h3>
-          <ul>
-            <HelpLi text={t('help.missingOverview')} />
-            <HelpLi text={t('help.missingKinds')} />
-            <HelpLi text={t('help.missingFilters')} />
-            <HelpLi text={t('help.missingMarkSeen')} />
-            <HelpLi text={t('help.missingAllow')} />
-            <HelpLi text={t('help.missingForget')} />
-            <HelpLi text={t('help.missingContextMenu')} />
-          </ul>
+          <p className="muted" style={{ marginTop: 10 }}>
+            {helpInline(t('help.progressBar.owned'))} · {helpInline(t('help.progressBar.yield'))} ·{' '}
+            {helpInline(t('help.progressBar.updates'))} · {helpInline(t('help.progressBar.awaiting'))} ·{' '}
+            {helpInline(t('help.progressBar.blocked'))} · {helpInline(t('help.progressBar.banned'))}
+          </p>
+          <p className="muted">{helpInline(t('help.progressBar.yieldNote'))}</p>
         </section>
 
         <section className="help-section">
@@ -212,9 +169,107 @@ export function HelpTab({ onOpenSettings }: Props) {
         <section className="help-section">
           <h3>
             <span className="help-section-icon" aria-hidden>
+              📚
+            </span>
+            {t('help.sections.library')}
+          </h3>
+          <ul>
+            <HelpLi text={t('help.libraryBadge')} />
+            <HelpLi text={t('help.librarySession')} />
+            <HelpLi text={t('help.libraryAlwaysUpdate')} />
+            <HelpLi text={t('help.libraryByDate')} />
+            <HelpLi text={t('help.libraryTypeFilter')} />
+            <HelpLi text={t('help.libraryUnrecognized')} />
+            <HelpLi text={t('help.libraryUnavailable')} />
+            <HelpLi text={t('help.libraryDeleteSafety')} />
+            <HelpLi text={t('help.libraryDetails')} />
+            <HelpLi text={t('help.librarySort')} />
+            <HelpLi text={t('help.libraryContent')} />
+            <HelpLi text={t('help.libraryTags')} />
+            <HelpLi text={t('help.libraryFastTag')} />
+            <HelpLi text={t('help.libraryExcluded')} />
+            <HelpLi text={t('help.libraryManual')} />
+            <HelpLi text={t('help.libraryPreserve')} />
+            <HelpLi text={t('help.libraryDiskSync')} />
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
+              🗂️
+            </span>
+            {t('help.sections.tagFolders')}
+          </h3>
+          <ul>
+            <HelpLi text={t('help.libraryFolders')} />
+            <HelpLi text={t('help.libraryCustomAssignments')} />
+            <HelpLi text={t('help.libraryPriority')} />
+            <HelpLi text={t('help.libraryTagBan')} />
+            <HelpLi text={t('help.libraryConfirmMoves')} />
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
+              🔄
+            </span>
+            {t('help.sections.updates')}
+          </h3>
+          <ul>
+            <HelpLi text={t('help.dlNewVersions')} />
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
+              ⏳
+            </span>
+            {t('help.sections.awaiting')}
+          </h3>
+          <ul>
+            <HelpLi text={t('help.dlAwaiting')} />
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
+              📭
+            </span>
+            {t('help.sections.missing')}
+          </h3>
+          <ul>
+            <HelpLi text={t('help.missingOverview')} />
+            <HelpLi text={t('help.missingKinds')} />
+            <HelpLi text={t('help.missingFilters')} />
+            <HelpLi text={t('help.missingMarkSeen')} />
+            <HelpLi text={t('help.missingAllow')} />
+            <HelpLi text={t('help.missingForget')} />
+            <HelpLi text={t('help.missingContextMenu')} />
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
+              🧩
+            </span>
+            {t('help.sections.incomplete')}
+          </h3>
+          <ul>
+            <HelpLi text={t('help.dlIncomplete')} />
+          </ul>
+        </section>
+
+        <section className="help-section">
+          <h3>
+            <span className="help-section-icon" aria-hidden>
               ⬇️
             </span>
-            {t('help.sections.downloads')}
+            {t('help.sections.downloadStrip')}
           </h3>
           <ul>
             <HelpLi text={t('help.dlStrip')} />
@@ -223,27 +278,20 @@ export function HelpTab({ onOpenSettings }: Props) {
             <HelpLi text={t('help.dlStripColors')} />
             <HelpLi text={t('help.dlStripPriority')} />
             <HelpLi text={t('help.dlStatusBar')} />
-            <HelpLi text={t('help.dlAwaiting')} />
-            <HelpLi text={t('help.dlIncomplete')} />
-            <HelpLi text={t('help.dlNewVersions')} />
             <HelpLi text={t('help.dlTabBadges')} />
-            <HelpLi text={t('help.dlActivity')} />
           </ul>
         </section>
 
         <section className="help-section">
           <h3>
             <span className="help-section-icon" aria-hidden>
-              📊
+              📋
             </span>
-            {t('help.sections.progressBar')}
+            {t('help.sections.activity')}
           </h3>
-          <p className="muted">
-            {helpInline(t('help.progressBar.owned'))} · {helpInline(t('help.progressBar.yield'))} ·{' '}
-            {helpInline(t('help.progressBar.updates'))} · {helpInline(t('help.progressBar.awaiting'))} ·{' '}
-            {helpInline(t('help.progressBar.blocked'))} · {helpInline(t('help.progressBar.banned'))}
-          </p>
-          <p className="muted">{helpInline(t('help.progressBar.yieldNote'))}</p>
+          <ul>
+            <HelpLi text={t('help.dlActivity')} />
+          </ul>
         </section>
       </div>
 
@@ -262,16 +310,6 @@ export function HelpTab({ onOpenSettings }: Props) {
             </div>
           ))}
         </dl>
-      </section>
-
-      <section className="help-section">
-        <h3>
-          <span className="help-section-icon" aria-hidden>
-            🌐
-          </span>
-          {t('help.sections.domains')}
-        </h3>
-        <p className="muted">{helpInline(t('help.domainsBody'))}</p>
       </section>
 
       {onOpenSettings && (

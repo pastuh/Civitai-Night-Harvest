@@ -109,7 +109,8 @@ export const en = {
       'NSFW & restricted models need an API key. Without it, downloads may fail or land in Early access.',
     sections: {
       general: 'General',
-      library: 'Library & API',
+      api: 'Civitai API',
+      library: 'Library folders',
       automation: 'Automation',
       blockedTags: 'Blocked tags',
       crawl: 'Browse & crawl',
@@ -355,15 +356,19 @@ export const en = {
       nsfw: 'NSFW & restricted downloads',
       testing: 'Testing status',
       quickStart: 'Quick start (beginner)',
-      header: 'Main controls (header)',
-      browse: 'Browse tab',
-      library: 'Library & folders',
-      missing: 'Missing tab',
-      edges: 'Gallery card colors',
-      downloads: 'Downloads & tabs',
-      domains: 'Domains (.com / .red)',
+      header: 'Header controls',
+      browse: 'Browse',
+      library: 'Library',
+      tagFolders: 'Tag Folders',
+      updates: 'Updates',
+      awaiting: 'Early access',
+      missing: 'Missing',
+      incomplete: 'Incomplete',
+      edges: 'Card colors (Browse & Library)',
+      downloadStrip: 'Download strip',
+      activity: 'Activity',
       settingsRef: 'Settings reference',
-      progressBar: 'Catalog progress bar (Browse)'
+      progressBar: 'Browse progress bar'
     },
     nsfwBody:
       'Civitai API key required for most NSFW/restricted models. Paste it in Settings → Civitai API key.',
@@ -372,118 +377,127 @@ export const en = {
     quickStart1: 'Settings → set LoRA folder (and API key for NSFW)',
     quickStart2: 'Browse → Rules → turn a rule On → Save rules',
     quickStart3: 'Header → 🌙 Harvest to walk the catalog; set **Auto** for hands-off queueing (or **Manual** and click cards)',
-    headerHarvest: '🌙 Harvest — walks enabled Browse rules page by page; queues and downloads new models',
+    headerHarvest: '**Harvest** — walks enabled Browse rules page by page; queues and downloads new models',
     headerNightModes:
-      '🌙 Harvesting — queues every new model that matches your enabled Browse rules (paused / banned tags still skipped). Folder / Tags assignment is separate and can wait until after download.',
+      'Harvest queues every new model that matches your enabled Browse rules (paused / banned tags still skipped). Folder assignment can wait until after download.',
     headerDownloads:
-      '**Auto** / **Manual** — separate header toggles: Auto queues eligible **LoRA** matches (up to 10 in pipeline); Manual queues cards you click. **Checkpoints are never auto-queued** — click to queue. Enabling a Checkpoint Browse rule turns **Pause** on so large downloads do not start until you unpause. **Pause** (red) stops active downloads without switching mode.',
-    headerEye: '👁 — hide Browse cards during harvest (quieter UI; downloads continue)',
+      '**Auto** / **Manual** — Auto queues matching **LoRA** (up to 10 at a time); Manual queues only cards you click. **Checkpoints are never auto-queued** — click to add. Enabling a Checkpoint Browse rule turns **Pause** on. **Pause** stops active downloads without changing Auto/Manual.',
+    headerEye: '👁 — hide Browse cards during harvest (downloads continue)',
     headerScan: 'Scan — run all enabled Browse rules once and refresh Results',
-    headerBlur: 'Blur — hide preview thumbnails',
+    headerBlur: '**Blur** — hide preview thumbnails',
     browseRules: 'Rules — Civitai filters (type, base model, keywords, sort)',
     browseResults:
       'Results — search by name, author, or numeric Civitai model/version ID; **Hide owned**, **Show updates** (same offers as the Updates tab — off by default), **Show blocked** (pause / ban-by-tag cards; still no auto-download); Loaded / Owned / Yield / Updates / … stats; **Updates** count excludes skipped versions; Sort and Tags; click a card to queue',
     browseDetails:
-      'ℹ on a card opens **Model details** — main description, per-version notes, scrollable version list with filter and **H**/**L** pair badges, sticky action bar, download, Load/Save preview',
+      'ℹ on a card opens **Model details** — description, version list with small preview thumbs, filter and **H**/**L** pair badges, download, and save preview',
     browseVideoBadges:
-      'Version row badges — **I2V**, **T2V**, **FL2V**, **R2V** when detected in the model/version name or description (WAN, MiniMax H3, etc.). Solid = from name; outlined = description only',
+      'Version badges — **I2V**, **T2V**, **FL2V**, **R2V** when the name or description mentions a video workflow. Solid = from the name; outlined = description only',
     browseQualityPairs:
-      '**PAIR** badge — Browse and Library combine High/Low noise variants of the **same base model** into one card (split thumbnail). Click to queue both versions',
+      '**PAIR** badge — Browse and Library combine High/Low variants of the **same base model** into one card (split thumbnail). Click to queue both versions',
     browsePreviews:
-      'Previews are **per version** (not one shared model image). Cards and the download strip show **version name**; Load previews fetches only that version’s images; Save preview writes `.preview.jpg` for the selected owned version',
+      'Previews are **per version**. Cards and the download strip show the **version name**; Load previews fetches that version’s images; Save preview writes a preview image for the selected owned version',
     browseTags:
-      'Tags popover — filter the grid · ⏸ pause tag (temporary Browse exclude) · permanent bans are managed in Tag Folders (purple chips)',
+      'Tags popover — filter the grid · ⏸ pause a tag temporarily · permanent tag bans are managed in Tag Folders (purple chips)',
     browsePausedBanned:
-      '**Paused** / **Banned** bars — add tags here (search + Ban / Pause). Click the label to jump to Missing → Session pause / Session bans. Amber = pause · purple = permanent on cards',
+      '**Paused** / **Banned** bars — add tags here. Amber = temporary pause · purple = permanent ban. Click the label to jump to Missing session lists',
     browseSearchHidden:
-      'Browse / Library search still finds models even when Hide excluded, blocked tags, or similar hide filters are on — so you can review and act on them',
+      'Search still finds models even when hide/exclude filters are on — so you can review them',
     browseManualQueue:
-      'Manual — crawl/scan and Auto pipeline do not add models; only your card clicks enter the queue (unlimited). Checkpoints always need a click even when Auto is on.',
+      '**Manual** — only cards you click enter the queue. Checkpoints always need a click, even when Auto is on',
     browseSettled:
-      'Settings → Browse gallery — optionally send owned/excluded/awaiting cards to the end and dim them (hover restores; search matches stay bright)',
-    browseBan: 'Ban On — red × on cards excludes a model from future auto-queue',
+      'Settings → Browse gallery — optionally move owned / excluded / awaiting cards to the end and dim them (hover restores; search matches stay bright)',
+    browseBan:
+      '**Ban On** — red × excludes that version from future auto-download. If you already own the files, the app asks first, then **deletes them from disk**',
     browseContextSkipTag:
-      'Right-click a model → pause a tag (temporary). Permanent ban-by-tag: Tag Folders **Ban** column',
+      'Right-click a model → pause a tag (temporary). Permanent tag ban: Tag Folders **Ban** column',
     libraryFolders:
-      'Tag Folders — map Civitai tags to `*\\name` under each base model (or a custom path) for **LoRA**. Checkpoints ignore Tag Folders tags and stay in `{checkpoint}/{baseModel}/` unless you use **Custom folder assignments** / manual Assign. Check tags to route LoRA downloads and move unsorted library models. Use **Apply to library** to re-sort after priority changes; models placed manually in Library are skipped. **Mass** assigns many tags to one folder name. No matching rule → `*\\Unsorted` (LoRA).',
+      '**Tag Folders** — map Civitai tags to named LoRA subfolders (or a custom path). Checkpoints stay in the Checkpoint/base-model folder unless you use **Custom folder assignments**. **Mass** assigns many tags at once. No matching rule → **Unsorted** (LoRA)',
     libraryCustomAssignments:
-      '**Custom folder assignments** (Tag Folders) — personal tag + folder for local-only models (optional type/base). For Checkpoints this is the only way to put files outside `{checkpoint}/{baseModel}/`. After Save, that folder and its subfolders import into Library. Civitai LoRA downloads with the same tag name still use the normal app tag folder — not your custom path. These locals skip Civitai preview/update checks.',
+      '**Custom folder assignments** — your own tag + folder for local models (and the Checkpoint override). After Save, that folder is imported into Library. These locals are not checked for Civitai updates',
     libraryPriority:
-      'Tag Folders **Priority** — when a model matches several tags, higher number wins (▲/▼ skip 0). Equal priorities: first matching tag. Priority 0 = fixed auto-route. Manual Library assigns always win.',
+      'Tag Folders **Priority** — when several tags match, the higher number wins. Manual Library folder assigns always win',
     libraryTagBan:
-      'Tag Folders **Ban** — permanent ban-by-tag (skip auto-download). Temporary pause lives only on Browse → Paused. Skipped models appear under Missing for per-model Allow.',
+      'Tag Folders **Ban** — never auto-download models with that tag. Temporary pause is only Browse → **Paused**. Skipped models appear under Missing so you can **Allow** one by one',
     libraryBadge:
-      'Library tab **+N** — new downloads since your last visit; opening Library with a badge selects **Session downloads** (clears when you visit). **Always update** sidebar filter lists models with per-model auto-update (right-click to turn off). **Show List** from Updates still opens All models pinned to that model',
+      'Library tab **+N** — new downloads since your last visit (opens **Session downloads**). **Always update** sidebar lists models with auto-update on (right-click to turn off)',
     librarySession:
-      '**Session downloads** — sidebar filter for models actually downloaded this app run (queue completions only — not disk sync / import)',
+      '**Session downloads** — models downloaded during this app run (not files only imported from disk)',
     libraryAlwaysUpdate:
-      '**Always update** — Library sidebar filter for models with Updates → Always update on; right-click a card to turn it off',
+      '**Always update** — filter for models with Updates → Always update on; right-click a card to turn it off',
     libraryByDate:
-      '**Downloaded by date** — Today / Yesterday / Last 7 days, or the calendar: click one day, or two days for a from–to range. Shows how many downloads match the selection.',
+      '**Downloaded by date** — Today / Yesterday / Last 7 days, or pick one or two days on the calendar',
     libraryDetails:
-      'ℹ opens the same Model details page as Browse — filter versions, **H**/**L** pair badges, save preview, open on Civitai. **PAIR** cards in the grid merge High/Low variants you already own',
+      'ℹ opens Model details — version list with small thumbs, **H**/**L** badges, save preview, open on Civitai. **PAIR** cards merge High/Low copies you already own',
     librarySort:
-      'Sort — folder tag, Civitai downloads, tag group, or download order. Same Settings results display (lazy / pages) as Browse.',
+      'Sort — by folder tag, popularity, tag group, or download order. Same page/scroll settings as Browse',
     libraryContent: 'Content filter — show all, SFW only, or NSFW only',
     libraryTypeFilter:
-      'Sidebar **LoRA** / **Checkpoint** — filter by model type (from metadata or folder). Checkpoint cards show a small type badge.',
+      'Sidebar **LoRA** / **Checkpoint** — filter by type. Checkpoint cards show a small type badge',
+    libraryUnrecognized:
+      '**Unrecognized** — local or custom files without a Civitai match. Deleting them always asks for confirmation',
+    libraryUnavailable:
+      '**Unavailable on Civitai** — files already known as taken down or archived (from saved info). The filter appears only when such files exist; Sync does **not** re-check every model live',
+    libraryDeleteSafety:
+      '**Delete** / **Exclude / ban** use an in-app confirm dialog. Owning the version means files are removed from disk after you confirm. **Don’t ask again (this session)** is allowed for normal deletes — taken down/archived and unrecognized files always ask again',
     libraryTags:
-      'Right-click a card → **Assign model to tag**. Click a card tag opens Tag folders (or Fast tag popup when enabled). Green / mapped chips = folder rules.',
+      'Right-click → **Assign model to tag**. Click a card tag to open Tag folders (or Fast tag when enabled)',
     libraryFastTag:
-      '**Fast tag** — assign the clicked tag as this model’s folder route without leaving Library (Path `*\\name`; change the name e.g. glass plug → plug). Suggestions group Folders / Assigned / Library tags.',
+      '**Fast tag** — assign the clicked tag as this model’s folder without leaving Library',
     libraryExcluded:
-      '**Excluded** + **Ignore excluded** with **Hide folder-assigned** — keep models whose routing tag is in Excluded (e.g. concept). **All assigned** hides mapped tags on cards (dashed placeholder remains).',
+      '**Excluded** tags can stay visible when hide-folder filters are on. **All assigned** temporarily hides mapped tags on cards',
     libraryManual:
-      '**Manual** badge — folder was set by hand; auto tag moves and priority will not re-route that model until you clear the manual assign.',
+      '**Manual** badge — you set the folder by hand; automatic tag moves will not override it until you clear that',
     libraryPreserve:
-      'Settings → **Preserve filters** — keep Browse/Library filters, sort, and show/hide checkboxes when switching tabs',
+      'Settings → **Preserve filters** — keep Browse/Library filters when switching tabs',
     libraryConfirmMoves:
-      'Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog (Tag folders / Fast tag)',
+      'Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog',
     libraryDiskSync:
-      'Settings → **Sync library from disk** — import/move files into Library. Files over 10GB skip auto-hash during sync (use **Verify hashes** later if needed). Custom/local models are not looked up on Civitai.',
+      'Settings → **Sync library from disk** — import or match files already on disk. Very large files skip automatic hash during sync (use **Verify hashes** later if needed). Local-only models are not looked up on Civitai',
     missingOverview:
-      'Missing — 404 / Suspect reviews, models skipped by pause or ban-by-tag, and manual bans. Opening Model details or Tag Folders keeps your Missing filters and scroll.',
+      '**Missing** — models Civitai no longer finds, plus ones skipped by pause/ban tags and manual bans. Opening details keeps your Missing filters',
     missingKinds:
-      'Kinds — Missing (404), Paused by tag (temporary Browse exclude), Banned by tag (Tag Folders Ban), Banned manual, Forgotten',
+      'Kinds — Not found on Civitai, Paused by tag, Banned by tag, Banned by you, Forgotten',
     missingFilters:
-      'Hide banned / Hide paused (on by default), Show forgotten, Session bans / Session pause sidebar filters',
+      'Hide banned / Hide paused (on by default), Show forgotten, and session ban/pause filters in the sidebar',
     missingAllow:
-      'Per model — **Allow** (exception vs pause/ban tags + queue). Click a policy tag (sidebar or card) to filter models skipped for that tag',
+      'Per model — **Allow** (exception + queue). Click a blocked tag to list models skipped for that tag',
     missingForget:
-      '**Forget On** — × on cards hides the model everywhere and stops suggestions; **Show forgotten** to review; × again = Unforget',
+      '**Forget** — hide the model everywhere; **Show forgotten** to review and undo',
     missingMarkSeen:
-      '**Mark seen on** — move pointer left/right off a ban/pause/exclude card to mark seen (green title). **Hide seen** hides those cards. Sidebar **Unseen bans** / **Seen bans** list them (not Missing 404). Unseen + Seen = current ban review cards.',
+      '**Mark seen** — swipe off a ban/pause card (green title). **Hide seen** removes those cards. Sidebar Unseen / Seen lists are for ban review, not “not found” items',
     missingContextMenu:
-      '**Right-click** a card → Mark seen, Forget, Unban, Allow, Acknowledge, or Open on Civitai — no need to toggle the toolbar buttons first.',
+      '**Right-click** a card → Mark seen, Forget, Unban, Allow, Acknowledge, or Open on Civitai',
     edgeOwned: 'Green top border — already in your library',
-    edgeQueued: 'Queue accent top border — in download queue',
-    edgeDownloading: 'Green bar on thumbnail — actively downloading',
-    edgeNew: 'Teal top border — new, not queued',
+    edgeQueued: 'Accent top border — in the download queue',
+    edgeDownloading: 'Green bar on the thumbnail — actively downloading',
+    edgeNew: 'Teal top border — new, not queued yet',
     edgeAwaiting: 'Yellow / amber — Early access',
-    edgeAwaitingConfirm: 'Updates accent — owned-model update / pack sibling (confirm on Updates; Browse with Show updates)',
-    edgeBlocked: 'Blocked accent — pause or ban-by-tag (Show blocked); amber chips = pause · purple chips = permanent ban',
+    edgeAwaitingConfirm:
+      'Updates accent — another version of a model you own (confirm on Updates; or Browse with Show updates)',
+    edgeBlocked:
+      'Blocked accent — paused or banned by tag (Show blocked); amber = pause · purple = permanent ban',
     dlStrip:
-      'Download strip — Settings → layout: **Row** (scroll cards), **Grid** (wrapped cards), or **Minimal** (compact list). Header: **Auto**, **Manual**, **Pause**; **Clear queue** (Browse) empties the strip without changing mode. Strip shows **version name** next to the model title.',
+      'Download strip — Settings → **Row**, **Grid**, or **Minimal** layout. Header **Auto** / **Manual** / **Pause**; **Clear queue** empties the strip. Cards show the **version name**',
     dlStripLayouts:
-      '**Minimal** — thumbnail always visible; left column shows queue/download text; vertical separator; model name on the right. Green fill grows across the left column only — when it reaches the separator, the download is complete. Right-click, ban, and priority work like other layouts.',
+      '**Minimal** — compact list with thumbnail, status, and name; green fill shows progress. Right-click works like other layouts',
     dlStripProgress:
-      'Active download — progress bar on the thumbnail; below the title: e.g. 218 MB / 1.2 GB · 12 MB/s (no percentage).',
+      'Active download — progress on the thumbnail; below the title e.g. 218 MB / 1.2 GB · 12 MB/s',
     dlStripColors:
-      'Strip top border only: queue accent = queued or downloading · pink = retryable error until the next attempt starts · yellow = early access unlocks today',
+      'Strip top border: accent = queued/downloading · pink = error waiting to retry · yellow = early access unlocks today',
     dlStripPriority:
-      'Right-click a strip card → Priority download — moves it to the front of the queue (or right after active downloads)',
+      'Right-click a strip card → Priority download — moves it to the front of the queue',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
     dlAwaiting: 'Early access tab — gated download, or missing API key',
     dlIncomplete:
-      'Incomplete tab — Civitai lists the model but version data is empty; recheck or paste a download URL',
+      'Incomplete tab — Civitai lists the model but has no usable version; recheck or paste a download link',
     dlNewVersions:
-      'Updates — other versions of models you already own (**newer** release or another file on the **same Civitai page** / pack) — not treated as brand-new Browse Yield. **Download** queues once; **Always update** queues **all** current Updates offers for that model and auto-queues future versions; both keep the Updates card with a queue status until the download finishes. Click **Always on** again to turn off, or manage under Library → **Always update**. **Skip** = this version later (until **Unskip**); **Mark seen On** also enables **Hide seen** — click a card or leave left/right to hide reviewed offers (**including skipped**); **Forget** = never suggest **this version** again (**Show forgotten** → Unforget; other versions stay). Skipped / forgotten are **not** counted in Browse Updates. Types / rating / sort sidebar like Missing. Early access → Awaiting. Filled during Harvest and by a background library check. Settings → Auto-download new versions: ON queues them globally. Custom folder locals are not checked for updates.',
+      '**Updates** — other versions of models you already own (newer or another file on the same page). **Download** once; **Always update** queues current offers and future ones. **Skip** = this version later; **Forget** = never suggest this version again; **Ban** excludes it and, if owned, deletes files after confirm. Skipped/forgotten are not counted in Browse Updates. List fills during Harvest and a background library check. Settings → Auto-download new versions can queue them automatically. Custom-folder locals are not checked',
     dlTabBadges:
-      'Tab badges — Browse: models in the download pipeline · Library: +N new in library · Updates / Early access / Missing / Incomplete: items waiting',
+      'Tab badges — Browse: in the download pipeline · Library: +N new · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
-      'Activity tab — compact filter bar (search and time on the left, level/source/topic checkboxes on the right); click a model name to jump to Library',
+      'Activity tab — search and filters for harvest/download history; click a model name to jump to Library',
     domainsBody:
-      'Browse uses civitai.red only (full SFW+NSFW catalog). Maturity is controlled per rule via content filter — there is no .com/.red host picker.',
+      'The app uses the full Civitai catalog. Maturity is controlled per Browse rule (SFW / NSFW) and your API key — there is no separate .com / .red switch for everyday use',
     settingsRef: {
       apiKey: 'Civitai API key — civitai.com → Account → API Keys. Required for most NSFW/restricted downloads. Stored locally.',
       modelsRoot: 'Root folder on disk — use separate LoRA and Checkpoint folders below. Tag Folders can override per model.',
@@ -1357,7 +1371,7 @@ export const en = {
       'Owned versions whose model has Always update on — right-click a card to turn it off',
     unavailableFilter: 'Unavailable on Civitai',
     unavailableFilterHint:
-      'Library files whose Civitai mode is Taken down or Archived (from last known metadata — no extra API scan)',
+      'Shows library files already known as taken down or archived. Appears only when such files exist — Sync does not re-check every model live',
     alwaysUpdateBadge: 'Up',
     alwaysUpdateBadgeHint: 'Future versions of this model auto-queue',
     turnOffAlwaysUpdate: 'Turn off Always update',

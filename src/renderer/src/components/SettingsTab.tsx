@@ -398,7 +398,7 @@ export function SettingsTab({
       </section>
 
       <section className="settings-section">
-        <h3>{t('settings.sections.library')}</h3>
+        <h3>{t('settings.sections.api')}</h3>
         <div className="field">
           <label className="field-label">{t('settings.fields.apiKey')}</label>
           <input
@@ -428,6 +428,10 @@ export function SettingsTab({
             </span>
           )}
         </div>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.sections.library')}</h3>
         <div className="field">
           <label className="field-label">{t('settings.fields.loraFolder')}</label>
           <div className="row">
