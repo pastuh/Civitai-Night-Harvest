@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent } from 'react'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent } from 'react'
 import type {
   BannedModel,
   InventoryRecord,
@@ -155,6 +155,8 @@ interface Props {
       previewUrl?: string
     }
   ) => void
+  /** Patch App inventory after exclude/delete without a full disk scan. */
+  onInventoryVersionsRemoved?: (versionIds: number[]) => void
 }
 
 interface ContextMenuState {
@@ -283,7 +285,8 @@ function GalleryTabInner({
   libraryPreviewCacheBust,
   browseVideoPreviews = false,
   showTagStats = false,
-  onBannedChange
+  onBannedChange,
+  onInventoryVersionsRemoved
 }: Props) {
   const t = useT()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
@@ -327,10 +330,14 @@ function GalleryTabInner({
   const [bannedList, setBannedList] = useState<BannedModel[]>([])
   /** Instant hide on Ban — survives stale loadBanned / refresh races that caused card flicker. */
   const [pendingBanIds, setPendingBanIds] = useState<Set<number>>(() => new Set())
-  /** Hide specific versions (local/unrecognized use modelId 0 — cannot key by modelId). */
+  /**
+   * Exclude/delete: keep the card in-grid as a dimmed temporary placeholder until leaving Library
+   * (same pattern as Updates/Pending). No full inventory refresh.
+   */
   const [pendingHiddenVersionIds, setPendingHiddenVersionIds] = useState<Set<number>>(
     () => new Set()
   )
+  const wasLibraryActiveRef = useRef(isActive)
   const [autoUpdateModelIds, setAutoUpdateModelIds] = useState<Set<number>>(() => new Set())
   useEffect(() => {
     let cancelled = false
@@ -359,6 +366,18 @@ function GalleryTabInner({
     modelName: string
   } | null>(null)
   const deleteConfirmSkipRef = useRef(false)
+  /** Keep `.content` scroll stable across exclude/delete re-renders (Missing-style). */
+  const savedContentScrollRef = useRef<number | null>(null)
+  const rememberContentScroll = useCallback(() => {
+    const el = document.querySelector('.content')
+    if (el instanceof HTMLElement) savedContentScrollRef.current = el.scrollTop
+  }, [])
+  const restoreContentScroll = useCallback(() => {
+    const top = savedContentScrollRef.current
+    if (top == null) return
+    const el = document.querySelector('.content')
+    if (el instanceof HTMLElement) el.scrollTop = top
+  }, [])
   const [assignFolderOpen, setAssignFolderOpen] = useState(false)
   const [assignTagQuery, setAssignTagQuery] = useState('')
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -756,6 +775,29 @@ function GalleryTabInner({
     })
   }, [inventory, pendingBanIds.size, pendingHiddenVersionIds.size])
 
+  // Leave Library: drop temporary excludes from App inventory (no full refresh / other models).
+  useEffect(() => {
+    const wasActive = wasLibraryActiveRef.current
+    wasLibraryActiveRef.current = isActive
+    if (!wasActive || isActive) return
+    if (pendingHiddenVersionIds.size === 0) return
+    const ids = [...pendingHiddenVersionIds]
+    onInventoryVersionsRemoved?.(ids)
+    setPendingHiddenVersionIds(new Set())
+  }, [isActive, pendingHiddenVersionIds, onInventoryVersionsRemoved])
+
+  // Ban/exclude re-renders must not yank the shared `.content` scroller (focus / status line).
+  useLayoutEffect(() => {
+    if (savedContentScrollRef.current == null) return
+    restoreContentScroll()
+    const top = savedContentScrollRef.current
+    const a = window.requestAnimationFrame(() => {
+      const el = document.querySelector('.content')
+      if (el instanceof HTMLElement && top != null) el.scrollTop = top
+    })
+    return () => window.cancelAnimationFrame(a)
+  }, [pendingHiddenVersionIds, message, deleteConfirm, localDeleteConfirm, restoreContentScroll])
+
   const isBanned = (modelId: number) => hiddenModelIds.has(modelId)
 
   const filteredInventory = useMemo(() => {
@@ -832,10 +874,8 @@ function GalleryTabInner({
         recordMatchesLibraryModelType(r, modelTypeFilter, checkpointFolder ?? '')
       )
     }
-    // Banned models are removed from disk/inventory on Ban; hide any leftover rows.
-    list = list.filter(
-      (r) => !hiddenModelIds.has(r.modelId) && !pendingHiddenVersionIds.has(r.versionId)
-    )
+    // Banned models are removed from disk; hide by modelId. Temporary excludes stay visible (dimmed).
+    list = list.filter((r) => !hiddenModelIds.has(r.modelId))
     if (nsfwFilter !== 'all') {
       list = list.filter((r) =>
         matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)
@@ -872,7 +912,6 @@ function GalleryTabInner({
     libraryFilter,
     modelTypeFilter,
     hiddenModelIds,
-    pendingHiddenVersionIds,
     tagClusters,
     tagRules,
     matchesModelSearch,
@@ -1275,19 +1314,20 @@ function GalleryTabInner({
     scope: 'version' | 'all' = 'version'
   ) => {
     const rec = inventory.find((r) => r.versionId === versionId)
-    const versionLabel = rec?.versionName || String(versionId)
     const siblings =
       modelId > 0 ? inventory.filter((r) => r.modelId === modelId) : rec ? [rec] : []
     const versionIds =
       scope === 'all' && siblings.length > 0 ? siblings.map((r) => r.versionId) : [versionId]
 
+    // Pin scroll before modal unmount / card dim — focus return was yanking the grid to top.
+    rememberContentScroll()
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     setContextMenu(null)
     setDeleteConfirm(null)
-    setMessage('')
 
-    const runDelete = async () => {
+    try {
       for (const id of versionIds) {
-        await window.api.deleteInventoryVersion(id, { ban: true })
+        // Dim immediately — stay in-grid until leaving Library (no full refresh).
         setPendingHiddenVersionIds((prev) => {
           const next = new Set(prev)
           next.add(id)
@@ -1299,29 +1339,28 @@ function GalleryTabInner({
           return next
         })
         onBannedChange?.(modelId, true, { name: modelName, versionId: id })
+        try {
+          // awaitFiles:false on main — DB detach returns quickly; disk unlink is background.
+          await window.api.deleteInventoryVersion(id, { ban: true })
+        } catch (err) {
+          setPendingHiddenVersionIds((prev) => {
+            if (!prev.has(id)) return prev
+            const next = new Set(prev)
+            next.delete(id)
+            return next
+          })
+          throw err
+        }
       }
-      setMessage(
-        scope === 'all'
-          ? t('gallery.deletedExcludedAllVersions', {
-              name: modelName,
-              count: String(versionIds.length)
-            })
-          : t('gallery.deletedExcludedVersion', { name: modelName, version: versionLabel })
-      )
-      await onRefresh()
-    }
-
-    try {
-      if (onBusyAction) {
-        await onBusyAction(t('gallery.deleting', { name: modelName }), runDelete, t('gallery.removingFromDisk'))
-      } else {
-        setMoving(true)
-        await runDelete()
-      }
+      // Done badge on the card is enough — status text was shifting layout / scroll.
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
     } finally {
-      setMoving(false)
+      restoreContentScroll()
+      window.requestAnimationFrame(() => {
+        restoreContentScroll()
+        savedContentScrollRef.current = null
+      })
     }
   }
 
@@ -1891,7 +1930,9 @@ function GalleryTabInner({
             <span className="gallery-selection-hint" aria-hidden />
           )}
           {uiExtended && syncMessage && <p className="muted">{syncMessage}</p>}
-          {message && <p>{message}</p>}
+          <p className="gallery-status-msg" aria-live="polite">
+            {message || '\u00a0'}
+          </p>
           </div>
         <div className="gallery-body-row">
           <div className="gallery-main">
@@ -1915,6 +1956,7 @@ function GalleryTabInner({
               units={gridUnits}
               selected={selected}
               hiddenModelIds={hiddenModelIds}
+              temporaryVersionIds={pendingHiddenVersionIds}
               highlightVersionId={highlightVersionId}
               highlightModelId={highlightModelId}
               highlightSet={highlightSet}
@@ -2695,6 +2737,8 @@ function GalleryTabInner({
           onConfirm={() => {
             const pending = localDeleteConfirm
             setLocalDeleteConfirm(null)
+            rememberContentScroll()
+            if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
             setPendingHiddenVersionIds((prev) => {
               if (prev.has(pending.versionId)) return prev
               const next = new Set(prev)
@@ -2709,7 +2753,6 @@ function GalleryTabInner({
             void (async () => {
               try {
                 await window.api.deleteInventoryVersion(pending.versionId, { ban: false })
-                scheduleLibraryRefresh()
               } catch (err) {
                 setPendingHiddenVersionIds((prev) => {
                   if (!prev.has(pending.versionId)) return prev
@@ -2718,6 +2761,12 @@ function GalleryTabInner({
                   return next
                 })
                 setMessage(err instanceof Error ? err.message : String(err))
+              } finally {
+                restoreContentScroll()
+                window.requestAnimationFrame(() => {
+                  restoreContentScroll()
+                  savedContentScrollRef.current = null
+                })
               }
             })()
           }}
@@ -2732,6 +2781,7 @@ type LibraryCardGridProps = {
   units: QualityTierGridUnit<InventoryRecord>[]
   selected: Set<number>
   hiddenModelIds: Set<number>
+  temporaryVersionIds?: Set<number>
   highlightVersionId: number | null
   highlightModelId: number | null
   highlightSet: Set<number>
@@ -2771,6 +2821,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   units,
   selected,
   hiddenModelIds,
+  temporaryVersionIds,
   highlightVersionId,
   highlightModelId,
   highlightSet,
@@ -2813,6 +2864,10 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             selectedHigh={selected.has(unit.high.versionId)}
             selectedLow={selected.has(unit.low.versionId)}
             banned={hiddenModelIds.has(unit.high.modelId)}
+            temporary={
+              Boolean(temporaryVersionIds?.has(unit.high.versionId)) ||
+              Boolean(temporaryVersionIds?.has(unit.low.versionId))
+            }
             highlight={
               highlightVersionId === unit.high.versionId ||
               highlightVersionId === unit.low.versionId ||
@@ -2851,6 +2906,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             browseVideoPreviews={browseVideoPreviews}
             selected={selected.has(unit.item.versionId)}
             banned={hiddenModelIds.has(unit.item.modelId)}
+            temporary={Boolean(temporaryVersionIds?.has(unit.item.versionId))}
             highlight={
               highlightVersionId === unit.item.versionId ||
               highlightModelId === unit.item.modelId

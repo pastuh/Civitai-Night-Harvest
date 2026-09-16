@@ -2374,6 +2374,11 @@ export default function App() {
               onBannedChange={(modelId, banned, stub) =>
                 markBrowseModelBan(modelId, banned, stub)
               }
+              onInventoryVersionsRemoved={(versionIds) => {
+                if (!versionIds.length) return
+                const drop = new Set(versionIds)
+                setInventory((prev) => prev.filter((r) => !drop.has(r.versionId)))
+              }}
             />
           </div>
         ) : null}

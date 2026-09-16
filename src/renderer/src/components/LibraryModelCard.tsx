@@ -23,6 +23,8 @@ export type LibraryModelCardProps = {
   record: InventoryRecord
   selected: boolean
   banned: boolean
+  /** Soft placeholder after exclude/delete — dim until leaving Library. */
+  temporary?: boolean
   highlight: boolean
   sessionNew: boolean
   /** Model has Always update enabled (per modelId). */
@@ -69,6 +71,7 @@ function LibraryModelCardInner({
   record,
   selected,
   banned,
+  temporary = false,
   highlight,
   sessionNew,
   alwaysUpdate = false,
@@ -148,12 +151,19 @@ function LibraryModelCardInner({
 
   return (
     <div
-      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''} ${isCheckpoint ? 'library-checkpoint' : 'library-lora'}`}
-      onClick={() => onToggleSelect(record.versionId)}
-      onContextMenu={(e) =>
-        onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
+      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${temporary ? 'pending-card-temporary' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''} ${isCheckpoint ? 'library-checkpoint' : 'library-lora'}`}
+      onClick={temporary ? undefined : () => onToggleSelect(record.versionId)}
+      onContextMenu={
+        temporary
+          ? undefined
+          : (e) => onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
     >
+      {temporary ? (
+        <span className="status-card-skipped-badge library-temporary-badge">
+          {t('pending.temporaryBadge')}
+        </span>
+      ) : null}
       {isCheckpoint ? (
         <span className="library-type-badge is-checkpoint" title={t('gallery.filterCheckpoint')}>
           {t('gallery.filterCheckpoint')}
@@ -183,6 +193,7 @@ function LibraryModelCardInner({
       <input
         type="checkbox"
         checked={selected}
+        disabled={temporary}
         onChange={() => onToggleSelect(record.versionId)}
         onClick={(e) => e.stopPropagation()}
         className="gallery-check"
@@ -257,7 +268,7 @@ function LibraryModelCardInner({
             ↗
           </button>
           )}
-          {banFunctionMode && !banned && onBanModel && (
+          {banFunctionMode && !banned && !temporary && onBanModel && (
             <button
               type="button"
               className="gallery-ban-inline-btn electron-no-drag"

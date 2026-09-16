@@ -30,6 +30,8 @@ export type LibraryQualityPairCardProps = {
   selectedHigh: boolean
   selectedLow: boolean
   banned: boolean
+  /** Soft placeholder after exclude/delete — dim until leaving Library. */
+  temporary?: boolean
   highlight: boolean
   sessionNew: boolean
   alwaysUpdate?: boolean
@@ -70,6 +72,7 @@ function LibraryQualityPairCardInner({
   selectedHigh,
   selectedLow,
   banned,
+  temporary = false,
   highlight,
   sessionNew,
   alwaysUpdate = false,
@@ -174,12 +177,19 @@ function LibraryQualityPairCardInner({
 
   return (
     <div
-      className={`gallery-card library-card quality-tier-pair-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''}`}
-      onClick={toggleBoth}
-      onContextMenu={(e) =>
-        onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
+      className={`gallery-card library-card quality-tier-pair-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${temporary ? 'pending-card-temporary' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''}`}
+      onClick={temporary ? undefined : toggleBoth}
+      onContextMenu={
+        temporary
+          ? undefined
+          : (e) => onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
     >
+      {temporary ? (
+        <span className="status-card-skipped-badge library-temporary-badge">
+          {t('pending.temporaryBadge')}
+        </span>
+      ) : null}
       {ratingInfo ? (
         <span
           className={`nsfw-rating-badge tier-${ratingInfo.tier} gallery-card-rating`}
@@ -191,6 +201,7 @@ function LibraryQualityPairCardInner({
       <input
         type="checkbox"
         checked={selected}
+        disabled={temporary}
         onChange={toggleBoth}
         onClick={(e) => e.stopPropagation()}
         className="gallery-check"
@@ -265,7 +276,7 @@ function LibraryQualityPairCardInner({
                 ↗
               </button>
             )}
-            {banFunctionMode && !banned && onBanModel && (
+            {banFunctionMode && !banned && !temporary && onBanModel && (
               <button
                 type="button"
                 className="gallery-ban-inline-btn electron-no-drag"

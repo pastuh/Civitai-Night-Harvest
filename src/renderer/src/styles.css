@@ -817,6 +817,14 @@ th {
   margin-bottom: 4px;
 }
 
+.gallery-status-msg {
+  display: block;
+  min-height: 1.25em;
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .gallery-main-scroll {
   /* Cards scroll with the page (like Early Access) — not a nested pane */
   flex: 0 0 auto;
@@ -1798,12 +1806,14 @@ body.is-app-busy * {
 }
 
 /* Only already-handled temporary placeholders stay soft. */
-.status-gallery-card.pending-card-temporary {
+.status-gallery-card.pending-card-temporary,
+.gallery-card.pending-card-temporary {
   opacity: 0.55;
   transition: opacity 0.15s ease;
 }
 
-.status-gallery-card.pending-card-temporary:hover {
+.status-gallery-card.pending-card-temporary:hover,
+.gallery-card.pending-card-temporary:hover {
   opacity: 1;
 }
 
@@ -4533,6 +4543,21 @@ select.browse-content-filter {
 .library-type-badge.is-checkpoint {
   background: color-mix(in srgb, var(--card-accent, #8a6a3a) 88%, #000);
   color: #fff;
+}
+
+.library-temporary-badge {
+  position: absolute;
+  z-index: 5;
+  left: 6px;
+  top: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--muted, #888) 35%, var(--card-bg, #222));
+  color: var(--text, #eee);
+  pointer-events: none;
 }
 
 .library-unrecognized-badge,
