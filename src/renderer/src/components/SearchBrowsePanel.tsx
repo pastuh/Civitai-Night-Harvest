@@ -1,4 +1,5 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type MouseEvent } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState, startTransition, forwardRef, type MouseEvent } from 'react'
+import { flushSync } from 'react-dom'
 import type {
   ContentFilter,
   DownloadQueueItem,
@@ -45,6 +46,7 @@ import {
   civitaiModeBadgeLabel,
   checkpointTypeLabel,
   isModelTakenDown,
+  isModelArchived,
   modelModeLabel
 } from '../../../shared/civitai-meta'
 import { baseModelLabel } from '../../../shared/base-model-label'
@@ -228,6 +230,270 @@ interface ContextMenuState {
   model: WatchRuleTestModel
 }
 
+/** Imperative host — menu open must not re-render SearchBrowsePanel / gallery pipeline. */
+export type BrowseCardContextMenuHandle = {
+  open: (e: MouseEvent, model: WatchRuleTestModel) => void
+  close: () => void
+}
+
+const BrowseCardContextMenu = memo(
+  forwardRef<
+    BrowseCardContextMenuHandle,
+    {
+      queuePaused: boolean
+      baseFolderTagSuggestions: string[]
+      hiddenTags: string[]
+      onHiddenTagsChange?: (tags: string[]) => void | Promise<void>
+      queueItemFor: (model: WatchRuleTestModel) => DownloadQueueItem | undefined
+      isBanned: (model: WatchRuleTestModel) => boolean
+      onViewDetails: (model: WatchRuleTestModel) => void
+      onEnqueue: (model: WatchRuleTestModel) => void
+      onDownloadNow: (model: WatchRuleTestModel) => void
+      onBan: (model: WatchRuleTestModel) => void
+      onUnban: (model: WatchRuleTestModel) => void
+      onDeleteFromLibrary: (model: WatchRuleTestModel) => void
+      onAssignTag: (model: WatchRuleTestModel, tag: string) => Promise<void>
+      onHideTag: (tag: string) => void
+      onJumpToGallery?: (modelId: number, modelName?: string) => void
+      t: (key: string, vars?: Record<string, string | number>) => string
+    }
+  >(function BrowseCardContextMenu(
+    {
+      queuePaused,
+      baseFolderTagSuggestions,
+      hiddenTags,
+      onHiddenTagsChange,
+      queueItemFor,
+      isBanned,
+      onViewDetails,
+      onEnqueue,
+      onDownloadNow,
+      onBan,
+      onUnban,
+      onDeleteFromLibrary,
+      onAssignTag,
+      onHideTag,
+      onJumpToGallery,
+      t
+    },
+    ref
+  ) {
+    const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+    const [assignTagOpen, setAssignTagOpen] = useState(false)
+    const [assignTagQuery, setAssignTagQuery] = useState('')
+    const [assignTagBusy, setAssignTagBusy] = useState(false)
+    const menuRef = useRef<HTMLDivElement>(null)
+
+    const close = useCallback(() => {
+      setContextMenu(null)
+      setAssignTagOpen(false)
+      setAssignTagQuery('')
+      setAssignTagBusy(false)
+    }, [])
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        open(e, model) {
+          e.preventDefault()
+          setAssignTagOpen(false)
+          setAssignTagQuery('')
+          setAssignTagBusy(false)
+          flushSync(() => {
+            setContextMenu({ x: e.clientX, y: e.clientY, model })
+          })
+        },
+        close
+      }),
+      [close]
+    )
+
+    const folderTagSuggestions = useMemo(() => {
+      if (!contextMenu?.model) return baseFolderTagSuggestions
+      const names = new Set(baseFolderTagSuggestions)
+      for (const tag of expandCivitaiTagNames(contextMenu.model.tags)) {
+        if (tag.trim()) names.add(tag.trim())
+      }
+      if (names.size === baseFolderTagSuggestions.length) return baseFolderTagSuggestions
+      return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    }, [baseFolderTagSuggestions, contextMenu?.model])
+
+    const modelTags = useMemo(
+      () => (contextMenu ? expandCivitaiTagNames(contextMenu.model.tags) : []),
+      [contextMenu]
+    )
+
+    if (!contextMenu) return null
+
+    const model = contextMenu.model
+    const queued = queueItemFor(model)
+    const banned = isBanned(model)
+
+    return (
+      <ContextMenuPortal
+        open
+        x={contextMenu.x}
+        y={contextMenu.y}
+        menuRef={menuRef}
+        onClose={close}
+      >
+        <div className="context-menu-title">{model.name}</div>
+        {model.versionId > 0 && (
+          <button
+            {...contextMenuButtonProps(() => {
+              onViewDetails(model)
+            }, close)}
+          >
+            View details
+          </button>
+        )}
+        {queued?.status === 'queued' ? (
+          <button {...contextMenuButtonProps(() => onEnqueue(model), close)}>
+            Remove from queue
+          </button>
+        ) : (
+          !model.inInventory &&
+          !banned && (
+            <button {...contextMenuButtonProps(() => onEnqueue(model), close)}>
+              Add to queue
+            </button>
+          )
+        )}
+        {queuePaused &&
+          !model.inInventory &&
+          !banned &&
+          queued?.status !== 'downloading' && (
+            <button {...contextMenuButtonProps(() => onDownloadNow(model), close)}>
+              {t('browse.downloadNow')}
+            </button>
+          )}
+        {banned ? (
+          <button {...contextMenuButtonProps(() => onUnban(model), close)}>
+            Unban — allow downloads
+          </button>
+        ) : (
+          <button {...contextMenuButtonProps(() => onBan(model), close)}>
+            Exclude / ban model
+          </button>
+        )}
+        {model.inInventory && (
+          <button
+            {...contextMenuButtonProps(() => onDeleteFromLibrary(model), close)}
+            className="context-menu-danger"
+          >
+            Delete files & exclude
+          </button>
+        )}
+        {model.versionId > 0 && (
+          <>
+            <div className="context-menu-divider" />
+            {!assignTagOpen ? (
+              <button
+                type="button"
+                disabled={assignTagBusy}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setAssignTagOpen(true)
+                }}
+              >
+                {t('gallery.assignFolderByTag')}
+              </button>
+            ) : (
+              <div
+                className="context-menu-assign-folder"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div className="context-menu-subtitle">{t('gallery.assignFolderByTag')}</div>
+                <TagAutocompleteInput
+                  value={assignTagQuery}
+                  onChange={setAssignTagQuery}
+                  suggestions={folderTagSuggestions}
+                  singleTag
+                  autoFocus
+                  matchMode="fuzzy"
+                  placeholder={t('gallery.assignFolderPlaceholder')}
+                  confirmLabel={t('gallery.assignFolderConfirm')}
+                  confirmText="→"
+                  clearable
+                  clearLabel={t('gallery.clearSearch')}
+                  disabled={assignTagBusy}
+                  onConfirm={() => {
+                    void (async () => {
+                      setAssignTagBusy(true)
+                      try {
+                        await onAssignTag(model, assignTagQuery)
+                        close()
+                      } finally {
+                        setAssignTagBusy(false)
+                      }
+                    })()
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
+                      e.preventDefault()
+                      void (async () => {
+                        setAssignTagBusy(true)
+                        try {
+                          await onAssignTag(model, assignTagQuery)
+                          close()
+                        } finally {
+                          setAssignTagBusy(false)
+                        }
+                      })()
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </>
+        )}
+        {modelTags.length > 0 && onHiddenTagsChange && (
+          <>
+            <div className="context-menu-divider" />
+            <div className="context-menu-label">{t('browse.contextSkipTag')}</div>
+            <div className="context-menu-tag-picks">
+              {modelTags.map((tag) => {
+                const hidden = hiddenTags.some((h) => h.toLowerCase() === tag.toLowerCase())
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    className="tag-chip context-menu-tag-chip"
+                    disabled={hidden}
+                    onClick={() => {
+                      close()
+                      onHideTag(tag)
+                    }}
+                  >
+                    {tag}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
+        {model.pageUrl && (
+          <button
+            {...contextMenuButtonProps(() => {
+              void window.api.openExternal(model.pageUrl!)
+            }, close)}
+          >
+            Open on Civitai ↗
+          </button>
+        )}
+        {model.inInventory && onJumpToGallery && (
+          <button
+            {...contextMenuButtonProps(() => onJumpToGallery(model.id, model.name), close)}
+          >
+            Go to in gallery →
+          </button>
+        )}
+      </ContextMenuPortal>
+    )
+  })
+)
+
 export function SearchBrowsePanel({
   result,
   tagRules,
@@ -306,7 +572,7 @@ export function SearchBrowsePanel({
 
   const toggleBanMode = useCallback(() => {
     const next = !banMode
-    setBanMode(next)
+    startTransition(() => setBanMode(next))
     void onBanFunctionModeChange?.(next)
   }, [banMode, onBanFunctionModeChange])
 
@@ -388,16 +654,19 @@ export function SearchBrowsePanel({
   const tagsPopoverRef = useRef<HTMLDivElement>(null)
   const tagCatalogRef = useRef<Map<number, WatchRuleTestModel>>(new Map())
   const [tagCatalogTick, setTagCatalogTick] = useState(0)
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [deleteConfirmModel, setDeleteConfirmModel] = useState<WatchRuleTestModel | null>(null)
   /** Skip delete confirm for the rest of this session (checkbox on ConfirmModal). */
   const [deleteConfirmSkipForSession, setDeleteConfirmSkipForSession] = useState(false)
-  const [assignTagOpen, setAssignTagOpen] = useState(false)
-  const [assignTagQuery, setAssignTagQuery] = useState('')
-  const [assignTagBusy, setAssignTagBusy] = useState(false)
+  /** Ban/exclude when owned files would be deleted — themed ConfirmModal (not window.confirm). */
+  const [banOwnedConfirm, setBanOwnedConfirm] = useState<
+    | { kind: 'card'; model: WatchRuleTestModel }
+    | { kind: 'version'; modelId: number; modelName: string; versionId: number }
+    | { kind: 'whole'; modelId: number; modelName: string }
+    | null
+  >(null)
   /** Per-version folder route set from context menu (used on next enqueue + card folder line). */
   const [routingOverrides, setRoutingOverrides] = useState<Record<number, string>>({})
-  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const browseContextMenuRef = useRef<BrowseCardContextMenuHandle>(null)
   const gridSentinelRef = useRef<HTMLDivElement>(null)
   const resultsTopRef = useRef<HTMLDivElement>(null)
   const pageScrollReadyRef = useRef(false)
@@ -2039,18 +2308,13 @@ export function SearchBrowsePanel({
     openDetailRef.current(model)
   }, [])
   const closeContextMenu = useCallback(() => {
-    setContextMenu(null)
-    setAssignTagOpen(false)
-    setAssignTagQuery('')
+    browseContextMenuRef.current?.close()
   }, [])
   const onCardContextMenu = useCallback((e: MouseEvent, model: WatchRuleTestModel) => {
-    e.preventDefault()
-    setAssignTagOpen(false)
-    setAssignTagQuery('')
-    setContextMenu({ x: e.clientX, y: e.clientY, model })
+    browseContextMenuRef.current?.open(e, model)
   }, [])
 
-  const folderTagSuggestions = useMemo(() => {
+  const baseFolderTagSuggestions = useMemo(() => {
     const names = new Set<string>()
     for (const rule of tagRules) {
       for (const n of parseTagRuleNames(rule.tagName)) {
@@ -2063,13 +2327,8 @@ export function SearchBrowsePanel({
     for (const tag of result.tagsInResults ?? []) {
       if (tag.name.trim()) names.add(tag.name.trim())
     }
-    if (contextMenu?.model) {
-      for (const t of expandCivitaiTagNames(contextMenu.model.tags)) {
-        if (t.trim()) names.add(t.trim())
-      }
-    }
     return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-  }, [tagRules, result.tagsInResults, contextMenu?.model])
+  }, [tagRules, result.tagsInResults])
 
   const ensureTagFolder = useCallback(
     async (tagName: string): Promise<boolean> => {
@@ -2084,7 +2343,6 @@ export function SearchBrowsePanel({
     async (model: WatchRuleTestModel, rawTag: string) => {
       const tagName = rawTag.trim()
       if (!tagName || model.versionId <= 0) return
-      setAssignTagBusy(true)
       setMessage('')
       try {
         if (!(await ensureTagFolder(tagName))) return
@@ -2106,21 +2364,12 @@ export function SearchBrowsePanel({
           }
           setMessage(t('browse.assignedRoute', { tag: tagName, name: model.name }))
         }
-        closeContextMenu()
       } catch (err) {
         setMessage(err instanceof Error ? err.message : String(err))
-      } finally {
-        setAssignTagBusy(false)
+        throw err
       }
     },
-    [
-      ensureTagFolder,
-      ownedVersionIds,
-      onRefreshInventory,
-      queueItemFor,
-      closeContextMenu,
-      t
-    ]
+    [ensureTagFolder, ownedVersionIds, onRefreshInventory, queueItemFor, t]
   )
   const onOpenTagFoldersRef = useRef(onOpenTagFolders)
   onOpenTagFoldersRef.current = onOpenTagFolders
@@ -2163,41 +2412,58 @@ export function SearchBrowsePanel({
     [bannedTags, hiddenTags, onHiddenTagsChange, t]
   )
 
-  const banModel = async (model: WatchRuleTestModel) => {
-    if (!(model.versionId > 0)) return
-    setLocalBannedVersions((prev) => new Set(prev).add(model.versionId))
-    setLocalAllowedVersions((prev) => {
-      const next = new Set(prev)
-      next.delete(model.versionId)
-      return next
-    })
-    onBrowseModelBanChange?.(model.id, true, { versionId: model.versionId })
-    setMessage(t('gallery.banned', { name: model.name }))
-    setContextMenu(null)
-    // Version-scoped exclude — does not ban sibling version cards / whole model.
-    void window.api
-      .excludeVersion({
-        modelId: model.id,
-        versionId: model.versionId,
-        modelName: model.name,
-        versionName: model.versionName,
-        previewUrl: model.previewUrl,
-        sourceDomain: model.sourceDomain,
-        author: model.creator,
-        baseModel: model.baseModel,
-        modelType: model.type,
-        tags: model.tags
-      })
-      .then(() => onRefreshInventory?.())
-      .catch((err) => {
-        setLocalBannedVersions((prev) => {
+  const executeExcludeVersion = useCallback(
+    (model: WatchRuleTestModel) => {
+      startTransition(() => {
+        setLocalBannedVersions((prev) => new Set(prev).add(model.versionId))
+        setLocalAllowedVersions((prev) => {
           const next = new Set(prev)
           next.delete(model.versionId)
           return next
         })
-        onBrowseModelBanChange?.(model.id, false, { versionId: model.versionId })
-        setMessage(err instanceof Error ? err.message : String(err))
       })
+      onBrowseModelBanChange?.(model.id, true, { versionId: model.versionId })
+      setMessage(t('gallery.banned', { name: model.name }))
+      void window.api
+        .excludeVersion({
+          modelId: model.id,
+          versionId: model.versionId,
+          modelName: model.name,
+          versionName: model.versionName,
+          previewUrl: model.previewUrl,
+          sourceDomain: model.sourceDomain,
+          author: model.creator,
+          baseModel: model.baseModel,
+          modelType: model.type,
+          tags: model.tags
+        })
+        .then(() => {
+          if (model.inInventory) return onRefreshInventory?.()
+        })
+        .catch((err) => {
+          startTransition(() => {
+            setLocalBannedVersions((prev) => {
+              const next = new Set(prev)
+              next.delete(model.versionId)
+              return next
+            })
+          })
+          onBrowseModelBanChange?.(model.id, false, { versionId: model.versionId })
+          setMessage(err instanceof Error ? err.message : String(err))
+        })
+    },
+    [onBrowseModelBanChange, onRefreshInventory, t]
+  )
+
+  const banModel = async (model: WatchRuleTestModel) => {
+    if (!(model.versionId > 0)) return
+    closeContextMenu()
+    // Owned library files are deleted by excludeVersion — themed confirm first.
+    if (model.inInventory) {
+      setBanOwnedConfirm({ kind: 'card', model })
+      return
+    }
+    executeExcludeVersion(model)
   }
 
   const banModelRef = useRef(banModel)
@@ -2216,16 +2482,27 @@ export function SearchBrowsePanel({
         return
       }
       if (versionId && versionId > 0) {
-        setLocalBannedVersions((prev) => new Set(prev).add(versionId))
+        const owned =
+          (inventory ?? []).some((r) => r.versionId === versionId) ||
+          (inventory ?? []).some((r) => r.modelId === modelId && r.versionId === versionId)
+        if (owned) {
+          setBanOwnedConfirm({ kind: 'version', modelId, modelName, versionId })
+          return
+        }
+        startTransition(() => {
+          setLocalBannedVersions((prev) => new Set(prev).add(versionId))
+        })
         onBrowseModelBanChange?.(modelId, true, { versionId })
         setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
         void window.api
           .excludeVersion({ modelId, versionId, modelName })
           .catch((err) => {
-            setLocalBannedVersions((prev) => {
-              const next = new Set(prev)
-              next.delete(versionId)
-              return next
+            startTransition(() => {
+              setLocalBannedVersions((prev) => {
+                const next = new Set(prev)
+                next.delete(versionId)
+                return next
+              })
             })
             onBrowseModelBanChange?.(modelId, false, { versionId })
             setMessage(err instanceof Error ? err.message : String(err))
@@ -2233,6 +2510,11 @@ export function SearchBrowsePanel({
         return
       }
       // Fallback: whole-model ban only when version is unknown.
+      const ownedModel = (inventory ?? []).some((r) => r.modelId === modelId)
+      if (ownedModel) {
+        setBanOwnedConfirm({ kind: 'whole', modelId, modelName })
+        return
+      }
       setLocalBanned((prev) => new Set(prev).add(modelId))
       setLocalUnbanned((prev) => {
         const next = new Set(prev)
@@ -2251,12 +2533,12 @@ export function SearchBrowsePanel({
         setMessage(err instanceof Error ? err.message : String(err))
       })
     },
-    [displayModels, ruleScopedModels, onBrowseModelBanChange, t]
+    [displayModels, ruleScopedModels, inventory, onBrowseModelBanChange, t]
   )
 
   const unbanModel = async (model: WatchRuleTestModel) => {
     if (!(model.versionId > 0)) return
-    setContextMenu(null)
+    closeContextMenu()
     const siblings = displayModels
       .filter((m) => m.id === model.id && m.versionId > 0 && m.versionId !== model.versionId)
       .map((m) => ({
@@ -2409,7 +2691,7 @@ export function SearchBrowsePanel({
     async (model: WatchRuleTestModel, scope: 'version' | 'all' = 'version') => {
       if (!model.versionId) return
       setDeleteConfirmModel(null)
-      setContextMenu(null)
+      closeContextMenu()
       setMessage('')
       try {
         if (scope === 'all' && model.id > 0) {
@@ -2451,14 +2733,18 @@ export function SearchBrowsePanel({
   const requestDeleteFromLibrary = useCallback(
     (model: WatchRuleTestModel) => {
       if (!model.versionId) return
-      if (deleteConfirmSkipForSession) {
+      const owned = (inventory ?? []).find((r) => r.versionId === model.versionId)
+      const mode = model.civitaiMode ?? owned?.civitaiMode
+      const goneFromCivitai = isModelTakenDown(mode) || isModelArchived(mode)
+      if (deleteConfirmSkipForSession && !goneFromCivitai) {
         void runDeleteFromLibrary(model)
         return
       }
-      setContextMenu(null)
+      // Always themed modal when gone from Civitai (even if session skip is on).
+      closeContextMenu()
       setDeleteConfirmModel(model)
     },
-    [deleteConfirmSkipForSession, runDeleteFromLibrary]
+    [deleteConfirmSkipForSession, runDeleteFromLibrary, closeContextMenu, inventory]
   )
 
   return (
@@ -3247,183 +3533,25 @@ export function SearchBrowsePanel({
         </div>
       </div>
 
-      {contextMenu && (
-        <ContextMenuPortal
-          open
-          x={contextMenu.x}
-          y={contextMenu.y}
-          menuRef={contextMenuRef}
-          onClose={closeContextMenu}
-        >
-          <div className="context-menu-title">{contextMenu.model.name}</div>
-            {contextMenu.model.versionId > 0 && (
-              <button
-                {...contextMenuButtonProps(() => {
-                  openDetail(contextMenu.model)
-                }, closeContextMenu)}
-              >
-                View details
-              </button>
-            )}
-            {queueItemFor(contextMenu.model)?.status === 'queued' ? (
-              <button
-                {...contextMenuButtonProps(
-                  () => void enqueueModel(contextMenu.model),
-                  closeContextMenu
-                )}
-              >
-                Remove from queue
-              </button>
-            ) : (
-              !contextMenu.model.inInventory &&
-              !isBanned(contextMenu.model) && (
-                <button
-                  {...contextMenuButtonProps(
-                    () => void enqueueModel(contextMenu.model),
-                    closeContextMenu
-                  )}
-                >
-                  Add to queue
-                </button>
-              )
-            )}
-            {queuePaused &&
-              !contextMenu.model.inInventory &&
-              !isBanned(contextMenu.model) &&
-              queueItemFor(contextMenu.model)?.status !== 'downloading' && (
-                <button
-                  {...contextMenuButtonProps(
-                    () => void downloadNowModel(contextMenu.model),
-                    closeContextMenu
-                  )}
-                >
-                  {t('browse.downloadNow')}
-                </button>
-              )}
-            {isBanned(contextMenu.model) ? (
-              <button
-                {...contextMenuButtonProps(
-                  () => void unbanModel(contextMenu.model),
-                  closeContextMenu
-                )}
-              >
-                Unban — allow downloads
-              </button>
-            ) : (
-              <button
-                {...contextMenuButtonProps(
-                  () => void banModel(contextMenu.model),
-                  closeContextMenu
-                )}
-              >
-                Exclude / ban model
-              </button>
-            )}
-            {contextMenu.model.inInventory && (
-              <button
-                {...contextMenuButtonProps(() => {
-                  const model = contextMenu.model
-                  requestDeleteFromLibrary(model)
-                }, closeContextMenu)}
-                className="context-menu-danger"
-              >
-                Delete files & exclude
-              </button>
-            )}
-            {contextMenu.model.versionId > 0 && (
-              <>
-                <div className="context-menu-divider" />
-                {!assignTagOpen ? (
-                  <button
-                    type="button"
-                    disabled={assignTagBusy}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setAssignTagOpen(true)
-                    }}
-                  >
-                    {t('gallery.assignFolderByTag')}
-                  </button>
-                ) : (
-                  <div
-                    className="context-menu-assign-folder"
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    <div className="context-menu-subtitle">{t('gallery.assignFolderByTag')}</div>
-                    <TagAutocompleteInput
-                      value={assignTagQuery}
-                      onChange={setAssignTagQuery}
-                      suggestions={folderTagSuggestions}
-                      singleTag
-                      autoFocus
-                      matchMode="fuzzy"
-                      placeholder={t('gallery.assignFolderPlaceholder')}
-                      confirmLabel={t('gallery.assignFolderConfirm')}
-                      confirmText="→"
-                      clearable
-                      clearLabel={t('gallery.clearSearch')}
-                      disabled={assignTagBusy}
-                      onConfirm={() =>
-                        void assignModelToTag(contextMenu.model, assignTagQuery)
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
-                          e.preventDefault()
-                          void assignModelToTag(contextMenu.model, assignTagQuery)
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-            {expandCivitaiTagNames(contextMenu.model.tags).length > 0 && onHiddenTagsChange && (
-              <>
-                <div className="context-menu-divider" />
-                <div className="context-menu-label">{t('browse.contextSkipTag')}</div>
-                <div className="context-menu-tag-picks">
-                  {expandCivitaiTagNames(contextMenu.model.tags).map((tag) => {
-                    const hidden = hiddenTags.some((t) => t.toLowerCase() === tag.toLowerCase())
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        className="tag-chip context-menu-tag-chip"
-                        disabled={hidden}
-                        onClick={() => {
-                          closeContextMenu()
-                          void hideTagFromBrowse(tag)
-                        }}
-                      >
-                        {tag}
-                      </button>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-            {contextMenu.model.pageUrl && (
-              <button
-                {...contextMenuButtonProps(() => {
-                  void window.api.openExternal(contextMenu.model.pageUrl!)
-                }, closeContextMenu)}
-              >
-                Open on Civitai ↗
-              </button>
-            )}
-            {contextMenu.model.inInventory && onJumpToGallery && (
-              <button
-                {...contextMenuButtonProps(
-                  () => onJumpToGallery(contextMenu.model.id, contextMenu.model.name),
-                  closeContextMenu
-                )}
-              >
-                Go to in gallery →
-              </button>
-            )}
-        </ContextMenuPortal>
-      )}
+      <BrowseCardContextMenu
+        ref={browseContextMenuRef}
+        queuePaused={queuePaused}
+        baseFolderTagSuggestions={baseFolderTagSuggestions}
+        hiddenTags={hiddenTags}
+        onHiddenTagsChange={onHiddenTagsChange}
+        queueItemFor={queueItemFor}
+        isBanned={isBanned}
+        onViewDetails={openDetail}
+        onEnqueue={(model) => void enqueueModel(model)}
+        onDownloadNow={(model) => void downloadNowModel(model)}
+        onBan={(model) => void banModel(model)}
+        onUnban={(model) => void unbanModel(model)}
+        onDeleteFromLibrary={requestDeleteFromLibrary}
+        onAssignTag={assignModelToTag}
+        onHideTag={(tag) => void hideTagFromBrowse(tag)}
+        onJumpToGallery={onJumpToGallery}
+        t={t}
+      />
 
       {deferredCount > 0 && (
         <p className="browse-deferred-notice muted ui-extended-only">
@@ -3471,23 +3599,103 @@ export function SearchBrowsePanel({
             )}
           </p>
         )}
+      {banOwnedConfirm && (
+        <ConfirmModal
+          title={t('gallery.excludeBan')}
+          message={t('gallery.banOwnedConfirm', {
+            name:
+              banOwnedConfirm.kind === 'card'
+                ? banOwnedConfirm.model.name
+                : banOwnedConfirm.modelName || `#${banOwnedConfirm.modelId}`
+          })}
+          confirmLabel={t('gallery.excludeBan')}
+          danger
+          onConfirm={() => {
+            const pending = banOwnedConfirm
+            setBanOwnedConfirm(null)
+            if (pending.kind === 'card') {
+              executeExcludeVersion(pending.model)
+              return
+            }
+            if (pending.kind === 'version') {
+              const { modelId, modelName, versionId } = pending
+              startTransition(() => {
+                setLocalBannedVersions((prev) => new Set(prev).add(versionId))
+              })
+              onBrowseModelBanChange?.(modelId, true, { versionId })
+              setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
+              void window.api
+                .excludeVersion({ modelId, versionId, modelName })
+                .then(() => onRefreshInventory?.())
+                .catch((err) => {
+                  startTransition(() => {
+                    setLocalBannedVersions((prev) => {
+                      const next = new Set(prev)
+                      next.delete(versionId)
+                      return next
+                    })
+                  })
+                  onBrowseModelBanChange?.(modelId, false, { versionId })
+                  setMessage(err instanceof Error ? err.message : String(err))
+                })
+              return
+            }
+            const { modelId, modelName } = pending
+            setLocalBanned((prev) => new Set(prev).add(modelId))
+            setLocalUnbanned((prev) => {
+              const next = new Set(prev)
+              next.delete(modelId)
+              return next
+            })
+            onBrowseModelBanChange?.(modelId, true)
+            setMessage(t('gallery.banned', { name: modelName || `#${modelId}` }))
+            void window.api.banModel(modelId, modelName).then(() => onRefreshInventory?.()).catch((err) => {
+              setLocalBanned((prev) => {
+                const next = new Set(prev)
+                next.delete(modelId)
+                return next
+              })
+              onBrowseModelBanChange?.(modelId, false)
+              setMessage(err instanceof Error ? err.message : String(err))
+            })
+          }}
+          onCancel={() => setBanOwnedConfirm(null)}
+        />
+      )}
       {deleteConfirmModel && (
         <ConfirmModal
           title={t('gallery.deleteFilesExclude')}
-          message={
-            inventory.filter((r) => r.modelId === deleteConfirmModel.id).length > 1
+          message={(() => {
+            const owned = inventory.find((r) => r.versionId === deleteConfirmModel.versionId)
+            const mode = deleteConfirmModel.civitaiMode ?? owned?.civitaiMode
+            const gone = isModelTakenDown(mode) || isModelArchived(mode)
+            const siblingCount = inventory.filter((r) => r.modelId === deleteConfirmModel.id).length
+            const version = deleteConfirmModel.versionName || String(deleteConfirmModel.versionId)
+            if (gone) {
+              return siblingCount > 1
+                ? t('gallery.deleteUnavailableConfirmOrAll', {
+                    name: deleteConfirmModel.name,
+                    version,
+                    count: String(siblingCount),
+                    mode: modelModeLabel(mode) || mode || 'unavailable'
+                  })
+                : t('gallery.deleteUnavailableConfirm', {
+                    name: deleteConfirmModel.name,
+                    version,
+                    mode: modelModeLabel(mode) || mode || 'unavailable'
+                  })
+            }
+            return siblingCount > 1
               ? t('gallery.deleteConfirmVersionOrAll', {
                   name: deleteConfirmModel.name,
-                  version: deleteConfirmModel.versionName || String(deleteConfirmModel.versionId),
-                  count: String(
-                    inventory.filter((r) => r.modelId === deleteConfirmModel.id).length
-                  )
+                  version,
+                  count: String(siblingCount)
                 })
               : t('gallery.deleteConfirmVersion', {
                   name: deleteConfirmModel.name,
-                  version: deleteConfirmModel.versionName || String(deleteConfirmModel.versionId)
+                  version
                 })
-          }
+          })()}
           confirmLabel={t('gallery.deleteThisVersion')}
           secondaryConfirmLabel={
             inventory.filter((r) => r.modelId === deleteConfirmModel.id).length > 1
@@ -3504,7 +3712,13 @@ export function SearchBrowsePanel({
               : undefined
           }
           danger
-          dontAskAgainLabel={t('gallery.deleteConfirmDontAsk')}
+          dontAskAgainLabel={(() => {
+            const owned = inventory.find((r) => r.versionId === deleteConfirmModel.versionId)
+            const mode = deleteConfirmModel.civitaiMode ?? owned?.civitaiMode
+            return isModelTakenDown(mode) || isModelArchived(mode)
+              ? undefined
+              : t('gallery.deleteConfirmDontAsk')
+          })()}
           onDontAskAgainChange={setDeleteConfirmSkipForSession}
           onConfirm={() => void runDeleteFromLibrary(deleteConfirmModel, 'version')}
           onCancel={() => setDeleteConfirmModel(null)}

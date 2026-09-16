@@ -736,8 +736,13 @@ export class ScanScheduler {
   }
 
   /** Public browse-gallery snapshot for enrichment / UI helpers. */
-  getBrowseGalleryModels(ruleId?: string): WatchRuleTestModel[] {
-    return this.crawlBrowseModels(ruleId)
+  getBrowseGalleryModels(
+    ruleId?: string,
+    options?: { preferredPreviews?: boolean }
+  ): WatchRuleTestModel[] {
+    return this.crawlBrowseModels(ruleId, {
+      preferredPreviews: options?.preferredPreviews !== false ? true : false
+    })
   }
 
   /** Build merged browse gallery for UI (all enabled rules). */
@@ -3235,10 +3240,17 @@ export class ScanScheduler {
       const rule = allRules.find((r) => r.enabled) ?? allRules[0]
       this.seedBrowseModels(rule?.id ?? '__banned__', [stub])
     }
+    // Light emit — skip preferred-preview rematerialize of the whole harvest gallery.
+    const models: WatchRuleTestModel[] = []
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const m of bucket.values()) {
+        if (m.id === modelId) models.push(m)
+      }
+    }
+    let galleryTotal = 0
+    for (const _ of this.iterateCrawlBrowseModels()) galleryTotal++
+    const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
-    const gallery = this.crawlBrowseModels()
-    const models = gallery.filter((m) => m.id === modelId)
-    const stats = this.browseGalleryStats(gallery)
     const rule = enabled[0] ?? getWatchRules()[0]
     const result = buildWatchRuleTestResult(
       models,
@@ -3246,7 +3258,7 @@ export class ScanScheduler {
         pageSize: models.length,
         currentPage: 1,
         nextCursor: null,
-        totalItems: gallery.length
+        totalItems: galleryTotal
       },
       this.browseEnumsOrFallback()
     )
@@ -3258,7 +3270,7 @@ export class ScanScheduler {
       pageNumber: 1,
       pageModelsAdded: models.length,
       pageModelsOnPage: models.length,
-      galleryTotal: gallery.length,
+      galleryTotal,
       galleryStats: stats,
       galleryMode: 'delta',
       galleryGeneration: this.browseGalleryGeneration,
@@ -3279,10 +3291,17 @@ export class ScanScheduler {
       }
     }
     if (!found) return
+    // Light emit — skip preferred-preview rematerialize of the whole harvest gallery.
+    const models: WatchRuleTestModel[] = []
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const m of bucket.values()) {
+        if (m.id === modelId) models.push(m)
+      }
+    }
+    let galleryTotal = 0
+    for (const _ of this.iterateCrawlBrowseModels()) galleryTotal++
+    const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
-    const gallery = this.crawlBrowseModels()
-    const models = gallery.filter((m) => m.id === modelId)
-    const stats = this.browseGalleryStats(gallery)
     const rule = enabled[0] ?? getWatchRules()[0]
     const result = buildWatchRuleTestResult(
       models,
@@ -3290,7 +3309,7 @@ export class ScanScheduler {
         pageSize: models.length,
         currentPage: 1,
         nextCursor: null,
-        totalItems: gallery.length
+        totalItems: galleryTotal
       },
       this.browseEnumsOrFallback()
     )
@@ -3301,7 +3320,7 @@ export class ScanScheduler {
       pageNumber: 1,
       pageModelsAdded: models.length,
       pageModelsOnPage: models.length,
-      galleryTotal: gallery.length,
+      galleryTotal,
       galleryStats: stats,
       galleryMode: 'delta',
       galleryGeneration: this.browseGalleryGeneration,
@@ -3338,6 +3357,8 @@ export class ScanScheduler {
       }
     }
     if (!found) return
+    // forgottenVersions / skipped sets change when Browse exclude writes DB.
+    this.invalidateBrowseStatsSetsCache()
     this.emitBrowseVersionDelta(
       modelId,
       versionId,
@@ -3371,9 +3392,10 @@ export class ScanScheduler {
       }
     }
     if (!touched.length) return
+    let galleryTotal = 0
+    for (const _ of this.iterateCrawlBrowseModels()) galleryTotal++
+    const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
-    const gallery = this.crawlBrowseModels()
-    const stats = this.browseGalleryStats(gallery)
     const rule = enabled[0] ?? getWatchRules()[0]
     const result = buildWatchRuleTestResult(
       touched,
@@ -3381,7 +3403,7 @@ export class ScanScheduler {
         pageSize: touched.length,
         currentPage: 1,
         nextCursor: null,
-        totalItems: gallery.length
+        totalItems: galleryTotal
       },
       this.browseEnumsOrFallback()
     )
@@ -3392,7 +3414,7 @@ export class ScanScheduler {
       pageNumber: 1,
       pageModelsAdded: touched.length,
       pageModelsOnPage: touched.length,
-      galleryTotal: gallery.length,
+      galleryTotal,
       galleryStats: stats,
       galleryMode: 'delta',
       galleryGeneration: this.browseGalleryGeneration,
@@ -3406,10 +3428,19 @@ export class ScanScheduler {
     ruleId: string,
     ruleName: string
   ): void {
+    // Light path — do not rematerialize the full gallery with preferred-preview SQL.
+    // Ban/allow of one undownloaded card was stalling the UI during harvest.
+    const models: WatchRuleTestModel[] = []
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      for (const m of bucket.values()) {
+        if (m.id === modelId && m.versionId === versionId) models.push(m)
+      }
+    }
+    if (!models.length) return
+    let galleryTotal = 0
+    for (const _ of this.iterateCrawlBrowseModels()) galleryTotal++
+    const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
-    const gallery = this.crawlBrowseModels()
-    const models = gallery.filter((m) => m.id === modelId && m.versionId === versionId)
-    const stats = this.browseGalleryStats(gallery)
     const rule = enabled[0] ?? getWatchRules()[0]
     const result = buildWatchRuleTestResult(
       models,
@@ -3417,7 +3448,7 @@ export class ScanScheduler {
         pageSize: models.length,
         currentPage: 1,
         nextCursor: null,
-        totalItems: gallery.length
+        totalItems: galleryTotal
       },
       this.browseEnumsOrFallback()
     )
@@ -3428,7 +3459,7 @@ export class ScanScheduler {
       pageNumber: 1,
       pageModelsAdded: models.length,
       pageModelsOnPage: models.length,
-      galleryTotal: gallery.length,
+      galleryTotal,
       galleryStats: stats,
       galleryMode: 'delta',
       galleryGeneration: this.browseGalleryGeneration,

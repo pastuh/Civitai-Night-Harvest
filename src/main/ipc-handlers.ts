@@ -527,8 +527,16 @@ export function initIpc(): void {
   ): boolean {
     if (!modelId || modelId <= 0) return false
     if (inventory.isModelBanned(modelId)) return false
-    const browse = scheduler.getBrowseGalleryModels().find((m) => m.id === modelId)
-    const versionId = stub?.versionId ?? browse?.versionId
+    // Prefer stub from Missing/ban row — avoid rematerializing the whole Browse gallery
+    // (preferred-preview SQL) on every Allow click.
+    let browse: import('../shared/types').WatchRuleTestModel | undefined
+    const stubVersionId = stub?.versionId && stub.versionId > 0 ? stub.versionId : 0
+    if (!stubVersionId) {
+      browse = scheduler
+        .getBrowseGalleryModels(undefined, { preferredPreviews: false })
+        .find((m) => m.id === modelId)
+    }
+    const versionId = stubVersionId || browse?.versionId
     if (!versionId || versionId <= 0) return false
     if (inventory.hasVersion(versionId)) return false
     const id = downloadQueue.enqueue(
@@ -1434,7 +1442,8 @@ export function initIpc(): void {
       modelId,
       kinds: ['bannedByTag', 'pausedByTag']
     })
-    return inventory.getExclusionReviewItems()
+    // Soft remove only — do not rebuild/send the full Missing grid on every click.
+    return { modelId }
   })
 
   /** Allow one tag-skipped model: persistent exception + remove review + manual queue. */
@@ -1464,13 +1473,16 @@ export function initIpc(): void {
       modelId,
       kinds: ['bannedByTag', 'pausedByTag']
     })
-    return { modelId, queued, items: inventory.getExclusionReviewItems() }
+    return { modelId, queued }
   })
 
   ipcMain.handle('exclusions:acknowledgeTagSkip', (_e, modelId: number) => {
     inventory.acknowledgeTagSkipReview(modelId)
-    emitMissingList(() => mainWindow)
-    return inventory.getExclusionReviewItems()
+    emitExclusionRemoved(() => mainWindow, {
+      modelId,
+      kinds: ['bannedByTag', 'pausedByTag']
+    })
+    return { modelId }
   })
 
   ipcMain.handle('exclusions:getBanSeen', () => ({

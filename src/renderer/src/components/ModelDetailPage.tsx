@@ -2084,6 +2084,9 @@ export function ModelDetailPage({
                     ea && v.earlyAccessEndsAt && new Date(v.earlyAccessEndsAt).getTime() > Date.now()
                       ? formatCountdownTo(v.earlyAccessEndsAt)
                       : null
+                  const thumbRaw =
+                    previewOverrides[v.id]?.[0] ?? v.previewUrls?.[0] ?? v.previewUrl
+                  const thumbSrc = thumbRaw ? toPreviewSrc(thumbRaw) : ''
                   return (
                     <div
                       key={v.id}
@@ -2096,6 +2099,23 @@ export function ModelDetailPage({
                         className="model-detail-version-select"
                         onClick={() => switchVersion(v.id)}
                       >
+                        <span className="model-detail-version-thumb" aria-hidden>
+                          {thumbSrc ? (
+                            <img
+                              className="model-detail-version-thumb-img"
+                              src={thumbSrc}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              onError={(e) => {
+                                e.currentTarget.style.visibility = 'hidden'
+                              }}
+                            />
+                          ) : (
+                            <span className="model-detail-version-thumb-empty" />
+                          )}
+                        </span>
+                        <span className="model-detail-version-select-body">
                         <VersionNameRow
                           name={v.name}
                           source={{
@@ -2152,6 +2172,7 @@ export function ModelDetailPage({
                             ) : null}
                           </span>
                         )}
+                        </span>
                       </button>
                       {!owned && (
                         <div className="model-detail-version-actions">

@@ -44,6 +44,7 @@ import { resolvePreviewsForModelWithFallback } from './preview-enrich'
 import * as inventory from './inventory'
 import { markNewestPeek, msUntilNewestPeekAllowed } from './crawl-state'
 import { getSettings, getTagRules, getWatchRules, shouldAutoQueue, shouldCrawlAutoDownload } from './settings-store'
+import { pickVersionStats } from '../shared/civitai-meta'
 
 export interface RuleQueueOptions {
   /** When false, only detect and report — do not enqueue */
@@ -304,10 +305,22 @@ export async function enrichPendingVersionPreviews(
           )
           url = resolved.previewUrls[0]
         }
-        if (!url || url === item.previewUrl) continue
-        inventory.updatePendingPreviewUrl(item.versionId, url)
-        item.previewUrl = url
-        changed = true
+        if (url && url !== item.previewUrl) {
+          inventory.updatePendingPreviewUrl(item.versionId, url)
+          item.previewUrl = url
+          changed = true
+        }
+        const version = model.modelVersions?.find((v) => v.id === item.versionId)
+        const stats = pickVersionStats(version)
+        if (
+          (stats.downloadCount != null && stats.downloadCount !== item.downloadCount) ||
+          (stats.thumbsUpCount != null && stats.thumbsUpCount !== item.thumbsUpCount)
+        ) {
+          inventory.updatePendingCardStats(item.versionId, stats)
+          if (stats.downloadCount != null) item.downloadCount = stats.downloadCount
+          if (stats.thumbsUpCount != null) item.thumbsUpCount = stats.thumbsUpCount
+          changed = true
+        }
       }
     } catch {
       /* keep existing preview */
@@ -318,16 +331,28 @@ export async function enrichPendingVersionPreviews(
   return changed
 }
 
-/** Align Updates-card previews with each pending version’s own images on this model. */
+/** Align Updates-card previews + version stats with each pending version on this model. */
 function refreshPendingPreviewsFromModel(model: CivitaiModel, ctx: RuleQueueContext): void {
   let changed = false
   for (const p of ctx.pendingVersions) {
     if (p.modelId !== model.id) continue
+    const version = model.modelVersions?.find((v) => v.id === p.versionId)
     const url = resolveVersionPreviewUrl(model, p.versionId)
-    if (!url || url === p.previewUrl) continue
-    inventory.updatePendingPreviewUrl(p.versionId, url)
-    p.previewUrl = url
-    changed = true
+    if (url && url !== p.previewUrl) {
+      inventory.updatePendingPreviewUrl(p.versionId, url)
+      p.previewUrl = url
+      changed = true
+    }
+    const stats = pickVersionStats(version)
+    if (
+      (stats.downloadCount != null && stats.downloadCount !== p.downloadCount) ||
+      (stats.thumbsUpCount != null && stats.thumbsUpCount !== p.thumbsUpCount)
+    ) {
+      inventory.updatePendingCardStats(p.versionId, stats)
+      if (stats.downloadCount != null) p.downloadCount = stats.downloadCount
+      if (stats.thumbsUpCount != null) p.thumbsUpCount = stats.thumbsUpCount
+      changed = true
+    }
   }
   if (changed) ctx.onPendingChange?.([...ctx.pendingVersions])
 }
@@ -402,8 +427,7 @@ function processModel(
       blockedTag: policyHit.policyTag,
       matchedModelTag: policyHit.modelTag,
       policy: policyHit.kind,
-      downloadCount: model.stats?.downloadCount,
-      thumbsUpCount: model.stats?.thumbsUpCount
+      ...pickVersionStats(version)
     })
     return
   }
@@ -453,8 +477,7 @@ function processModel(
       reason: formatEarlyAccessReason(version.earlyAccessEndsAt),
       earlyAccessEndsAt: version.earlyAccessEndsAt ?? undefined,
       civitaiTags,
-      downloadCount: model.stats?.downloadCount,
-      thumbsUpCount: model.stats?.thumbsUpCount,
+      ...pickVersionStats(version),
       baseModel: version.baseModel
     })
     if (deferred) {
@@ -675,8 +698,7 @@ function processModel(
       civitaiTags: Array.isArray(model.tags)
         ? model.tags.filter((t): t is string => typeof t === 'string')
         : undefined,
-      downloadCount: model.stats?.downloadCount,
-      thumbsUpCount: model.stats?.thumbsUpCount,
+      ...pickVersionStats(version),
       modelDescription: model.description,
       versionDescription: version.description
     }

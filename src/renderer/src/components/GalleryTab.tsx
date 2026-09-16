@@ -62,7 +62,7 @@ import {
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { fuzzyTagMatch } from '../../../shared/tag-fuzzy'
 import { aggregateBaseModelOptions, baseModelLabel, baseModelsMatch } from '../../../shared/base-model-label'
-import { isModelTakenDown, isModelArchived } from '../../../shared/civitai-meta'
+import { isModelTakenDown, isModelArchived, modelModeLabel } from '../../../shared/civitai-meta'
 import {
   DEFAULT_LIBRARY_VIEW_PREFS,
   LIBRARY_SORT_OPTIONS,
@@ -350,6 +350,13 @@ function GalleryTabInner({
     modelName: string
     versionName: string
     siblingCount: number
+    /** Taken down / archived — always confirm, even if session skip is on. */
+    goneFromCivitai?: boolean
+    modeLabel?: string
+  } | null>(null)
+  const [localDeleteConfirm, setLocalDeleteConfirm] = useState<{
+    versionId: number
+    modelName: string
   } | null>(null)
   const deleteConfirmSkipRef = useRef(false)
   const [assignFolderOpen, setAssignFolderOpen] = useState(false)
@@ -1208,82 +1215,6 @@ function GalleryTabInner({
     }
   }, [])
 
-  const banModel = useCallback(
-    (modelId: number, modelName: string, versionId?: number) => {
-      const rec =
-        versionId != null && versionId > 0
-          ? inventory.find((r) => r.versionId === versionId)
-          : inventory.find((r) => r.modelId === modelId)
-      const isLocal = rec ? isUnrecognizedInventoryRecord(rec) : modelId <= 0
-      const targetVersionId = rec?.versionId ?? versionId
-
-      if (rec) {
-        setPendingHiddenVersionIds((prev) => {
-          if (prev.has(rec.versionId)) return prev
-          const next = new Set(prev)
-          next.add(rec.versionId)
-          return next
-        })
-      }
-      setContextMenu(null)
-      setSelected((prev) => {
-        const next = new Set(prev)
-        if (targetVersionId && targetVersionId > 0) next.delete(targetVersionId)
-        return next
-      })
-
-      // Fire-and-forget — version-scoped exclude (not whole-model ban).
-      const run = async () => {
-        try {
-          if (isLocal && rec) {
-            await window.api.deleteInventoryVersion(rec.versionId, { ban: false })
-          } else if (targetVersionId && targetVersionId > 0 && modelId > 0) {
-            if (typeof window.api.excludeVersion === 'function') {
-              await window.api.excludeVersion({
-                modelId,
-                versionId: targetVersionId,
-                modelName,
-                versionName: rec?.versionName,
-                previewUrl: rec?.previewPath,
-                author: rec?.author,
-                baseModel: rec?.baseModel,
-                sourceDomain: rec?.civitaiDomain,
-                tags: rec?.civitaiTags,
-                modelType: rec?.modelType
-              })
-            } else {
-              // Preload not restarted — delete this version only (no whole-model ban).
-              await window.api.deleteInventoryVersion(targetVersionId, { ban: true })
-            }
-            onBannedChange?.(modelId, true, {
-              name: modelName,
-              versionId: targetVersionId,
-              baseModel: rec?.baseModel,
-              creator: rec?.author,
-              previewUrl: rec?.previewPath
-            })
-          } else if (modelId > 0) {
-            await window.api.banModel(modelId, modelName)
-            onBannedChange?.(modelId, true)
-          }
-          scheduleLibraryRefresh()
-        } catch (err) {
-          if (rec) {
-            setPendingHiddenVersionIds((prev) => {
-              if (!prev.has(rec.versionId)) return prev
-              const next = new Set(prev)
-              next.delete(rec.versionId)
-              return next
-            })
-          }
-          setMessage(err instanceof Error ? err.message : String(err))
-        }
-      }
-      void run()
-    },
-    [inventory, onBannedChange, scheduleLibraryRefresh]
-  )
-
   const unbanModel = useCallback(
     async (modelId: number, modelName: string) => {
       setBannedList((prev) => prev.filter((b) => b.modelId !== modelId))
@@ -1399,30 +1330,98 @@ function GalleryTabInner({
     const versionLabel = rec?.versionName || String(versionId)
     const siblings =
       modelId > 0 ? inventory.filter((r) => r.modelId === modelId) : rec ? [rec] : []
-    const hasMultiple = siblings.length > 1
+    const goneFromCivitai = Boolean(
+      rec && (isModelTakenDown(rec.civitaiMode) || isModelArchived(rec.civitaiMode))
+    )
+    const modeLabel = modelModeLabel(rec?.civitaiMode) || rec?.civitaiMode || 'unavailable'
+    // Session skip is OK for normal deletes; always re-confirm if gone from Civitai.
+    const maySkip = deleteConfirmSkipRef.current && !goneFromCivitai
 
-    if (hasMultiple && !deleteConfirmSkipRef.current) {
+    if (!maySkip) {
       setDeleteConfirm({
         versionId,
         modelId,
         modelName,
         versionName: versionLabel,
-        siblingCount: siblings.length
+        siblingCount: Math.max(1, siblings.length),
+        goneFromCivitai,
+        modeLabel
       })
       setContextMenu(null)
       return
     }
 
-    if (!hasMultiple && !deleteConfirmSkipRef.current) {
-      const ok = window.confirm(
-        t('gallery.deleteConfirmVersion', { name: modelName, version: versionLabel })
-      )
-      if (!ok) return
-    }
-
     // Session "don't ask": always this version only (not all versions).
     await performDelete(versionId, modelId, modelName, 'version')
   }
+
+  const banModel = useCallback(
+    (modelId: number, modelName: string, versionId?: number) => {
+      const rec =
+        versionId != null && versionId > 0
+          ? inventory.find((r) => r.versionId === versionId)
+          : inventory.find((r) => r.modelId === modelId) ??
+            (versionId != null ? inventory.find((r) => r.versionId === versionId) : undefined)
+      // Local/custom rows use negative versionIds — find by versionId even when ≤ 0.
+      const row =
+        rec ??
+        (versionId != null ? inventory.find((r) => r.versionId === versionId) : undefined)
+      const isLocal = row ? isUnrecognizedInventoryRecord(row) : modelId <= 0
+      const targetVersionId = row?.versionId ?? versionId
+
+      setContextMenu(null)
+
+      // Owned / local files on disk — never delete without an explicit confirm.
+      if (isLocal && row) {
+        setLocalDeleteConfirm({
+          versionId: row.versionId,
+          modelName: modelName || row.modelName
+        })
+        return
+      }
+
+      // Civitai-linked library file — Ban/Exclude deletes from disk; reuse Delete confirm flow.
+      if (row && targetVersionId != null && targetVersionId > 0 && modelId > 0) {
+        void deleteModel(targetVersionId, modelId, modelName)
+        return
+      }
+
+      // Not in library — soft exclude only (no disk files).
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (targetVersionId && targetVersionId > 0) next.delete(targetVersionId)
+        return next
+      })
+
+      const run = async () => {
+        try {
+          if (targetVersionId && targetVersionId > 0 && modelId > 0) {
+            if (typeof window.api.excludeVersion === 'function') {
+              await window.api.excludeVersion({
+                modelId,
+                versionId: targetVersionId,
+                modelName
+              })
+            } else {
+              await window.api.banModel(modelId, modelName)
+            }
+            onBannedChange?.(modelId, true, {
+              name: modelName,
+              versionId: targetVersionId
+            })
+          } else if (modelId > 0) {
+            await window.api.banModel(modelId, modelName)
+            onBannedChange?.(modelId, true)
+          }
+          scheduleLibraryRefresh()
+        } catch (err) {
+          setMessage(err instanceof Error ? err.message : String(err))
+        }
+      }
+      void run()
+    },
+    [inventory, onBannedChange, scheduleLibraryRefresh, t, deleteModel]
+  )
 
   const toggleSelect = useCallback((versionId: number) => {
     setSelected((prev) => {
@@ -1712,7 +1711,10 @@ function GalleryTabInner({
                       <button
                         type="button"
                         className={`btn-sm browse-ban-toggle ${banFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                        onClick={() => onBanFunctionModeChange(!banFunctionMode)}
+                        onClick={() => {
+                          const next = !banFunctionMode
+                          startTransition(() => onBanFunctionModeChange(next))
+                        }}
                         title={t('browse.banModeTitle')}
                         aria-pressed={banFunctionMode}
                       >
@@ -2621,29 +2623,105 @@ function GalleryTabInner({
       {deleteConfirm && (
         <ConfirmModal
           title={t('gallery.deleteFilesExclude')}
-          message={t('gallery.deleteConfirmVersionOrAll', {
-            name: deleteConfirm.modelName,
-            version: deleteConfirm.versionName,
-            count: String(deleteConfirm.siblingCount)
-          })}
-          confirmLabel={t('gallery.deleteThisVersion')}
-          secondaryConfirmLabel={t('gallery.deleteAllVersions', {
-            count: String(deleteConfirm.siblingCount)
-          })}
-          onSecondaryConfirm={() => {
-            const pending = deleteConfirm
-            void performDelete(pending.versionId, pending.modelId, pending.modelName, 'all')
-          }}
+          message={
+            deleteConfirm.goneFromCivitai
+              ? deleteConfirm.siblingCount > 1
+                ? t('gallery.deleteUnavailableConfirmOrAll', {
+                    name: deleteConfirm.modelName,
+                    version: deleteConfirm.versionName,
+                    count: String(deleteConfirm.siblingCount),
+                    mode: deleteConfirm.modeLabel || 'unavailable'
+                  })
+                : t('gallery.deleteUnavailableConfirm', {
+                    name: deleteConfirm.modelName,
+                    version: deleteConfirm.versionName,
+                    mode: deleteConfirm.modeLabel || 'unavailable'
+                  })
+              : deleteConfirm.siblingCount > 1
+                ? t('gallery.deleteConfirmVersionOrAll', {
+                    name: deleteConfirm.modelName,
+                    version: deleteConfirm.versionName,
+                    count: String(deleteConfirm.siblingCount)
+                  })
+                : t('gallery.deleteConfirmVersion', {
+                    name: deleteConfirm.modelName,
+                    version: deleteConfirm.versionName
+                  })
+          }
+          confirmLabel={
+            deleteConfirm.siblingCount > 1
+              ? t('gallery.deleteThisVersion')
+              : t('gallery.deleteFilesExclude')
+          }
+          secondaryConfirmLabel={
+            deleteConfirm.siblingCount > 1
+              ? t('gallery.deleteAllVersions', {
+                  count: String(deleteConfirm.siblingCount)
+                })
+              : undefined
+          }
+          onSecondaryConfirm={
+            deleteConfirm.siblingCount > 1
+              ? () => {
+                  const pending = deleteConfirm
+                  void performDelete(pending.versionId, pending.modelId, pending.modelName, 'all')
+                }
+              : undefined
+          }
           danger
-          dontAskAgainLabel={t('gallery.deleteConfirmDontAsk')}
-          onDontAskAgainChange={(checked) => {
-            deleteConfirmSkipRef.current = checked
-          }}
+          dontAskAgainLabel={
+            deleteConfirm.goneFromCivitai ? undefined : t('gallery.deleteConfirmDontAsk')
+          }
+          onDontAskAgainChange={
+            deleteConfirm.goneFromCivitai
+              ? undefined
+              : (checked) => {
+                  deleteConfirmSkipRef.current = checked
+                }
+          }
           onConfirm={() => {
             const pending = deleteConfirm
             void performDelete(pending.versionId, pending.modelId, pending.modelName, 'version')
           }}
           onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+      {localDeleteConfirm && (
+        <ConfirmModal
+          title={t('gallery.deleteLocal')}
+          message={t('gallery.deleteLocalConfirm', { name: localDeleteConfirm.modelName })}
+          confirmLabel={t('gallery.deleteLocal')}
+          danger
+          onConfirm={() => {
+            const pending = localDeleteConfirm
+            setLocalDeleteConfirm(null)
+            setPendingHiddenVersionIds((prev) => {
+              if (prev.has(pending.versionId)) return prev
+              const next = new Set(prev)
+              next.add(pending.versionId)
+              return next
+            })
+            setSelected((prev) => {
+              const next = new Set(prev)
+              next.delete(pending.versionId)
+              return next
+            })
+            void (async () => {
+              try {
+                await window.api.deleteInventoryVersion(pending.versionId, { ban: false })
+                scheduleLibraryRefresh()
+              } catch (err) {
+                setPendingHiddenVersionIds((prev) => {
+                  if (!prev.has(pending.versionId)) return prev
+                  const next = new Set(prev)
+                  next.delete(pending.versionId)
+                  return next
+                })
+                setMessage(err instanceof Error ? err.message : String(err))
+              }
+            })()
+          }}
+          onCancel={() => setLocalDeleteConfirm(null)}
         />
       )}
     </div>

@@ -1297,6 +1297,10 @@ export const lt: Messages = {
     deleteThisVersion: 'Tik ši versija',
     deleteAllVersions: 'Visos {count} versijos',
     deleteConfirmDontAsk: 'Daugiau neklausti (šią sesiją)',
+    deleteUnavailableConfirm:
+      '„{name}“ ({version}) Civitai pažymėta kaip {mode} — iš naujo atsisiųsti nebegalėsite.\n\nVis tiek ištrinti šiuos failus iš disko?',
+    deleteUnavailableConfirmOrAll:
+      '„{name}“ Civitai pažymėta kaip {mode} — iš naujo atsisiųsti nebegalėsite.\n\nIštrinti versiją „{version}“, ar visas {count} turimas versijas iš disko?',
     deletedExcluded: 'Ištrinta ir excluded: {name}',
     deletedExcludedVersion: 'Ištrinta ir excluded versija: {name} → {version}',
     deletedExcludedAllVersions: 'Ištrinta ir excluded {count} versija(-os) modelio {name}',
@@ -1356,6 +1360,10 @@ export const lt: Messages = {
     unrecognizedHint: 'Custom / vietinis failas be Civitai tapatybės (nėra .swarm.json arba nesutapo hash)',
     duplicateOf: 'Dublikatas: {name}',
     deleteLocal: 'Ištrinti vietinius failus',
+    deleteLocalConfirm:
+      'Ištrinti vietinius „{name}“ failus iš disko?\n\nTai vietinis / nestandartinis modelis (nėra Civitai arba neatpažintas). Automatiškai iš naujo neatsisiųs.',
+    banOwnedConfirm:
+      'Išjungti „{name}“ ir ištrinti failus iš disko?\n\nŠi versija yra bibliotekoje. Atšaukus failai lieka.',
     sessionDownloads: 'Sesijos atsisiuntimai',
     alwaysUpdateFilter: 'Visada atnaujinti',
     alwaysUpdateFilterHint:

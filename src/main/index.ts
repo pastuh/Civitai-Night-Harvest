@@ -15,7 +15,11 @@ let isQuitting = false
 // HTTP/2 drops overnight are a common cause of ERR_HTTP2_PROTOCOL_ERROR on long downloads.
 app.commandLine.appendSwitch('disable-http2')
 // Reduce blank-window crashes when Chromium's network service restarts (Windows).
-app.commandLine.appendSwitch('disable-features', 'NetworkServiceSandbox')
+app.commandLine.appendSwitch('disable-features', 'NetworkServiceSandbox,CalculateNativeWinOcclusion')
+
+const isDev = Boolean(process.env.ELECTRON_RENDERER_URL)
+let pendingNetworkRecovery = false
+let startupWatchdog: ReturnType<typeof setTimeout> | null = null
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
@@ -35,13 +39,51 @@ function showMainWindow(win: BrowserWindow): void {
   win.focus()
 }
 
+function clearStartupWatchdog(): void {
+  if (!startupWatchdog) return
+  clearTimeout(startupWatchdog)
+  startupWatchdog = null
+}
+
+function armStartupWatchdog(win: BrowserWindow): void {
+  clearStartupWatchdog()
+  if (shouldStartHidden()) return
+  // Network Service can crash during first Vite/HTTP load and leave the window
+  // forever hidden (show:false) with isLoading() stuck — tray only until a second
+  // npm run hits second-instance. Force visibility + reload if still stuck.
+  startupWatchdog = setTimeout(() => {
+    startupWatchdog = null
+    if (win.isDestroyed() || shouldStartHidden()) return
+    if (!win.isVisible()) showMainWindow(win)
+    if (rendererNeedsReload(win)) {
+      console.warn('Startup watchdog: renderer stuck after network fault — reloading')
+      loadRenderer(win, 1)
+    }
+  }, isDev ? 4500 : 7000)
+}
+
 function rendererNeedsReload(win: BrowserWindow): boolean {
   if (win.isDestroyed() || win.webContents.isCrashed()) return true
   const url = win.webContents.getURL()
-  if (url === 'about:blank' || url.startsWith('chrome-error://')) return true
+  if (url === 'about:blank' || url.startsWith('chrome-error://') || !url) return true
   const devUrl = process.env.ELECTRON_RENDERER_URL
   if (devUrl && !win.webContents.isLoading() && !url.startsWith(devUrl)) return true
   return false
+}
+
+function recoverRendererAfterNetworkFault(win?: BrowserWindow | null): void {
+  const target = win ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
+  if (!target) {
+    pendingNetworkRecovery = true
+    return
+  }
+  pendingNetworkRecovery = false
+  onRendererUnload()
+  setTimeout(() => {
+    if (target.isDestroyed()) return
+    if (!shouldStartHidden()) showMainWindow(target)
+    loadRenderer(target, 1)
+  }, 600)
 }
 
 function showMainWindowFromTray(win?: BrowserWindow): void {
@@ -54,18 +96,15 @@ function showMainWindowFromTray(win?: BrowserWindow): void {
   showMainWindow(target)
 }
 
-function loadRenderer(win: BrowserWindow, retry = 0): void {
+function loadRenderer(win: BrowserWindow, _retry = 0): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'))
   }
-  if (retry === 0) {
-    setTimeout(() => {
-      if (win.isDestroyed() || win.webContents.isLoading()) return
-      if (!win.isVisible() && !shouldStartHidden()) win.show()
-    }, 4000)
-  }
+  // Always arm a visibility safety net — previous code skipped show while
+  // isLoading() was true, which is exactly the hung-network-service case.
+  armStartupWatchdog(win)
 }
 
 function registerProcessRecovery(): void {
@@ -148,12 +187,14 @@ function createWindow(): void {
   })
 
   win.webContents.on('did-finish-load', () => {
+    clearStartupWatchdog()
     if (!shouldStartHidden() && !win.isVisible()) showMainWindow(win)
     // Safety net only if renderer never signals ready (crash/hang). Do not race the startup popup.
     setTimeout(() => ensureSchedulerStarted(), 90_000)
   })
 
   win.on('ready-to-show', () => {
+    clearStartupWatchdog()
     if (!shouldStartHidden()) showMainWindow(win)
   })
 
@@ -204,27 +245,14 @@ app.on('child-process-gone', (_event, details) => {
       details.serviceName?.toLowerCase().includes('network') ||
       details.reason === 'crashed')
   if (!networkLike && details.type !== 'GPU') return
-  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
-  if (!win) return
-  onRendererUnload()
-  setTimeout(() => {
-    if (win.isDestroyed()) return
-    if (!shouldStartHidden()) showMainWindow(win)
-    loadRenderer(win, 1)
-  }, 600)
+  // May fire before createWindow() finishes (e.g. during early session work) —
+  // queue recovery so the first load is retried once the window exists.
+  recoverRendererAfterNetworkFault()
 })
 
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   Menu.setApplicationMenu(null)
-
-  // Clear corrupt HTTP cache — prevents "Invalid cache size" Chromium errors
-  // and stale/corrupt cached API responses on startup.
-  try {
-    void session.defaultSession.clearCache()
-  } catch {
-    /* non-fatal */
-  }
 
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['*://image.civitai.com/*', '*://image.civitai.red/*'] },
@@ -245,6 +273,21 @@ app.whenReady().then(() => {
   applyLaunchAtLogin(getSettings().launchAtLogin)
   createWindow()
   createTray()
+
+  if (pendingNetworkRecovery) {
+    recoverRendererAfterNetworkFault()
+  }
+
+  // Clear HTTP cache AFTER the first window load is underway. Doing this in
+  // whenReady() before createWindow races Chromium's Network Service and often
+  // leaves a hidden tray-only window on the first npm run dev.
+  setTimeout(() => {
+    try {
+      void session.defaultSession.clearCache()
+    } catch {
+      /* non-fatal */
+    }
+  }, 15_000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

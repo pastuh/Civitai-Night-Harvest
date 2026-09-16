@@ -24,6 +24,7 @@ import type {
   CrawlProgressPayload,
   CrawlPagePayload
 } from '../../../shared/types'
+import { isModelTakenDown, isModelArchived, modelModeLabel } from '../../shared/civitai-meta'
 import { GlobalStatusBar } from './components/GlobalStatusBar'
 import { SettingsTab } from './components/SettingsTab'
 import { TagsTab } from './components/TagsTab'
@@ -158,6 +159,8 @@ export default function App() {
     modelName: string
     versionName: string
     siblingCount: number
+    goneFromCivitai?: boolean
+    modeLabel?: string
   } | null>(null)
   const [libraryDeleteSkipForSession, setLibraryDeleteSkipForSession] = useState(false)
   const [storageOffline, setStorageOffline] = useState(false)
@@ -1360,20 +1363,22 @@ export default function App() {
           setSessionBanModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]))
         }
       }
-      setLiveCrawlBrowse((prev) => {
-        if (!prev?.sampleModels?.length) {
-          return prev
-        }
-        let changed = false
-        const sampleModels = prev.sampleModels.map((m) => {
-          if (m.id !== modelId) return m
-          if (versionId > 0 && m.versionId !== versionId) return m
-          if (m.isBanned === banned) return m
-          changed = true
-          return { ...m, isBanned: banned }
+      startTransition(() => {
+        setLiveCrawlBrowse((prev) => {
+          if (!prev?.sampleModels?.length) {
+            return prev
+          }
+          let changed = false
+          const sampleModels = prev.sampleModels.map((m) => {
+            if (m.id !== modelId) return m
+            if (versionId > 0 && m.versionId !== versionId) return m
+            if (m.isBanned === banned) return m
+            changed = true
+            return { ...m, isBanned: banned }
+          })
+          if (!changed) return prev
+          return { ...prev, sampleModels }
         })
-        if (!changed) return prev
-        return { ...prev, sampleModels }
       })
     },
     []
@@ -2496,14 +2501,20 @@ export default function App() {
                         rec.modelId > 0
                           ? inventory.filter((r) => r.modelId === rec.modelId).length
                           : 1
+                      const goneFromCivitai =
+                        isModelTakenDown(rec.civitaiMode) || isModelArchived(rec.civitaiMode)
+                      const modeLabel =
+                        modelModeLabel(rec.civitaiMode) || rec.civitaiMode || 'unavailable'
                       const pending = {
                         versionId: rec.versionId,
                         modelId: rec.modelId,
                         modelName: rec.modelName,
                         versionName: rec.versionName || String(rec.versionId),
-                        siblingCount
+                        siblingCount,
+                        goneFromCivitai,
+                        modeLabel
                       }
-                      if (libraryDeleteSkipForSession) {
+                      if (libraryDeleteSkipForSession && !goneFromCivitai) {
                         void (async () => {
                           try {
                             await window.api.deleteInventoryVersion(pending.versionId, { ban: true })
@@ -2775,16 +2786,29 @@ export default function App() {
         <ConfirmModal
           title={translate(settings.locale ?? 'en', 'gallery.deleteFilesExclude')}
           message={
-            libraryDeleteConfirm.siblingCount > 1
-              ? translate(settings.locale ?? 'en', 'gallery.deleteConfirmVersionOrAll', {
-                  name: libraryDeleteConfirm.modelName,
-                  version: libraryDeleteConfirm.versionName,
-                  count: String(libraryDeleteConfirm.siblingCount)
-                })
-              : translate(settings.locale ?? 'en', 'gallery.deleteConfirmVersion', {
-                  name: libraryDeleteConfirm.modelName,
-                  version: libraryDeleteConfirm.versionName
-                })
+            libraryDeleteConfirm.goneFromCivitai
+              ? libraryDeleteConfirm.siblingCount > 1
+                ? translate(settings.locale ?? 'en', 'gallery.deleteUnavailableConfirmOrAll', {
+                    name: libraryDeleteConfirm.modelName,
+                    version: libraryDeleteConfirm.versionName,
+                    count: String(libraryDeleteConfirm.siblingCount),
+                    mode: libraryDeleteConfirm.modeLabel || 'unavailable'
+                  })
+                : translate(settings.locale ?? 'en', 'gallery.deleteUnavailableConfirm', {
+                    name: libraryDeleteConfirm.modelName,
+                    version: libraryDeleteConfirm.versionName,
+                    mode: libraryDeleteConfirm.modeLabel || 'unavailable'
+                  })
+              : libraryDeleteConfirm.siblingCount > 1
+                ? translate(settings.locale ?? 'en', 'gallery.deleteConfirmVersionOrAll', {
+                    name: libraryDeleteConfirm.modelName,
+                    version: libraryDeleteConfirm.versionName,
+                    count: String(libraryDeleteConfirm.siblingCount)
+                  })
+                : translate(settings.locale ?? 'en', 'gallery.deleteConfirmVersion', {
+                    name: libraryDeleteConfirm.modelName,
+                    version: libraryDeleteConfirm.versionName
+                  })
           }
           confirmLabel={translate(settings.locale ?? 'en', 'gallery.deleteThisVersion')}
           secondaryConfirmLabel={
@@ -2820,8 +2844,14 @@ export default function App() {
               : undefined
           }
           danger
-          dontAskAgainLabel={translate(settings.locale ?? 'en', 'gallery.deleteConfirmDontAsk')}
-          onDontAskAgainChange={setLibraryDeleteSkipForSession}
+          dontAskAgainLabel={
+            libraryDeleteConfirm.goneFromCivitai
+              ? undefined
+              : translate(settings.locale ?? 'en', 'gallery.deleteConfirmDontAsk')
+          }
+          onDontAskAgainChange={
+            libraryDeleteConfirm.goneFromCivitai ? undefined : setLibraryDeleteSkipForSession
+          }
           onConfirm={() => {
             const pending = libraryDeleteConfirm
             setLibraryDeleteConfirm(null)

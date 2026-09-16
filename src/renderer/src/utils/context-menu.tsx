@@ -70,7 +70,8 @@ export function ContextMenuPortal({
     }
     const rect = el.getBoundingClientRect()
     setPos(clampMenuPosition(x, y, rect.width || 220, rect.height || 120))
-  }, [open, x, y, menuRef, children])
+    // Do not depend on `children` — parent harvest re-renders would re-measure and make hover feel sticky.
+  }, [open, x, y, menuRef])
 
   useEffect(() => {
     if (!open) return

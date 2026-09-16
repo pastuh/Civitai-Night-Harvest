@@ -1284,6 +1284,10 @@ export const en = {
     deleteThisVersion: 'This version only',
     deleteAllVersions: 'All {count} versions',
     deleteConfirmDontAsk: "Don't ask me again (this session)",
+    deleteUnavailableConfirm:
+      '“{name}” ({version}) is marked {mode} on Civitai — it cannot be re-downloaded.\n\nDelete these files from disk anyway?',
+    deleteUnavailableConfirmOrAll:
+      '“{name}” is marked {mode} on Civitai — it cannot be re-downloaded.\n\nDelete version “{version}”, or all {count} owned versions, from disk?',
     deletedExcluded: 'Deleted and excluded: {name}',
     deletedExcludedVersion: 'Deleted and excluded version: {name} → {version}',
     deletedExcludedAllVersions: 'Deleted and excluded {count} version(s) of {name}',
@@ -1343,6 +1347,10 @@ export const en = {
     unrecognizedHint: 'Custom / local file without Civitai identity (no .swarm.json or unmatched hash)',
     duplicateOf: 'Duplicate of {name}',
     deleteLocal: 'Delete local files',
+    deleteLocalConfirm:
+      'Delete local files for "{name}" from disk?\n\nThis is a custom/local model (not on Civitai or unmatched). It cannot be re-downloaded automatically.',
+    banOwnedConfirm:
+      'Exclude "{name}" and delete its files from disk?\n\nThis version is in your library. Cancel keeps the files.',
     sessionDownloads: 'Session downloads',
     alwaysUpdateFilter: 'Always update',
     alwaysUpdateFilterHint:

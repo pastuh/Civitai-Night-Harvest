@@ -348,13 +348,13 @@ const api = {
   }> => ipcRenderer.invoke('model:allowVersion', payload),
   getBannedModels: () => ipcRenderer.invoke('model:getBanned'),
   getExclusions: (): Promise<ExclusionReviewItem[]> => ipcRenderer.invoke('exclusions:get'),
-  dismissTagSkip: (modelId: number): Promise<ExclusionReviewItem[]> =>
+  dismissTagSkip: (modelId: number): Promise<{ modelId: number }> =>
     ipcRenderer.invoke('exclusions:dismissTagSkip', modelId),
   allowTagSkip: (
     modelId: number
-  ): Promise<{ modelId: number; queued: boolean; items: ExclusionReviewItem[] }> =>
+  ): Promise<{ modelId: number; queued: boolean }> =>
     ipcRenderer.invoke('exclusions:allowTagSkip', modelId),
-  acknowledgeTagSkip: (modelId: number): Promise<ExclusionReviewItem[]> =>
+  acknowledgeTagSkip: (modelId: number): Promise<{ modelId: number }> =>
     ipcRenderer.invoke('exclusions:acknowledgeTagSkip', modelId),
   getMissingBanSeen: (): Promise<{
     byModelId: Record<number, string>

@@ -6,6 +6,7 @@ import {
   useCallback,
   useRef,
   useDeferredValue,
+  startTransition,
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import type {
@@ -385,11 +386,15 @@ export const PendingTab = memo(function PendingTab({
     if (busyVersionIds.has(item.versionId) || item.skipped || item.forgotten) return
     markBusy(item.versionId, true)
     // Optimistic — tab badge uses App `pending` and must drop before emit catches up.
-    onPendingPatched?.(item.versionId, { skipped: true, forgotten: false })
+    startTransition(() => {
+      onPendingPatched?.(item.versionId, { skipped: true, forgotten: false })
+    })
     try {
       await window.api.skipPending(item.versionId)
     } catch {
-      onPendingPatched?.(item.versionId, { skipped: false, forgotten: Boolean(item.forgotten) })
+      startTransition(() => {
+        onPendingPatched?.(item.versionId, { skipped: false, forgotten: Boolean(item.forgotten) })
+      })
     } finally {
       markBusy(item.versionId, false)
     }
@@ -398,11 +403,15 @@ export const PendingTab = memo(function PendingTab({
   const unskipVersion = async (item: PendingVersion) => {
     if (busyVersionIds.has(item.versionId) || !item.skipped || item.forgotten) return
     markBusy(item.versionId, true)
-    onPendingPatched?.(item.versionId, { skipped: false, forgotten: false })
+    startTransition(() => {
+      onPendingPatched?.(item.versionId, { skipped: false, forgotten: false })
+    })
     try {
       await window.api.unskipPending(item.versionId)
     } catch {
-      onPendingPatched?.(item.versionId, { skipped: true, forgotten: false })
+      startTransition(() => {
+        onPendingPatched?.(item.versionId, { skipped: true, forgotten: false })
+      })
     } finally {
       markBusy(item.versionId, false)
     }
@@ -412,12 +421,16 @@ export const PendingTab = memo(function PendingTab({
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
     markBusy(item.versionId, true)
     // Keep current sidebar filter — only ensure forgotten cards stay visible (Show forgotten).
-    onPendingPatched?.(item.versionId, { forgotten: true, skipped: false })
-    setShowForgotten(true)
+    startTransition(() => {
+      onPendingPatched?.(item.versionId, { forgotten: true, skipped: false })
+      setShowForgotten(true)
+    })
     try {
       await window.api.forgetPendingVersion(item.versionId)
     } catch {
-      onPendingPatched?.(item.versionId, { forgotten: false, skipped: Boolean(item.skipped) })
+      startTransition(() => {
+        onPendingPatched?.(item.versionId, { forgotten: false, skipped: Boolean(item.skipped) })
+      })
     } finally {
       markBusy(item.versionId, false)
     }
@@ -840,8 +853,6 @@ export const PendingTab = memo(function PendingTab({
         if (ai >= 0 && bi < 0) return -1
         if (bi >= 0 && ai < 0) return 1
       }
-      const ao = ownedPrimaryByModel.get(a.item.modelId)
-      const bo = ownedPrimaryByModel.get(b.item.modelId)
       switch (sortMode) {
         case 'name':
           return (
@@ -849,15 +860,9 @@ export const PendingTab = memo(function PendingTab({
             a.item.versionName.localeCompare(b.item.versionName)
           )
         case 'downloads':
-          return compareOptionalCount(
-            a.item.downloadCount ?? ao?.downloadCount,
-            b.item.downloadCount ?? bo?.downloadCount
-          )
+          return compareOptionalCount(a.item.downloadCount, b.item.downloadCount)
         case 'likes':
-          return compareOptionalCount(
-            a.item.thumbsUpCount ?? ao?.thumbsUpCount,
-            b.item.thumbsUpCount ?? bo?.thumbsUpCount
-          )
+          return compareOptionalCount(a.item.thumbsUpCount, b.item.thumbsUpCount)
         case 'recent':
         default:
           return (a.item.detectedAt || '').localeCompare(b.item.detectedAt || '')
@@ -1265,8 +1270,8 @@ export const PendingTab = memo(function PendingTab({
                               }}
                               baseModel={item.baseModel}
                               modelType={mt}
-                              downloadCount={item.downloadCount ?? owned?.downloadCount}
-                              thumbsUpCount={item.thumbsUpCount ?? owned?.thumbsUpCount}
+                              downloadCount={item.downloadCount}
+                              thumbsUpCount={item.thumbsUpCount}
                               statusChips={
                                 temporary ||
                                 (!temporary && autoUpdate) ||

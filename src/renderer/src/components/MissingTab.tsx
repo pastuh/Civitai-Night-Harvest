@@ -1199,7 +1199,9 @@ export const MissingTab = memo(function MissingTab({
         items.find((m) => m.modelId === modelId)
       setBusyId(modelId)
       setMessage(null)
-      if (item) holdAllowedUntilLeave(item)
+      if (item) {
+        startTransition(() => holdAllowedUntilLeave(item))
+      }
       try {
         const result = await window.api.unbanModel(modelId)
         if (result && typeof result === 'object' && 'queued' in result && result.queued) {
@@ -1227,7 +1229,7 @@ export const MissingTab = memo(function MissingTab({
       if (!versionId || versionId <= 0 || item.modelId <= 0) return
       setBusyId(item.modelId)
       setMessage(null)
-      holdAllowedUntilLeave(item)
+      startTransition(() => holdAllowedUntilLeave(item))
       try {
         if (typeof window.api.allowVersion === 'function') {
           await window.api.allowVersion({ modelId: item.modelId, versionId })
@@ -1256,7 +1258,9 @@ export const MissingTab = memo(function MissingTab({
         items.find((m) => m.modelId === modelId && isTagSkipKind(m.kind))
       setBusyId(modelId)
       setMessage(null)
-      if (item) holdAllowedUntilLeave(item)
+      if (item) {
+        startTransition(() => holdAllowedUntilLeave(item))
+      }
       try {
         const result = await window.api.allowTagSkip(modelId)
         if (result.queued) setMessage(t('missingTab.unbanQueued'))

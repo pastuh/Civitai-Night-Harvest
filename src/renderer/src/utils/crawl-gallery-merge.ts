@@ -25,10 +25,16 @@ export function applyCrawlPageToLiveGallery(
 
   const byKey = new Map<string, (typeof prev.sampleModels)[0]>()
   for (const m of prev.sampleModels) byKey.set(browseModelDedupeKey(m), m)
+  let onlyFlagPatch = payload.result.sampleModels.length > 0
   for (const m of payload.result.sampleModels) {
     const key = browseModelDedupeKey(m)
     const existing = byKey.get(key)
-    byKey.set(key, existing ? preferBrowseModel(existing, m) : m)
+    if (!existing) {
+      onlyFlagPatch = false
+      byKey.set(key, m)
+      continue
+    }
+    byKey.set(key, preferBrowseModel(existing, m))
   }
 
   const ordered: typeof prev.sampleModels = []
@@ -43,6 +49,7 @@ export function applyCrawlPageToLiveGallery(
     if (seen.has(key)) continue
     // Ban stubs from main must not insert a new card — causes Hide excluded blink.
     if (m.isBanned) continue
+    onlyFlagPatch = false
     ordered.push(byKey.get(key)!)
     seen.add(key)
   }
@@ -51,6 +58,10 @@ export function applyCrawlPageToLiveGallery(
     ...payload.result,
     sampleModels: ordered,
     totalItems: payload.galleryTotal ?? ordered.length,
-    tagsInResults: aggregateResultTags(ordered)
+    // Ban/allow of cards already in the gallery does not change tag chips — skip O(n) re-agg.
+    tagsInResults:
+      onlyFlagPatch && payload.result.sampleModels.length <= 8
+        ? prev.tagsInResults
+        : aggregateResultTags(ordered)
   }
 }

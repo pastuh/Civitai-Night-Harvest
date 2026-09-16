@@ -1844,12 +1844,25 @@ export function addPendingVersion(pending: PendingVersion): void {
   const detectedAt = pending.detectedAt?.trim() || new Date().toISOString()
   getDb()
     .prepare(
-      `INSERT OR IGNORE INTO pending_versions (
+      `INSERT INTO pending_versions (
         version_id, model_id, model_name, version_name, base_model,
         author, preview_url, existing_folder, detected_at, total_versions,
         model_type, is_nsfw, nsfw_level, civitai_tags, download_count, thumbs_up_count,
         model_description, version_description
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(version_id) DO UPDATE SET
+        model_name = excluded.model_name,
+        version_name = excluded.version_name,
+        base_model = excluded.base_model,
+        author = CASE WHEN excluded.author != '' THEN excluded.author ELSE pending_versions.author END,
+        preview_url = COALESCE(excluded.preview_url, pending_versions.preview_url),
+        total_versions = COALESCE(excluded.total_versions, pending_versions.total_versions),
+        model_type = CASE WHEN excluded.model_type != '' THEN excluded.model_type ELSE pending_versions.model_type END,
+        civitai_tags = CASE WHEN excluded.civitai_tags != '[]' THEN excluded.civitai_tags ELSE pending_versions.civitai_tags END,
+        download_count = COALESCE(excluded.download_count, pending_versions.download_count),
+        thumbs_up_count = COALESCE(excluded.thumbs_up_count, pending_versions.thumbs_up_count),
+        model_description = COALESCE(excluded.model_description, pending_versions.model_description),
+        version_description = COALESCE(excluded.version_description, pending_versions.version_description)`
     )
     .run(
       pending.versionId,
@@ -1889,6 +1902,29 @@ export function updatePendingPreviewUrl(versionId: number, previewUrl: string): 
   getDb()
     .prepare('UPDATE pending_versions SET preview_url = ? WHERE version_id = ?')
     .run(url, versionId)
+}
+
+/** Patch Updates-card meta (version-scoped likes/downloads — not model totals). */
+export function updatePendingCardStats(
+  versionId: number,
+  stats: { downloadCount?: number; thumbsUpCount?: number }
+): void {
+  if (versionId <= 0) return
+  const sets: string[] = []
+  const vals: unknown[] = []
+  if (stats.downloadCount != null) {
+    sets.push('download_count = ?')
+    vals.push(stats.downloadCount)
+  }
+  if (stats.thumbsUpCount != null) {
+    sets.push('thumbs_up_count = ?')
+    vals.push(stats.thumbsUpCount)
+  }
+  if (!sets.length) return
+  vals.push(versionId)
+  getDb()
+    .prepare(`UPDATE pending_versions SET ${sets.join(', ')} WHERE version_id = ?`)
+    .run(...vals)
 }
 
 /** User-picked cover for a Civitai version (Browse / queue — before library download). */
