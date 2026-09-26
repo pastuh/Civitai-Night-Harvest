@@ -2265,6 +2265,8 @@ export function initIpc(): void {
 
   ipcMain.handle('deferred:enrich', async () => {
     const items = inventory.getAllDeferredDownloads()
+    const unlocked: number[] = []
+    // Opening Early access / startup enrich: unlock anything Civitai already made public.
     await enrichDeferredDownloads(
       clientPool.primary(),
       items,
@@ -2288,10 +2290,41 @@ export function initIpc(): void {
           bumpAttempt: false
         })
       },
-      80,
-      undefined,
-      { allowUnlock: false }
+      items.length,
+      (versionId) => {
+        const row = inventory.getDeferredDownload(versionId)
+        if (!row) return
+        unlocked.push(versionId)
+        inventory.clearBrowseCardEarlyAccessFlag(versionId)
+        const preview =
+          inventory.backfillDeferredPreviewForVersion(versionId) ?? row.previewUrl
+        if (preview) {
+          scheduler.patchBrowseModelPreview(row.modelId, versionId, preview)
+        }
+      },
+      { allowUnlock: true }
     )
+    for (const versionId of unlocked) {
+      if (downloadQueue.requeueDeferredVersion(versionId)) {
+        // ok
+      } else if (inventory.getDeferredDownload(versionId)) {
+        inventory.markDeferredReadyForPipeline(versionId)
+      }
+    }
+    const dateReady = downloadQueue.requeueDeferred()
+    if (unlocked.length + dateReady > 0) {
+      scheduler.log(
+        'info',
+        `Early access enrich — unlocked ${unlocked.length} via API` +
+          (dateReady ? `, ${dateReady} by unlock date / pipeline top-up` : ''),
+        undefined,
+        { source: 'system' }
+      )
+      if (shouldCrawlAutoDownload()) {
+        downloadQueue.start()
+        scheduler.setStatus('downloading')
+      }
+    }
 
     inventory.backfillDeferredBaseModelsFromBrowseCache()
     inventory.backfillDeferredPreviewsFromInventory()
@@ -2363,7 +2396,7 @@ export function initIpc(): void {
   })
 
   ipcMain.handle('deferred:retry', (_e, versionId: number) => {
-    const ok = downloadQueue.requeueDeferredVersion(versionId)
+    const ok = downloadQueue.requeueDeferredVersion(versionId, { force: true })
     if (ok) scheduler.log('info', `Re-queued version ${versionId} for download`)
     return { ok, queue: downloadQueue.getState(), deferred: inventory.getAllDeferredDownloads() }
   })

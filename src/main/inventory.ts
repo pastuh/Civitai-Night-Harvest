@@ -3040,6 +3040,94 @@ export function getAllBrowseCardCacheCards(): WatchRuleTestModel[] {
   return out
 }
 
+/** After live API unlock — clear EA flag and copy deferred preview into browse cache when missing. */
+export function clearBrowseCardEarlyAccessFlag(versionId: number): void {
+  if (versionId <= 0) return
+  const hit = getBrowseCardCache([versionId]).get(versionId)
+  const deferred = getDeferredDownload(versionId)
+  const deferredPreview = coalesceDeferredPreviewUrl(
+    deferred?.previewUrl,
+    hit?.previewUrl,
+    hit?.previewUrls?.[0],
+    hit?.videoPreviewUrl,
+    hit?.videoPreviewUrls?.[0]
+  )
+  const hadBrowsePreview = isDisplayablePreviewUrl(hit?.previewUrl ?? hit?.previewUrls?.[0])
+  const nextPreview =
+    (hadBrowsePreview ? coalesceDeferredPreviewUrl(hit?.previewUrl, hit?.previewUrls?.[0]) : undefined) ??
+    deferredPreview
+
+  if (!hit) {
+    // No browse cache row — still persist a minimal card so Browse can show the deferred cover.
+    if (!deferred || !nextPreview) return
+    upsertBrowseCardCache([
+      {
+        versionId,
+        modelId: deferred.modelId,
+        card: {
+          id: deferred.modelId,
+          versionId,
+          name: deferred.modelName,
+          versionName: deferred.versionName,
+          type: deferred.modelType || 'LORA',
+          baseModel: deferred.baseModel || '',
+          tags: deferred.civitaiTags ?? [],
+          pageUrl: '',
+          inInventory: false,
+          isBanned: false,
+          isEarlyAccess: false,
+          previewUrl: nextPreview,
+          previewUrls: [nextPreview],
+          downloadCount: deferred.downloadCount,
+          thumbsUpCount: deferred.thumbsUpCount
+        }
+      }
+    ])
+    return
+  }
+
+  if (!hit.isEarlyAccess && hadBrowsePreview) return
+
+  const previewUrls =
+    hit.previewUrls?.length && hadBrowsePreview
+      ? hit.previewUrls
+      : nextPreview
+        ? [nextPreview, ...(hit.previewUrls ?? []).filter((u) => u && u !== nextPreview)]
+        : hit.previewUrls
+
+  upsertBrowseCardCache([
+    {
+      versionId,
+      modelId: hit.id,
+      card: {
+        ...hit,
+        isEarlyAccess: false,
+        earlyAccessEndsAt: undefined,
+        previewUrl: nextPreview ?? hit.previewUrl,
+        previewUrls
+      }
+    }
+  ])
+}
+
+/**
+ * Mark an unlocked EA row ready for auto-queue without dumping the whole list into the strip.
+ * Past endsAt → shouldAutoRetryDeferred is true; 2 days ago → not shown as "unlocks today" on strip.
+ */
+export function markDeferredReadyForPipeline(versionId: number): void {
+  const row = getDeferredDownload(versionId)
+  if (!row) return
+  const readyAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  upsertDeferredDownload({
+    ...row,
+    failureKind: 'early_access',
+    earlyAccessEndsAt: readyAt,
+    reason: 'Ready — waiting for download pipeline slot',
+    lastAttemptAt: new Date().toISOString(),
+    bumpAttempt: false
+  })
+}
+
 export function patchBrowseCardCachePreview(
   versionId: number,
   modelId: number,

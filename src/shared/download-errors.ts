@@ -169,10 +169,8 @@ export function shouldAutoRetryDeferred(
   entry: DeferredRetryContext,
   hasApiKey: boolean
 ): boolean {
-  // Paid / Buzz-gated models — never auto-retry; user must pay manually.
-  if (entry.additionalResourceCharge) return false
-
   // Early access waits for unlock time — attempt caps do not apply (no point retrying early).
+  // No endsAt → wait for live enrich (API says Public / Buzz gate cleared) rather than blind retry.
   if (entry.failureKind === 'early_access') {
     if (entry.earlyAccessEndsAt) {
       return Date.now() >= new Date(entry.earlyAccessEndsAt).getTime()

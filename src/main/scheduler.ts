@@ -39,7 +39,7 @@ import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedu
 import { watchRuleCrawlSignature, watchRulesCrawlChanged } from '../shared/watch-rule-crawl'
 import { recheckIncompleteModels, emitIncompleteList } from './incomplete-resolve'
 import { emitMissingList, recheckMissingModels } from './missing-models'
-import { enrichDeferredDownloads, isEarlyAccessActive } from '../shared/early-access'
+import { enrichDeferredDownloads } from '../shared/early-access'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -896,11 +896,16 @@ export class ScanScheduler {
     }
     this.clearDeferredPipelineFill()
     this.lastPipelineFillAt = now
+    // Prefer ready Early-access unlocks, then browse gallery New.
+    const fromEa = this.downloadQueue.requeueDeferred()
     const filled = this.fillBrowseDownloadPipeline()
-    if (filled > 0) {
-      this.log('info', `Download pipeline filled with ${filled} model(s) from browse gallery`, undefined, {
-        source: 'crawl'
-      })
+    if (fromEa > 0 || filled > 0) {
+      this.log(
+        'info',
+        `Download pipeline filled — ${fromEa} from Early access ready, ${filled} from browse gallery`,
+        undefined,
+        { source: 'crawl' }
+      )
     }
     if (shouldCrawlAutoDownload()) {
       this.maybeStartAutoDownloads()
@@ -1436,34 +1441,55 @@ export class ScanScheduler {
     if (this.earlyAccessTimerId) clearInterval(this.earlyAccessTimerId)
     const peekMinutes = Math.max(getSettings().newestPeekIntervalMinutes || 15, 5)
     const intervalMs = peekMinutes * 60 * 1000
+    // First pass soon after launch — catch unlock dates that passed while the app was off.
+    void this.tickEarlyAccessRetry({ fullSweep: true })
     this.earlyAccessTimerId = setInterval(() => {
       if (getSettings().autoRetryDeferred === false) return
-      // Peek loop already requeues deferred after each maintenance pass — skip while Harvest crawl runs.
-      if (shouldRunContinuousCrawl()) return
+      // Don't compete with an in-flight catalog page fetch; otherwise always poll for unlocks.
+      if (this.crawler.isRunning()) return
       void this.tickEarlyAccessRetry()
       void this.runIncompleteRecheckIfDue()
     }, intervalMs)
   }
 
   private earlyAccessEnrichBusy = false
+  private earlyAccessFullSweepPending = false
 
   /**
    * Keep Early access rows across restarts, but still poll Civitai: unlock clock may fire early
    * (creator ends EA), or earlyAccessEndsAt may arrive late from getVersionMini.
+   * @param fullSweep — check every awaiting row once (after catalog / app settle), not a small batch.
    */
-  private async tickEarlyAccessRetry(): Promise<void> {
-    if (this.earlyAccessEnrichBusy) return
+  private async tickEarlyAccessRetry(opts?: { fullSweep?: boolean }): Promise<void> {
+    if (this.earlyAccessEnrichBusy) {
+      if (opts?.fullSweep) this.earlyAccessFullSweepPending = true
+      return
+    }
+    if (getSettings().autoRetryDeferred === false) return
     this.earlyAccessEnrichBusy = true
+    const fullSweep = opts?.fullSweep === true
     try {
       const items = inventory.getAllDeferredDownloads()
       const unlocked: number[] = []
-      const needsLiveCheck = items.some(
+      const gateItems = items.filter(
         (d) =>
           d.failureKind === 'early_access' ||
           d.failureKind === 'auth' ||
           d.failureKind === 'forbidden'
       )
-      if (needsLiveCheck) {
+      if (gateItems.length > 0) {
+        const maxChecks = fullSweep
+          ? gateItems.length
+          : Math.min(80, Math.max(40, gateItems.length))
+        if (fullSweep) {
+          this.setStatus('checking')
+          this.log(
+            'info',
+            `Early access sweep — checking ${gateItems.length} awaiting model(s) against Civitai…`,
+            undefined,
+            { source: 'system' }
+          )
+        }
         await enrichDeferredDownloads(
           this.pool.primary(),
           items,
@@ -1488,42 +1514,71 @@ export class ScanScheduler {
               bumpAttempt: false
             })
           },
-          40,
+          maxChecks,
           (versionId) => {
             const row = inventory.getDeferredDownload(versionId)
             if (!row) return
-            if (row.failureKind === 'interrupted') {
-              unlocked.push(versionId)
-              return
-            }
-            // Pay/Buzz gates often look "public" on the mini endpoint — only auto-requeue when
-            // the stored unlock clock has actually expired (creator-ended EA is manual Retry).
-            if (row.earlyAccessEndsAt && !isEarlyAccessActive(row.earlyAccessEndsAt)) {
-              unlocked.push(versionId)
+            // Live API (mini + paidAccess fallback) already confirmed the gate is gone.
+            unlocked.push(versionId)
+            // Copy Early-access cover into browse cache (search often has no EA images).
+            inventory.clearBrowseCardEarlyAccessFlag(versionId)
+            const preview =
+              inventory.backfillDeferredPreviewForVersion(versionId) ?? row.previewUrl
+            if (preview) {
+              this.patchBrowseModelPreview(row.modelId, versionId, preview)
             }
           }
         )
+        let promoted = 0
+        let waitingSlots = 0
         for (const versionId of unlocked) {
-          this.downloadQueue.requeueDeferredVersion(versionId)
+          if (this.downloadQueue.requeueDeferredVersion(versionId)) {
+            promoted++
+          } else if (inventory.getDeferredDownload(versionId)) {
+            inventory.markDeferredReadyForPipeline(versionId)
+            waitingSlots++
+          }
+        }
+        if (unlocked.length > 0) {
+          this.log(
+            'info',
+            waitingSlots > 0
+              ? `Early access unlocked ${unlocked.length} — queued ${promoted}, ${waitingSlots} waiting for pipeline slots (cap ${AUTO_QUEUE_PIPELINE_CAP})`
+              : `Early access unlocked ${unlocked.length} — queued ${promoted} for download`,
+            undefined,
+            { source: 'system' }
+          )
         }
       }
 
       const count = this.downloadQueue.requeueDeferred()
-      const total = unlocked.length + count
-      if (total > 0) {
+      if (count > 0) {
         this.log(
           'info',
-          `Early access ready — re-queued ${total} model(s) for download${
-            unlocked.length ? ` (${unlocked.length} unlocked early via API)` : ''
-          }`
+          `Early access pipeline top-up — re-queued ${count} ready model(s)`,
+          undefined,
+          { source: 'system' }
         )
+      }
+      if (unlocked.length > 0 || count > 0) {
         this.maybeStartAutoDownloads()
+      } else if (fullSweep && gateItems.length > 0) {
+        this.log(
+          'info',
+          `Early access sweep done — ${gateItems.length} still gated (Sub/Buzz or wait clock)`,
+          undefined,
+          { source: 'system' }
+        )
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       this.log('warn', `Early access check failed: ${msg}`, undefined, { source: 'system' })
     } finally {
       this.earlyAccessEnrichBusy = false
+      if (this.earlyAccessFullSweepPending) {
+        this.earlyAccessFullSweepPending = false
+        void this.tickEarlyAccessRetry({ fullSweep: true })
+      }
     }
   }
 
@@ -2461,6 +2516,10 @@ export class ScanScheduler {
             requireCatalogDone: false
           })
         }
+        // Unlock any Early access rows that became Public while the app was off / during boot peek.
+        if (getSettings().autoRetryDeferred !== false) {
+          await this.tickEarlyAccessRetry({ fullSweep: true })
+        }
       }
 
       while (shouldRunContinuousCrawl() && !this.continuousCrawlStopRequested) {
@@ -2539,10 +2598,12 @@ export class ScanScheduler {
           this.harvestPeekIdle = true
           this.scheduleBackgroundLibraryVersionScan(2_000)
           if (getSettings().autoRetryDeferred !== false) {
-            const requeued = this.downloadQueue.requeueDeferred()
-            if (requeued > 0) {
-              this.log('info', `Re-queued ${requeued} interrupted download(s)`)
-              this.maybeStartAutoDownloads()
+            // Live API sweep — Sub/Buzz without a wait clock never unlock via blind requeueDeferred.
+            await this.tickEarlyAccessRetry({ fullSweep: true })
+            const pipelineBusy = this.downloadQueue
+              .getItems()
+              .some((i) => i.status === 'queued' || i.status === 'downloading')
+            if (pipelineBusy) {
               // Pass the continuous-crawl abort signal — stopContinuousCrawl breaks this wait
               // right away instead of leaving a 500ms poll running up to 6h after the user
               // stopped Harvest.

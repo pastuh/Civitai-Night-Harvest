@@ -163,6 +163,15 @@ export class DownloadQueue {
     for (const card of inventory.getAllBrowseCardCacheCards()) {
       if (!card.isEarlyAccess || card.versionId <= 0 || card.id <= 0) continue
       if (inventory.hasVersion(card.versionId)) continue
+      if (
+        this.items.some(
+          (i) =>
+            i.versionId === card.versionId &&
+            (i.status === 'queued' || i.status === 'downloading' || i.status === 'deferred')
+        )
+      ) {
+        continue
+      }
       const existing = inventory.getDeferredDownload(card.versionId)
       if (existing) {
         if (!isDisplayablePreviewUrl(existing.previewUrl)) {
@@ -525,9 +534,12 @@ export class DownloadQueue {
     const settings = getSettings()
     const pausedTags = settings.hiddenTags ?? []
     const bannedTags = settings.bannedTags ?? []
+    const atAutoCap = () =>
+      !manual && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP
 
     for (const item of this.items) {
       if (item.status !== 'deferred') continue
+      if (atAutoCap()) break
       if (
         !inventory.isTagSkipAllowed(item.modelId) &&
         queueItemBlockedByPolicyTags(item, pausedTags, bannedTags)
@@ -562,10 +574,15 @@ export class DownloadQueue {
       ) {
         continue
       }
+      const previewUrl =
+        inventory.backfillDeferredPreviewForVersion(item.versionId) ??
+        deferredRow?.previewUrl ??
+        item.previewUrl
       inventory.removeDeferredDownload(item.versionId)
       item.status = 'queued'
       item.reason = undefined
       item.failureKind = undefined
+      item.previewUrl = previewUrl
       item.bytesReceived = 0
       item.totalBytes = 0
       item.phase = 'model'
@@ -574,6 +591,7 @@ export class DownloadQueue {
     }
 
     for (const d of inventory.getAllDeferredDownloads()) {
+      if (atAutoCap()) break
       if (
         !inventory.isTagSkipAllowed(d.modelId) &&
         queueItemBlockedByPolicyTags(
@@ -603,6 +621,8 @@ export class DownloadQueue {
       )
       if (active) continue
 
+      const previewUrl =
+        inventory.backfillDeferredPreviewForVersion(d.versionId) ?? d.previewUrl
       inventory.removeDeferredDownload(d.versionId)
       const id = randomUUID()
       this.items.push({
@@ -611,7 +631,7 @@ export class DownloadQueue {
         versionId: d.versionId,
         modelName: d.modelName,
         slug: '',
-        previewUrl: d.previewUrl,
+        previewUrl,
         routingTag: d.routingTag,
         modelType: d.modelType,
         status: 'queued',
@@ -627,12 +647,22 @@ export class DownloadQueue {
 
     if (count) {
       this.broadcast()
+      this.emitDeferred()
       if (!this.paused) void this.pump()
     }
     return count
   }
 
-  requeueDeferredVersion(versionId: number): boolean {
+  /**
+   * Promote one deferred row into the auto-queue pipeline.
+   * Respects AUTO_QUEUE_PIPELINE_CAP unless `force` (manual Retry).
+   */
+  requeueDeferredVersion(versionId: number, options?: { force?: boolean }): boolean {
+    const force = options?.force === true
+    if (!force && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
+      return false
+    }
+
     const item = this.items.find((i) => i.versionId === versionId && i.status === 'deferred')
     if (item) {
       if (inventory.hasVersion(versionId)) {
@@ -641,10 +671,13 @@ export class DownloadQueue {
         item.reason = 'Already downloaded'
         item.completedAt = new Date().toISOString()
       } else {
+        const previewUrl =
+          inventory.backfillDeferredPreviewForVersion(versionId) ?? item.previewUrl
         inventory.removeDeferredDownload(versionId)
         item.status = 'queued'
         item.reason = undefined
         item.failureKind = undefined
+        item.previewUrl = previewUrl
         item.bytesReceived = 0
         item.totalBytes = 0
         item.phase = 'model'
@@ -667,6 +700,7 @@ export class DownloadQueue {
       if (d) inventory.removeDeferredDownload(versionId)
       return false
     }
+    const previewUrl = inventory.backfillDeferredPreviewForVersion(versionId) ?? d.previewUrl
     inventory.removeDeferredDownload(versionId)
     const id = randomUUID()
     this.items.push({
@@ -675,7 +709,7 @@ export class DownloadQueue {
       versionId: d.versionId,
       modelName: d.modelName,
       slug: '',
-      previewUrl: d.previewUrl,
+      previewUrl,
       routingTag: d.routingTag,
       modelType: d.modelType,
       status: 'queued',
