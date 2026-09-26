@@ -1915,20 +1915,15 @@ export function SearchBrowsePanel({
   const downloadingItems = queue.filter((i) => i.status === 'downloading')
   const deferredCount = deferredAwaitingCount
 
-  // Only show the in-panel spinner while a real Civitai page fetch is in flight.
-  // browseGalleryAwaiting / status scanning alone caused a stuck "Loading…" above the
-  // colored Owned/Yield bar while the bottom said "waiting for Civitai activity".
+  // Fetch / load-more progress belongs only in the bottom GlobalStatusBar — never an
+  // in-panel "Loading…" between search and the Owned/Yield bar.
   const activelyFetchingPage =
     loadingMore ||
     crawlProgress?.phase === 'fetching' ||
     crawlProgress?.phase === 'fetching-tags' ||
     crawlProgress?.phase === 'processing'
 
-  const galleryLoadingEmpty =
-    !displayModels.length && ruleScopedModels.length === 0 && activelyFetchingPage
-
-  const galleryIdleEmpty =
-    !displayModels.length && ruleScopedModels.length === 0 && !galleryLoadingEmpty
+  const galleryIdleEmpty = !displayModels.length && ruleScopedModels.length === 0
 
   const showEmptyHint = !displayModels.length && ruleScopedModels.length > 0
 
@@ -2754,8 +2749,8 @@ export function SearchBrowsePanel({
   return (
     <div
       className={`search-browse search-browse-layout browse-results-panel${
-        galleryLoadingEmpty ? ' is-loading-empty' : ''
-      }${banMode ? ' is-ban-mode' : ''}`}
+        banMode ? ' is-ban-mode' : ''
+      }`}
     >
       <div className="search-browse-header">
         <div className="search-browse-header-main">
@@ -3225,7 +3220,7 @@ export function SearchBrowsePanel({
                   : t('browse.loadMoreTitle')
               }
             >
-              {loadingMore ? t('common.loading') : t('browse.loadMore', { label: loadedLabel })}
+              {t('browse.loadMore', { label: loadedLabel })}
             </button>
           )}
           {showQueueAll && (
@@ -3360,27 +3355,8 @@ export function SearchBrowsePanel({
         </div>
       )}
 
-      <div className={`search-browse-body${galleryLoadingEmpty ? ' is-loading-empty' : ''}`}>
+      <div className="search-browse-body">
         <div className="gallery-main search-browse-main">
-          {galleryLoadingEmpty && (
-            <div className="browse-gallery-loading" role="status" aria-live="polite">
-              <span className="browse-gallery-loading-spinner" aria-hidden />
-              <strong>
-                {crawlProgress?.ruleName?.trim()
-                  ? t('browse.fetchingRulePage', {
-                      page: crawlProgress.pageNumber ?? crawlPageMeta?.pageNumber ?? 1,
-                      rule: crawlProgress.ruleName.trim()
-                    })
-                  : browseRule?.name
-                    ? t('browse.fetchingRulePage', {
-                        page: crawlPageMeta?.pageNumber ?? 1,
-                        rule: browseRule.name
-                      })
-                    : t('browse.galleryBusyTitle')}
-              </strong>
-              <p className="muted">{t('browse.galleryBusyDetail')}</p>
-            </div>
-          )}
           {galleryIdleEmpty && (
             <div className="browse-gallery-loading browse-gallery-idle" role="status">
               <strong>{t('browse.results')}</strong>
@@ -3578,9 +3554,7 @@ export function SearchBrowsePanel({
                 onClick={() => void onLoadMore()}
                 disabled={loadingMore}
               >
-                {loadingMore
-                  ? t('browse.loadingNextPage')
-                  : `${t('browse.loadMore', { label: loadedLabel })} →`}
+                {`${t('browse.loadMore', { label: loadedLabel })} →`}
               </button>
             </div>
           )}

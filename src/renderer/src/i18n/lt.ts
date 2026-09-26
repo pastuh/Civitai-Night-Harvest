@@ -467,7 +467,7 @@ export const lt: Messages = {
     missingForget:
       '**Forget** — slepia modelį visur; **Show forgotten** peržiūrai ir atšaukimui',
     missingMarkSeen:
-      '**Mark seen** — perbraukite nuo ban/pause kortelės (žalia antraštė). **Hide seen** jas slepia. Unseen / Seen — ban peržiūrai, ne „nerasta“ įrašams',
+      '**Mark seen** — perbraukite nuo ban/pause kortelės (žalia antraštė). **Hide seen** jas slepia. Sidebar **Neperžiūrėti ban/pause** / **Seen ban/pause** — ban+pause peržiūrai, ne „nerasta“ įrašams',
     missingContextMenu:
       '**Dešinio pelės meniu** → Mark seen, Forget, Unban, Allow, Acknowledge, Open on Civitai',
     edgeOwned: 'Žalias viršutinis kraštas — jau bibliotekoje',
@@ -490,7 +490,10 @@ export const lt: Messages = {
     dlStripPriority:
       'Dešinis pelės mygtukas ant juostos kortelės → Prioritetinis atsisiuntimas — į eilės priekį',
     dlStatusBar: 'Status juosta — apačioje eilė, greitis ir dabartinis siuntimas',
-    dlAwaiting: 'Early access — gated download arba trūksta API rakto',
+    dlAwaiting:
+      'Early access — Wait (atrakinimo data) vs Buzz (tik mokama). Badge +N = neperžiūrėti modeliai (išsivalo apsilankius tab’e). **Mark seen** / **Hide seen** — tik Banned / Paused by tag kortelėms (žalias titulas), ne Wait/Buzz',
+    dlAwaitingMarkSeen:
+      'Early access **Mark seen** — įjunkite mygtuką, tada braukite kairėn/dešinėn nuo Banned/Paused-by-tag kortelės. **Hide seen** jas paslepia. Įprasti Wait/Buzz modeliai lieka All sąraše',
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be tinkamos versijos; recheck arba įklijuokite download nuorodą',
     dlNewVersions:
@@ -1610,10 +1613,15 @@ export const lt: Messages = {
     unlocksInShort: 'Atrakinama po {countdown}',
     reasonWait: '— Sub/Buzz/Wait',
     reasonBuy: '— Sub/Buzz',
+    badgeWait: 'Wait',
+    badgeBuy: 'Buzz',
     filterLabel: 'Prieiga',
     filterAll: 'Visi',
     filterWait: 'Atrakinama (laukti)',
     filterBuy: 'Be atrakinimo datos',
+    filterSessionNew: 'Neperžiūrėti',
+    filterSessionNewHint:
+      'Early access modeliai, kurių dar neatidarėte (badge išsivalo apsilankius šiame tab’e)',
     emptyFiltered: 'Šiam filtrui modelių nėra.',
     emptyHiddenByRules:
       'Paslėpta {count} harvest modelių — Browse taisyklės išjungtos arba nebetinka. Favorites ir rankiniai atsisiuntimai lieka matomi.',
@@ -1635,7 +1643,24 @@ export const lt: Messages = {
     sessionBannedBadge: 'Banned šią sesiją',
     allowlistedWaiting:
       'Allowed — pause tag’ai ignoruojami. Lieka Early access iki unlock (tada automatiškai į queue).',
-    policyTagsHint: 'Modeliai, kurių tagai atitinka pause / ban-by-tag politiką.'
+    policyTagsHint: 'Modeliai, kurių tagai atitinka pause / ban-by-tag politiką.',
+    hideSeen: 'Slėpti seen',
+    hideSeenHint:
+      'Slepia Banned/Paused-by-tag korteles, pažymėtas seen (žalias titulas). Įprastų Wait/Buzz Early access kortelių neslepia.',
+    markSeenModeOn: 'Mark seen įj.',
+    markSeenModeOff: 'Mark seen išj.',
+    markSeenModeTitle:
+      'Tik Banned / Paused by tag (ir sesijos ban/pause). Įjunkite, tada braukite kairėn/dešinėn nuo kortelės — žalias titulas = seen. Įprastų Wait/Buzz kortelių nežymi. Dešiniu → Mark seen irgi veikia.',
+    markSeenHintOn:
+      'Braukite kairėn/dešinėn tik nuo Banned arba Paused-by-tag kortelės (žalias titulas). Wait / Buzz lieka All sąraše — jiems naudokite šoninius filtrus.',
+    markSeenHintEmpty:
+      'Čia nėra Banned/Paused-by-tag kortelių — Mark seen neturi ką žymėti. Wait / Buzz į Mark seen neįeina.',
+    unseenReviews: 'Neperžiūrėti ban/pause',
+    unseenReviewsHint:
+      'Banned arba paused kortelės, dar nepažymėtos seen (pagal tagą arba šią sesiją). Vienas sąrašas — neatsisiro ban vs pause.',
+    seenReviews: 'Seen ban/pause',
+    seenReviewsHint:
+      'Banned arba paused kortelės, pažymėtos seen (žalias titulas). Apima ir ban, ir pause — atskiro Seen pauses filtro nėra.'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1643,6 +1668,13 @@ export const lt: Messages = {
     emptyLead:
       'Modeliai, kuriuos Civitai rodo be versijos duomenų (tuščias modelVersions). Į Browse pagal nutylėjimą neįtraukiami.',
     recheck: 'Tikrinti API',
+    recheckBusy: 'Tikrinama…',
+    recheckRunning: 'Tikrinama Civitai versija + preview…',
+    recheckProgress: 'Tikrinama {current}/{total} · resolved {resolved}',
+    recheckProgressNamed: 'Tikrinama {current}/{total} · resolved {resolved} — {name}',
+    recheckDone: 'Patikrinta {checked} · {resolved} dabar turi versiją/preview',
+    recheckStopped:
+      'Sustabdyta po {checked} (resolved {resolved}): {reason}. Spauskite Tikrinti API vėliau dar kartą.',
     download: 'Siųsti → eilė',
     downloadWithUrl: 'Naudoti nuorodą → eilė',
     pasteUrl: 'Įklijuoti URL…',
@@ -1687,7 +1719,8 @@ export const lt: Messages = {
     hideMissingHint:
       'Slepia Missing (404 / nerastus) įrašus — tab skirti ban / pause / tag peržiūrai. Norint peržiūrėti — spausk „Missing (404)“ sidebar arba kind filtrą.',
     hideSeen: 'Slėpti seen',
-    hideSeenHint: 'Slepia jau pažymėtus seen banus (žalias title ženklas)',
+    hideSeenHint:
+      'Slepia Banned/Paused korteles, pažymėtas seen (žalias titulas). Missing (404) neslepia.',
     markSeenModeOn: 'Mark seen įj.',
     markSeenModeOff: 'Mark seen išj.',
     markSeenModeTitle:
@@ -1709,10 +1742,12 @@ export const lt: Messages = {
     blockedTagFilter: 'Policy tagas: {tag}',
     openTagFoldersHint: 'Filtruoti modelius su „{tag}“',
     clearSideFilter: 'Išvalyti sidebar filtrą',
-    unseenBans: 'Neperžiūrėti banai',
-    unseenBansHint: 'Ban / pause / exclude kortelės be seen žymės. Neįeina Missing (404).',
-    seenBans: 'Seen banai',
-    seenBansHint: 'Ban / pause / exclude kortelės su seen (žalias title). Spausk — pamatysi sąrašą. Ne Missing (404).',
+    unseenBans: 'Neperžiūrėti ban/pause',
+    unseenBansHint:
+      'Banned arba paused kortelės be seen žymės (pagal tagą, exclude ar šią sesiją). Vienas sąrašas — neatsisiro ban vs pause. Neįeina Missing (404).',
+    seenBans: 'Seen ban/pause',
+    seenBansHint:
+      'Banned arba paused kortelės su seen (žalias titulas). Apima ir ban, ir pause — atskiro Seen pauses filtro nėra. Ne Missing (404).',
     banReviewSummary: 'peržiūra {unseen}+{seen}={total}',
     banReviewHint:
       'Unseen + Seen = ban/pause/exclude kortelės šiame puslapyje dabar. Missing (404) — atskiras filtras.',
@@ -1822,6 +1857,8 @@ export const lt: Messages = {
     scanningCatalogContinuingRule: 'Puslapis {page} · {total} galerijoje · {rules}',
     checkingLibrary: 'Tikrinama biblioteka dėl naujų versijų',
     checkingLibraryProgress: 'Tikrinama biblioteka ({current}/{total})',
+    incompleteRecheckProgress:
+      'Incomplete recheck {current}/{total} · resolved {resolved}',
     failedPrefix: 'Nepavyko:',
     nextPrefix: 'Kitas:',
     downloadingCount: '{count} siunčiama',
@@ -1835,8 +1872,7 @@ export const lt: Messages = {
     ratingUnknown: '{count} nežinoma',
     detailMore: '(+{count} daugiau)',
     bytesReceived: 'gauta {bytes}',
-    readyWaitingFetch:
-      'Harvest įjungtas — peek laukia (galerija iš cache). Spalvota juosta = Owned / Yield, ne paslėptas fetch.',
+    readyWaitingFetch: 'Harvest įjungtas — peek laukia.',
     outputDriveOffline:
       'Išvesties diskas nepasiekiamas — Harvest išjungtas, atsisiuntimai pauzėje. Pataisykite aplankus Nustatymuose.'
   }

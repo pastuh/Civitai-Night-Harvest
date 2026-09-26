@@ -37,6 +37,12 @@ import {
 } from '../utils/model-card-preview'
 import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
 import {
+  countModelsByRatingFilter,
+  matchesRatingFilter,
+  RATING_FILTER_OPTIONS,
+  type RatingFilter
+} from '../../../shared/rating-filter'
+import {
   aggregateBaseModelOptions,
   baseModelLabel,
   baseModelsMatch
@@ -281,6 +287,53 @@ export const MissingTab = memo(function MissingTab({
     }
     return map
   }, [inventory])
+
+  /** Browse-cache nsfw for Missing cards (versionId → fields). */
+  const [ratingByVersionId, setRatingByVersionId] = useState<
+    Record<number, { nsfw?: boolean; nsfwLevel?: number }>
+  >({})
+
+  useEffect(() => {
+    if (!isActive) return
+    const ids = [
+      ...new Set(
+        workingItems
+          .map((m) => m.versionId)
+          .filter((id): id is number => typeof id === 'number' && id > 0)
+      )
+    ]
+    if (!ids.length) {
+      setRatingByVersionId({})
+      return
+    }
+    let cancelled = false
+    void window.api.getBrowseCardCache(ids).then((cards) => {
+      if (cancelled) return
+      const next: Record<number, { nsfw?: boolean; nsfwLevel?: number }> = {}
+      for (const [vid, card] of Object.entries(cards ?? {})) {
+        const id = Number(vid)
+        if (!id) continue
+        next[id] = { nsfw: card.nsfw, nsfwLevel: card.nsfwLevel }
+      }
+      setRatingByVersionId(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [isActive, workingItems])
+
+  const resolveMissingNsfw = useCallback(
+    (m: ExclusionReviewItem): { nsfw?: boolean; nsfwLevel?: number } => {
+      const owned = ownedPrimaryByModel.get(m.modelId)
+      const fromCache = m.versionId ? ratingByVersionId[m.versionId] : undefined
+      return {
+        nsfw: fromCache?.nsfw ?? owned?.isNsfw,
+        nsfwLevel: fromCache?.nsfwLevel ?? owned?.nsfwLevel
+      }
+    },
+    [ownedPrimaryByModel, ratingByVersionId]
+  )
+
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [hideBanned, setHideBanned] = useState(initial.hideBanned)
   const [hidePaused, setHidePaused] = useState(initial.hidePaused)
@@ -289,6 +342,7 @@ export const MissingTab = memo(function MissingTab({
   const [showForgotten, setShowForgotten] = useState(initial.showForgotten)
   const [hideMissing, setHideMissing] = useState(initial.hideMissing ?? true)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
+  const [ratingFilter, setRatingFilter] = useState<RatingFilter>(initial.ratingFilter ?? 'all')
   const [sideFilter, setSideFilter] = useState<SideFilter>(() => ({ type: 'all' }))
 
   useEffect(() => {
@@ -416,6 +470,7 @@ export const MissingTab = memo(function MissingTab({
     setHideSeen(initial.hideSeen ?? false)
     setMarkSeenMode(initial.markSeenMode ?? false)
     setHideMissing(initial.hideMissing ?? true)
+    setRatingFilter(initial.ratingFilter ?? 'all')
     setKindFilter('all')
     setDateAnchor(null)
     armedSeenIdRef.current = null
@@ -483,6 +538,7 @@ export const MissingTab = memo(function MissingTab({
       showForgotten,
       hideMissing,
       sortMode,
+      ratingFilter,
       search,
       sidebarExpanded,
       baseModelFilter
@@ -495,6 +551,7 @@ export const MissingTab = memo(function MissingTab({
     showForgotten,
     hideMissing,
     sortMode,
+    ratingFilter,
     search,
     sidebarExpanded,
     baseModelFilter,
@@ -894,6 +951,10 @@ export const MissingTab = memo(function MissingTab({
         return false
       }
 
+      if (!matchesRatingFilter(resolveMissingNsfw(m), ratingFilter)) {
+        return false
+      }
+
       // Hide banned / paused apply only on the plain All view (no kind/side/type pick).
       // Active search shows matches even when Hide banned / Missing is on.
       if (!q) {
@@ -946,6 +1007,7 @@ export const MissingTab = memo(function MissingTab({
               : sideFilter.type,
       modelTypeFilter ?? '',
       baseModelFilter ?? '',
+      ratingFilter,
       sortMode,
       sortAscending ? 'asc' : 'desc'
     ].join('|')
@@ -1023,6 +1085,8 @@ export const MissingTab = memo(function MissingTab({
     modelTypeFilter,
     baseModelFilter,
     matchesModelTypeFilter,
+    resolveMissingNsfw,
+    ratingFilter,
     isSessionBan,
     isSessionPause,
     search,
@@ -1032,6 +1096,11 @@ export const MissingTab = memo(function MissingTab({
     sessionDimmedKeys,
     temporaryAllowedByKey
   ])
+
+  const ratingCounts = useMemo(() => {
+    const fields = workingItems.map((m) => resolveMissingNsfw(m))
+    return countModelsByRatingFilter(fields)
+  }, [workingItems, resolveMissingNsfw])
 
   const resultsResetKey = useMemo(
     () =>
@@ -1052,6 +1121,7 @@ export const MissingTab = memo(function MissingTab({
               : '',
         modelTypeFilter ?? '',
         baseModelFilter ?? '',
+        ratingFilter,
         sortMode,
         search.trim().toLowerCase(),
         displayMode,
@@ -1500,6 +1570,23 @@ export const MissingTab = memo(function MissingTab({
           </div>
         </div>
         <div className="browse-results-controls-box">
+          <select
+            className={`browse-content-filter${ratingFilter !== 'all' ? ' filtered' : ''}`}
+            value={ratingFilter}
+            onChange={(e) => setRatingFilter(e.target.value as RatingFilter)}
+            title={t('gallery.contentLabel')}
+          >
+            {RATING_FILTER_OPTIONS.map((opt) => (
+              <option
+                key={opt}
+                value={opt}
+                disabled={opt !== 'all' && opt !== ratingFilter && ratingCounts[opt] === 0}
+              >
+                {t(`gallery.ratingFilter.${opt}`)}
+                {opt !== 'all' ? ` (${ratingCounts[opt]})` : ''}
+              </option>
+            ))}
+          </select>
           <label
             className="library-sort browse-results-sort"
             title={
@@ -1654,9 +1741,10 @@ export const MissingTab = memo(function MissingTab({
               previewSource,
               versionId > 0 ? previewOverrides[versionId] : undefined
             )
+            const nsfwFields = resolveMissingNsfw(item)
             const ratingInfo = describeNsfwRatingForCard(
-              browseCard?.nsfw ?? owned?.isNsfw,
-              browseCard?.nsfwLevel ?? owned?.nsfwLevel
+              nsfwFields.nsfw ?? browseCard?.nsfw ?? owned?.isNsfw,
+              nsfwFields.nsfwLevel ?? browseCard?.nsfwLevel ?? owned?.nsfwLevel
             )
             return (
               <StatusModelCard

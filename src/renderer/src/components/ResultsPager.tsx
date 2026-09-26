@@ -79,13 +79,13 @@ export function ResultsPager({
           <button
             type="button"
             className="btn-sm results-pager-btn"
-            disabled={page >= totalPages && !canLoadMoreApi}
+            disabled={loadingMoreApi || (page >= totalPages && !canLoadMoreApi)}
             onClick={() => {
               if (page < totalPages) onNext()
               else if (canLoadMoreApi) onLoadMoreApi?.()
             }}
           >
-            {loadingMoreApi ? t('common.loading') : t('resultsPager.next')}
+            {t('resultsPager.next')}
           </button>
         </div>
       ) : (
@@ -104,11 +104,7 @@ export function ResultsPager({
                 else onLoadMoreApi?.()
               }}
             >
-              {loadingMoreApi
-                ? t('common.loading')
-                : hasMoreLazy
-                  ? t('resultsPager.showMore')
-                  : t('resultsPager.loadMoreApi')}
+              {hasMoreLazy ? t('resultsPager.showMore') : t('resultsPager.loadMoreApi')}
             </button>
           )}
         </div>

@@ -284,6 +284,31 @@ function migrateInventorySchema(database: Database.Database): void {
   `)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_pending_seen_day ON pending_seen(seen_day)`)
 
+  // Early access tab badge: versionIds reviewed (visit clears +N across restarts).
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ea_access_seen (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      seen_day TEXT NOT NULL,
+      seen_at TEXT NOT NULL
+    );
+  `)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_ea_access_seen_day ON ea_access_seen(seen_day)`)
+  // First create: treat current deferred list as already reviewed so upgrade does not
+  // re-light the badge for models the user already looked at before this table existed.
+  {
+    const eaSeenCount = (
+      database.prepare('SELECT COUNT(*) AS c FROM ea_access_seen').get() as { c: number }
+    ).c
+    if (eaSeenCount === 0) {
+      database.exec(`
+        INSERT OR IGNORE INTO ea_access_seen (version_id, seen_day, seen_at)
+        SELECT version_id, date('now', 'localtime'), datetime('now')
+        FROM deferred_downloads
+        WHERE version_id > 0
+      `)
+    }
+  }
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS library_version_checks (
       model_id INTEGER NOT NULL PRIMARY KEY,
@@ -320,6 +345,17 @@ function migrateInventorySchema(database: Database.Database): void {
       last_error TEXT
     );
   `)
+  {
+    const incompleteCols = database.prepare('PRAGMA table_info(incomplete_models)').all() as Array<{
+      name: string
+    }>
+    if (!incompleteCols.some((c) => c.name === 'is_nsfw')) {
+      database.exec(`ALTER TABLE incomplete_models ADD COLUMN is_nsfw INTEGER`)
+    }
+    if (!incompleteCols.some((c) => c.name === 'nsfw_level')) {
+      database.exec(`ALTER TABLE incomplete_models ADD COLUMN nsfw_level INTEGER`)
+    }
+  }
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS missing_models (
@@ -2534,6 +2570,7 @@ export function removeDeferredForModel(modelId: number): void {
 function rowToIncomplete(row: Record<string, unknown>): IncompleteModel {
   const resolvedVid = row.resolved_version_id as number | null | undefined
   const domain = (row.source_domain as string) === 'red' ? 'red' : 'com'
+  const isNsfwRaw = row.is_nsfw as number | null | undefined
   return {
     modelId: row.model_id as number,
     modelName: row.model_name as string,
@@ -2548,7 +2585,12 @@ function rowToIncomplete(row: Record<string, unknown>): IncompleteModel {
     resolvedVersionName: (row.resolved_version_name as string) || undefined,
     detectedAt: row.detected_at as string,
     lastCheckedAt: row.last_checked_at as string,
-    lastError: (row.last_error as string) || undefined
+    lastError: (row.last_error as string) || undefined,
+    nsfw: isNsfwRaw == null ? undefined : Boolean(isNsfwRaw),
+    nsfwLevel:
+      row.nsfw_level != null && row.nsfw_level !== ''
+        ? Number(row.nsfw_level)
+        : undefined
   }
 }
 
@@ -2580,8 +2622,8 @@ export function upsertIncompleteModel(
       `INSERT INTO incomplete_models (
         model_id, model_name, model_type, author, base_model, tags_json, page_url,
         source_domain, preview_url, resolved_version_id, resolved_version_name,
-        detected_at, last_checked_at, last_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        detected_at, last_checked_at, last_error, is_nsfw, nsfw_level
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(model_id) DO UPDATE SET
         model_name = excluded.model_name,
         model_type = excluded.model_type,
@@ -2596,7 +2638,9 @@ export function upsertIncompleteModel(
         resolved_version_id = COALESCE(excluded.resolved_version_id, incomplete_models.resolved_version_id),
         resolved_version_name = COALESCE(excluded.resolved_version_name, incomplete_models.resolved_version_name),
         last_checked_at = excluded.last_checked_at,
-        last_error = excluded.last_error`
+        last_error = excluded.last_error,
+        is_nsfw = COALESCE(excluded.is_nsfw, incomplete_models.is_nsfw),
+        nsfw_level = COALESCE(excluded.nsfw_level, incomplete_models.nsfw_level)`
     )
     .run(
       entry.modelId,
@@ -2612,7 +2656,9 @@ export function upsertIncompleteModel(
       entry.resolvedVersionName ?? null,
       existing?.detected_at ?? entry.detectedAt ?? now,
       entry.lastCheckedAt ?? now,
-      entry.lastError ?? null
+      entry.lastError ?? null,
+      entry.nsfw == null ? null : entry.nsfw ? 1 : 0,
+      entry.nsfwLevel ?? null
     )
 }
 
@@ -2625,6 +2671,8 @@ export function updateIncompleteModelResolved(
     baseModel?: string
     lastError?: string | null
     lastCheckedAt?: string
+    nsfw?: boolean
+    nsfwLevel?: number
   }
 ): void {
   const row = getIncompleteModel(modelId)
@@ -2636,7 +2684,9 @@ export function updateIncompleteModelResolved(
     previewUrl: patch.previewUrl ?? row.previewUrl,
     baseModel: patch.baseModel ?? row.baseModel,
     lastError: patch.lastError === null ? undefined : (patch.lastError ?? row.lastError),
-    lastCheckedAt: patch.lastCheckedAt ?? new Date().toISOString()
+    lastCheckedAt: patch.lastCheckedAt ?? new Date().toISOString(),
+    nsfw: patch.nsfw ?? row.nsfw,
+    nsfwLevel: patch.nsfwLevel ?? row.nsfwLevel
   })
 }
 
@@ -3061,6 +3111,56 @@ export function markPendingSeen(versionIds: number[], seenDay: string): number[]
 export function clearPendingSeen(versionId: number): void {
   if (!versionId || versionId <= 0) return
   getDb().prepare('DELETE FROM pending_seen WHERE version_id = ?').run(versionId)
+}
+
+/** versionId → day when Early access badge considered this model reviewed. */
+export function getEaAccessSeenMap(): Record<number, string> {
+  const rows = getDb()
+    .prepare('SELECT version_id, seen_day FROM ea_access_seen')
+    .all() as Array<{ version_id: number; seen_day: string }>
+  const out: Record<number, string> = {}
+  for (const r of rows) out[r.version_id] = r.seen_day
+  return out
+}
+
+/** Mark Early access versions reviewed (badge +N). First visit wins. */
+export function markEaAccessSeen(versionIds: number[], seenDay: string): number[] {
+  if (!versionIds.length) return []
+  const day = seenDay.trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return []
+  const now = new Date().toISOString()
+  const insert = getDb().prepare(
+    `INSERT OR IGNORE INTO ea_access_seen (version_id, seen_day, seen_at) VALUES (?, ?, ?)`
+  )
+  const marked: number[] = []
+  const tx = getDb().transaction((ids: number[]) => {
+    for (const id of ids) {
+      if (!id || id <= 0) continue
+      const info = insert.run(id, day, now)
+      if (info.changes > 0) marked.push(id)
+    }
+  })
+  tx(versionIds)
+  return marked
+}
+
+/** Drop seen marks for versions no longer on the deferred / Early access list. */
+export function pruneEaAccessSeen(keepVersionIds: number[]): number {
+  const keep = new Set(keepVersionIds.filter((id) => id > 0))
+  const rows = getDb()
+    .prepare('SELECT version_id FROM ea_access_seen')
+    .all() as Array<{ version_id: number }>
+  const del = getDb().prepare('DELETE FROM ea_access_seen WHERE version_id = ?')
+  let removed = 0
+  const tx = getDb().transaction((ids: number[]) => {
+    for (const id of ids) {
+      if (keep.has(id)) continue
+      del.run(id)
+      removed++
+    }
+  })
+  tx(rows.map((r) => r.version_id))
+  return removed
 }
 
 export function clearPendingSeenForModel(modelId: number): void {

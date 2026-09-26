@@ -464,7 +464,7 @@ export const en = {
     missingForget:
       '**Forget** — hide the model everywhere; **Show forgotten** to review and undo',
     missingMarkSeen:
-      '**Mark seen** — swipe off a ban/pause card (green title). **Hide seen** removes those cards. Sidebar Unseen / Seen lists are for ban review, not “not found” items',
+      '**Mark seen** — swipe off a ban/pause card (green title). **Hide seen** removes those cards. Sidebar **Unseen ban/pause** / **Seen ban/pause** are for ban+pause review, not “not found” items',
     missingContextMenu:
       '**Right-click** a card → Mark seen, Forget, Unban, Allow, Acknowledge, or Open on Civitai',
     edgeOwned: 'Green top border — already in your library',
@@ -487,7 +487,10 @@ export const en = {
     dlStripPriority:
       'Right-click a strip card → Priority download — moves it to the front of the queue',
     dlStatusBar: 'Status bar — bottom of the window shows queue, speed, and current download',
-    dlAwaiting: 'Early access tab — gated download, or missing API key',
+    dlAwaiting:
+      'Early access — Wait (unlock date) vs Buzz (pay only). Badge +N = unreviewed models (clears when you visit the tab). **Mark seen** / **Hide seen** apply only to Banned / Paused-by-tag cards (green title), not Wait/Buzz',
+    dlAwaitingMarkSeen:
+      'Early access **Mark seen** — turn the button on, then swipe left/right off a Banned/Paused-by-tag card. **Hide seen** hides those. Normal Wait/Buzz models stay in All',
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but has no usable version; recheck or paste a download link',
     dlNewVersions:
@@ -1595,10 +1598,15 @@ export const en = {
     unlocksInShort: 'Unlocks in {countdown}',
     reasonWait: '— Sub/Buzz/Wait',
     reasonBuy: '— Sub/Buzz',
+    badgeWait: 'Wait',
+    badgeBuy: 'Buzz',
     filterLabel: 'Access',
     filterAll: 'All',
     filterWait: 'Unlock soon (wait)',
     filterBuy: 'No unlock date yet',
+    filterSessionNew: 'Unseen',
+    filterSessionNewHint:
+      'Early access models you have not opened since they appeared (badge clears when you visit this tab)',
     emptyFiltered: 'No models match this filter.',
     emptyHiddenByRules:
       '{count} harvest model(s) hidden — Browse rules are off or no longer match. Favorites and manual downloads stay visible.',
@@ -1619,7 +1627,24 @@ export const en = {
     sessionBannedBadge: 'Banned this session',
     allowlistedWaiting:
       'Allowed — pause tags ignored. Stays in Early access until unlock (then queues automatically).',
-    policyTagsHint: 'Models whose tags match pause / ban-by-tag policy.'
+    policyTagsHint: 'Models whose tags match pause / ban-by-tag policy.',
+    hideSeen: 'Hide seen',
+    hideSeenHint:
+      'Hide Banned/Paused-by-tag cards marked seen (green title). Does not hide normal Wait/Buzz Early access cards.',
+    markSeenModeOn: 'Mark seen on',
+    markSeenModeOff: 'Mark seen off',
+    markSeenModeTitle:
+      'Only Banned / Paused by tag (and session ban/pause). Turn on, then swipe left or right off that card — green title = seen. Normal Wait/Buzz cards are not marked. Right-click → Mark seen also works.',
+    markSeenHintOn:
+      'Swipe left/right off a Banned or Paused-by-tag card only (green title). Wait / Buzz cards stay in All — use sidebar Wait / Buzz filters for those.',
+    markSeenHintEmpty:
+      'No Banned/Paused-by-tag cards here — Mark seen has nothing to mark. Wait / Buzz cards are not part of Mark seen.',
+    unseenReviews: 'Unseen ban/pause',
+    unseenReviewsHint:
+      'Banned or paused cards not marked seen yet (by tag or this session). One list — not separate for bans vs pauses.',
+    seenReviews: 'Seen ban/pause',
+    seenReviewsHint:
+      'Banned or paused cards you marked seen (green title). Includes both bans and pauses — no separate Seen pauses filter.'
   },
   incompleteTab: {
     title: 'Incomplete',
@@ -1627,6 +1652,13 @@ export const en = {
     emptyLead:
       'Models Civitai lists without version data (empty modelVersions). They are kept out of Browse until resolved.',
     recheck: 'Recheck API',
+    recheckBusy: 'Rechecking…',
+    recheckRunning: 'Checking Civitai for version data + previews…',
+    recheckProgress: 'Checking {current}/{total} · resolved {resolved}',
+    recheckProgressNamed: 'Checking {current}/{total} · resolved {resolved} — {name}',
+    recheckDone: 'Checked {checked} · {resolved} now have version/preview',
+    recheckStopped:
+      'Stopped early after {checked} (resolved {resolved}): {reason}. Click Recheck API again in a minute.',
     download: 'Download → queue',
     downloadWithUrl: 'Use link → queue',
     pasteUrl: 'Paste URL…',
@@ -1671,7 +1703,8 @@ export const en = {
     hideMissingHint:
       'Hide Missing (404 / not-found) cards so this tab focuses on ban / pause / tag reviews. Click “Missing (404)” in the sidebar / kind filter to review them.',
     hideSeen: 'Hide seen',
-    hideSeenHint: 'Hide bans you already marked seen (green title mark)',
+    hideSeenHint:
+      'Hide Banned/Paused cards you marked seen (green title). Does not hide Missing (404).',
     markSeenModeOn: 'Mark seen on',
     markSeenModeOff: 'Mark seen off',
     markSeenModeTitle:
@@ -1693,10 +1726,12 @@ export const en = {
     blockedTagFilter: 'Policy tag: {tag}',
     openTagFoldersHint: 'Filter models with “{tag}”',
     clearSideFilter: 'Clear sidebar filter',
-    unseenBans: 'Unseen bans',
-    unseenBansHint: 'Ban / pause / exclude cards not marked seen yet. Does not include Missing (404).',
-    seenBans: 'Seen bans',
-    seenBansHint: 'Ban / pause / exclude cards you marked seen (green title). Click to list them. Not Missing (404).',
+    unseenBans: 'Unseen ban/pause',
+    unseenBansHint:
+      'Banned or paused cards not marked seen yet (by tag, exclude, or this session). One list — not separate for bans vs pauses. Does not include Missing (404).',
+    seenBans: 'Seen ban/pause',
+    seenBansHint:
+      'Banned or paused cards you marked seen (green title). Includes both bans and pauses — no separate Seen pauses filter. Not Missing (404).',
     banReviewSummary: 'review {unseen}+{seen}={total}',
     banReviewHint:
       'Unseen + Seen = ban/pause/exclude cards currently on this page. Missing (404) is a separate filter.',
@@ -1806,6 +1841,8 @@ export const en = {
     scanningCatalogContinuingRule: 'Page {page} · {total} in gallery · {rules}',
     checkingLibrary: 'Checking your library for new versions',
     checkingLibraryProgress: 'Checking library for new versions ({current}/{total})',
+    incompleteRecheckProgress:
+      'Incomplete recheck {current}/{total} · resolved {resolved}',
     failedPrefix: 'Failed:',
     nextPrefix: 'Next:',
     downloadingCount: '{count} downloading',
@@ -1819,8 +1856,7 @@ export const en = {
     ratingUnknown: '{count} unknown',
     detailMore: '(+{count} more)',
     bytesReceived: '{bytes} received',
-    readyWaitingFetch:
-      'Harvest on — peek idle (gallery from cache). Colored bar = Owned / Yield, not a hidden fetch.',
+    readyWaitingFetch: 'Harvest on — peek idle.',
     outputDriveOffline:
       'Output drive offline — Harvest off, downloads paused. Fix folders in Settings.'
   }

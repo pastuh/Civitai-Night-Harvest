@@ -18,6 +18,10 @@ interface Props {
   videoFetch?: ModelCardPreviewSource
   /** Overlay label on the preview (e.g. queued · paused) — same placement as Browse. */
   statusFoot?: string
+  /** Badges inside the thumb (e.g. EA Wait/Buzz bottom-right). */
+  thumbBadges?: ReactNode
+  /** Full-thumb shimmer while Incomplete Recheck probes this card. */
+  thumbChecking?: boolean
   /** Extra controls next to the title (e.g. Ban ×). Clicks do not open the card. */
   titleActions?: ReactNode
   onOpen?: () => void
@@ -47,6 +51,8 @@ export const StatusModelCard = memo(function StatusModelCard({
   videoAvailability,
   videoFetch,
   statusFoot,
+  thumbBadges,
+  thumbChecking = false,
   actions,
   titleActions,
   onOpen,
@@ -100,6 +106,10 @@ export const StatusModelCard = memo(function StatusModelCard({
           loading={previewLoading}
           onAllFailed={onPreviewAllFailed}
         />
+        {thumbBadges}
+        {thumbChecking ? (
+          <span className="preview-thumb-shimmer incomplete-recheck-shimmer" aria-hidden />
+        ) : null}
         {statusFoot ? <div className="card-status-foot">{statusFoot}</div> : null}
       </div>
       <div className="gallery-card-body">

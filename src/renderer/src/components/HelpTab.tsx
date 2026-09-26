@@ -231,6 +231,7 @@ export function HelpTab({ onOpenSettings }: Props) {
           </h3>
           <ul>
             <HelpLi text={t('help.dlAwaiting')} />
+            <HelpLi text={t('help.dlAwaitingMarkSeen')} />
           </ul>
         </section>
 

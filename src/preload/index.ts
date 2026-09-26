@@ -422,6 +422,17 @@ const api = {
     ipcRenderer.invoke('pending:clearSeen', versionId ? { versionId } : {}),
 
   getDeferred: (): Promise<DeferredDownload[]> => ipcRenderer.invoke('deferred:get'),
+  getEaAccessSeen: (): Promise<{ byVersionId: Record<number, string> }> =>
+    ipcRenderer.invoke('deferred:getSeen'),
+  markEaAccessSeen: (
+    versionIds: number[],
+    seenDay: string
+  ): Promise<{ marked: number[]; byVersionId: Record<number, string> }> =>
+    ipcRenderer.invoke('deferred:markSeen', { versionIds, seenDay }),
+  pruneEaAccessSeen: (
+    keepVersionIds: number[]
+  ): Promise<{ byVersionId: Record<number, string> }> =>
+    ipcRenderer.invoke('deferred:pruneSeen', { keepVersionIds }),
   getCrawlStatus: (): Promise<Record<string, import('../shared/types').RuleCrawlStatus>> =>
     ipcRenderer.invoke('crawl:getStatus'),
   retryAllDeferred: (): Promise<{
@@ -440,6 +451,8 @@ const api = {
   recheckIncomplete: (): Promise<{
     checked: number
     resolved: number
+    stoppedEarly?: boolean
+    stopReason?: string
     items: IncompleteModel[]
   }> => ipcRenderer.invoke('incomplete:recheck'),
   downloadIncomplete: (payload: {
@@ -532,6 +545,28 @@ const api = {
     const handler = (_: unknown, items: IncompleteModel[]) => cb(items)
     ipcRenderer.on('incomplete:list', handler)
     return () => ipcRenderer.removeListener('incomplete:list', handler)
+  },
+  onIncompleteRecheckProgress: (
+    cb: (progress: {
+      current: number
+      total: number
+      resolved: number
+      modelId?: number
+      done?: boolean
+    }) => void
+  ) => {
+    const handler = (
+      _: unknown,
+      progress: {
+        current: number
+        total: number
+        resolved: number
+        modelId?: number
+        done?: boolean
+      }
+    ) => cb(progress)
+    ipcRenderer.on('incomplete:recheckProgress', handler)
+    return () => ipcRenderer.removeListener('incomplete:recheckProgress', handler)
   },
   onMissingList: (cb: (items: MissingModel[]) => void) => {
     const handler = (_: unknown, items: MissingModel[]) => cb(items)

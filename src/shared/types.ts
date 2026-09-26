@@ -659,6 +659,8 @@ export interface IncompleteModel {
   detectedAt: string
   lastCheckedAt: string
   lastError?: string
+  nsfw?: boolean
+  nsfwLevel?: number
 }
 
 /** Calendar-day 404 confirmations before a model is marked Unavailable. */

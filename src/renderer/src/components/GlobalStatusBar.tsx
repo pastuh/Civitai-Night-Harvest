@@ -38,6 +38,13 @@ interface Props {
   suppressIdlePipeline?: boolean
   versionScanning?: boolean
   versionScanProgress?: LibraryVersionScanProgress | null
+  /** Incomplete tab Recheck API — survives leaving the tab. */
+  incompleteRecheckProgress?: {
+    current: number
+    total: number
+    resolved: number
+    modelId?: number
+  } | null
   scanningRuleNames?: string[]
   crawlPageNumber?: number | null
   crawlGalleryTotal?: number | null
@@ -143,6 +150,13 @@ function primaryActivityLabel(
 
     versionScanProgress?: LibraryVersionScanProgress | null
 
+    incompleteRecheckProgress?: {
+      current: number
+      total: number
+      resolved: number
+      modelId?: number
+    } | null
+
     scanningRuleNames?: string[]
 
     crawlPageNumber?: number | null
@@ -177,6 +191,8 @@ function primaryActivityLabel(
 
     versionScanProgress,
 
+    incompleteRecheckProgress,
+
     scanningRuleNames,
 
     crawlPageNumber,
@@ -209,7 +225,13 @@ function primaryActivityLabel(
 
   }
 
-
+  if (incompleteRecheckProgress && incompleteRecheckProgress.total > 0) {
+    return t('globalStatus.incompleteRecheckProgress', {
+      current: incompleteRecheckProgress.current,
+      total: incompleteRecheckProgress.total,
+      resolved: incompleteRecheckProgress.resolved
+    })
+  }
 
   // Harvest / Civitai page fetch owns the bar. Background "Check library for new versions"
   // must not hide "Fetching page N · Rule: …".
@@ -592,6 +614,7 @@ export function GlobalStatusBar({
   suppressIdlePipeline = false,
   versionScanning = false,
   versionScanProgress = null,
+  incompleteRecheckProgress = null,
   scanningRuleNames = [],
   crawlPageNumber = null,
   crawlGalleryTotal = null,
@@ -667,6 +690,8 @@ export function GlobalStatusBar({
 
         versionScanProgress,
 
+        incompleteRecheckProgress,
+
         scanningRuleNames,
 
         crawlPageNumber,
@@ -700,6 +725,8 @@ export function GlobalStatusBar({
       versionScanning,
 
       versionScanProgress,
+
+      incompleteRecheckProgress,
 
       scanningRuleNames,
 

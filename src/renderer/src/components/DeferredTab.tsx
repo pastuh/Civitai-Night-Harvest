@@ -34,6 +34,12 @@ import {
 } from '../../../shared/base-model-label'
 import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
 import {
+  countModelsByRatingFilter,
+  matchesRatingFilter,
+  RATING_FILTER_OPTIONS,
+  type RatingFilter
+} from '../../../shared/rating-filter'
+import {
   cardTagFolderRole,
   cardTagFolderRoleClass,
   folderLineIfNotDuplicatingTag,
@@ -47,6 +53,7 @@ import {
 
 type SideFilter =
   | { type: 'all' }
+  | { type: 'sessionNew' }
   | { type: 'wait' }
   | { type: 'buy' }
   | { type: 'favorites' }
@@ -101,6 +108,10 @@ interface Props {
   sessionPauseModelIds?: number[]
   /** Clear Browse/App ban state after Unban from this tab. */
   onBrowseModelUnbanned?: (modelId: number) => void
+  /** Tab badge — if > 0 open New this session, else All. */
+  badgeCount?: number
+  /** Version ids currently counted on the EA +N badge (snapshot on tab open). */
+  sessionNewVersionIds?: number[]
   fastTagMode?: boolean
   confirmTagFolderMoves?: boolean
   onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
@@ -205,6 +216,19 @@ function deferredNeedsBaseModelBackfill(
   return true
 }
 
+function resolveDeferredNsfw(
+  item: DeferredDownload,
+  browseCards: Record<number, import('../../../shared/types').WatchRuleTestModel>,
+  inventoryByVersion: Map<number, InventoryRecord>
+): { nsfw?: boolean; nsfwLevel?: number } {
+  const card = browseCards[item.versionId]
+  const owned = inventoryByVersion.get(item.versionId)
+  return {
+    nsfw: card?.nsfw ?? owned?.isNsfw,
+    nsfwLevel: card?.nsfwLevel ?? owned?.nsfwLevel
+  }
+}
+
 function resolveDeferredModelType(item: DeferredDownload): string {
   const raw = (item.modelType || '').trim()
   const upper = raw.toUpperCase()
@@ -273,6 +297,8 @@ export function DeferredTab({
   sessionBanModelIds = [],
   sessionPauseModelIds = [],
   onBrowseModelUnbanned,
+  badgeCount,
+  sessionNewVersionIds = [],
   fastTagMode = false,
   confirmTagFolderMoves = true,
   onSaveTagRules,
@@ -285,7 +311,18 @@ export function DeferredTab({
   const [busyId, setBusyId] = useState<number | null>(null)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
-  const [sideFilter, setSideFilter] = useState<SideFilter>({ type: 'all' })
+  // Badge → New this session; no badge → All (like Updates Unseen).
+  const openSessionNew = (badgeCount ?? 0) > 0
+  const [sideFilter, setSideFilter] = useState<SideFilter>(
+    openSessionNew ? { type: 'sessionNew' } : { type: 'all' }
+  )
+  const sessionNewSnapshotRef = useRef<Set<number>>(
+    new Set(openSessionNew ? sessionNewVersionIds : [])
+  )
+  const [sessionNewSnapIds, setSessionNewSnapIds] = useState<number[]>(() =>
+    openSessionNew ? [...sessionNewVersionIds] : []
+  )
+
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [hideBanned, setHideBanned] = useState(true)
   const [hidePaused, setHidePaused] = useState(true)
@@ -308,6 +345,7 @@ export function DeferredTab({
   const [sidebarSearch, setSidebarSearch] = useState('')
   const [unlockDayFilter, setUnlockDayFilter] = useState<string | null>(null)
   const [deferredSort, setDeferredSort] = useState<DeferredSort>('unlock')
+  const [ratingFilter, setRatingFilter] = useState<RatingFilter>('all')
   const [search, setSearch] = useState('')
   const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [tagMessage, setTagMessage] = useState('')
@@ -358,6 +396,18 @@ export function DeferredTab({
     if (justOpened) {
       setPinFavoriteIds(eaFavoriteIds)
       armedSeenIdRef.current = null
+      if ((badgeCount ?? 0) > 0 && sessionNewVersionIds.length > 0) {
+        const snap = [...sessionNewVersionIds]
+        sessionNewSnapshotRef.current = new Set(snap)
+        setSessionNewSnapIds(snap)
+        setSideFilter({ type: 'sessionNew' })
+        setKindFilter('all')
+        setModelTypeFilter(null)
+        setUnlockDayFilter(null)
+      } else {
+        setSideFilter({ type: 'all' })
+        setKindFilter('all')
+      }
       void window.api.getTagSkipAllowlist?.().then((snap) => {
         const ids = snap?.modelIds ?? []
         setTagSkipAllowIds(new Set(ids.filter((id) => id > 0)))
@@ -372,7 +422,7 @@ export function DeferredTab({
         })
       }
     }
-  }, [isActive, eaFavoriteIds])
+  }, [isActive, eaFavoriteIds, badgeCount, sessionNewVersionIds])
 
   const toggleBanMode = useCallback(() => {
     const next = !banMode
@@ -500,6 +550,11 @@ export function DeferredTab({
     () => itemsForMainCounts.filter((d) => liveFavoriteSet.has(d.modelId)).length,
     [itemsForMainCounts, liveFavoriteSet]
   )
+  const sessionNewCount = useMemo(() => {
+    if (!sessionNewSnapIds.length) return 0
+    const snap = new Set(sessionNewSnapIds)
+    return scopedDeferred.filter((d) => snap.has(d.versionId)).length
+  }, [scopedDeferred, sessionNewSnapIds])
   const sessionPauseSet = useMemo(() => new Set(sessionPauseModelIds), [sessionPauseModelIds])
   const classifyPolicy = useCallback(
     (item: DeferredDownload) => {
@@ -674,6 +729,13 @@ export function DeferredTab({
     setUnlockDayFilter((prev) => (prev === day ? null : day))
   }, [])
 
+  const ratingCounts = useMemo(() => {
+    const fields = itemsForMainCounts.map((d) =>
+      resolveDeferredNsfw(d, browseCards, inventoryByVersion)
+    )
+    return countModelsByRatingFilter(fields)
+  }, [itemsForMainCounts, browseCards, inventoryByVersion])
+
   const sorted = useMemo(() => {
     const q = search.trim().toLowerCase()
     let list: DeferredDownload[]
@@ -687,6 +749,15 @@ export function DeferredTab({
         }
       }
       list = sortDeferred([...merged.values()], pinFavoriteSet, deferredSort)
+    } else if (sideFilter.type === 'sessionNew') {
+      const snap = sessionNewSnapshotRef.current
+      list = scopedDeferred.filter((d) => snap.has(d.versionId))
+      // Keep holds that were in the snapshot even if refresh dropped them briefly.
+      for (const held of temporaryAllowedByModelId.values()) {
+        if (snap.has(held.versionId) && !list.some((d) => d.modelId === held.modelId)) {
+          list = [...list, held]
+        }
+      }
     } else if (sideFilter.type === 'sessionPause') {
       const merged = new Map<number, DeferredDownload>()
       for (const d of sessionPausePool) merged.set(d.modelId, d)
@@ -798,6 +869,12 @@ export function DeferredTab({
 
     if (q) list = list.filter((d) => matchesSearch(d, q))
 
+    if (ratingFilter !== 'all') {
+      list = list.filter((d) =>
+        matchesRatingFilter(resolveDeferredNsfw(d, browseCards, inventoryByVersion), ratingFilter)
+      )
+    }
+
     // Freeze first-seen order for this filter view so Allow / Unban / refresh cannot
     // shove a card to the top (sortDeferred would re-rank after onRefresh).
     const filterKey = [
@@ -805,6 +882,7 @@ export function DeferredTab({
       kindFilter,
       modelTypeFilter ?? '',
       unlockDayFilter ?? '',
+      ratingFilter,
       deferredSort
     ].join('|')
     if (sessionOrderFilterKeyRef.current !== filterKey) {
@@ -847,6 +925,7 @@ export function DeferredTab({
     liveFavoriteSet,
     pinFavoriteSet,
     deferredSort,
+    ratingFilter,
     browseCards,
     inventoryByVersion,
     classifyPolicy,
@@ -1238,7 +1317,7 @@ export function DeferredTab({
             </label>
             <label
               className="checkbox-field missing-hide-seen"
-              title={t('missingTab.hideSeenHint')}
+              title={t('deferredTab.hideSeenHint')}
             >
               <input
                 type="checkbox"
@@ -1251,17 +1330,17 @@ export function DeferredTab({
                   }
                 }}
               />
-              {t('missingTab.hideSeen')}
+              {t('deferredTab.hideSeen')}
             </label>
             <div className="browse-mode-toggles">
               <button
                 type="button"
                 className={`btn-sm browse-ban-toggle ${markSeenMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
                 onClick={() => setMarkSeenMode((v) => !v)}
-                title={t('missingTab.markSeenModeTitle')}
+                title={t('deferredTab.markSeenModeTitle')}
                 aria-pressed={markSeenMode}
               >
-                {markSeenMode ? t('missingTab.markSeenModeOn') : t('missingTab.markSeenModeOff')}
+                {markSeenMode ? t('deferredTab.markSeenModeOn') : t('deferredTab.markSeenModeOff')}
               </button>
               {onBanFunctionModeChange && (
                 <button
@@ -1278,6 +1357,23 @@ export function DeferredTab({
           </div>
         </div>
         <div className="browse-results-controls-box">
+          <select
+            className={`browse-content-filter${ratingFilter !== 'all' ? ' filtered' : ''}`}
+            value={ratingFilter}
+            onChange={(e) => setRatingFilter(e.target.value as RatingFilter)}
+            title={t('gallery.contentLabel')}
+          >
+            {RATING_FILTER_OPTIONS.map((opt) => (
+              <option
+                key={opt}
+                value={opt}
+                disabled={opt !== 'all' && opt !== ratingFilter && ratingCounts[opt] === 0}
+              >
+                {t(`gallery.ratingFilter.${opt}`)}
+                {opt !== 'all' ? ` (${ratingCounts[opt]})` : ''}
+              </option>
+            ))}
+          </select>
           <label className="library-sort browse-results-sort">
             {t('listSort.label')}
             <select
@@ -1316,6 +1412,13 @@ export function DeferredTab({
   return (
     <div className="panel status-tab-panel missing-tab-panel">
       {toolbar}
+      {markSeenMode ? (
+        <p className="muted status-inline-msg deferred-mark-seen-hint">
+          {reviewableItems.length > 0
+            ? t('deferredTab.markSeenHintOn')
+            : t('deferredTab.markSeenHintEmpty')}
+        </p>
+      ) : null}
       <div className="gallery-layout missing-gallery-layout">
         <div className="gallery-body-row">
           <div className="gallery-main">
@@ -1398,9 +1501,10 @@ export function DeferredTab({
                       )
                       const browseCard = browseCards[item.versionId]
                       const owned = inventoryByVersion.get(item.versionId)
+                      const nsfwFields = resolveDeferredNsfw(item, browseCards, inventoryByVersion)
                       const ratingInfo = describeNsfwRatingForCard(
-                        browseCard?.nsfw ?? owned?.isNsfw,
-                        browseCard?.nsfwLevel ?? owned?.nsfwLevel
+                        nsfwFields.nsfw,
+                        nsfwFields.nsfwLevel
                       )
                       return (
                         <StatusModelCard
@@ -1578,6 +1682,24 @@ export function DeferredTab({
                           videoFetch={previewSource}
                           previewLoading="lazy"
                           onPreviewAllFailed={() => markPreviewBroken(item.versionId)}
+                          thumbBadges={
+                            isEarlyAccess ? (
+                              <span
+                                className={`model-badge badge-ea-access ${
+                                  canWait ? 'badge-early' : 'badge-paid'
+                                }`}
+                                title={
+                                  canWait
+                                    ? t('deferredTab.reasonWait')
+                                    : t('deferredTab.reasonBuy')
+                                }
+                              >
+                                {canWait
+                                  ? t('deferredTab.badgeWait')
+                                  : t('deferredTab.badgeBuy')}
+                              </span>
+                            ) : null
+                          }
                           titleActions={
                             <>
                               {onToggleEaFavorite ? (
@@ -1719,6 +1841,19 @@ export function DeferredTab({
                   <span className="tag-name">{t('missingTab.sidebarAll')}</span>
                   <span className="muted tag-count-inline">{allVisibleCount}</span>
                 </button>
+                {(sessionNewCount > 0 || sideFilter.type === 'sessionNew') && (
+                  <button
+                    type="button"
+                    className={`sidebar-tag ${
+                      sideFilterActive({ type: 'sessionNew' }) ? 'active' : ''
+                    }`}
+                    onClick={() => applySideFilter({ type: 'sessionNew' })}
+                    title={t('deferredTab.filterSessionNewHint')}
+                  >
+                    <span className="tag-name">{t('deferredTab.filterSessionNew')}</span>
+                    <span className="muted tag-count-inline">{sessionNewCount}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   className={`sidebar-tag ${sideFilterActive({ type: 'wait' }) ? 'active' : ''}`}
@@ -1751,18 +1886,18 @@ export function DeferredTab({
                   type="button"
                   className={`sidebar-tag ${sideFilterActive({ type: 'unseen' }) ? 'active' : ''}`}
                   onClick={() => applySideFilter({ type: 'unseen' })}
-                  title={t('missingTab.unseenBansHint')}
+                  title={t('deferredTab.unseenReviewsHint')}
                 >
-                  <span className="tag-name">{t('missingTab.unseenBans')}</span>
+                  <span className="tag-name">{t('deferredTab.unseenReviews')}</span>
                   <span className="muted tag-count-inline">{unseenBanCount}</span>
                 </button>
                 <button
                   type="button"
                   className={`sidebar-tag ${sideFilterActive({ type: 'seen' }) ? 'active' : ''}`}
                   onClick={() => applySideFilter({ type: 'seen' })}
-                  title={t('missingTab.seenBansHint')}
+                  title={t('deferredTab.seenReviewsHint')}
                 >
-                  <span className="tag-name">{t('missingTab.seenBans')}</span>
+                  <span className="tag-name">{t('deferredTab.seenReviews')}</span>
                   <span className="muted tag-count-inline">{seenBanCount}</span>
                 </button>
                 <button
@@ -1944,7 +2079,7 @@ export function DeferredTab({
                   queueBanSeen(contextMenu.item.modelId, { force: true })
                 }, () => setContextMenu(null))}
               >
-                {t('missingTab.markSeenModeOn')}
+                {t('deferredTab.markSeenModeOn')}
               </button>
             )}
           {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&

@@ -113,6 +113,7 @@ export interface MissingViewPrefs {
   /** Hide Missing (404 / not-found) cards so the tab focuses on ban / pause / tag reviews. */
   hideMissing: boolean
   sortMode: MissingSort
+  ratingFilter: RatingFilter
   search: string
   sidebarExpanded: boolean
   /** Case-insensitive base model filter (uppercase label). */
@@ -127,6 +128,7 @@ export const DEFAULT_MISSING_VIEW_PREFS: MissingViewPrefs = {
   showForgotten: false,
   hideMissing: true,
   sortMode: 'recent',
+  ratingFilter: 'all',
   search: '',
   sidebarExpanded: true,
   baseModelFilter: null
@@ -249,6 +251,7 @@ export function coerceMissingViewPrefs(raw: Partial<MissingViewPrefs> | null | u
   return {
     ...base,
     sortMode: normalizeMissingSort(base.sortMode),
+    ratingFilter: (base.ratingFilter as RatingFilter | undefined) ?? 'all',
     baseModelFilter:
       typeof base.baseModelFilter === 'string' && base.baseModelFilter.trim()
         ? base.baseModelFilter.trim()

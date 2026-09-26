@@ -156,6 +156,9 @@ const IPC_CHANNELS = [
   'pending:markSeen',
   'pending:clearSeen',
   'deferred:get',
+  'deferred:getSeen',
+  'deferred:markSeen',
+  'deferred:pruneSeen',
   'deferred:enrich',
   'deferred:retry',
   'deferred:retryAll',
@@ -2327,6 +2330,24 @@ export function initIpc(): void {
   ipcMain.handle('deferred:get', () => {
     inventory.sanitizeDeferredDeadLocalPreviews()
     return inventory.getAllDeferredDownloads()
+  })
+
+  ipcMain.handle('deferred:getSeen', () => ({
+    byVersionId: inventory.getEaAccessSeenMap()
+  }))
+
+  ipcMain.handle(
+    'deferred:markSeen',
+    (_e, payload: { versionIds: number[]; seenDay: string }) => {
+      const marked = inventory.markEaAccessSeen(payload?.versionIds ?? [], payload?.seenDay ?? '')
+      return { marked, byVersionId: inventory.getEaAccessSeenMap() }
+    }
+  )
+
+  ipcMain.handle('deferred:pruneSeen', (_e, payload?: { keepVersionIds?: number[] }) => {
+    const keep = Array.isArray(payload?.keepVersionIds) ? payload.keepVersionIds : []
+    inventory.pruneEaAccessSeen(keep)
+    return { byVersionId: inventory.getEaAccessSeenMap() }
   })
 
   ipcMain.handle('deferred:enrich', async () => {

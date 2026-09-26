@@ -2251,6 +2251,38 @@ label.field-label {
   --card-accent: #e85a3c;
 }
 
+/* EA Wait / Buzz — bottom-left on preview (right stays free for play-video cue). */
+.status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access {
+  top: auto;
+  bottom: 6px;
+  left: 6px;
+  right: auto;
+  z-index: 2;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--card-accent, #5eb8d4) 45%, transparent);
+  background: color-mix(in srgb, var(--card-accent, #5eb8d4) 42%, rgba(0, 0, 0, 0.72));
+  color: color-mix(in srgb, var(--card-accent, #5eb8d4) 55%, white);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.theme-light .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access {
+  background: color-mix(in srgb, var(--card-accent, #5eb8d4) 28%, rgba(255, 255, 255, 0.92));
+  color: color-mix(in srgb, var(--card-accent, #5eb8d4) 72%, #1a1a1a);
+  border-color: color-mix(in srgb, var(--card-accent, #5eb8d4) 40%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.theme-aroma .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access {
+  background: color-mix(in srgb, var(--card-accent, #5eb8d4) 35%, rgba(40, 28, 36, 0.78));
+  color: color-mix(in srgb, var(--card-accent, #5eb8d4) 50%, #fff5f8);
+}
+
 .missing-tab-header-actions {
   display: flex;
   align-items: center;

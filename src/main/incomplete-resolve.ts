@@ -19,6 +19,19 @@ export function emitIncompleteList(getWindow: () => BrowserWindow | null): void 
   sendToRenderer(getWindow, 'incomplete:list', inventory.getAllIncompleteModels())
 }
 
+export function emitIncompleteRecheckProgress(
+  getWindow: () => BrowserWindow | null,
+  progress: {
+    current: number
+    total: number
+    resolved: number
+    modelId?: number
+    done?: boolean
+  }
+): void {
+  sendToRenderer(getWindow, 'incomplete:recheckProgress', progress)
+}
+
 export function registerIncompleteFromModel(
   model: CivitaiModel,
   domain: CivitaiDomain,
@@ -38,6 +51,9 @@ export function registerIncompleteFromModel(
     tags: model.tags ?? [],
     pageUrl,
     sourceDomain: domain === 'red' ? 'red' : 'com',
+    previewUrl: pickPreviewImage(model.modelVersions?.[0]?.images),
+    nsfw: model.nsfw,
+    nsfwLevel: model.nsfwLevel,
     lastError: undefined
   })
   if (getWindow) emitIncompleteList(getWindow)
@@ -257,17 +273,24 @@ export async function downloadIncompleteModel(options: {
 
 const INCOMPLETE_CHECK_COOLDOWN_MS = 30 * 60_000
 const INCOMPLETE_CHECK_BATCH = 8
+const INCOMPLETE_BATCH_PAUSE_MS = 400
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /** Re-fetch /models/{id}; when versions appear, store version id + preview (user still confirms download). */
 export async function recheckIncompleteModels(
   pool: CivitaiClientPool,
   getWindow: () => BrowserWindow | null,
   options: { force?: boolean } = {}
-): Promise<{ checked: number; resolved: number }> {
+): Promise<{ checked: number; resolved: number; stoppedEarly?: boolean; stopReason?: string }> {
   const items = inventory.getAllIncompleteModels()
   const now = Date.now()
   let checked = 0
   let resolved = 0
+  let stoppedEarly = false
+  let stopReason: string | undefined
 
   const due = items.filter((item) => {
     if (options.force) return true
@@ -275,38 +298,81 @@ export async function recheckIncompleteModels(
     return !Number.isFinite(last) || now - last >= INCOMPLETE_CHECK_COOLDOWN_MS
   })
 
-  for (const item of due.slice(0, INCOMPLETE_CHECK_BATCH)) {
+  // Force (Recheck API button): walk the whole list in small batches.
+  // Background cooldown pass: one batch only (avoid harvest storms).
+  const limit = options.force ? due.length : Math.min(due.length, INCOMPLETE_CHECK_BATCH)
+
+  if (options.force && limit > 0) {
+    emitIncompleteRecheckProgress(getWindow, {
+      current: 0,
+      total: limit,
+      resolved: 0
+    })
+  }
+
+  for (let i = 0; i < limit; i++) {
+    const item = due[i]!
     checked++
+    if (options.force) {
+      emitIncompleteRecheckProgress(getWindow, {
+        current: checked,
+        total: limit,
+        resolved,
+        modelId: item.modelId
+      })
+    }
     try {
       const domain = item.sourceDomain === 'red' ? 'red' : 'com'
       const client = pool.forDomain(domain)
       const model = await client.getModel(item.modelId)
-      let version = model.modelVersions?.[0]
-      if (!version?.id) {
+      let versionId = model.modelVersions?.[0]?.id ?? 0
+      let versionName = model.modelVersions?.[0]?.name || ''
+      let baseModel = model.modelVersions?.[0]?.baseModel || item.baseModel
+      let previewUrl =
+        pickPreviewImage(model.modelVersions?.[0]?.images) ?? item.previewUrl
+      const nsfw = model.nsfw ?? item.nsfw
+      const nsfwLevel = model.nsfwLevel ?? item.nsfwLevel
+
+      if (!versionId) {
         // /models/{id} sometimes returns empty modelVersions[] while the site still has a
         // published version — recover via HTML scrape or leave for paste-URL download.
         const scraped = await scrapeVersionIdFromModelPage(domain, item.modelId)
-        if (scraped) {
-          try {
-            version = await client.getModelVersion(scraped)
-          } catch {
-            version = undefined
-          }
-        }
+        if (scraped) versionId = scraped
       }
-      if (version?.id) {
-        const previewUrl = pickPreviewImage(version.images) ?? item.previewUrl
+
+      if (versionId > 0) {
+        // Prefer version endpoint (same path model-detail uses) for name + preview.
+        try {
+          const full = await client.getModelVersion(versionId)
+          versionName = full.name || versionName || `v${versionId}`
+          baseModel = full.baseModel || baseModel
+          previewUrl = pickPreviewImage(full.images) ?? previewUrl
+        } catch {
+          if (!versionName) versionName = `v${versionId}`
+        }
         inventory.updateIncompleteModelResolved(item.modelId, {
-          resolvedVersionId: version.id,
-          resolvedVersionName: version.name || `v${version.id}`,
+          resolvedVersionId: versionId,
+          resolvedVersionName: versionName,
           previewUrl,
-          baseModel: version.baseModel || item.baseModel,
+          baseModel,
+          nsfw,
+          nsfwLevel,
           lastError: null,
           lastCheckedAt: new Date().toISOString()
         })
         resolved++
+        if (options.force) {
+          emitIncompleteRecheckProgress(getWindow, {
+            current: checked,
+            total: limit,
+            resolved,
+            modelId: item.modelId
+          })
+        }
       } else {
         inventory.updateIncompleteModelResolved(item.modelId, {
+          nsfw,
+          nsfwLevel,
           lastCheckedAt: new Date().toISOString(),
           lastError:
             'API returned no versions — use Download and paste the Civitai download URL if needed'
@@ -318,11 +384,29 @@ export async function recheckIncompleteModels(
         lastCheckedAt: new Date().toISOString(),
         lastError: reason.slice(0, 200)
       })
-      // Stop the batch — further calls would only worsen a Cloudflare / 429 storm.
-      if (isCloudflareOrRateLimitError(reason)) break
+      // Stop the run — further calls would only worsen a Cloudflare / 429 storm.
+      if (isCloudflareOrRateLimitError(reason)) {
+        stoppedEarly = true
+        stopReason = reason.slice(0, 160)
+        break
+      }
+    }
+
+    // Progressive UI refresh + gentle pacing between models on full force runs.
+    if (options.force && (checked % INCOMPLETE_CHECK_BATCH === 0 || i === limit - 1)) {
+      emitIncompleteList(getWindow)
+      if (i < limit - 1) await sleep(INCOMPLETE_BATCH_PAUSE_MS)
     }
   }
 
   if (checked > 0) emitIncompleteList(getWindow)
-  return { checked, resolved }
+  if (options.force) {
+    emitIncompleteRecheckProgress(getWindow, {
+      current: checked,
+      total: Math.max(limit, checked),
+      resolved,
+      done: true
+    })
+  }
+  return { checked, resolved, stoppedEarly, stopReason }
 }

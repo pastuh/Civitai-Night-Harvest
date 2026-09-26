@@ -38,7 +38,7 @@ import { MissingTab } from './components/MissingTab'
 import { GalleryTab } from './components/GalleryTab'
 import { HelpTab } from './components/HelpTab'
 import { loadEaFavoriteIds, toggleEaFavoriteId } from './ea-favorites'
-import { isDeferredVisibleInAwaitingTab } from '../../shared/deferred-visibility'
+import { isDeferredVisibleInAwaitingTab, deferredBlockedByPolicyTags } from '../../shared/deferred-visibility'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
@@ -193,6 +193,12 @@ export default function App() {
   const [tagPromptQueue, setTagPromptQueue] = useState<TagAssignmentPrompt[]>([])
   const [versionScanProgress, setVersionScanProgress] = useState<LibraryVersionScanProgress | null>(null)
   const [versionScanning, setVersionScanning] = useState(false)
+  const [incompleteRecheckProgress, setIncompleteRecheckProgress] = useState<{
+    current: number
+    total: number
+    resolved: number
+    modelId?: number
+  } | null>(null)
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null)
   const [sessionDownloadIds, setSessionDownloadIds] = useState<number[]>([])
@@ -1079,6 +1085,18 @@ export default function App() {
       window.api.onIncompleteList((items) => {
         setIncomplete(items)
       }),
+      window.api.onIncompleteRecheckProgress((progress) => {
+        if (progress.done) {
+          setIncompleteRecheckProgress(null)
+          return
+        }
+        setIncompleteRecheckProgress({
+          current: progress.current,
+          total: progress.total,
+          resolved: progress.resolved,
+          modelId: progress.modelId
+        })
+      }),
       window.api.onMissingList((items) => {
         setMissing(items)
       }),
@@ -1923,6 +1941,28 @@ export default function App() {
     setIncomplete(await window.api.getIncomplete())
   }, [])
 
+  const incompleteRecheckBusy = incompleteRecheckProgress != null
+  const incompleteRecheckBusyRef = useRef(false)
+  incompleteRecheckBusyRef.current = incompleteRecheckBusy
+
+  const startIncompleteRecheck = useCallback(async () => {
+    if (incompleteRecheckBusyRef.current) return
+    setIncompleteRecheckProgress({ current: 0, total: 0, resolved: 0 })
+    try {
+      const result = await window.api.recheckIncomplete()
+      if (result.items) setIncomplete(result.items)
+      else setIncomplete(await window.api.getIncomplete())
+    } catch {
+      try {
+        setIncomplete(await window.api.getIncomplete())
+      } catch {
+        /* keep list */
+      }
+    } finally {
+      setIncompleteRecheckProgress(null)
+    }
+  }, [])
+
   const refreshMissingExclusions = useCallback(async () => {
     const [missingItems, exclusionItems, banned] = await Promise.all([
       window.api.getMissing(),
@@ -2039,18 +2079,92 @@ export default function App() {
   // Session Yield under the progress bar stays separate (only grows).
   const browsePlannedDownloadCount = browseEligibleNow.size || undefined
 
-  const awaitingBadgeCount = useMemo(
+  /** EA badge: versionIds already reviewed (persisted — survives restart). */
+  const eaBadgeSeenRef = useRef<Set<number>>(new Set())
+  const [eaBadgeTick, setEaBadgeTick] = useState(0)
+  const eaSeenLoadedRef = useRef(false)
+
+  useEffect(() => {
+    if (!startupReady || eaSeenLoadedRef.current) return
+    if (typeof window.api.getEaAccessSeen !== 'function') {
+      eaSeenLoadedRef.current = true
+      return
+    }
+    void window.api.getEaAccessSeen().then((snap) => {
+      eaSeenLoadedRef.current = true
+      const ids = Object.keys(snap?.byVersionId ?? {})
+        .map(Number)
+        .filter((id) => id > 0)
+      eaBadgeSeenRef.current = new Set(ids)
+      setEaBadgeTick((n) => n + 1)
+    })
+  }, [startupReady])
+
+  const actionableAwaiting = useMemo(
     () =>
       deferred.filter((d) => {
         if (d.failureKind === 'not_found') return false
         if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
-        // Same as Missing: badge ignores Session bans / Session pause.
         if (sessionBanModelIds.includes(d.modelId)) return false
         if (sessionPauseModelIds.includes(d.modelId)) return false
-        return true
-      }).length,
-    [deferred, watchRules, eaFavoriteIds, sessionBanModelIds, sessionPauseModelIds]
+        if (deferredBlockedByPolicyTags(d, settings?.hiddenTags, settings?.bannedTags)) {
+          return false
+        }
+        return d.versionId > 0
+      }),
+    [
+      deferred,
+      watchRules,
+      eaFavoriteIds,
+      sessionBanModelIds,
+      sessionPauseModelIds,
+      settings?.hiddenTags,
+      settings?.bannedTags
+    ]
   )
+
+  /** Unreviewed actionable EA — drives badge + "Unseen" filter (persisted seen). */
+  const awaitingNewVersionIds = useMemo(() => {
+    void eaBadgeTick
+    if (!eaSeenLoadedRef.current) return []
+    const seen = eaBadgeSeenRef.current
+    return actionableAwaiting
+      .filter((d) => !seen.has(d.versionId))
+      .map((d) => d.versionId)
+  }, [actionableAwaiting, eaBadgeTick])
+
+  const awaitingBadgeCount = awaitingNewVersionIds.length || undefined
+
+  // Visiting Early access marks current actionable as seen (persisted).
+  useEffect(() => {
+    if (tab !== 'awaiting' || !startupReady || !eaSeenLoadedRef.current) return
+    const seen = eaBadgeSeenRef.current
+    const toMark: number[] = []
+    for (const d of actionableAwaiting) {
+      if (seen.has(d.versionId)) continue
+      seen.add(d.versionId)
+      toMark.push(d.versionId)
+    }
+    if (toMark.length === 0) return
+    setEaBadgeTick((n) => n + 1)
+    if (typeof window.api.markEaAccessSeen !== 'function') return
+    const d = new Date()
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    void window.api.markEaAccessSeen(toMark, day)
+  }, [tab, actionableAwaiting, startupReady, eaBadgeTick])
+
+  // Drop seen rows for versions that left Early access (downloaded / dismissed).
+  useEffect(() => {
+    if (!startupReady || !eaSeenLoadedRef.current) return
+    if (typeof window.api.pruneEaAccessSeen !== 'function') return
+    const keep = deferred.map((d) => d.versionId).filter((id) => id > 0)
+    void window.api.pruneEaAccessSeen(keep).then((snap) => {
+      const ids = Object.keys(snap?.byVersionId ?? {})
+        .map(Number)
+        .filter((id) => id > 0)
+      eaBadgeSeenRef.current = new Set(ids)
+    })
+  }, [deferred, startupReady])
 
   const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
     {
@@ -2061,7 +2175,7 @@ export default function App() {
     },
     { id: 'gallery', label: m.tabs.library, badge: newLibraryCount || undefined, badgePrefix: '+' },
     { id: 'pending', label: m.tabs.newVersions, badge: pendingBadgeCount },
-    { id: 'awaiting', label: m.tabs.awaitingAccess, badge: awaitingBadgeCount || undefined },
+    { id: 'awaiting', label: m.tabs.awaitingAccess, badge: awaitingBadgeCount, badgePrefix: '+' },
     { id: 'missing', label: m.tabs.missing, badge: missing.filter((x) => !x.acknowledged).length || undefined },
     { id: 'incomplete', label: m.tabs.incomplete, badge: incomplete.length || undefined },
     { id: 'tags', label: m.tabs.tagFolders }
@@ -2088,6 +2202,7 @@ export default function App() {
     tab === 'missing' || tagFoldersReturnTo?.kind === 'missing'
   const keepAwaitingMounted =
     tab === 'awaiting' || tagFoldersReturnTo?.kind === 'awaiting'
+  const keepIncompleteMounted = tab === 'incomplete' || incompleteRecheckBusy
   /** Tag folders opened from Library — show as overlay, keep grid laid out underneath. */
   const tagsCoveringLibrary =
     tab === 'tags' && tagFoldersReturnTo?.kind === 'gallery'
@@ -2096,10 +2211,12 @@ export default function App() {
   const watchOnTab = tab === 'watch'
   const missingOnTab = tab === 'missing'
   const awaitingOnTab = tab === 'awaiting'
+  const incompleteOnTab = tab === 'incomplete'
   const galleryInteractive = galleryOnTab && !modelDetailTarget
   const watchInteractive = watchOnTab && !modelDetailTarget
   const missingInteractive = missingOnTab && !modelDetailTarget && !tagsCoveringMissing
   const awaitingInteractive = awaitingOnTab && !modelDetailTarget
+  const incompleteInteractive = incompleteOnTab && !modelDetailTarget
 
   // Shared `.content` scroller across keep-alive tabs. Open a tab at the top —
   // unless returning from Tag Folders / Model Details where we restore the saved position.
@@ -2460,7 +2577,7 @@ export default function App() {
             : ''
         }${modelDetailTarget || tagsCoveringLibrary || tagsCoveringMissing ? ' content-with-overlay' : ''}${
           modelDetailTarget ? ' content-detail-open' : ''
-        }${keepLibraryMounted || keepWatchMounted || keepMissingMounted || keepAwaitingMounted ? ' content-stack' : ''}`}
+        }${keepLibraryMounted || keepWatchMounted || keepMissingMounted || keepAwaitingMounted || keepIncompleteMounted ? ' content-stack' : ''}`}
       >
         {keepLibraryMounted ? (
           <div
@@ -2777,21 +2894,40 @@ export default function App() {
               sessionPauseModelIds={sessionPauseModelIds}
               onBrowseModelUnbanned={(modelId) => markBrowseModelBan(modelId, false)}
               isActive={awaitingOnTab}
+              badgeCount={awaitingBadgeCount}
+              sessionNewVersionIds={awaitingNewVersionIds}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
             />
           </div>
         ) : null}
-        {!modelDetailTarget && tab === 'incomplete' ? (
-          <IncompleteTab
-            items={incomplete}
-            onRefresh={refreshIncomplete}
-            onQueueRefresh={refreshQueueOnly}
-            onBrowseModelBanned={(modelId, stub) => {
-              markBrowseModelBan(modelId, true, stub)
-            }}
-            onOpenModelDetail={openModelDetail}
-            isActive
-          />
+        {keepIncompleteMounted ? (
+          <div
+            className={`gallery-layout-host${
+              incompleteOnTab
+                ? modelDetailTarget
+                  ? ' tab-panel-under-overlay'
+                  : ''
+                : ' tab-keepalive-offscreen'
+            }`}
+            aria-hidden={!incompleteInteractive}
+          >
+            <IncompleteTab
+              items={incomplete}
+              inventory={inventory}
+              onRefresh={refreshIncomplete}
+              onQueueRefresh={refreshQueueOnly}
+              onItemsReplace={setIncomplete}
+              onBrowseModelBanned={(modelId, stub) => {
+                markBrowseModelBan(modelId, true, stub)
+              }}
+              onOpenModelDetail={openModelDetail}
+              isActive={incompleteOnTab && !modelDetailTarget}
+              browseVideoPreviews={settings.browseVideoPreviews ?? false}
+              recheckBusy={incompleteRecheckBusy}
+              recheckCheckingModelId={incompleteRecheckProgress?.modelId ?? null}
+              onRecheck={() => void startIncompleteRecheck()}
+            />
+          </div>
         ) : null}
         {keepMissingMounted ? (
           <div
@@ -2900,6 +3036,7 @@ export default function App() {
         suppressIdlePipeline={suppressIdlePipeline}
         versionScanning={versionScanning}
         versionScanProgress={versionScanProgress}
+        incompleteRecheckProgress={incompleteRecheckProgress}
         scanningRuleNames={enabledRuleNames}
         crawlPageNumber={crawlPageMeta?.pageNumber ?? crawlProgress?.pageNumber ?? null}
         crawlGalleryTotal={crawlPageMeta?.galleryTotal ?? crawlProgress?.galleryTotal ?? null}
