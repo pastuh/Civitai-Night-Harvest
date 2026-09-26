@@ -1053,6 +1053,8 @@ export function WatchRulesTab({
           forgottenModelIds={forgottenModelIds}
           onHiddenTagsChange={async (tags) => onSaveSettings({ hiddenTags: tags })}
           crawlStatus={crawlStatus}
+          enabledBrowseRules={draft.filter((r) => r.enabled)}
+          crawlStatusByRule={crawlByRule}
           backfillCatalog={settings.backfillCatalog ?? true}
           nightMode={settings.nightMode ?? false}
           updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? false}

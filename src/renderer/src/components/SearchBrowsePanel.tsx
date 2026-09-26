@@ -163,6 +163,9 @@ interface Props {
   /** Forgotten models — always hidden in Browse (even when Show banned). */
   forgottenModelIds?: Set<number>
   crawlStatus?: RuleCrawlStatus | null
+  /** Enabled Browse rules + crawl status (for empty-state peek counts). */
+  enabledBrowseRules?: WatchRule[]
+  crawlStatusByRule?: Record<string, RuleCrawlStatus>
   nightMode?: boolean
   backfillCatalog?: boolean
   updateBrowseOnCrawl?: boolean
@@ -522,6 +525,8 @@ export function SearchBrowsePanel({
   bannedTags = [],
   forgottenModelIds,
   crawlStatus,
+  enabledBrowseRules = [],
+  crawlStatusByRule = {},
   backfillCatalog = true,
   nightMode = false,
   updateBrowseOnCrawl = false,
@@ -1951,6 +1956,27 @@ export function SearchBrowsePanel({
 
   const showEmptyHint = !displayModels.length && ruleScopedModels.length > 0
 
+  const emptyPeekRuleLines = useMemo(() => {
+    const rules =
+      enabledBrowseRules.length > 0
+        ? enabledBrowseRules
+        : browseRule
+          ? [browseRule]
+          : []
+    return rules.map((rule) => {
+      const st =
+        crawlStatusByRule[rule.id] ??
+        crawlStatusByRule[`${rule.id}:red`] ??
+        crawlStatusByRule[`${rule.id}:com`] ??
+        (browseRule?.id === rule.id ? crawlStatus : null)
+      return {
+        id: rule.id,
+        name: rule.name,
+        peeks: st?.peekCount ?? 0
+      }
+    })
+  }, [enabledBrowseRules, browseRule, crawlStatusByRule, crawlStatus])
+
   const pipelineVersionIds = useMemo(() => {
     const ids = new Set<number>()
     for (const item of queue) {
@@ -3371,6 +3397,20 @@ export function SearchBrowsePanel({
               <p className="muted">
                 {nightMode ? t('browse.galleryAwaitingDetail') : t('browse.emptyNoResults')}
               </p>
+              {(emptyPeekRuleLines.length > 0 || sessionYieldCount > 0) && (
+                <ul className="browse-empty-session-stats">
+                  {emptyPeekRuleLines.length > 0 && (
+                    <li>
+                      {t('browse.emptyPeekLine', {
+                        rules: emptyPeekRuleLines
+                          .map((r) => t('browse.emptyPeekRule', { name: r.name, count: r.peeks }))
+                          .join(' · ')
+                      })}
+                    </li>
+                  )}
+                  <li>{t('browse.emptyYieldLine', { count: sessionYieldCount })}</li>
+                </ul>
+              )}
             </div>
           )}
           {queueAllNotice && <p className="muted">{queueAllNotice}</p>}
@@ -3449,6 +3489,16 @@ export function SearchBrowsePanel({
                       hiddenTags.some((t) => t.toLowerCase() === tagFilter.toLowerCase()) && (
                         <li>{t('browse.tagFilterBlockedConflict')}</li>
                       )}
+                    {emptyPeekRuleLines.length > 0 && (
+                      <li>
+                        {t('browse.emptyPeekLine', {
+                          rules: emptyPeekRuleLines
+                            .map((r) => t('browse.emptyPeekRule', { name: r.name, count: r.peeks }))
+                            .join(' · ')
+                        })}
+                      </li>
+                    )}
+                    <li>{t('browse.emptyYieldLine', { count: sessionYieldCount })}</li>
                   </ul>
                   <p className="muted">
                     Loaded {galleryModelCount} matching rule
@@ -3469,6 +3519,18 @@ export function SearchBrowsePanel({
                         })
                       : t('browse.catalogCompleteNoResults')}
                   </p>
+                  {emptyPeekRuleLines.length > 0 && (
+                    <ul>
+                      <li>
+                        {t('browse.emptyPeekLine', {
+                          rules: emptyPeekRuleLines
+                            .map((r) => t('browse.emptyPeekRule', { name: r.name, count: r.peeks }))
+                            .join(' · ')
+                        })}
+                      </li>
+                      <li>{t('browse.emptyYieldLine', { count: sessionYieldCount })}</li>
+                    </ul>
+                  )}
                 </>
               ) : (
                 <p className="muted">{t('browse.noModelsOnPageYet')}</p>

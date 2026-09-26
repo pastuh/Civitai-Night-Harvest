@@ -366,6 +366,8 @@ export interface RuleCrawlStatus {
   hasCursor: boolean
   catalogPasses: number
   lastPeekAt: string | null
+  /** Newest-page peeks this app/harvest session (not persisted). */
+  peekCount: number
 }
 
 export interface CivitaiImage {
@@ -1037,6 +1039,11 @@ export interface BrowseGalleryStats {
 export interface CrawlProgressPayload {
   ruleId: string
   ruleName: string
+  /**
+   * All enabled rules in this peek / wait cycle (status bar lists them).
+   * `ruleName` remains the rule currently fetching or the primary focus.
+   */
+  ruleNames?: string[]
   phase: 'fetching' | 'waiting' | 'fetching-tags' | 'page-done' | 'catalog-complete'
   pageNumber?: number
   galleryTotal?: number

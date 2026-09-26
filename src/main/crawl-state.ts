@@ -21,6 +21,14 @@ const store = new Store<CrawlStateSchema>({
   }
 })
 
+/** In-memory session counters — reset with catalog session / rule clear. */
+const sessionPeekCounts: Record<string, number> = {}
+
+function baseRuleId(ruleIdOrScoped: string): string {
+  const i = ruleIdOrScoped.indexOf(':')
+  return i >= 0 ? ruleIdOrScoped.slice(0, i) : ruleIdOrScoped
+}
+
 export function getCrawlCursor(ruleId: string, domain?: import('../shared/types').CivitaiDomain): string | null | undefined {
   const cursors = store.get('cursors')
   let raw: string | null | undefined
@@ -72,6 +80,16 @@ export function markNewestPeek(ruleId: string, domain?: import('../shared/types'
   const lastPeekAt = { ...store.get('lastPeekAt') }
   lastPeekAt[id] = new Date().toISOString()
   store.set('lastPeekAt', lastPeekAt)
+  const base = baseRuleId(ruleId)
+  sessionPeekCounts[base] = (sessionPeekCounts[base] ?? 0) + 1
+}
+
+export function getSessionPeekCount(ruleId: string): number {
+  return sessionPeekCounts[baseRuleId(ruleId)] ?? 0
+}
+
+export function getSessionPeekCounts(): Record<string, number> {
+  return { ...sessionPeekCounts }
 }
 
 export function msUntilNewestPeekAllowed(
@@ -166,6 +184,7 @@ export function resetCatalogSessionForAppStart(): void {
   store.set('catalogPass', {})
   store.set('backfillPages', {})
   store.set('cursors', {})
+  for (const key of Object.keys(sessionPeekCounts)) delete sessionPeekCounts[key]
 }
 
 function keysForRule(storeKey: Record<string, unknown>, ruleId: string): string[] {
@@ -186,11 +205,18 @@ export function clearRuleCrawlState(ruleId: string): void {
   store.set('backfillPages', backfillPages)
   store.set('catalogPass', catalogPass)
   store.set('lastPeekAt', lastPeekAt)
+  delete sessionPeekCounts[ruleId]
 }
 
 export function getCrawlStatus(): Record<
   string,
-  { backfillPage: number; hasCursor: boolean; catalogPasses: number; lastPeekAt: string | null }
+  {
+    backfillPage: number
+    hasCursor: boolean
+    catalogPasses: number
+    lastPeekAt: string | null
+    peekCount: number
+  }
 > {
   const cursors = store.get('cursors')
   const backfillPages = store.get('backfillPages')
@@ -200,18 +226,26 @@ export function getCrawlStatus(): Record<
     ...Object.keys(cursors),
     ...Object.keys(backfillPages),
     ...Object.keys(catalogPass),
-    ...Object.keys(lastPeekAt)
+    ...Object.keys(lastPeekAt),
+    ...Object.keys(sessionPeekCounts)
   ])
   const out: Record<
     string,
-    { backfillPage: number; hasCursor: boolean; catalogPasses: number; lastPeekAt: string | null }
+    {
+      backfillPage: number
+      hasCursor: boolean
+      catalogPasses: number
+      lastPeekAt: string | null
+      peekCount: number
+    }
   > = {}
   for (const id of ruleIds) {
     out[id] = {
       backfillPage: backfillPages[id] ?? 0,
       hasCursor: Boolean(cursors[id]),
       catalogPasses: catalogPass[id] ?? 0,
-      lastPeekAt: lastPeekAt[id] ?? null
+      lastPeekAt: lastPeekAt[id] ?? null,
+      peekCount: sessionPeekCounts[baseRuleId(id)] ?? 0
     }
   }
   return out

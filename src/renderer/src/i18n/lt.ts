@@ -716,6 +716,9 @@ export const lt: Messages = {
     resultsUpdating: 'Updating…',
     resultsNoResults: 'No results',
     noModelsMatchFiltersTitle: 'Pagal filtrus modelių nėra.',
+    emptyPeekRule: '{name} ×{count}',
+    emptyPeekLine: 'Peek šią sesiją: {rules}',
+    emptyYieldLine: 'Yield šią sesiją: {count}',
     noModelsOnPageYet:
       'Modelių dar nėra. Nakties crawl krauna puslapis po puslapio — žiūrėkite Activity arba Load more.',
     catalogCompleteEmptyTitle: 'Katalogo skenavimas baigtas — galerija tuščia.',
@@ -1760,8 +1763,10 @@ export const lt: Messages = {
     scanningApiFetchingTagsPrep: 'Ruošiami {total} tag variantai…',
     scanningApiFetchingTagsPrepRule: 'Ruošiami {total} tag variantai · Taisyklė: {rules}',
     scanningApiWaiting: 'Kitas Civitai peek po ~{time}',
-    scanningApiWaitingRule: 'Kitas peek po ~{time} · Taisyklė: {rules}',
+    scanningApiWaitingRule: 'Kitas peek po ~{time} · {rules}',
     peekCountdownUnderMin: '<1 min',
+    scanningApiPeeking: 'Peek {index}/{total} · {current}',
+    scanningApiPeekingMulti: 'Peek {index}/{total} · {current} · tada {also}',
     scanningCatalogComplete: 'Katalogas baigtas · {page} pusl. · {total} galerijoje',
     scanningCatalogCompleteRule: 'Katalogas baigtas · {page} pusl. · {total} galerijoje · {rules}',
     scanningCatalogCompleteFiltered:

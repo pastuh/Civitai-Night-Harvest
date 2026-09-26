@@ -97,10 +97,13 @@ export class ScanScheduler {
     ruleName: string
     pageNumber: number
     domain?: import('../shared/types').CivitaiDomain
+    /** Full peek set — status bar lists all rules, not only the one fetching now. */
+    ruleNames?: string[]
   }): void {
     this.emitCrawlProgress({
       ruleId: payload.ruleId,
       ruleName: payload.ruleName,
+      ruleNames: payload.ruleNames,
       phase: 'fetching',
       pageNumber: payload.pageNumber,
       domain: payload.domain
@@ -1342,7 +1345,7 @@ export class ScanScheduler {
     // Each app launch: full rule catalog once, then peek-only (do not inherit prior "done").
     resetCatalogSessionForAppStart()
     this.crawler.resetPaginationHints()
-    this.log('info', 'Starting session catalog backfill for enabled Browse rules…', undefined, {
+    this.log('info', 'Starting session: peek all enabled rules, then catalog backfill…', undefined, {
       source: 'crawl'
     })
     const settings = getSettings()
@@ -2437,6 +2440,29 @@ export class ScanScheduler {
     this.setStatus('scanning')
 
     try {
+      // Multi-rule fairness: newest page for every rule first, then deep catalog walk.
+      // Otherwise rule B waits behind rule A's 80+ pages while new models on B sit unseen.
+      {
+        const bootRules = getWatchRules().filter((r) => r.enabled)
+        const requireTagMatch = crawlRequireTagMatch()
+        const catalogPending = bootRules.some((rule) => {
+          if (rule.modelId && rule.modelId > 0) return false
+          return this.ruleSearchDomains(rule).some((domain) => !isCatalogBackfillDone(rule.id, domain))
+        })
+        if (
+          catalogPending &&
+          bootRules.length > 0 &&
+          shouldRunContinuousCrawl() &&
+          !this.continuousCrawlStopRequested
+        ) {
+          await this.runRuleNewestPeeks(bootRules, requireTagMatch, {
+            mode: 'startup',
+            respectCooldown: false,
+            requireCatalogDone: false
+          })
+        }
+      }
+
       while (shouldRunContinuousCrawl() && !this.continuousCrawlStopRequested) {
         this.maybeFillDownloadQueue()
 
@@ -2528,20 +2554,21 @@ export class ScanScheduler {
           this.log('info', 'Catalogs complete — peek-only maintenance (waiting for new models)…', undefined, {
             source: 'crawl'
           })
-          for (const rule of rules) {
-            const galleryTotal = this.crawlBrowseGalleryLength(rule.id)
-            // Do not re-push the entire browse gallery every peek wait — status bar is enough.
-            this.emitCrawlProgress({
-              ruleId: rule.id,
-              ruleName: rule.name,
-              phase: 'waiting',
-              waitMs: peekIntervalMs,
-              waitUntil: Date.now() + peekIntervalMs,
-              galleryTotal,
-              catalogComplete: true,
-              hasMorePages: false
-            })
-          }
+          // One waiting payload with every peekable rule — status bar must not show only the last emit.
+          const peekRules = rules.filter((r) => !(r.modelId && r.modelId > 0))
+          const peekRuleNames = (peekRules.length ? peekRules : rules).map((r) => r.name)
+          const focus = peekRules[0] ?? rules[0]
+          this.emitCrawlProgress({
+            ruleId: focus.id,
+            ruleName: focus.name,
+            ruleNames: peekRuleNames,
+            phase: 'waiting',
+            waitMs: peekIntervalMs,
+            waitUntil: Date.now() + peekIntervalMs,
+            galleryTotal: this.crawlBrowseGalleryLength(),
+            catalogComplete: true,
+            hasMorePages: false
+          })
           await this.interruptibleSleep(peekIntervalMs)
           continue
         }
@@ -2570,6 +2597,27 @@ export class ScanScheduler {
 
   /** After backfill done: only check page 1 for new models per peek interval. */
   private async runPeekOnlyMaintenance(rules: WatchRule[], requireTagMatch: boolean): Promise<void> {
+    await this.runRuleNewestPeeks(rules, requireTagMatch, {
+      mode: 'maintenance',
+      respectCooldown: true,
+      requireCatalogDone: true
+    })
+  }
+
+  /**
+   * Page-1 (Newest) check for enabled Browse rules.
+   * - startup: every rule before catalog walk (no cooldown) so multi-rule harvests see new models first
+   * - maintenance: catalog-done rules only, respects peek interval
+   */
+  private async runRuleNewestPeeks(
+    rules: WatchRule[],
+    requireTagMatch: boolean,
+    opts: {
+      mode: 'startup' | 'maintenance'
+      respectCooldown: boolean
+      requireCatalogDone: boolean
+    }
+  ): Promise<void> {
     if (!this.downloadQueue.isBusy()) {
       const filled = this.fillBrowseDownloadPipeline('crawl')
       if (filled > 0) {
@@ -2577,26 +2625,46 @@ export class ScanScheduler {
       }
     }
 
-    for (const rule of rules) {
-      if (!shouldRunContinuousCrawl()) return
-      if (rule.modelId && rule.modelId > 0) continue
+    const peekRules = rules.filter((r) => !(r.modelId && r.modelId > 0))
+    if (!peekRules.length) return
+    const peekRuleNames = peekRules.map((r) => r.name)
+
+    if (opts.mode === 'startup') {
+      this.log(
+        'info',
+        `Startup peek — newest page for ${peekRules.length} rule(s) before catalog backfill…`,
+        undefined,
+        { source: 'crawl' }
+      )
+    }
+
+    for (const rule of peekRules) {
+      if (!shouldRunContinuousCrawl() || this.continuousCrawlStopRequested) return
       for (const domain of this.ruleSearchDomains(rule)) {
-        if (!isCatalogBackfillDone(rule.id, domain)) continue
+        if (!shouldRunContinuousCrawl() || this.continuousCrawlStopRequested) return
+        if (opts.requireCatalogDone && !isCatalogBackfillDone(rule.id, domain)) continue
+
         const galleryEmpty = this.crawlBrowseGalleryLength(rule.id) === 0
-        const waitMs = msUntilNewestPeekAllowed(
-          rule.id,
-          getSettings().newestPeekIntervalMinutes,
-          domain
-        )
-        // Always seed Browse gallery after restart (accum is in-memory and cleared on start).
-        if (waitMs > 0 && !galleryEmpty) continue
+        if (opts.respectCooldown) {
+          const waitMs = msUntilNewestPeekAllowed(
+            rule.id,
+            getSettings().newestPeekIntervalMinutes,
+            domain
+          )
+          // Always seed Browse gallery after restart (accum is in-memory and cleared on start).
+          if (waitMs > 0 && !galleryEmpty) continue
+        }
 
         const client = this.pool.forDomain(domain)
         const queueOpts = this.crawlQueueOptions(requireTagMatch, true, 'crawl')
+        const domains = this.ruleSearchDomains(rule)
+        const ruleLabel =
+          domains.length > 1 ? `${rule.name} · ${domainLabel(domain)}` : rule.name
         try {
           this.scheduleFetchingStatus({
             ruleId: rule.id,
-            ruleName: rule.name,
+            ruleName: ruleLabel,
+            ruleNames: peekRuleNames,
             pageNumber: 1,
             domain
           })
@@ -2610,17 +2678,17 @@ export class ScanScheduler {
             this.pendingChangeHandler,
             {
               skipBackfill: true,
-              // Empty gallery after app restart must refresh page 1 even inside peek cooldown.
-              respectPeekCooldown: !galleryEmpty
+              respectPeekCooldown: opts.respectCooldown && !galleryEmpty
             }
           )
           this.cancelPendingFetchingStatus()
           await this.emitCrawlPage(rule, 1, combined, 'night', client, true)
           if (combined.queued > 0) {
-            // Queue newest hits only — do NOT clear catalog pass (that re-walked pages 1…N).
             this.log(
               'info',
-              `Peek queued ${combined.queued} new model(s) for "${rule.name}" — staying on peek-only`,
+              opts.mode === 'startup'
+                ? `Startup peek: queued ${combined.queued} new model(s) for "${rule.name}"`
+                : `Peek queued ${combined.queued} new model(s) for "${rule.name}" — staying on peek-only`,
               rule.id,
               { source: 'crawl' }
             )
@@ -2631,11 +2699,18 @@ export class ScanScheduler {
         } catch (err) {
           this.cancelPendingFetchingStatus()
           const msg = err instanceof Error ? err.message : String(err)
-          this.log('warn', `Peek failed for "${rule.name}" (${domainLabel(domain)}): ${msg}`, rule.id, {
-            source: 'crawl'
-          })
+          this.log(
+            'warn',
+            `${opts.mode === 'startup' ? 'Startup peek' : 'Peek'} failed for "${rule.name}" (${domainLabel(domain)}): ${msg}`,
+            rule.id,
+            { source: 'crawl' }
+          )
         }
       }
+    }
+
+    if (opts.mode === 'startup') {
+      this.log('info', 'Startup peek done — starting catalog backfill…', undefined, { source: 'crawl' })
     }
   }
 

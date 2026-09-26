@@ -3191,6 +3191,16 @@ button.missing-tag-chip.is-clickable:hover {
   background: var(--surface2);
 }
 
+.browse-empty-session-stats {
+  margin: 10px 0 0;
+  padding-left: 1.2rem;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 28rem;
+}
+
 .browse-gallery-loading strong {
   font-size: 14px;
 }

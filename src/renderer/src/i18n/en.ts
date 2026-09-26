@@ -710,6 +710,9 @@ export const en = {
     resultsUpdating: 'Updating…',
     resultsNoResults: 'No results',
     noModelsMatchFiltersTitle: 'No models match current filters.',
+    emptyPeekRule: '{name} ×{count}',
+    emptyPeekLine: 'Peeks this session: {rules}',
+    emptyYieldLine: 'Yield this session: {count}',
     noModelsOnPageYet:
       'No models loaded yet. Night crawl adds pages over time — check Activity or use Load more.',
     catalogCompleteEmptyTitle: 'Catalog scan finished — browse gallery is empty.',
@@ -1744,8 +1747,10 @@ export const en = {
     scanningApiFetchingTagsPrep: 'Preparing {total} tag search variants…',
     scanningApiFetchingTagsPrepRule: 'Preparing {total} tag variants · Rule: {rules}',
     scanningApiWaiting: 'Next Civitai peek in ~{time}',
-    scanningApiWaitingRule: 'Next peek in ~{time} · Rule: {rules}',
+    scanningApiWaitingRule: 'Next peek in ~{time} · {rules}',
     peekCountdownUnderMin: '<1 min',
+    scanningApiPeeking: 'Peeking {index}/{total} · {current}',
+    scanningApiPeekingMulti: 'Peeking {index}/{total} · {current} · then {also}',
     scanningCatalogComplete: 'Catalog complete · {page} page(s) · {total} in gallery',
     scanningCatalogCompleteRule: 'Catalog complete · {page} page(s) · {total} in gallery · {rules}',
     scanningCatalogCompleteFiltered:

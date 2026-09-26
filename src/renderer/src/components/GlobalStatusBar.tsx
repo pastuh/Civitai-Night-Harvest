@@ -103,6 +103,28 @@ function formatRuleNames(names: string[]): string {
   return `${clean[0]}, ${clean[1]} +${clean.length - 2}`
 }
 
+/** Prefer full peek set (`ruleNames`) over the single focus `ruleName`. */
+function crawlProgressRuleNames(
+  crawlProgress: CrawlProgressPayload | null | undefined,
+  fallback?: string[]
+): string[] {
+  const multi = crawlProgress?.ruleNames?.map((n) => n.trim()).filter(Boolean)
+  if (multi?.length) return multi
+  const one = crawlProgress?.ruleName?.trim()
+  if (one) return [one]
+  return (fallback ?? []).map((n) => n.trim()).filter(Boolean)
+}
+
+/** Match focus label (may include " · domain") to an entry in the peek set. */
+function peekFocusIndex(ruleNames: string[], ruleName: string | undefined): number {
+  if (!ruleNames.length || !ruleName) return 0
+  const exact = ruleNames.indexOf(ruleName)
+  if (exact >= 0) return exact
+  const base = ruleName.split(' · ')[0]?.trim() ?? ruleName
+  const byBase = ruleNames.findIndex((n) => n === base || ruleName.startsWith(n))
+  return byBase >= 0 ? byBase : 0
+}
+
 
 
 function primaryActivityLabel(
@@ -211,11 +233,8 @@ function primaryActivityLabel(
 
   if (status === 'scanning' || crawlProgress != null || galleryAwaiting) {
 
-    const rules = formatRuleNames(
-      crawlProgress?.ruleName
-        ? [crawlProgress.ruleName]
-        : scanningRuleNames ?? []
-    )
+    const nameList = crawlProgressRuleNames(crawlProgress, scanningRuleNames)
+    const rules = formatRuleNames(nameList)
 
     const page = crawlPageNumber != null && crawlPageNumber > 0 ? crawlPageNumber : null
 
@@ -259,6 +278,27 @@ function primaryActivityLabel(
 
     if (crawlProgress?.phase === 'fetching') {
       const fetchPage = crawlProgress.pageNumber ?? page ?? 1
+      // Peek-only multi-rule: show which rule is active and what else is in the set.
+      const peekSet = crawlProgress.ruleNames?.map((n) => n.trim()).filter(Boolean) ?? []
+      if (peekSet.length > 1) {
+        const focus = crawlProgress.ruleName?.trim() || peekSet[0]
+        const idx = peekFocusIndex(peekSet, crawlProgress.ruleName) + 1
+        const rest = peekSet.filter((_, i) => i !== idx - 1)
+        const also = formatRuleNames(rest)
+        if (also) {
+          return t('globalStatus.scanningApiPeekingMulti', {
+            index: idx,
+            total: peekSet.length,
+            current: focus,
+            also
+          })
+        }
+        return t('globalStatus.scanningApiPeeking', {
+          index: idx,
+          total: peekSet.length,
+          current: focus
+        })
+      }
       if (total > 0) {
         return rules
           ? t('globalStatus.scanningApiFetchingWithTotalRule', {
