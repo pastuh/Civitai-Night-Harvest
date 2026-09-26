@@ -742,32 +742,20 @@ export function SearchBrowsePanel({
   const catalogStillGrowing = useMemo(() => {
     if (crawlPageMeta?.catalogComplete === true) return false
     if (loadingMore) return true
-    if (nightMode) {
-      return (
-        Boolean(result.crawlSource) ||
-        appStatus === 'scanning' ||
-        appStatus === 'checking' ||
-        crawlProgress != null ||
-        browseGalleryAwaiting ||
-        crawlFetching
-      )
+    if (crawlProgress?.phase === 'waiting' || crawlProgress?.phase === 'catalog-complete') {
+      return false
     }
-    if (!result.crawlSource) return false
     return (
-      appStatus === 'scanning' ||
-      appStatus === 'checking' ||
-      crawlProgress != null ||
-      browseGalleryAwaiting ||
-      crawlFetching
+      crawlProgress?.phase === 'fetching' ||
+      crawlProgress?.phase === 'fetching-tags' ||
+      crawlProgress?.phase === 'processing' ||
+      (nightMode && appStatus === 'scanning' && crawlProgress != null)
     )
   }, [
     crawlPageMeta?.catalogComplete,
-    result.crawlSource,
     nightMode,
     appStatus,
     crawlProgress,
-    browseGalleryAwaiting,
-    crawlFetching,
     loadingMore
   ])
 
@@ -1375,16 +1363,6 @@ export function SearchBrowsePanel({
     [ruleScopedModels]
   )
 
-  useEffect(() => {
-    let cancelled = false
-    void fetchMissingPreviews(ruleScopedModels).then(() => {
-      if (cancelled) return
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [ruleScopedModels, fetchMissingPreviews])
-
   const ruleKeywordFilterActive = Boolean(
     !result.crawlSource &&
       browseRule &&
@@ -1706,6 +1684,25 @@ export function SearchBrowsePanel({
   const gridUnits = resultsWindow.visible
 
   useEffect(() => {
+    // Only resolve previews for what's on screen — disk/browse cache covers the rest.
+    const visibleModels: WatchRuleTestModel[] = []
+    for (const unit of gridUnits) {
+      if (unit.kind === 'pair') {
+        visibleModels.push(unit.high, unit.low)
+      } else {
+        visibleModels.push(unit.item)
+      }
+    }
+    let cancelled = false
+    void fetchMissingPreviews(visibleModels).then(() => {
+      if (cancelled) return
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [gridUnits, fetchMissingPreviews])
+
+  useEffect(() => {
     if (!browseVideoPreviews) return
     const versionIds = [
       ...new Set(
@@ -1918,43 +1915,24 @@ export function SearchBrowsePanel({
   const downloadingItems = queue.filter((i) => i.status === 'downloading')
   const deferredCount = deferredAwaitingCount
 
-  const awaitingFirstCrawlData =
-    result.sampleModels.length === 0 &&
-    crawlPageMeta?.catalogComplete !== true &&
-    ((browseGalleryAwaiting && nightMode) ||
-      appStatus === 'scanning' ||
-      appStatus === 'checking' ||
-      (crawlProgress != null && crawlProgress.phase !== 'waiting') ||
-      (crawlFetching && nightMode))
-
-  // Do not treat peek "waiting" as gallery fetch — status bar already shows the countdown.
-  const resultsUpdating =
+  // Only show the in-panel spinner while a real Civitai page fetch is in flight.
+  // browseGalleryAwaiting / status scanning alone caused a stuck "Loading…" above the
+  // colored Owned/Yield bar while the bottom said "waiting for Civitai activity".
+  const activelyFetchingPage =
     loadingMore ||
-    awaitingFirstCrawlData ||
     crawlProgress?.phase === 'fetching' ||
     crawlProgress?.phase === 'fetching-tags' ||
-    (crawlFetching && displayModels.length === 0) ||
-    (browseGalleryAwaiting &&
-      nightMode &&
-      displayModels.length === 0 &&
-      ruleScopedModels.length === 0)
-
-  const resultsAwaitingReload =
-    browseGalleryAwaiting &&
-    nightMode &&
-    !displayModels.length &&
-    ruleScopedModels.length === 0 &&
-    !resultsUpdating
+    crawlProgress?.phase === 'processing'
 
   const galleryLoadingEmpty =
-    !displayModels.length &&
-    ruleScopedModels.length === 0 &&
-    (resultsUpdating || resultsAwaitingReload)
+    !displayModels.length && ruleScopedModels.length === 0 && activelyFetchingPage
 
   const galleryIdleEmpty =
     !displayModels.length && ruleScopedModels.length === 0 && !galleryLoadingEmpty
 
   const showEmptyHint = !displayModels.length && ruleScopedModels.length > 0
+
+  const resultsUpdating = activelyFetchingPage
 
   const emptyPeekRuleLines = useMemo(() => {
     const rules =
@@ -3387,7 +3365,19 @@ export function SearchBrowsePanel({
           {galleryLoadingEmpty && (
             <div className="browse-gallery-loading" role="status" aria-live="polite">
               <span className="browse-gallery-loading-spinner" aria-hidden />
-              <strong>{t('browse.galleryBusyTitle')}</strong>
+              <strong>
+                {crawlProgress?.ruleName?.trim()
+                  ? t('browse.fetchingRulePage', {
+                      page: crawlProgress.pageNumber ?? crawlPageMeta?.pageNumber ?? 1,
+                      rule: crawlProgress.ruleName.trim()
+                    })
+                  : browseRule?.name
+                    ? t('browse.fetchingRulePage', {
+                        page: crawlPageMeta?.pageNumber ?? 1,
+                        rule: browseRule.name
+                      })
+                    : t('browse.galleryBusyTitle')}
+              </strong>
               <p className="muted">{t('browse.galleryBusyDetail')}</p>
             </div>
           )}
@@ -3395,7 +3385,9 @@ export function SearchBrowsePanel({
             <div className="browse-gallery-loading browse-gallery-idle" role="status">
               <strong>{t('browse.results')}</strong>
               <p className="muted">
-                {nightMode ? t('browse.galleryAwaitingDetail') : t('browse.emptyNoResults')}
+                {nightMode
+                  ? t('browse.galleryAwaitingDetailActive')
+                  : t('browse.emptyNoResults')}
               </p>
               {(emptyPeekRuleLines.length > 0 || sessionYieldCount > 0) && (
                 <ul className="browse-empty-session-stats">

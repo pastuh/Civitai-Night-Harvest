@@ -709,8 +709,8 @@ export const lt: Messages = {
     loadingNextPage: 'Kraunamas kitas puslapis…',
     showingGridCount: 'Rodoma {shown} iš {total} — slinkite žemyn',
     fetchingFirstPage: 'Kraunami modeliai iš Civitai API…',
-    galleryBusyTitle: 'Kraunama…',
-    galleryBusyDetail: 'Palaukite. Eiga rodoma apačios juostoje.',
+    galleryBusyTitle: 'Gaunama iš Civitai…',
+    galleryBusyDetail: 'Aktyvi taisyklė ir puslapis — apačios statuso juostoje.',
     fetchingRulePage: 'Kraunamas {page} puslapis — „{rule}“…',
     waitingNextPage: 'Laukiama ~{min} min. iki kito Civitai puslapio…',
     resultsUpdating: 'Updating…',
@@ -776,8 +776,10 @@ export const lt: Messages = {
     galleryAwaitingTitle: 'Browse galerija tuščia — įjunkite Harvest',
     galleryAwaitingDetail:
       'Galerijoje dar nėra modelių. Spauskite Harvest antraštėje, kad užkrautumėte modelius pagal įjungtas taisykles.',
-    galleryAwaitingDetailActive: 'Kraunama… Palaukite.',
-    galleryAwaitingDetailHarvest: 'Kraunama… Palaukite.',
+    galleryAwaitingDetailActive:
+      'Peek laukia — modeliai iš lokalaus Browse cache. Kitas Civitai peek — apačios juostoje.',
+    galleryAwaitingDetailHarvest:
+      'Peek laukia — modeliai iš lokalaus Browse cache. Kitas Civitai peek — apačios juostoje.',
     galleryPausedOffline:
       'Browse neveikia — išvesties diskas nepasiekiamas. Pataisykite LoRA/Checkpoint aplankus Nustatymuose prieš harvest.',
     emptyPreview: 'Preview „{name}“',
@@ -1129,13 +1131,20 @@ export const lt: Messages = {
   load: {
     failed: 'Nepavyko įkelti',
     starting: 'Kraunama programa',
+    connecting: 'Paleidžiama…',
     loadingSettings: 'Skaitomi išsaugoti nustatymai…',
     loadingSettingsRules: 'Kraunamos Browse taisyklės…',
-    stepSettings: 'Skaitomi išsaugoti nustatymai iš disko…',
+    stepSettings: 'Skaitomi nustatymai…',
     stepRules: 'Kraunami Tag folders ir Browse harvest taisyklės…',
+    stepRulesCount: 'Tag folders: {tags} · Browse taisyklės: {rules} ({enabled} įjungtos)',
     stepLists: 'Kraunami Updates, Early access, Missing ir ban sąrašai…',
-    stepLibrary: 'Kraunama modelių biblioteka iš duomenų bazės…',
-    stepSession: 'Perduodama pagrindiniam langui…'
+    stepListsCount:
+      'Updates: {updates} · Early access: {ea} · Missing: {missing} · Incomplete: {incomplete}',
+    stepLibrary: 'Skaičiuojami modeliai bibliotekoje…',
+    stepLibraryCount: 'Biblioteka: {count} modelio versija(-os)',
+    stepLibraryDone: 'Biblioteka: {count} modelio versija(-os) — kortelės po šio ekrano',
+    stepSession: 'Perduodama pagrindiniam langui…',
+    stepSessionReady: 'Paruošta — {tags} tag · {rules} taisyklės · {library} bibliotekoje'
   },
   app: {
     apiUnavailable: 'Programos API nepasiekiamas — paleiskite programą iš naujo.',
@@ -1773,6 +1782,19 @@ export const lt: Messages = {
     scanningApiFetchingRule: 'Kraunamas puslapis {page} · Taisyklė: {rules}',
     scanningApiFetchingWithTotal: 'Kraunamas puslapis {page} · {total} galerijoje…',
     scanningApiFetchingWithTotalRule: 'Kraunamas puslapis {page} · {total} galerijoje · {rules}',
+    scanningApiProcessing: 'Puslapis {page} gautas…',
+    scanningApiProcessingRule: 'Puslapis {page} gautas · {rules}',
+    processCivitaiApi: 'Ieškoma Civitai…',
+    processTagSearch: 'Papildoma tag paieška {step}/{total}: „{tag}“',
+    processTagPrep: 'Ruošiama {total} tag paieškų…',
+    processMerging: 'Toliau: katalogo paieška…',
+    processWaiting: 'Laukiama…',
+    processSaving: 'Toliau: katalogo paieška…',
+    processDownloadStarting: 'Pradedamas siuntimas…',
+    processNextPage: 'Toliau: katalogo paieška…',
+    processCatalogDone: 'Katalogas baigtas',
+    processPaceWait: 'Trumpa API pauzė…',
+    processPriorRequest: 'Laukiama — ankstesnė Civitai paieška dar vyksta…',
     scanningApiFetchingTags: 'Tag paieška {step}/{total}: „{tag}“…',
     scanningApiFetchingTagsRule: 'Tag {step}/{total}: „{tag}“ · Taisyklė: {rules}',
     scanningApiFetchingTagsPrep: 'Ruošiami {total} tag variantai…',
@@ -1782,6 +1804,12 @@ export const lt: Messages = {
     peekCountdownUnderMin: '<1 min',
     scanningApiPeeking: 'Peek {index}/{total} · {current}',
     scanningApiPeekingMulti: 'Peek {index}/{total} · {current} · tada {also}',
+    scanningApiPeekingOne: 'Naujausių peek…',
+    scanningApiPeekingRule: 'Naujausių peek · {rules}',
+    scanningApiCatalog: 'Katalogo puslapis {page}…',
+    scanningApiCatalogRule: 'Katalogo puslapis {page} · {rules}',
+    scanningApiCatalogWithTotal: 'Katalogo puslapis {page} · {total} galerijoje…',
+    scanningApiCatalogWithTotalRule: 'Katalogo puslapis {page} · {total} galerijoje · {rules}',
     scanningCatalogComplete: 'Katalogas baigtas · {page} pusl. · {total} galerijoje',
     scanningCatalogCompleteRule: 'Katalogas baigtas · {page} pusl. · {total} galerijoje · {rules}',
     scanningCatalogCompleteFiltered:
@@ -1806,7 +1834,8 @@ export const lt: Messages = {
     ratingUnknown: '{count} nežinoma',
     detailMore: '(+{count} daugiau)',
     bytesReceived: 'gauta {bytes}',
-    readyWaitingFetch: 'Harvest įjungtas — laukiama Civitai aktyvumo…',
+    readyWaitingFetch:
+      'Harvest įjungtas — peek laukia (galerija iš cache). Spalvota juosta = Owned / Yield, ne paslėptas fetch.',
     outputDriveOffline:
       'Išvesties diskas nepasiekiamas — Harvest išjungtas, atsisiuntimai pauzėje. Pataisykite aplankus Nustatymuose.'
   }

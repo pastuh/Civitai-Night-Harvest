@@ -1044,7 +1044,14 @@ export interface CrawlProgressPayload {
    * `ruleName` remains the rule currently fetching or the primary focus.
    */
   ruleNames?: string[]
-  phase: 'fetching' | 'waiting' | 'fetching-tags' | 'page-done' | 'catalog-complete'
+  phase:
+    | 'fetching'
+    | 'waiting'
+    | 'fetching-tags'
+    | 'page-done'
+    | 'catalog-complete'
+    /** Post-API work: gallery merge, preview cache, queue reconcile — not Civitai HTTP. */
+    | 'processing'
   pageNumber?: number
   galleryTotal?: number
   galleryStats?: BrowseGalleryStats
@@ -1053,6 +1060,8 @@ export interface CrawlProgressPayload {
   hasMorePages?: boolean
   catalogComplete?: boolean
   pageModelsOnPage?: number
+  /** Models queued for download from this API page (status: Download starting…) */
+  pageQueued?: number
   /** Raw models returned on this API page before rule filters */
   apiModelsOnPage?: number
   /** When phase is waiting — ms until next peek (initial; use waitUntil for live countdown) */
@@ -1071,6 +1080,18 @@ export interface CrawlProgressPayload {
   fetchSkipped?: number
   /** Already on primary query page — not counted as matched/skipped */
   fetchDuplicates?: number
+  /**
+   * Short right-side status hint (always shown during Harvest).
+   * Prefer concrete verbs: "GET /models · newest peek", "Tag 2/5…", "Download starting…"
+   * (Local SQLite card cache is silent — do not surface as "Saving…".)
+   */
+  detail?: string
+  /** What the current Civitai HTTP call is for (status bar). */
+  fetchPurpose?: 'peek' | 'catalog' | 'scan' | 'tag' | 'library'
+  /** Bumped when a new Civitai page fetch starts — ignores stale post-page status. */
+  statusSeq?: number
+  /** Seq captured when this page's post-API work started (must match crawlStatusSeq to publish). */
+  gateSeq?: number
 }
 
 export interface ScanResult {

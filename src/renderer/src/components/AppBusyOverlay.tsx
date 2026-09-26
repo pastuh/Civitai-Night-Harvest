@@ -5,6 +5,8 @@ import { useT } from '../i18n/context'
 interface Props {
   message: string
   subMessage?: string
+  /** Boot counts that stay visible while the next step loads. */
+  statsLine?: string
   syncProgress?: LibrarySyncProgress | null
 }
 
@@ -26,7 +28,7 @@ const PHASE_ORDER: Record<LibrarySyncProgress['phase'], number> = {
   preview: 8
 }
 
-export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
+export function AppBusyOverlay({ message, subMessage, statsLine, syncProgress }: Props) {
   const t = useT()
   const phaseLabels: Record<LibrarySyncProgress['phase'], string> = {
     import: t('appBusy.phaseImport'),
@@ -78,6 +80,7 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
   }
 
   const step = subMessage?.trim() || ''
+  const stats = statsLine?.trim() || ''
   const total = progress?.total ?? 0
   const current = progress?.current ?? 0
   const hasTotal = Boolean(progress) && total > 0
@@ -117,6 +120,10 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
 
         {!showSyncProgress && step && step !== message && (
           <p className="app-busy-step">{step}</p>
+        )}
+
+        {!showSyncProgress && stats && (
+          <p className="app-busy-stats muted">{stats}</p>
         )}
 
         {!showSyncProgress && (

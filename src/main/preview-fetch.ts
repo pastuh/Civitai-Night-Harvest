@@ -13,9 +13,10 @@ export async function fetchFirstWorkingPreview(urls: string[]): Promise<FetchedP
     try {
       // CDN image downloads must NOT share the Civitai API pace lane — that made
       // "Fetching page N" wait ~1.25s per preview cache write from earlier pages.
+      // One attempt, silent: Browse warm-cache misses must not fill Activity with retries.
       const res = await withNetworkRetry(`preview ${url}`, () => fetch(url), {
-        attempts: 2,
-        baseDelayMs: 800
+        attempts: 1,
+        silent: true
       })
       if (!res.ok) continue
 

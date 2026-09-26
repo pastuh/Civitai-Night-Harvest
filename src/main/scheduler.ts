@@ -19,10 +19,10 @@ import type {
   WatchRuleTestModel,
   WatchRuleTestResult
 } from '../shared/types'
-import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearRuleCrawlState, msUntilNewestPeekAllowed, clearLegacyUnscopedCursor, resetCatalogSessionForAppStart, getLastLibraryVersionScanAt, markLibraryVersionScan } from './crawl-state'
+import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearRuleCrawlState, msUntilNewestPeekAllowed, clearLegacyUnscopedCursor, resetCatalogSessionForAppStart, invalidateAllCatalogBackfills, reconcileCatalogFingerprints, getLastLibraryVersionScanAt, markLibraryVersionScan } from './crawl-state'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
-import { enrichTestModelPreviews } from './preview-enrich'
-import { mergeCachedBrowseCards, cacheBrowseCardPreviews, upsertBrowseCards } from './browse-cache'
+import { mergeCachedBrowseCards, upsertBrowseCardsForRule } from './browse-cache'
+import { setCrawlPaceStatusHook, setCrawlHttpStatusHook } from '../shared/civitai-pace'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
 import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, enrichPendingVersionPreviews, offerNewVersionsForOwnedModel, type RulePageQueueResult } from './rule-queue'
 import { DownloadQueue, AUTO_QUEUE_PIPELINE_CAP } from './download-queue'
@@ -35,8 +35,8 @@ import { isNetworkOfflineCircuitOpen } from '../shared/network-retry'
 import { firstPolicyMatch, modelHasPolicyTag } from '../shared/tag-routing'
 import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { sendToRenderer } from './window-notify'
-import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, modelMatchesRuleKeywords } from '../shared/utils'
-import { watchRuleCrawlSignature, watchRulesCrawlChanged } from '../shared/watch-rule-crawl'
+import { resolveSearchDomains, domainLabel, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, modelMatchesRuleBrowseFilter, modelMatchesRuleKeywords, matchesContentFilter } from '../shared/utils'
+import { watchRuleCrawlSignature, watchRulesCrawlChanged, browseModelMatchesWatchRuleHarvest } from '../shared/watch-rule-crawl'
 import { recheckIncompleteModels, emitIncompleteList } from './incomplete-resolve'
 import { emitMissingList, recheckMissingModels } from './missing-models'
 import { enrichDeferredDownloads } from '../shared/early-access'
@@ -84,6 +84,13 @@ export class ScanScheduler {
     tagSkipAllow: Set<number>
     at: number
   } | null = null
+  /** Cached Browse progress-bar totals — avoid O(gallery) walk every crawl page. */
+  private browseGalleryStatsCache: {
+    key: string
+    at: number
+    stats: import('../shared/types').BrowseGalleryStats
+  } | null = null
+  private lastCrawlInventorySyncAt = 0
   private nextIntervalScanAt: number | null = null
   private lastScanFinishedAt: number | null = null
   private pendingActivityEmits: ActivityEntry[] = []
@@ -91,7 +98,18 @@ export class ScanScheduler {
   private wasNightMode = getSettings().nightMode
   private wasDomain = getSettings().domain
   private wasCrawlAutoDownload = shouldCrawlAutoDownload()
-  /** Show "Fetching page N…" in the bottom status bar as soon as the API call starts. */
+  /** Monotonic id so a late gallery-save status cannot overwrite an already-started Page N+1 fetch. */
+  private crawlStatusSeq = 0
+  /** Last in-flight fetch identity — pace waits annotate this instead of wiping the rule name. */
+  private lastFetchStatus: {
+    ruleId: string
+    ruleName: string
+    pageNumber: number
+    domain?: import('../shared/types').CivitaiDomain
+    ruleNames?: string[]
+    purpose?: 'peek' | 'catalog' | 'scan'
+  } | null = null
+  /** Show precise fetch status as soon as the Civitai HTTP call starts. */
   private scheduleFetchingStatus(payload: {
     ruleId: string
     ruleName: string
@@ -99,19 +117,94 @@ export class ScanScheduler {
     domain?: import('../shared/types').CivitaiDomain
     /** Full peek set — status bar lists all rules, not only the one fetching now. */
     ruleNames?: string[]
+    /** peek = newest page only; catalog = Page N walk; scan = manual. */
+    purpose?: 'peek' | 'catalog' | 'scan'
+    detail?: string
   }): void {
+    const seq = ++this.crawlStatusSeq
+    const page = Math.max(1, payload.pageNumber)
+    const purpose = payload.purpose ?? 'catalog'
+    const detail =
+      payload.detail ??
+      (purpose === 'peek'
+        ? 'Newest peek — searching Civitai…'
+        : purpose === 'scan'
+          ? 'Manual scan — searching Civitai…'
+          : 'Catalog search — waiting for Civitai…')
+    this.lastFetchStatus = {
+      ruleId: payload.ruleId,
+      ruleName: payload.ruleName,
+      pageNumber: page,
+      domain: payload.domain,
+      ruleNames: payload.ruleNames,
+      purpose
+    }
     this.emitCrawlProgress({
       ruleId: payload.ruleId,
       ruleName: payload.ruleName,
       ruleNames: payload.ruleNames,
       phase: 'fetching',
-      pageNumber: payload.pageNumber,
-      domain: payload.domain
+      pageNumber: page,
+      domain: payload.domain,
+      fetchPurpose: purpose,
+      detail,
+      statusSeq: seq
+    })
+  }
+
+  /** Keep left-side page/rule identity while right-side detail changes mid-request. */
+  private emitFetchDetail(
+    detail: string,
+    extra: Partial<import('../shared/types').CrawlProgressPayload> = {}
+  ): void {
+    const last = this.lastFetchStatus
+    if (!last) {
+      this.emitCrawlProgress({
+        ruleId: extra.ruleId ?? '',
+        ruleName: extra.ruleName ?? '',
+        phase: extra.phase ?? 'fetching',
+        detail,
+        ...extra
+      })
+      return
+    }
+    const pageNumber = extra.pageNumber ?? last.pageNumber
+    if (extra.pageNumber != null && extra.pageNumber !== last.pageNumber) {
+      this.lastFetchStatus = { ...last, pageNumber: extra.pageNumber }
+    }
+    this.emitCrawlProgress({
+      ruleId: last.ruleId,
+      ruleName: last.ruleName,
+      ruleNames: last.ruleNames,
+      pageNumber,
+      domain: last.domain,
+      fetchPurpose: last.purpose ?? 'catalog',
+      phase: 'fetching',
+      ...extra,
+      pageNumber,
+      detail
     })
   }
 
   private cancelPendingFetchingStatus(): void {
     /* Fetching status is emitted immediately; kept for call-site clarity before page-done. */
+  }
+
+  private emitCrawlProgress(payload: import('../shared/types').CrawlProgressPayload | null): void {
+    // Stale post-page work must not clobber an in-flight "Civitai API…" for the next page.
+    if (payload?.statusSeq != null && payload.statusSeq < this.crawlStatusSeq) {
+      return
+    }
+    if (
+      payload &&
+      payload.statusSeq == null &&
+      (payload.phase === 'processing' || payload.phase === 'page-done') &&
+      payload.gateSeq != null &&
+      payload.gateSeq < this.crawlStatusSeq
+    ) {
+      return
+    }
+    this.emit('crawl:progress', payload)
   }
 
   clearCrawlBrowseAccum(ruleId?: string): void {
@@ -303,6 +396,131 @@ export class ScanScheduler {
         bucket.set(key, inventory.applyPreferredPreviewToModel({ ...model, previewUrl: url, previewUrls }))
       }
     }
+  }
+
+  /**
+   * Browse-only: load Harvest gallery into memory + UI from SQLite.
+   * Does not touch Library (owned disk inventory). Civitai is not called here.
+   * @returns number of cards restored across enabled rules
+   */
+  private seedBrowseGalleriesFromCache(): number {
+    const rules = getWatchRules().filter((r) => r.enabled && !(r.modelId && r.modelId > 0))
+    if (!rules.length) return 0
+
+    // Rule criteria changed while app was closed → drop "catalog done" for those rules.
+    const invalidated = reconcileCatalogFingerprints(
+      rules.map((r) => ({ id: r.id, signature: watchRuleCrawlSignature(r) }))
+    )
+    for (const ruleId of invalidated) {
+      inventory.clearBrowseRuleGallery(ruleId)
+      this.log(
+        'info',
+        `Browse rule criteria changed since last catalog — will re-walk Page 1…N`,
+        ruleId,
+        { source: 'crawl' }
+      )
+    }
+
+    const bannedIds = inventory.getBannedModelIds()
+    const forgottenVersions = inventory.getForgottenVersionIds()
+    const ownedVersions = new Set(
+      inventory.getAllVersions().map((v) => v.versionId).filter((id) => id > 0)
+    )
+    let total = 0
+    let globalCache: WatchRuleTestModel[] | null = null
+
+    for (const rule of rules) {
+      const domains = this.ruleSearchDomains(rule)
+      const catalogDone = domains.every((d) => isCatalogBackfillDone(rule.id, d))
+      if (!catalogDone) continue
+
+      let cards = inventory.getBrowseRuleGalleryCards(rule.id)
+
+      // Upgrade path: older builds had catalogPass but no browse_rule_gallery rows.
+      // Rebuild membership by filtering the global browse_card_cache (still Browse, not Library).
+      if (!cards.length) {
+        if (!globalCache) globalCache = inventory.getAllBrowseCardCacheCards()
+        cards = globalCache.filter((m) => this.browseCachedCardMatchesRule(m, rule))
+        if (cards.length) {
+          inventory.replaceBrowseRuleGalleryMembers(
+            rule.id,
+            cards.map((c) => c.versionId)
+          )
+        }
+      }
+
+      if (!cards.length) {
+        // Marked done but nothing to show — force a fresh catalog walk.
+        this.invalidateBrowseRuleCrawl(rule.id)
+        this.log(
+          'info',
+          `Browse cache empty for completed catalog — scheduling full re-walk`,
+          rule.id,
+          { source: 'crawl' }
+        )
+        continue
+      }
+
+      const flagged = cards.map((m) => ({
+        ...m,
+        inInventory: m.inInventory || ownedVersions.has(m.versionId),
+        isBanned:
+          m.isBanned === true ||
+          bannedIds.has(m.id) ||
+          (m.versionId > 0 && forgottenVersions.has(m.versionId))
+      }))
+      this.seedBrowseModels(rule.id, flagged)
+      // Chunked deltas — one full IPC with thousands of cards freezes tab switch / scroll.
+      const CHUNK = 80
+      for (let i = 0; i < flagged.length; i += CHUNK) {
+        const slice = flagged.slice(i, i + CHUNK)
+        const result = buildWatchRuleTestResult(
+          slice,
+          {
+            pageSize: slice.length,
+            currentPage: 1,
+            nextCursor: null,
+            totalItems: flagged.length
+          },
+          this.browseEnumsOrFallback()
+        )
+        result.crawlSource = 'night'
+        // Per-chunk tags — renderer merges incrementally (full-gallery agg freezes UI).
+        result.tagsInResults = aggregateResultTags(slice)
+        this.emit('crawl:page', {
+          ruleId: rule.id,
+          ruleName: rule.name,
+          pageNumber: 1,
+          pageModelsAdded: slice.length,
+          pageModelsOnPage: slice.length,
+          galleryTotal: flagged.length,
+          galleryStats: this.browseGalleryStats(undefined, rule.id),
+          catalogComplete: true,
+          hasMorePages: false,
+          pageQueued: 0,
+          galleryMode: 'delta',
+          galleryGeneration: this.browseGalleryGeneration,
+          result
+        })
+      }
+      total += flagged.length
+    }
+
+    return total
+  }
+
+  /** Does a cached Browse card still match this Harvest rule's filters? */
+  private browseCachedCardMatchesRule(model: WatchRuleTestModel, rule: WatchRule): boolean {
+    if (!browseModelMatchesWatchRuleHarvest(model, rule)) return false
+    if (!modelMatchesRuleBrowseFilter(model, rule)) return false
+    const filter = rule.contentFilter ?? getSettings().contentFilter
+    if (!matchesContentFilter(model.nsfw, filter)) return false
+    return true
+  }
+
+  private invalidateBrowseRuleCrawl(ruleId: string): void {
+    clearRuleCrawlState(ruleId)
+    inventory.clearBrowseRuleGallery(ruleId)
   }
 
   /** Merge manual browse / test results into the in-memory gallery (used for auto-queue outside night mode). */
@@ -932,11 +1150,52 @@ export class ScanScheduler {
     this.pool = pool
     this.downloadQueue = downloadQueue
     this.window = getWindow
-    this.pendingVersions = inventory.getAllPendingVersions()
-    // Clean stale / wrong-base New Versions rows left after downloads / imports / rule changes.
-    this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
-    this.activity = inventory.getActivityLog(2000)
+    // Heavy inventory reads happen in hydrateSessionState() after the Loading popup closes.
+    this.pendingVersions = []
+    this.activity = []
     this.lastLibraryVersionScanAt = getLastLibraryVersionScanAt() ?? 0
+    setCrawlPaceStatusHook((info) => {
+      if (info.behindPriorRequest) {
+        const prior = info.priorLabel?.trim()
+        this.emitFetchDetail(
+          prior
+            ? `Queued — waiting for “${prior}” to finish…`
+            : 'Queued — waiting for prior Browse API call…'
+        )
+        return
+      }
+      if (info.waitMs > 40) {
+        this.emitFetchDetail(
+          `Short API pause (~${Math.max(1, Math.ceil(info.waitMs / 100) / 10)}s)…`
+        )
+      }
+    })
+    setCrawlHttpStatusHook((info) => {
+      if (info.kind === 'http-waiting') {
+        this.emitFetchDetail(
+          info.path.startsWith('/models/')
+            ? `Waiting for Civitai model details…`
+            : `Waiting for Civitai search response…`
+        )
+        return
+      }
+      if (info.kind === 'http-received') {
+        this.emitFetchDetail('Civitai response received — processing…')
+        return
+      }
+      this.emitFetchDetail(`Civitai retry ${info.attempt}/${info.attempts}…`)
+    })
+  }
+
+  /** Load pending/activity from SQLite — call only after UI Loading popup is gone. */
+  private async hydrateSessionState(): Promise<void> {
+    const yieldMain = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+    this.pendingVersions = inventory.getAllPendingVersions()
+    await yieldMain()
+    this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
+    await yieldMain()
+    // Boot UI already showed a short activity window; keep hydrate lighter.
+    this.activity = inventory.getActivityLog(500)
   }
 
   private emit(channel: string, data?: unknown): void {
@@ -1065,7 +1324,7 @@ export class ScanScheduler {
     }, Math.max(0, delayMs))
   }
 
-  private async runLibraryVersionScanIfDue(minIntervalMs = 30 * 60_000): Promise<void> {
+  private async runLibraryVersionScanIfDue(minIntervalMs = 5 * 60_000): Promise<void> {
     // Do not compete with a one-shot scan or an active Harvest catalog walk.
     if (this.libraryScanning || this.scanning || (this.continuousCrawlPromise && !this.harvestPeekIdle)) {
       this.scheduleBackgroundLibraryVersionScan(60_000)
@@ -1110,13 +1369,17 @@ export class ScanScheduler {
     this.libraryScanning = true
     this.lastLibraryVersionScanAt = Date.now()
     markLibraryVersionScan(this.lastLibraryVersionScanAt)
-    this.setStatus('checking')
+    // Manual "Check library" may own the status bar. Background sweeps must NOT
+    // overwrite Harvest "scanning" / crawl:progress (that hid Fetching page · Rule).
+    if (options.force) {
+      this.setStatus('checking')
+    }
     const uniqueModels = new Set(owned.map((v) => v.modelId)).size
     this.log(
       'info',
       options.force
         ? `Checking ${uniqueModels} model(s) in your library for new versions (manual full re-check)…`
-        : `Checking library for new versions (skips models polled within 2 days)…`,
+        : `Checking library for new versions (skips models polled within ~45 min)…`,
       undefined,
       { source: 'library' }
     )
@@ -1137,7 +1400,7 @@ export class ScanScheduler {
         }
       )
       const errMsg = result.errors.length ? `, ${result.errors.length} error(s)` : ''
-      const skipMsg = result.modelsSkipped ? `, ${result.modelsSkipped} skipped (< 2 days)` : ''
+      const skipMsg = result.modelsSkipped ? `, ${result.modelsSkipped} skipped (cooldown / later batch)` : ''
       this.log(
         'success',
         `Library check done — ${result.newVersions} new version(s), ${result.upToDate} up-to-date, ${result.modelsChecked} checked${skipMsg}${errMsg}`,
@@ -1147,6 +1410,26 @@ export class ScanScheduler {
       if (shouldAutoDownloadNewVersions()) {
         this.maybeStartAutoDownloads()
       }
+      // More due models: keep draining the ID list — but yield while catalog crawl is busy.
+      if (!options.force && result.modelsSkipped > 0) {
+        if (this.libraryVersionScanTimer) clearTimeout(this.libraryVersionScanTimer)
+        this.libraryVersionScanTimer = setTimeout(() => {
+          this.libraryVersionScanTimer = null
+          if (
+            this.libraryScanning ||
+            this.scanning ||
+            (this.continuousCrawlPromise && !this.harvestPeekIdle)
+          ) {
+            // Catalog still walking — retry later instead of stealing API from Page N.
+            this.scheduleBackgroundLibraryVersionScan(60_000)
+            return
+          }
+          void this.runLibraryVersionScan()
+        }, 45_000)
+      } else if (!options.force) {
+        // Full pass done — schedule the next sweep soon (cooldown is per-model).
+        this.scheduleBackgroundLibraryVersionScan(5 * 60_000)
+      }
       return result
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1155,22 +1438,27 @@ export class ScanScheduler {
     } finally {
       this.libraryScanning = false
       this.emit('version-scan:complete')
-      if (!this.scanning && !this.downloadQueue.isBusy() && !this.crawler.isRunning()) {
+      if (this.scanning || this.crawler.isRunning() || this.continuousCrawlPromise) {
+        this.setStatus('scanning')
+      } else if (!this.downloadQueue.isBusy()) {
         this.setStatus('idle')
       }
     }
   }
 
   getPendingVersions(): PendingVersion[] {
-    // Drop stale rows (already owned) and pending whose base no longer matches owned/Browse filters.
-    const before = this.pendingVersions.length
-    this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
-    inventory.pruneSkippedPendingVersions()
-    if (this.pendingVersions.length !== before) {
-      this.emitPendingVersions()
+    // Before hydrateSessionState(), pendingVersions is [] — do not prune (that used to
+    // buildInventorySnapshot / SELECT * the whole library and freeze Windows title bar).
+    if (this.pendingVersions.length > 0) {
+      const before = this.pendingVersions.length
+      this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
+      inventory.pruneSkippedPendingVersions()
+      if (this.pendingVersions.length !== before) {
+        this.emitPendingVersions()
+      }
+      this.schedulePendingPreviewEnrich()
+      this.schedulePackSiblingPendingSync()
     }
-    this.schedulePendingPreviewEnrich()
-    this.schedulePackSiblingPendingSync()
     return this.combinedPendingVersions()
   }
 
@@ -1347,20 +1635,34 @@ export class ScanScheduler {
   }
 
   /**
-   * Library ↔ disk sync, then session prep.
-   * UI keeps the busy popup open until this returns (via app:rendererReady).
+   * Library ↔ disk prep, then session start.
+   * Must stay fast — app:rendererReady used to await this and the Loading popup
+   * stayed up through Civitai scan/harvest. Crawl is fire-and-forget below.
    */
   private async startAfterLibraryReady(): Promise<void> {
+    const yieldMain = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+    // Queue restore + inventory hydrate — was in initIpc and froze the Loading popup /
+    // Windows “Not Responding” (existsSync × entire library, full snapshot prune).
+    this.downloadQueue.restoreFromDisk()
+    await yieldMain()
+    await this.hydrateSessionState()
+    this.emitPendingVersions()
+    await yieldMain()
+
     void this.browseEnumsForUi().catch(() => {})
     this.bumpBrowseGalleryGeneration()
     this.clearCrawlBrowseAccum()
     this.emitBrowseGalleryReset()
-    // Each app launch: full rule catalog once, then peek-only (do not inherit prior "done").
+    // Clear in-memory peek counters only — keep catalogPass so we do not re-walk Page 1…N
+    // when Browse rules are unchanged (UI restores from browse_card_cache + browse_rule_gallery).
     resetCatalogSessionForAppStart()
     this.crawler.resetPaginationHints()
-    this.log('info', 'Starting session: peek all enabled rules, then catalog backfill…', undefined, {
-      source: 'crawl'
-    })
+    this.log(
+      'info',
+      'Starting session: restore Browse from cache when possible, then peek for new models…',
+      undefined,
+      { source: 'crawl' }
+    )
     const settings = getSettings()
     if (outputFoldersConfigured()) {
       const reach = await probeConfiguredOutputFolders()
@@ -1369,7 +1671,7 @@ export class ScanScheduler {
         this.downloadQueue.pause()
         sendToRenderer(this.window, 'app:storageError', reach.message)
       } else {
-        // Full folder walk is Settings → Sync library from disk only (not every app launch).
+        // Full folder walk / path repair is Settings → Sync library from disk only.
         this.downloadQueue.syncWithInventory()
         this.log(
           'info',
@@ -1381,14 +1683,15 @@ export class ScanScheduler {
     }
     this.downloadQueue.purgeBrowseSessionOnStartup()
     if (settings.scanOnStartup) {
-      await this.runScan()
+      // Never await — blocked the Loading popup for the whole Civitai scan.
+      void this.runScan()
     }
     this.restartInterval()
     this.startEarlyAccessWatcher()
     // Harvest runs after startup prep — UI overlay must not wait for the full catalog walk.
     this.ensureContinuousCrawl()
-    // New Versions poll: only if due (persisted 30 min cooldown). Skips while Harvest is walking catalogs.
-    this.scheduleBackgroundLibraryVersionScan(20_000)
+    // New Versions poll: GET /models/{id} in batches — wait until catalog peek settles.
+    this.scheduleBackgroundLibraryVersionScan(45_000)
     // Do not wait for the first crawl page — resume the pump immediately when auto-download is on.
     this.maybeStartAutoDownloads()
   }
@@ -1449,11 +1752,10 @@ export class ScanScheduler {
     if (this.earlyAccessTimerId) clearInterval(this.earlyAccessTimerId)
     const peekMinutes = Math.max(getSettings().newestPeekIntervalMinutes || 15, 5)
     const intervalMs = peekMinutes * 60 * 1000
-    // First pass soon after launch — catch unlock dates that passed while the app was off.
-    void this.tickEarlyAccessRetry({ fullSweep: true })
+    // Full unlock sweep runs after startup peek (runContinuousCrawl). Here only a light
+    // follow-up on the peek interval — avoids double fullSweep + preview storm on boot.
     this.earlyAccessTimerId = setInterval(() => {
       if (getSettings().autoRetryDeferred === false) return
-      // Don't compete with an in-flight catalog page fetch; otherwise always poll for unlocks.
       if (this.crawler.isRunning()) return
       void this.tickEarlyAccessRetry()
       void this.runIncompleteRecheckIfDue()
@@ -1642,7 +1944,11 @@ export class ScanScheduler {
       this.bumpBrowseGalleryGeneration()
       this.clearCrawlBrowseAccum()
       this.crawler.resetPaginationHints()
-      resetCatalogSessionForAppStart()
+      // Different Civitai domain → Browse catalog must be re-fetched (not a normal restart).
+      invalidateAllCatalogBackfills()
+      for (const rule of getWatchRules()) {
+        inventory.clearBrowseRuleGallery(rule.id)
+      }
       this.emitBrowseGalleryReset()
       this.cancelPendingFetchingStatus()
       this.emitCrawlProgress(null)
@@ -1659,12 +1965,9 @@ export class ScanScheduler {
           this.downloadQueue.getItems().some((i) => i.status === 'downloading') ? 'downloading' : 'idle'
         )
       } else if (shouldRunContinuousCrawl()) {
-        // When Harvest turns back on after being off, the catalog session may still be marked
-        // "done" from the previous session — without this reset the crawler would skip the
-        // full backfill and drop straight to peek-only, so toggling Harvest off → on would
-        // not re-fetch anything. Mirrors the manual-scan path below.
+        // Harvest on: restore Browse from cache + peek. Do NOT wipe catalogPass (that would
+        // force Page 1…N again). Manual Scan is the explicit "re-fetch everything" path.
         if (nightTurnedOn) {
-          resetCatalogSessionForAppStart()
           this.crawler.stop()
           this.bumpBrowseGalleryGeneration()
           this.crawler.resetPaginationHints()
@@ -1672,6 +1975,16 @@ export class ScanScheduler {
           this.emitBrowseGalleryReset()
           this.cancelPendingFetchingStatus()
           this.emitCrawlProgress(null)
+          resetCatalogSessionForAppStart()
+          const restored = this.seedBrowseGalleriesFromCache()
+          if (restored > 0) {
+            this.log(
+              'info',
+              `Harvest on — restored ${restored} Browse card(s) from cache`,
+              undefined,
+              { source: 'crawl' }
+            )
+          }
         }
         this.ensureContinuousCrawl()
         // Full scan only when Harvest turns on or domain changes — not on Pause toggle.
@@ -1767,7 +2080,7 @@ export class ScanScheduler {
     for (const rule of next) {
       const prev = prevById.get(rule.id)
       if (!prev || watchRuleCrawlSignature(prev) !== watchRuleCrawlSignature(rule)) {
-        clearRuleCrawlState(rule.id)
+        this.invalidateBrowseRuleCrawl(rule.id)
         this.clearCrawlBrowseAccum(rule.id)
         for (const key of [...this.scanPageCounts.keys()]) {
           if (key.startsWith(`${rule.id}:`)) this.scanPageCounts.delete(key)
@@ -1776,7 +2089,7 @@ export class ScanScheduler {
     }
     for (const prev of previous) {
       if (!nextIds.has(prev.id)) {
-        clearRuleCrawlState(prev.id)
+        this.invalidateBrowseRuleCrawl(prev.id)
         this.clearCrawlBrowseAccum(prev.id)
         for (const key of [...this.scanPageCounts.keys()]) {
           if (key.startsWith(`${prev.id}:`)) this.scanPageCounts.delete(key)
@@ -1916,8 +2229,27 @@ export class ScanScheduler {
       markManual: source === 'manual',
       log: (level: ActivityEntry['level'], message: string, ruleId?: string) =>
         this.log(level, message, ruleId, { source }),
-      onFetchProgress: (payload: import('../shared/types').CrawlProgressPayload) =>
+      onFetchProgress: (payload: import('../shared/types').CrawlProgressPayload) => {
+        if (payload.detail?.trim()) {
+          this.emitFetchDetail(payload.detail.trim(), {
+            phase: payload.phase,
+            tagFetchStep: payload.tagFetchStep,
+            tagFetchTotal: payload.tagFetchTotal,
+            fetchTagLabel: payload.fetchTagLabel,
+            fetchLoaded: payload.fetchLoaded,
+            fetchMatched: payload.fetchMatched,
+            fetchSkipped: payload.fetchSkipped,
+            fetchDuplicates: payload.fetchDuplicates,
+            fetchPurpose: payload.fetchPurpose,
+            ruleId: payload.ruleId,
+            ruleName: payload.ruleName,
+            domain: payload.domain,
+            pageNumber: payload.pageNumber
+          })
+          return
+        }
         this.emitCrawlProgress(payload)
+      }
     }
   }
 
@@ -1942,12 +2274,6 @@ export class ScanScheduler {
     )
   }
 
-  private emitCrawlProgress(payload: import('../shared/types').CrawlProgressPayload | null): void {
-    // Do not rebuild gallery stats here — callers that need the bar attach galleryStats
-    // (emitCrawlPage) or pass length-only updates (FetchDone / waiting).
-    this.emit('crawl:progress', payload)
-  }
-
   /**
    * Browse progress-bar categories.
    * Pass `models` when already materialized; otherwise walk accum in place (no preview SQL).
@@ -1956,6 +2282,16 @@ export class ScanScheduler {
     models?: WatchRuleTestModel[],
     ruleId?: string
   ): import('../shared/types').BrowseGalleryStats {
+    // Cheap path during live harvest: reuse stats for a few seconds while length is unchanged.
+    if (!models) {
+      const len = this.crawlBrowseGalleryLength(ruleId)
+      const key = `${ruleId ?? '*'}:${len}`
+      const hit = this.browseGalleryStatsCache
+      if (hit && hit.key === key && Date.now() - hit.at < 4_000) {
+        return hit.stats
+      }
+    }
+
     const settings = getSettings()
     const paused = settings.hiddenTags ?? []
     const banned = settings.bannedTags ?? []
@@ -2006,7 +2342,7 @@ export class ScanScheduler {
       for (const m of this.iterateCrawlBrowseModels(ruleId)) visit(m)
     }
 
-    return {
+    const stats = {
       owned,
       excluded,
       skipTag,
@@ -2015,6 +2351,14 @@ export class ScanScheduler {
       missing,
       total
     }
+    if (!models) {
+      this.browseGalleryStatsCache = {
+        key: `${ruleId ?? '*'}:${total}`,
+        at: Date.now(),
+        stats
+      }
+    }
+    return stats
   }
 
   private async emitCrawlPage(
@@ -2028,6 +2372,21 @@ export class ScanScheduler {
   ): Promise<void> {
     const pageGeneration = this.browseGalleryGeneration
     if (!this.isWatchRuleStillEnabled(rule.id)) return
+
+    // If a newer Civitai fetch already started, do not overwrite its status.
+    const gateSeq = this.crawlStatusSeq
+
+    // Yield so the crawler can start Page N+1 / sleep without waiting for this sync merge.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    if (!this.isWatchRuleStillEnabled(rule.id)) return
+    // Do not abort gallery/DB work just because Page N+1 fetch status already started
+    // (gateSeq is only for status-bar emits below).
+
+    // Start downloads first. Do not put "Saving…" on the status bar — that looked like a
+    // fetch stall. Local SQLite cache is silent background work for the next app launch.
+    if (page.queued > 0 && shouldCrawlAutoDownload()) {
+      this.maybeStartAutoDownloads()
+    }
 
     void this.browseEnumsForUi().catch(() => {})
     const filter = rule.contentFilter ?? getSettings().contentFilter
@@ -2131,10 +2490,12 @@ export class ScanScheduler {
         return
       }
 
-      const galleryNow = this.crawlBrowseModels(rule.id)
-      const galleryStats = this.browseGalleryStats(galleryNow)
+      // Live delta: never materialize the full gallery (preferred-preview SQL × N) just for
+      // the status bar — length + in-place stats walk is enough; renderer merges cards.
+      const galleryTotal = this.crawlBrowseGalleryLength(rule.id)
+      const galleryStats = this.browseGalleryStats(undefined, rule.id)
 
-      if (cards.length === 0 && galleryNow.length === 0) {
+      if (cards.length === 0 && galleryTotal === 0) {
         if (!pageHasApiData) return
         const emptyResult = buildWatchRuleTestResult(
           [],
@@ -2172,11 +2533,12 @@ export class ScanScheduler {
           pageSize: page.pageModels || cards.length,
           currentPage: pageNumber,
           nextCursor: page.nextCursor ?? null,
-          totalItems: galleryNow.length
+          totalItems: galleryTotal
         },
         this.browseEnumsOrFallback()
       )
       result.crawlSource = source
+      // Page-local tags only — renderer incrementally merges into the sidebar tally.
       result.tagsInResults = aggregateResultTags(cards)
 
       const payload: CrawlPagePayload = {
@@ -2185,7 +2547,7 @@ export class ScanScheduler {
         pageNumber,
         pageModelsAdded,
         pageModelsOnPage: pageModels.length,
-        galleryTotal: galleryNow.length,
+        galleryTotal,
         galleryStats,
         catalogComplete,
         hasMorePages: morePages,
@@ -2200,63 +2562,72 @@ export class ScanScheduler {
     // Live Browse: send only this page's cards; renderer merges. Snapshots use galleryMode full.
     emitGalleryPage(pageModels.length > 0 ? pageModels : [], added, 'delta')
 
-    if (pageModels.length > 0) {
-      void (async () => {
-        const previewFilled = await enrichTestModelPreviews(this.pool, pageModels, filter)
-        if (!this.isBrowseGalleryGenerationCurrent(pageGeneration)) return
-        if (!this.isWatchRuleStillEnabled(rule.id)) return
-        if (previewFilled > 0) {
-          this.log(
-            'info',
-            `Resolved preview images for ${previewFilled} model(s) on API page ${pageNumber}`,
+    // --- Downloads first ---------------------------------------------------------
+    // Model was already queued in queueModelsFromPage. Start the pump NOW.
+    // Do not wait for SQLite upsert / CDN preview disk-cache (that used to sit on
+    // "Saving Browse cards…" for ~30s while the queue looked stuck).
+    if (page.queued > 0 || shouldCrawlAutoDownload()) {
+      this.maybeStartAutoDownloads()
+    }
+
+    // Library-owned versions already have on-disk preview + .json + model file from download.
+    // Harvest must not re-write Browse cache or re-hit CDN for them.
+    // Already-cached Browse cards (not owned) keep their SQLite row — no per-peek refresh
+    // (optional "update model info" later; direction is always Civitai → us).
+    const alreadyCached = inventory.getBrowseCardCache(
+      pageModels.map((m) => m.versionId).filter((id) => id > 0)
+    )
+    const browseNewCards = pageModels.filter((m) => {
+      if (!m.versionId || m.versionId <= 0) return false
+      if (inventory.hasVersion(m.versionId)) return false
+      if (alreadyCached.has(m.versionId)) return false
+      return true
+    })
+    // Rule membership only for not-owned (Browse candidates). Owned stay Library-only here.
+    const browseMembers = pageModels.filter(
+      (m) => m.versionId > 0 && !inventory.hasVersion(m.versionId)
+    )
+
+    if (browseNewCards.length > 0 || browseMembers.length > 0) {
+      try {
+        if (browseNewCards.length > 0) {
+          upsertBrowseCardsForRule(rule.id, browseNewCards)
+        }
+        // Already-cached (not owned) still join this rule's gallery index — no card JSON rewrite.
+        const memberOnly = browseMembers.filter((m) => alreadyCached.has(m.versionId))
+        if (memberOnly.length > 0) {
+          inventory.appendBrowseRuleGalleryMembers(
             rule.id,
-            { source: 'crawl' }
+            memberOnly.map((c) => c.versionId)
           )
         }
-        await cacheBrowseCardPreviews(pageModels)
-        upsertBrowseCards(pageModels)
-        if (!this.isBrowseGalleryGenerationCurrent(pageGeneration)) return
-        if (!this.isWatchRuleStillEnabled(rule.id)) return
-        const bucket = this.crawlBrowseRuleBucket(rule.id)
-        for (const m of pageModels) {
-          const key = this.crawlModelKey(m)
-          const prev = bucket.get(key)
-          bucket.set(key, prev ? preferBrowseModel(prev, m) : m)
-        }
-        if (previewFilled > 0) {
-          // Quiet harvest: status bar already updated; skip another full gallery stats pass.
-          const quiet = source === 'night' && getSettings().updateBrowseOnCrawl === false
-          if (!quiet) {
-            emitGalleryPage(pageModels, 0, 'delta')
-          }
-        }
-      })().catch((err) => {
+      } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        this.log('warn', `Preview enrich failed on page ${pageNumber}: ${msg}`, rule.id, {
+        this.log('warn', `Browse cache upsert failed on page ${pageNumber}: ${msg}`, rule.id, {
           source: 'crawl'
         })
+      }
+    }
+
+    // Do NOT warm CDN → disk during Harvest. That raced with GET /models, filled Activity
+    // with preview fetch-failed retries, and is unrelated to Library sidecar previews.
+    // Browse UI loads thumbnails on demand; optional warm can live under Settings later.
+
+    // Light queue reconcile for THIS page only — never crawlBrowseModels(entire gallery).
+    // (That full-gallery path was the ~30s hang after peek with catalogComplete=true.)
+    if (pageModels.length > 0) {
+      const freshPageModels = pageModels.map((m) => ({
+        ...m,
+        inInventory: inventory.hasVersion(m.versionId)
+      }))
+      const allowOutsideNightMode = !getSettings().nightMode
+      this.reconcileBrowseDownloadQueue({
+        models: freshPageModels,
+        ruleId: rule.id,
+        source,
+        allowOutsideNightMode
       })
     }
-
-    // Queue reconcile only — do not scan the whole library on disk every harvest page.
-    this.downloadQueue.syncWithInventory({ repairPaths: false })
-
-    const freshPageModels = pageModels.map((m) => ({
-      ...m,
-      inInventory: inventory.hasVersion(m.versionId)
-    }))
-    const allowOutsideNightMode = !getSettings().nightMode
-    // Early access → Awaiting tab even when Pause / manual queue mode blocks downloads.
-    this.reconcileBrowseDownloadQueue({
-      models: freshPageModels,
-      ruleId: rule.id,
-      source,
-      allowOutsideNightMode
-    })
-    if (catalogComplete) {
-      this.reconcileBrowseDownloadQueue({ ruleId: rule.id, source, allowOutsideNightMode })
-    }
-    // Start pump only when downloads are allowed (Pause off).
     if (shouldCrawlAutoDownload()) {
       this.maybeStartAutoDownloads()
     }
@@ -2280,6 +2651,23 @@ export class ScanScheduler {
         { source: 'crawl' }
       )
     }
+
+    if (catalogComplete && gateSeq === this.crawlStatusSeq) {
+      this.emitCrawlProgress({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        phase: 'catalog-complete',
+        pageNumber,
+        galleryTotal: this.crawlBrowseGalleryLength(rule.id),
+        hasMorePages: false,
+        catalogComplete: true,
+        pageModelsOnPage: pageModels.length,
+        domain: client.getDomain(),
+        detail: 'Catalog done',
+        gateSeq
+      })
+    }
+    // Otherwise leave status alone — Page N+1 "Civitai API…" must stay visible.
   }
 
   private crawlPageHandler =
@@ -2299,17 +2687,24 @@ export class ScanScheduler {
       )
       const ruleFullyDone = thisDomainEnded && !otherDomainsPending
       const hasMorePages = Boolean(info.page.nextCursor) || otherDomainsPending
-      return this.emitCrawlPage(
-        info.rule,
-        info.pageNumber,
-        info.page,
-        source,
-        info.client,
-        ruleFullyDone,
-        hasMorePages
-      ).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        this.log('error', `Browse gallery update failed: ${msg}`, info.rule.id, { source: 'crawl' })
+      // Defer to next macrotask so Harvest can start Page N+1 immediately.
+      // emitCrawlPage is mostly sync until first await — running it inline blocked the
+      // event loop and made the bar flash "Saving…" between every Civitai page.
+      setImmediate(() => {
+        void this.emitCrawlPage(
+          info.rule,
+          info.pageNumber,
+          info.page,
+          source,
+          info.client,
+          ruleFullyDone,
+          hasMorePages
+        ).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err)
+          this.log('error', `Browse gallery update failed: ${msg}`, info.rule.id, {
+            source: 'crawl'
+          })
+        })
       })
     }
 
@@ -2328,7 +2723,7 @@ export class ScanScheduler {
       onPendingChange: this.pendingChangeHandler,
       onDownloadsStarted: () => this.setStatus('downloading'),
       onCrawlPage: this.crawlPageHandler(source),
-      onCrawlFetchStart: ({ rule, pageNumber, domain }) => {
+      onCrawlFetchStart: ({ rule, pageNumber, domain, purpose }) => {
         const domains = this.ruleSearchDomains(rule)
         const ruleLabel =
           domains.length > 1 ? `${rule.name} · ${domainLabel(domain)}` : rule.name
@@ -2336,7 +2731,8 @@ export class ScanScheduler {
           ruleId: rule.id,
           ruleName: ruleLabel,
           pageNumber,
-          domain
+          domain,
+          purpose: purpose ?? 'catalog'
         })
       },
       onCrawlWaiting: ({ rule, waitMs, domain }) => {
@@ -2397,18 +2793,32 @@ export class ScanScheduler {
         const ruleFullyDone = catalogComplete && !otherDomainsPending
         const multiDomain = domains.length > 1
         const ruleLabel = multiDomain ? `${rule.name} · ${domainLabel(domain)}` : rule.name
+        // Start downloads here — do not wait for deferred Browse UI/DB work.
+        if (page.queued > 0) {
+          this.maybeStartAutoDownloads()
+        }
+        let detail: string | undefined
+        if (page.queued > 0) {
+          detail = 'Download starting…'
+        } else if (ruleFullyDone) {
+          detail = 'Catalog done'
+        } else if (hasMorePages || otherDomainsPending) {
+          detail = otherDomainsPending && !hasMorePages
+            ? 'Next: search other domain…'
+            : 'Next: this page done — catalog continues…'
+        }
         this.emitCrawlProgress({
           ruleId: rule.id,
           ruleName: ruleLabel,
           phase: hasMorePages || otherDomainsPending ? 'page-done' : 'catalog-complete',
           pageNumber,
-          // Omit galleryTotal here — emitCrawlPage merges first, then publishes the real count.
-          // Publishing length before merge made the status bar jump (N → N+100).
           hasMorePages: hasMorePages || otherDomainsPending,
           catalogComplete: ruleFullyDone,
           pageModelsOnPage: page.pageModels,
           apiModelsOnPage: fromApi,
-          domain
+          pageQueued: page.queued,
+          domain,
+          detail
         })
       },
       onCatalogPassComplete: (rule, domain) => {
@@ -2503,17 +2913,22 @@ export class ScanScheduler {
     this.setStatus('scanning')
 
     try {
-      // Multi-rule fairness: newest page for every rule first, then deep catalog walk.
-      // Otherwise rule B waits behind rule A's 80+ pages while new models on B sit unseen.
+      // Browse UI from SQLite first (when a prior catalog walk finished). Not Library.
+      const restored = this.seedBrowseGalleriesFromCache()
+      if (restored > 0) {
+        this.log(
+          'info',
+          `Browse: restored ${restored} card(s) from cache — skipping full Page 1…N for completed rules`,
+          undefined,
+          { source: 'crawl' }
+        )
+      }
+
+      // Always peek newest page(s) for *new* models (delta). Full catalog only if not done.
       {
         const bootRules = getWatchRules().filter((r) => r.enabled)
         const requireTagMatch = crawlRequireTagMatch()
-        const catalogPending = bootRules.some((rule) => {
-          if (rule.modelId && rule.modelId > 0) return false
-          return this.ruleSearchDomains(rule).some((domain) => !isCatalogBackfillDone(rule.id, domain))
-        })
         if (
-          catalogPending &&
           bootRules.length > 0 &&
           shouldRunContinuousCrawl() &&
           !this.continuousCrawlStopRequested
@@ -2521,12 +2936,13 @@ export class ScanScheduler {
           await this.runRuleNewestPeeks(bootRules, requireTagMatch, {
             mode: 'startup',
             respectCooldown: false,
+            // Peek even when catalog is already done — that is the "new models" path.
             requireCatalogDone: false
           })
         }
-        // Unlock any Early access rows that became Public while the app was off / during boot peek.
+        // Unlock EA in the background — awaiting this before Page 1 blocked catalog for a long time.
         if (getSettings().autoRetryDeferred !== false) {
-          await this.tickEarlyAccessRetry({ fullSweep: true })
+          void this.tickEarlyAccessRetry({ fullSweep: true })
         }
       }
 
@@ -2725,7 +3141,10 @@ export class ScanScheduler {
         }
 
         const client = this.pool.forDomain(domain)
-        const queueOpts = this.crawlQueueOptions(requireTagMatch, true, 'crawl')
+        const queueOpts = {
+          ...this.crawlQueueOptions(requireTagMatch, true, 'crawl'),
+          pageNumber: 1
+        }
         const domains = this.ruleSearchDomains(rule)
         const ruleLabel =
           domains.length > 1 ? `${rule.name} · ${domainLabel(domain)}` : rule.name
@@ -2735,7 +3154,11 @@ export class ScanScheduler {
             ruleName: ruleLabel,
             ruleNames: peekRuleNames,
             pageNumber: 1,
-            domain
+            domain,
+            purpose: 'peek',
+            detail: opts.mode === 'startup'
+              ? 'Startup peek — searching Civitai…'
+              : 'Newest peek — searching Civitai…'
           })
           const { combined } = await runDualRulePageCheck(
             client,
@@ -2751,7 +3174,7 @@ export class ScanScheduler {
             }
           )
           this.cancelPendingFetchingStatus()
-          await this.emitCrawlPage(rule, 1, combined, 'night', client, true)
+          await this.emitCrawlPage(rule, 1, combined, 'night', client, false)
           if (combined.queued > 0) {
             this.log(
               'info',
@@ -2930,7 +3353,11 @@ export class ScanScheduler {
       this.emitCrawlProgress(null)
       this.emitBrowseGalleryReset()
       if (continuousCrawl) {
-        resetCatalogSessionForAppStart()
+        // Explicit user request: re-fetch Browse catalog from Civitai (not a normal restart).
+        invalidateAllCatalogBackfills()
+        for (const rule of getWatchRules()) {
+          inventory.clearBrowseRuleGallery(rule.id)
+        }
         this.crawler.resetPaginationHints()
         this.log(
           'info',
@@ -3086,7 +3513,15 @@ export class ScanScheduler {
                 ruleId: rule.id,
                 ruleName: rule.name,
                 pageNumber: nextPageNumber,
-                domain
+                domain,
+                purpose: skipBackfill ? 'peek' : 'catalog',
+                detail: rule.modelId
+                  ? `Fetching model ${rule.modelId}…`
+                  : skipBackfill
+                    ? 'Newest page — searching Civitai…'
+                    : cursor
+                      ? 'Catalog search — waiting for Civitai…'
+                      : 'First catalog page — searching Civitai…'
               })
               const apiCalls = skipBackfill ? 1 : cursor ? 2 : 1
               const apiDetail = rule.modelId
@@ -3136,7 +3571,7 @@ export class ScanScheduler {
                 } else if (cursor || backfill.pageModels > 0 || nextPageNumber > 1) {
                   setCrawlCursor(rule.id, null, domain)
                   clearLegacyUnscopedCursor(rule.id)
-                  const pass = incrementCatalogPass(rule.id, domain)
+                  const pass = incrementCatalogPass(rule.id, domain, watchRuleCrawlSignature(rule))
                   setBackfillPage(rule.id, 0, domain)
                   this.log(
                     'info',

@@ -142,7 +142,12 @@ export function sleep(ms: number): Promise<void> {
 export async function withNetworkRetry<T>(
   label: string,
   fn: () => Promise<T>,
-  options: { attempts?: number; baseDelayMs?: number } = {}
+  options: {
+    attempts?: number
+    baseDelayMs?: number
+    silent?: boolean
+    onRetry?: (info: { attempt: number; attempts: number; delayMs: number; error: string }) => void
+  } = {}
 ): Promise<T> {
   if (isNetworkOfflineCircuitOpen()) {
     throw new Error('Network offline — waiting before retrying Civitai')
@@ -169,9 +174,18 @@ export async function withNetworkRetry<T>(
       const retryable = isRetryableNetworkError(errorText(lastErr))
       if (!retryable || i === attempts - 1) throw lastErr
       const delay = baseDelayMs * (i + 1)
-      console.warn(
-        `[network] ${label} failed (${lastErr.message}) — retry ${i + 2}/${attempts} in ${delay}ms`
-      )
+      options.onRetry?.({
+        attempt: i + 2,
+        attempts,
+        delayMs: delay,
+        error: lastErr.message
+      })
+      // Preview CDN misses are common / noisy — do not spam Activity with every retry.
+      if (!options.silent) {
+        console.warn(
+          `[network] ${label} failed (${lastErr.message}) — retry ${i + 2}/${attempts} in ${delay}ms`
+        )
+      }
       await sleep(delay)
       if (isNetworkOfflineCircuitOpen()) throw lastErr
     }

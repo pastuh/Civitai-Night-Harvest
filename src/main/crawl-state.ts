@@ -6,6 +6,12 @@ interface CrawlStateSchema {
   lastPeekAt: Record<string, string>
   backfillPages: Record<string, number>
   catalogPass: Record<string, number>
+  /**
+   * Browse rule crawl fingerprint (watchRuleCrawlSignature) saved when a full catalog
+   * walk completes. If the rule criteria change, we clear "catalog done" and re-walk.
+   * Not used for Library (owned files) — only Harvest/Browse discovery.
+   */
+  ruleCatalogSignatures: Record<string, string>
   /** ISO timestamp of last library New Versions API poll (persists across restarts). */
   lastLibraryVersionScanAt: string | null
 }
@@ -17,6 +23,7 @@ const store = new Store<CrawlStateSchema>({
     lastPeekAt: {},
     backfillPages: {},
     catalogPass: {},
+    ruleCatalogSignatures: {},
     lastLibraryVersionScanAt: null
   }
 })
@@ -131,12 +138,22 @@ export function setBackfillPage(ruleId: string, page: number, domain?: import('.
   store.set('backfillPages', backfillPages)
 }
 
-export function incrementCatalogPass(ruleId: string, domain?: import('../shared/types').CivitaiDomain): number {
+export function incrementCatalogPass(
+  ruleId: string,
+  domain?: import('../shared/types').CivitaiDomain,
+  /** watchRuleCrawlSignature — ties "catalog done" to the rule criteria that were crawled. */
+  ruleSignature?: string
+): number {
   const id = domain ? crawlScopeId(ruleId, domain) : ruleId
   const catalogPass = { ...store.get('catalogPass') }
   const next = (catalogPass[id] ?? catalogPass[ruleId] ?? 0) + 1
   catalogPass[id] = next
   store.set('catalogPass', catalogPass)
+  if (ruleSignature) {
+    const sigs = { ...store.get('ruleCatalogSignatures') }
+    sigs[ruleId] = ruleSignature
+    store.set('ruleCatalogSignatures', sigs)
+  }
   return next
 }
 
@@ -177,18 +194,25 @@ export function clearCatalogPass(ruleId: string, domain?: import('../shared/type
 }
 
 /**
- * App launch: forget "catalog already done" so Harvest walks all rule pages once,
- * then switches to peek-only for the rest of the session.
+ * App launch: only clear in-memory peek counters for this process.
+ * Do NOT wipe catalogPass / cursors — Browse already finished Page 1…N last session;
+ * UI restores from SQLite and Civitai only peeks for *new* models.
+ * Forced full re-walk: Manual Scan during Harvest, domain change, or rule criteria change.
  */
 export function resetCatalogSessionForAppStart(): void {
-  store.set('catalogPass', {})
-  store.set('backfillPages', {})
-  store.set('cursors', {})
   for (const key of Object.keys(sessionPeekCounts)) delete sessionPeekCounts[key]
 }
 
-function keysForRule(storeKey: Record<string, unknown>, ruleId: string): string[] {
-  return Object.keys(storeKey).filter((k) => k === ruleId || k.startsWith(`${ruleId}:`))
+/**
+ * Force a full Browse catalog re-walk (Page 1…N) on next Harvest cycle.
+ * Used for Manual Scan, domain switch — not for ordinary app restart.
+ */
+export function invalidateAllCatalogBackfills(): void {
+  store.set('catalogPass', {})
+  store.set('backfillPages', {})
+  store.set('cursors', {})
+  store.set('ruleCatalogSignatures', {})
+  for (const key of Object.keys(sessionPeekCounts)) delete sessionPeekCounts[key]
 }
 
 /** Drop saved pagination/peek state when a Browse rule's search criteria change. */
@@ -197,15 +221,37 @@ export function clearRuleCrawlState(ruleId: string): void {
   const backfillPages = { ...store.get('backfillPages') }
   const catalogPass = { ...store.get('catalogPass') }
   const lastPeekAt = { ...store.get('lastPeekAt') }
+  const ruleCatalogSignatures = { ...store.get('ruleCatalogSignatures') }
   for (const key of keysForRule(cursors, ruleId)) delete cursors[key]
   for (const key of keysForRule(backfillPages, ruleId)) delete backfillPages[key]
   for (const key of keysForRule(catalogPass, ruleId)) delete catalogPass[key]
   for (const key of keysForRule(lastPeekAt, ruleId)) delete lastPeekAt[key]
+  delete ruleCatalogSignatures[ruleId]
   store.set('cursors', cursors)
   store.set('backfillPages', backfillPages)
   store.set('catalogPass', catalogPass)
   store.set('lastPeekAt', lastPeekAt)
+  store.set('ruleCatalogSignatures', ruleCatalogSignatures)
   delete sessionPeekCounts[ruleId]
+}
+
+/**
+ * If a rule's crawl signature no longer matches what we stored at catalog-complete,
+ * clear "done" so Harvest re-walks Page 1…N (criteria changed while app was closed, etc.).
+ */
+export function reconcileCatalogFingerprints(
+  rules: Array<{ id: string; signature: string }>
+): string[] {
+  const sigs = store.get('ruleCatalogSignatures') ?? {}
+  const invalidated: string[] = []
+  for (const rule of rules) {
+    const saved = sigs[rule.id]
+    if (!saved) continue
+    if (saved === rule.signature) continue
+    clearRuleCrawlState(rule.id)
+    invalidated.push(rule.id)
+  }
+  return invalidated
 }
 
 export function getCrawlStatus(): Record<
@@ -249,4 +295,8 @@ export function getCrawlStatus(): Record<
     }
   }
   return out
+}
+
+function keysForRule(storeKey: Record<string, unknown>, ruleId: string): string[] {
+  return Object.keys(storeKey).filter((k) => k === ruleId || k.startsWith(`${ruleId}:`))
 }

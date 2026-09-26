@@ -4,7 +4,8 @@ import { join } from 'path'
 import { fetchFirstWorkingPreview } from './preview-fetch'
 import { getPreviewCacheDir } from './media-cache-path'
 
-const WORKERS = 6
+/** Keep CDN warm-cache gentle — parallel storms cause fetch-failed spam and slow Harvest. */
+const WORKERS = 2
 
 function cacheDir(): string {
   return getPreviewCacheDir()

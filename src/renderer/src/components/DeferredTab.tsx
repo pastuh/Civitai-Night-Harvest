@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { DeferredDownload, InventoryRecord, TagFolderRule, WatchRule } from '../../../shared/types'
-import { isDeferredVisibleInAwaitingTab } from '../../../shared/deferred-visibility'
+import { deferredIsSessionPause, isDeferredVisibleInAwaitingTab } from '../../../shared/deferred-visibility'
 import {
   DEFERRED_KIND_LABELS,
   MAX_AUTO_DEFERRED_ATTEMPTS,
@@ -345,22 +345,19 @@ export function DeferredTab({
       .filter((id) => id > 0)
       .sort((a, b) => a - b)
       .join(',')
-    const hasNewVersions = versionKey !== deferredVersionSnapshotRef.current
+    const prevKey = deferredVersionSnapshotRef.current
+    // First paint: let browse-cache / preview hook fill thumbs — don't storm enrichDeferred.
+    const hasNewVersions = prevKey !== '' && versionKey !== prevKey
     deferredVersionSnapshotRef.current = versionKey
-    const needsPreview = visibleDeferred.some((d) => {
-      if (d.versionId <= 0) return false
-      const source = deferredCardPreviewSource(d, inventoryByVersion, browseCards[d.versionId])
-      const thumb = resolveModelCardThumb(
-        source,
-        previewOverrides[d.versionId],
-        browseCards[d.versionId]
-      )
-      return !thumb.urls.length
-    })
     const needsBaseModel = visibleDeferred.some((d) =>
       deferredNeedsBaseModelBackfill(d, browseCards, inventoryByVersion)
     )
-    if (!needsPreview && !hasNewVersions && !needsBaseModel) return
+    const missingPreviewCount = visibleDeferred.filter(
+      (d) => !isDisplayablePreviewUrl(d.previewUrl)
+    ).length
+    // Previews: hook fills thumbs; also run enrich when many rows lack stored previewUrl
+    // (Session pause often never hit browse_card_cache during harvest skip).
+    if (!needsBaseModel && !hasNewVersions && missingPreviewCount < 8) return
     enrichBusyRef.current = true
     void window.api
       .enrichDeferred()
@@ -372,7 +369,6 @@ export function DeferredTab({
     isActive,
     visibleDeferred,
     inventoryByVersion,
-    previewOverrides,
     browseCards
   ])
 
@@ -405,13 +401,20 @@ export function DeferredTab({
     [visibleDeferred, hiddenModelIds, sessionBannedByModelId, pinFavoriteSet, deferredSort]
   )
 
-  /** Harvest rows from disabled / non-matching Browse rules are hidden. */
+  /** Harvest rows from disabled / non-matching Browse rules are hidden.
+   *  Session pause stays out of All — use the Session pause sidebar filter. */
   const scopedDeferred = useMemo(
     () =>
-      activeDeferred.filter((d) =>
-        isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)
-      ),
-    [activeDeferred, watchRules, eaFavoriteIds]
+      activeDeferred.filter((d) => {
+        if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
+        if (
+          deferredIsSessionPause(d, hiddenTags, bannedTags, (id) => tagSkipAllowIds.has(id))
+        ) {
+          return false
+        }
+        return true
+      }),
+    [activeDeferred, watchRules, eaFavoriteIds, hiddenTags, bannedTags, tagSkipAllowIds]
   )
 
   const hiddenByRulesCount = useMemo(

@@ -23,7 +23,8 @@ import {
   downloadDomainForModel,
   parseRuleFilterTags,
   modelMatchesRuleKeywords,
-  getModelPageUrl
+  getModelPageUrl,
+  isDisplayablePreviewUrl
 } from '../shared/utils'
 import { isVersionEarlyAccess, formatEarlyAccessReason } from '../shared/early-access'
 import { resolveSearchNextCursor, sanitizeCrawlCursor } from '../shared/civitai-pagination'
@@ -57,6 +58,8 @@ export interface RuleQueueOptions {
   markManual?: boolean
   log?: ActivityLogFn
   onFetchProgress?: (payload: import('../shared/types').CrawlProgressPayload) => void
+  /** Catalog page number (1-based) for status — must stay stable during this page's processing. */
+  pageNumber?: number
 }
 
 export interface RuleQueueResult {
@@ -233,9 +236,11 @@ function pickVersionsForNewModel(
  * matches owned bases / Browse Rules baseModels.
  */
 export function pruneIrrelevantPendingVersions(pending: PendingVersion[]): PendingVersion[] {
+  if (!pending.length) return pending
   const ruleBases = allowedBaseModelsFromRules()
   const ruleSet = ruleBases ?? new Set<string>()
-  const snapshot = inventory.buildInventorySnapshot()
+  // Reuse recent snapshot — boot used to call getAllVersions() on every pending:get.
+  const snapshot = inventory.getInventorySnapshotCached(60_000)
   const kept: PendingVersion[] = []
   for (const p of pending) {
     if (inventory.isModelBanned(p.modelId) || inventory.isMissingUnavailable(p.modelId)) {
@@ -285,8 +290,15 @@ export async function enrichPendingVersionPreviews(
 
   const domainByModel = libraryDomainByModelId()
   let changed = false
+  let fetched = 0
+  const FETCH_CAP = 12
 
   for (const [modelId, items] of byModel) {
+    // Cache-first: skip models whose Updates cards already have displayable previews.
+    const needNetwork = items.some((item) => !isDisplayablePreviewUrl(item.previewUrl))
+    if (!needNetwork) continue
+    if (fetched >= FETCH_CAP) break
+    fetched++
     try {
       const preferred = domainByModel.get(modelId) ?? 'com'
       const { model, domain } = await fetchLibraryModel(pool, modelId, preferred)
@@ -751,6 +763,23 @@ export async function queueModelsFromPage(
 
   let searchResult
   try {
+    const scopeParts: string[] = []
+    if (tagPrimary) scopeParts.push(`tag “${tagPrimary}”`)
+    else if (rule.query?.trim()) scopeParts.push(`query “${rule.query.trim().slice(0, 36)}”`)
+    if (searchOpts.sort) scopeParts.push(searchOpts.sort)
+    if (rule.modelType) scopeParts.push(rule.modelType)
+    const scope = scopeParts.length ? scopeParts.join(' · ') : 'rule filters'
+    const searchDetail = apiCursor
+      ? `Searching Civitai catalog (${scope})…`
+      : `Searching Civitai (${scope})…`
+    options.onFetchProgress?.({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      phase: 'fetching',
+      domain: client.getDomain(),
+      fetchPurpose: apiCursor ? 'catalog' : 'peek',
+      detail: searchDetail
+    })
     searchResult = await client.searchModels({
       query: tagPrimary ? undefined : rule.query || undefined,
       tag: tagPrimary,
@@ -775,9 +804,23 @@ export async function queueModelsFromPage(
 
   let models = searchResult.items
   result.apiReturnCount = models.length
+  const pageNumber = options.pageNumber
+  // Yield so the status bar can leave "Waiting for Civitai…" — HTTP is already done (~1s).
+  // Sync SQLite/queue work used to freeze the UI on that label for tens of seconds.
+  options.onFetchProgress?.({
+    ruleId: rule.id,
+    ruleName: rule.name,
+    phase: 'processing',
+    pageNumber,
+    domain: client.getDomain(),
+    fetchPurpose: apiCursor ? 'catalog' : 'peek',
+    detail: `Got ${models.length} on this API page — processing…`
+  })
+  await new Promise<void>((r) => setImmediate(r))
+
   models = await supplementRuleSearchWithTagVariants(client, rule, filter, models, {
     hasCursor: Boolean(apiCursor),
-    pageNumber: apiCursor ? undefined : 1,
+    pageNumber: apiCursor ? pageNumber : 1,
     domain: client.getDomain(),
     onProgress: options.onFetchProgress
   })
@@ -785,12 +828,44 @@ export async function queueModelsFromPage(
   // Civitai query/tag search already scopes results — model.tags often omits the searched tag.
   result.pageModels = models.length
   result.rawModels = models
-  result.sampleModels = buildSampleModels(models, client, filter)
 
+  // Queue / Updates / EA FIRST — start downloads as soon as anything is queued.
+  // Browse card materialization used to run before this and delayed the pump by ~1 min.
   const ctx = createRuleQueueContext(pendingVersions, onPendingChange)
-  for (const model of models) {
-    processModel(client, downloadQueue, rule, options, ctx, result, model)
+  const total = models.length
+  let lastQueued = 0
+  for (let i = 0; i < models.length; i++) {
+    if (i === 0 || (i + 1) % 20 === 0 || i === total - 1) {
+      const onPage = i + 1
+      const pct = total > 0 ? Math.round((onPage / total) * 100) : 100
+      options.onFetchProgress?.({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        phase: 'processing',
+        pageNumber,
+        domain: client.getDomain(),
+        // Percent of this API page only (≤100 models). Cursor responses have no catalog totalItems.
+        detail: total > 0 ? `Checking queue ${pct}%` : 'No models on this page'
+      })
+      await new Promise<void>((r) => setImmediate(r))
+    }
+    processModel(client, downloadQueue, rule, options, ctx, result, models[i])
+    if (result.queued > lastQueued) {
+      lastQueued = result.queued
+      startDownloadsIfQueued(downloadQueue, result.queued)
+    }
   }
+
+  options.onFetchProgress?.({
+    ruleId: rule.id,
+    ruleName: rule.name,
+    phase: 'processing',
+    pageNumber,
+    domain: client.getDomain(),
+    detail: 'Building Browse cards…'
+  })
+  await new Promise<void>((r) => setImmediate(r))
+  result.sampleModels = buildSampleModels(models, client, filter)
 
   result.nextCursor = resolveSearchNextCursor(searchResult.metadata)
   if (
@@ -846,7 +921,13 @@ export async function runDualRulePageCheck(
   backfillCursor: string | undefined,
   pendingVersions: PendingVersion[] = [],
   onPendingChange?: (pending: PendingVersion[]) => void,
-  dualOptions: { forcePeek?: boolean; respectPeekCooldown?: boolean; skipBackfill?: boolean } = {}
+  dualOptions: {
+    forcePeek?: boolean
+    respectPeekCooldown?: boolean
+    skipBackfill?: boolean
+    /** When true, never fetch the newest page alongside backfill (catalog walk). */
+    skipPeek?: boolean
+  } = {}
 ): Promise<{
   peek: RulePageQueueResult | null
   backfill: RulePageQueueResult
@@ -901,6 +982,7 @@ export async function runDualRulePageCheck(
     ? msUntilNewestPeekAllowed(rule.id, settings.newestPeekIntervalMinutes, client.getDomain())
     : 0
   const shouldPeek =
+    !dualOptions.skipPeek &&
     hasBackfillCursor &&
     (dualOptions.forcePeek === true || !respectCooldown || waitMs <= 0)
 
@@ -955,7 +1037,9 @@ export function startDownloadsIfQueued(
   onStarted?.()
 }
 
-/** Queue browse/crawl models that are missing from library but eligible — fills download pipeline. */
+/** Queue Browse harvest models that are missing from Library — fills download pipeline.
+ * Never queues Library (owned) cards. Never auto-queues Updates-style siblings —
+ * those stay on Updates until Download / Always update (see processModel + pending:approve). */
 export function queueEligibleTestModels(
   client: CivitaiClient,
   downloadQueue: DownloadQueue,
@@ -1005,14 +1089,12 @@ export function queueEligibleTestModels(
       skipped.needsConfirm++
       continue
     }
-    // Owned model, newer version card — New Versions confirm / Always update / Settings auto-NV.
+    // Already own this model (any version) → this is an Updates offer, not Browse harvest.
+    // Library cards never go to the download queue from here.
+    // Queue only after Updates → Download / Always update (or Settings auto-NV via processModel).
     if (inventory.getVersionsForModel(m.id).length > 0) {
-      const autoNv =
-        getSettings().autoDownloadNewVersions === true || inventory.isModelAutoUpdate(m.id)
-      if (!autoNv) {
-        skipped.needsConfirm++
-        continue
-      }
+      skipped.needsConfirm++
+      continue
     }
     if (m.isBanned || inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) {
       skipped.banned++
@@ -1208,7 +1290,9 @@ async function fetchLibraryModel(
   modelId: number,
   preferredDomain: CivitaiDomain
 ): Promise<{ model: CivitaiModel; domain: CivitaiDomain }> {
-  const pace = { pace: 'crawl' as const }
+  // Library Updates poll must NOT use the crawl lane — that blocked Browse catalog pages
+  // for 10–30s behind Early-Access / version checks ("prior Civitai search still running").
+  const pace = { pace: 'background' as const }
   const client = pool.forDomain(preferredDomain)
   try {
     return { model: await client.getModel(modelId, pace), domain: preferredDomain }
@@ -1241,10 +1325,17 @@ export interface LibraryVersionScanOptions {
   force?: boolean
 }
 
-/** Background polls skip models checked within this window — new versions rarely appear sooner. */
-export const LIBRARY_VERSION_CHECK_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000
-/** Cap API calls per background sweep so the UI stays responsive on large libraries. */
-export const LIBRARY_VERSION_CHECK_BATCH = 20
+/** Background polls skip models checked within this window (per modelId). */
+export const LIBRARY_VERSION_CHECK_COOLDOWN_MS = 45 * 60 * 1000 // 45 minutes — catch new versions quickly
+/** Cap API calls per background sweep so Harvest / downloads stay responsive. */
+export const LIBRARY_VERSION_CHECK_BATCH = 50
+
+function libraryCooldownLabel(): string {
+  const mins = Math.round(LIBRARY_VERSION_CHECK_COOLDOWN_MS / 60_000)
+  if (mins < 120) return `${mins} min`
+  const hours = Math.round(mins / 60)
+  return `${hours}h`
+}
 
 function allowedBaseModelsFromRules(): Set<string> | null {
   const bases = new Set<string>()
@@ -1314,7 +1405,7 @@ export async function scanOwnedModelsForNewVersions(
     options.log?.(
       'info',
       modelsSkipped
-        ? `Library check: all ${modelsSkipped} model(s) checked within the last 2 days — nothing to poll`
+        ? `Library check: all ${modelsSkipped} model(s) checked within the last ${libraryCooldownLabel()} — nothing to poll`
         : 'Library check: no models in scope'
     )
     return result
@@ -1395,7 +1486,7 @@ export async function scanOwnedModelsForNewVersions(
       // Do not mark checked on failure — allow retry on next sweep.
     }
 
-    if (i + 1 < dueModelIds.length) await sleep(250)
+    if (i + 1 < dueModelIds.length) await sleep(150)
   }
 
   return result

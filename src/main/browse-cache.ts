@@ -1,10 +1,26 @@
 import type { WatchRuleTestModel } from '../shared/types'
 import * as inventory from './inventory'
-import { resolveCachedPreviewUrls } from './preview-cache'
+import { localPreviewPathIfCached, resolveCachedPreviewUrls } from './preview-cache'
 
 export async function cacheBrowseCardPreviews(cards: WatchRuleTestModel[]): Promise<void> {
+  const needDisk = cards.filter((card) => {
+    const remote = card.previewUrls?.length
+      ? card.previewUrls
+      : card.previewUrl
+        ? [card.previewUrl]
+        : []
+    if (!remote.length) return false
+    // Already media:/file: or on-disk cache — skip network/disk rewrite storm.
+    return !remote.every(
+      (u) =>
+        u.startsWith('media:') ||
+        u.startsWith('file:') ||
+        Boolean(localPreviewPathIfCached(u))
+    )
+  })
+  if (!needDisk.length) return
   await Promise.all(
-    cards.map(async (card) => {
+    needDisk.map(async (card) => {
       const remote = card.previewUrls?.length
         ? card.previewUrls
         : card.previewUrl
@@ -36,6 +52,22 @@ export function upsertBrowseCards(cards: WatchRuleTestModel[]): void {
       card: c,
       sourceUpdated: c.publishedAt ?? undefined
     }))
+  )
+}
+
+/**
+ * Persist Browse (Harvest) page cards: card JSON + which rule's gallery they belong to.
+ * Library (owned disk files + sidecar preview/json) is separate — callers must not pass
+ * owned versions here for routine harvest refresh.
+ */
+export function upsertBrowseCardsForRule(ruleId: string, cards: WatchRuleTestModel[]): void {
+  if (!ruleId || !cards.length) return
+  const fresh = cards.filter((c) => c.versionId > 0 && !inventory.hasVersion(c.versionId))
+  if (!fresh.length) return
+  upsertBrowseCards(fresh)
+  inventory.appendBrowseRuleGalleryMembers(
+    ruleId,
+    fresh.map((c) => c.versionId)
   )
 }
 

@@ -117,7 +117,11 @@ const api = {
 
   getInventory: (options?: InventoryGetOptions): Promise<InventoryGetResult> =>
     ipcRenderer.invoke('inventory:getAll', options),
+  /** Fast library size for the Loading popup (COUNT only). */
+  getInventoryCount: (): Promise<number> => ipcRenderer.invoke('inventory:count'),
   notifyRendererReady: (): Promise<void> => ipcRenderer.invoke('app:rendererReady'),
+  /** After Loading popup closes — starts Harvest / scan / downloads. */
+  startSession: (): Promise<void> => ipcRenderer.invoke('app:startSession'),
   getAppIconDataUrl: (): Promise<string | null> => ipcRenderer.invoke('app:iconDataUrl'),
   hideWindow: (): Promise<void> => ipcRenderer.invoke('window:hide'),
   toggleFullscreen: (): Promise<boolean> => ipcRenderer.invoke('window:toggleFullscreen'),

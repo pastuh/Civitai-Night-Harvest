@@ -703,8 +703,8 @@ export const en = {
     loadingNextPage: 'Loading next page…',
     showingGridCount: 'Showing {shown} of {total} — scroll for more',
     fetchingFirstPage: 'Fetching models from Civitai API…',
-    galleryBusyTitle: 'Fetching…',
-    galleryBusyDetail: 'Please wait. Progress is shown in the status bar below.',
+    galleryBusyTitle: 'Fetching from Civitai…',
+    galleryBusyDetail: 'Active rule and page are in the status bar at the bottom.',
     fetchingRulePage: 'Fetching page {page} for “{rule}”…',
     waitingNextPage: 'Waiting ~{min} min before next Civitai page…',
     resultsUpdating: 'Updating…',
@@ -768,8 +768,10 @@ export const en = {
     galleryAwaitingTitle: 'Browse gallery is empty — turn on Harvest',
     galleryAwaitingDetail:
       'No models in the gallery yet. Press Harvest in the header to load models from your enabled rules.',
-    galleryAwaitingDetailActive: 'Fetching… Please wait.',
-    galleryAwaitingDetailHarvest: 'Fetching… Please wait.',
+    galleryAwaitingDetailActive:
+      'Peek idle — models come from local Browse cache. Watch the bottom bar for the next Civitai peek.',
+    galleryAwaitingDetailHarvest:
+      'Peek idle — models come from local Browse cache. Watch the bottom bar for the next Civitai peek.',
     galleryPausedOffline:
       'Browse is idle — output drive is offline. Fix LoRA/Checkpoint folders in Settings before harvesting.',
     emptyPreview: 'Preview “{name}”',
@@ -1119,13 +1121,20 @@ export const en = {
   load: {
     failed: 'Failed to load',
     starting: 'Loading application',
+    connecting: 'Starting…',
     loadingSettings: 'Reading saved settings…',
     loadingSettingsRules: 'Loading Browse rules…',
-    stepSettings: 'Reading saved settings from disk…',
+    stepSettings: 'Reading settings…',
     stepRules: 'Loading Tag folders and Browse harvest rules…',
+    stepRulesCount: 'Tag folders: {tags} · Browse rules: {rules} ({enabled} on)',
     stepLists: 'Loading Updates, Early access, Missing, and ban lists…',
-    stepLibrary: 'Loading your model library from the database…',
-    stepSession: 'Handing off to the main window…'
+    stepListsCount:
+      'Updates: {updates} · Early access: {ea} · Missing: {missing} · Incomplete: {incomplete}',
+    stepLibrary: 'Counting models in your library…',
+    stepLibraryCount: 'Library: {count} model version(s)',
+    stepLibraryDone: 'Library: {count} model version(s) — cards load after this screen',
+    stepSession: 'Handing off to the main window…',
+    stepSessionReady: 'Ready — {tags} tags · {rules} rules · {library} in library'
   },
   app: {
     apiUnavailable: 'App API not available — restart the application.',
@@ -1757,6 +1766,19 @@ export const en = {
     scanningApiFetchingRule: 'Fetching page {page} · Rule: {rules}',
     scanningApiFetchingWithTotal: 'Fetching page {page} · {total} in gallery…',
     scanningApiFetchingWithTotalRule: 'Fetching page {page} · {total} in gallery · {rules}',
+    scanningApiProcessing: 'Page {page} received…',
+    scanningApiProcessingRule: 'Page {page} received · {rules}',
+    processCivitaiApi: 'Searching Civitai…',
+    processTagSearch: 'Extra tag search {step}/{total}: “{tag}”',
+    processTagPrep: 'Preparing {total} tag searches…',
+    processMerging: 'Next: catalog search…',
+    processWaiting: 'Waiting…',
+    processSaving: 'Next: catalog search…',
+    processDownloadStarting: 'Download starting…',
+    processNextPage: 'Next: catalog search…',
+    processCatalogDone: 'Catalog done',
+    processPaceWait: 'Short API pause…',
+    processPriorRequest: 'Waiting — prior Civitai search still running…',
     scanningApiFetchingTags: 'Tag search {step}/{total}: “{tag}”…',
     scanningApiFetchingTagsRule: 'Tag {step}/{total}: “{tag}” · Rule: {rules}',
     scanningApiFetchingTagsPrep: 'Preparing {total} tag search variants…',
@@ -1766,6 +1788,12 @@ export const en = {
     peekCountdownUnderMin: '<1 min',
     scanningApiPeeking: 'Peeking {index}/{total} · {current}',
     scanningApiPeekingMulti: 'Peeking {index}/{total} · {current} · then {also}',
+    scanningApiPeekingOne: 'Newest peek…',
+    scanningApiPeekingRule: 'Newest peek · {rules}',
+    scanningApiCatalog: 'Catalog page {page}…',
+    scanningApiCatalogRule: 'Catalog page {page} · {rules}',
+    scanningApiCatalogWithTotal: 'Catalog page {page} · {total} in gallery…',
+    scanningApiCatalogWithTotalRule: 'Catalog page {page} · {total} in gallery · {rules}',
     scanningCatalogComplete: 'Catalog complete · {page} page(s) · {total} in gallery',
     scanningCatalogCompleteRule: 'Catalog complete · {page} page(s) · {total} in gallery · {rules}',
     scanningCatalogCompleteFiltered:
@@ -1790,7 +1818,8 @@ export const en = {
     ratingUnknown: '{count} unknown',
     detailMore: '(+{count} more)',
     bytesReceived: '{bytes} received',
-    readyWaitingFetch: 'Harvest on — waiting for Civitai activity…',
+    readyWaitingFetch:
+      'Harvest on — peek idle (gallery from cache). Colored bar = Owned / Yield, not a hidden fetch.',
     outputDriveOffline:
       'Output drive offline — Harvest off, downloads paused. Fix folders in Settings.'
   }

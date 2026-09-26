@@ -211,7 +211,17 @@ function primaryActivityLabel(
 
 
 
-  if (versionScanning || status === 'checking') {
+  // Harvest / Civitai page fetch owns the bar. Background "Check library for new versions"
+  // must not hide "Fetching page N · Rule: …".
+  const harvestOwnsStatusBar =
+    status === 'scanning' ||
+    Boolean(galleryAwaiting) ||
+    crawlProgress != null
+
+  if (
+    (versionScanning || status === 'checking') &&
+    !harvestOwnsStatusBar
+  ) {
 
     if (versionScanProgress && versionScanProgress.total > 0) {
 
@@ -262,6 +272,13 @@ function primaryActivityLabel(
         : t('globalStatus.scanningApiWaiting', { time: label })
     }
 
+    if (crawlProgress?.phase === 'processing') {
+      const procPage = crawlProgress.pageNumber ?? page ?? 1
+      return rules
+        ? t('globalStatus.scanningApiProcessingRule', { page: procPage, rules })
+        : t('globalStatus.scanningApiProcessing', { page: procPage })
+    }
+
     if (crawlProgress?.phase === 'fetching-tags') {
       const step = crawlProgress.tagFetchStep ?? 0
       const total = crawlProgress.tagFetchTotal ?? 0
@@ -278,26 +295,45 @@ function primaryActivityLabel(
 
     if (crawlProgress?.phase === 'fetching') {
       const fetchPage = crawlProgress.pageNumber ?? page ?? 1
+      const purpose = crawlProgress.fetchPurpose
       // Peek-only multi-rule: show which rule is active and what else is in the set.
       const peekSet = crawlProgress.ruleNames?.map((n) => n.trim()).filter(Boolean) ?? []
-      if (peekSet.length > 1) {
-        const focus = crawlProgress.ruleName?.trim() || peekSet[0]
-        const idx = peekFocusIndex(peekSet, crawlProgress.ruleName) + 1
-        const rest = peekSet.filter((_, i) => i !== idx - 1)
-        const also = formatRuleNames(rest)
-        if (also) {
-          return t('globalStatus.scanningApiPeekingMulti', {
+      if (purpose === 'peek' || peekSet.length > 1) {
+        if (peekSet.length > 1) {
+          const focus = crawlProgress.ruleName?.trim() || peekSet[0]
+          const idx = peekFocusIndex(peekSet, crawlProgress.ruleName) + 1
+          const rest = peekSet.filter((_, i) => i !== idx - 1)
+          const also = formatRuleNames(rest)
+          if (also) {
+            return t('globalStatus.scanningApiPeekingMulti', {
+              index: idx,
+              total: peekSet.length,
+              current: focus,
+              also
+            })
+          }
+          return t('globalStatus.scanningApiPeeking', {
             index: idx,
             total: peekSet.length,
-            current: focus,
-            also
+            current: focus
           })
         }
-        return t('globalStatus.scanningApiPeeking', {
-          index: idx,
-          total: peekSet.length,
-          current: focus
-        })
+        return rules
+          ? t('globalStatus.scanningApiPeekingRule', { rules })
+          : t('globalStatus.scanningApiPeekingOne')
+      }
+      if (purpose === 'catalog') {
+        return rules
+          ? total > 0
+            ? t('globalStatus.scanningApiCatalogWithTotalRule', {
+                page: fetchPage,
+                total,
+                rules
+              })
+            : t('globalStatus.scanningApiCatalogRule', { page: fetchPage, rules })
+          : total > 0
+            ? t('globalStatus.scanningApiCatalogWithTotal', { page: fetchPage, total })
+            : t('globalStatus.scanningApiCatalog', { page: fetchPage })
       }
       if (total > 0) {
         return rules
@@ -772,9 +808,14 @@ export function GlobalStatusBar({
     }
 
     if (versionScanProgress?.modelName && (versionScanning || status === 'checking')) {
-
-      return versionScanProgress.modelName
-
+      // Only when library check owns the bar — not while Harvest is fetching a rule page.
+      if (
+        status !== 'scanning' &&
+        crawlProgress == null &&
+        !galleryAwaiting
+      ) {
+        return versionScanProgress.modelName
+      }
     }
 
     return null
@@ -799,16 +840,18 @@ export function GlobalStatusBar({
 
     versionScanning,
 
-    versionScanProgress
+    versionScanProgress,
+
+    crawlProgress,
+
+    galleryAwaiting
 
   ])
 
 
 
   const segments = useMemo(() => {
-
     const parts: string[] = []
-
     // Always show scan/fetch/idle labels — even in minimal UI (otherwise the bar
     // stays empty while Civitai is loading the first Browse page).
     if (activityLabel) parts.push(activityLabel)
@@ -816,55 +859,60 @@ export function GlobalStatusBar({
     if (summary && summary !== activityLabel) parts.push(summary)
 
     if (uiExtended && detail) {
-
       if (downloading.length > 0) parts.push(detail)
-
-      else if (failed.length > 0 && downloading.length === 0) parts.push(`${t('globalStatus.failedPrefix')} ${detail}`)
-
+      else if (failed.length > 0 && downloading.length === 0)
+        parts.push(`${t('globalStatus.failedPrefix')} ${detail}`)
       else if (queued.length > 0 && downloading.length === 0 && failed.length === 0) {
-
         parts.push(`${t('globalStatus.nextPrefix')} ${detail}`)
-
       } else if (!activityLabel || detail !== activityLabel) {
-
         parts.push(detail)
-
       }
-
     }
 
     return parts
-
   }, [activityLabel, summary, detail, downloading.length, failed.length, queued.length, t, uiExtended])
 
+  /** Right-side: what Harvest/Civitai is doing right now (API / tags / merge). */
+  const processDetail = useMemo(() => {
+    if (!crawlProgress) return null
+    if (crawlProgress.detail?.trim()) return crawlProgress.detail.trim()
+    if (crawlProgress.phase === 'fetching') return t('globalStatus.processCivitaiApi')
+    if (crawlProgress.phase === 'fetching-tags') {
+      const step = crawlProgress.tagFetchStep ?? 0
+      const total = crawlProgress.tagFetchTotal ?? 0
+      const tag = crawlProgress.fetchTagLabel
+      if (tag) return t('globalStatus.processTagSearch', { step, total, tag })
+      return t('globalStatus.processTagPrep', { total })
+    }
+    // Local SQLite cache is silent — never show "Saving…" as if fetch is blocked.
+    if (crawlProgress.phase === 'processing') return t('globalStatus.processNextPage')
+    if (crawlProgress.phase === 'waiting') return t('globalStatus.processWaiting')
+    if (crawlProgress.phase === 'page-done') {
+      if ((crawlProgress.pageQueued ?? 0) > 0 || crawlProgress.detail?.includes('Download')) {
+        return t('globalStatus.processDownloadStarting')
+      }
+      // Prefer concrete detail from main ("Next: GET /models · catalog page N").
+      if (crawlProgress.detail?.trim()) return crawlProgress.detail.trim()
+      if (crawlProgress.hasMorePages) return t('globalStatus.processNextPage')
+      return null
+    }
+    if (crawlProgress.phase === 'catalog-complete') return t('globalStatus.processCatalogDone')
+    return null
+  }, [crawlProgress, t])
 
-
-  if (!segments.length) return null
-
-
+  if (!segments.length && !processDetail) return null
 
   const dotKind = resolveStatusDotKind(
-
     status,
-
     downloading,
-
     queued,
-
     failed,
-
     queuePaused,
-
-    Boolean(activityLabel)
-
+    Boolean(activityLabel || processDetail)
   )
 
-
-
   return (
-
     <footer className="global-status-bar" role="status" aria-live="polite">
-
       {onNavigateBack ? (
         <button
           type="button"
@@ -881,10 +929,13 @@ export function GlobalStatusBar({
 
       <span className="global-status-text">{segments.join(' · ')}</span>
 
+      {processDetail ? (
+        <span className="global-status-process" title={processDetail}>
+          {processDetail}
+        </span>
+      ) : null}
     </footer>
-
   )
-
 }
 
 

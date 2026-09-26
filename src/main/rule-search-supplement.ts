@@ -78,7 +78,11 @@ export async function supplementRuleSearchWithTagVariants(
       fetchLoaded,
       fetchMatched,
       fetchSkipped,
-      fetchDuplicates
+      fetchDuplicates,
+      detail: tagLabel
+        ? `Extra tag search ${step}/${tagPlan.length}: “${tagLabel}”`
+        : `Preparing ${tagPlan.length} tag searches…`,
+      fetchPurpose: 'tag'
     })
   }
 

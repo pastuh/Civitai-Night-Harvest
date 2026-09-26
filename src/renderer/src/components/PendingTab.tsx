@@ -924,10 +924,10 @@ export const PendingTab = memo(function PendingTab({
 
   const previewSources = useMemo(
     () =>
-      filtered.map((row) =>
+      visibleRows.map((row) =>
         pendingCardPreviewSource(row.item, ownedPrimaryByModel.get(row.item.modelId))
       ),
-    [filtered, ownedPrimaryByModel]
+    [visibleRows, ownedPrimaryByModel]
   )
 
   const { overrides: previewOverrides, browseCards, markPreviewBroken } =

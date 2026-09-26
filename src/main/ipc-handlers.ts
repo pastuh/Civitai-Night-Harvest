@@ -112,6 +112,7 @@ const IPC_CHANNELS = [
   'watch:test',
   'watch:queueAll',
   'inventory:getAll',
+  'inventory:count',
   'model:ban',
   'model:forget',
   'model:unban',
@@ -171,6 +172,7 @@ const IPC_CHANNELS = [
   'model:getDetail',
   'library:verifyHashes',
   'app:rendererReady',
+  'app:startSession',
   'app:iconDataUrl',
   'window:hide',
   'window:toggleFullscreen',
@@ -509,7 +511,7 @@ export function initIpc(): void {
   scheduler = new ScanScheduler(clientPool, downloadQueue, () => mainWindow)
   bindRendererWindow(() => mainWindow)
   sched = scheduler
-  downloadQueue.restoreFromDisk()
+  // restoreFromDisk / inventory hydrate run in startSession — not here (blocks UI).
 
   /** Queue one model as manual so blocked tags cannot re-skip it.
    *  Returns whether the item is actively queued (not merely still deferred/EA-waiting). */
@@ -816,6 +818,8 @@ export function initIpc(): void {
     return scheduler.queueAllForRule(rule)
   })
 
+  ipcMain.handle('inventory:count', () => inventory.countVersions())
+
   ipcMain.handle(
     'inventory:getAll',
     async (
@@ -831,6 +835,8 @@ export function initIpc(): void {
         recognizeLocalModels?: boolean
       }
     ) => {
+      // Yield so the Loading overlay / title bar can paint before a large SELECT *.
+      await new Promise<void>((resolve) => setImmediate(resolve))
       let removedMissing = 0
       let enrichedMeta = 0
       let hashesBackfilled = 0
@@ -918,7 +924,9 @@ export function initIpc(): void {
           downloadQueue.syncWithInventory()
         }
       }
-      let items = inventory.getAllVersions()
+      let items = options?.syncDisk
+        ? inventory.getAllVersions()
+        : inventory.getAllVersionsCached()
       let repairedPreviews = 0
       let repairedRatings = 0
       let repairedSwarmHints = 0
@@ -1431,11 +1439,8 @@ export function initIpc(): void {
   )
 
   ipcMain.handle('exclusions:get', () => {
-    try {
-      inventory.enrichExclusionStubsFromBrowse(scheduler.getBrowseGalleryModels())
-    } catch {
-      /* browse cache optional */
-    }
+    // Skip browse enrich on cold boot — gallery is empty until startSession; enrichment
+    // was a wasted walk that stacked with other boot IPC and froze the title bar.
     return inventory.getExclusionReviewItems()
   })
 
@@ -2119,6 +2124,10 @@ export function initIpc(): void {
     await onRendererReady()
   })
 
+  ipcMain.handle('app:startSession', async () => {
+    await ensureSchedulerStarted()
+  })
+
   ipcMain.handle('app:iconDataUrl', () => getAppIconDataUrl(32))
 
   ipcMain.handle('window:hide', () => {
@@ -2359,9 +2368,10 @@ export function initIpc(): void {
     inventory.backfillDeferredPreviewsFromInventory()
     inventory.backfillDeferredPreviewsFromBrowseCache()
     downloadQueue.reconcileEarlyAccessFromBrowseCache()
+    // Prefer cache for baseModel — only fetch a few missing IDs (avoid boot API storm).
     let baseModelFetches = 0
     for (const row of inventory.getAllDeferredDownloads()) {
-      if (baseModelFetches >= 80) break
+      if (baseModelFetches >= 12) break
       if ((row.baseModel || '').trim()) continue
       if (row.versionId <= 0) continue
       baseModelFetches++
@@ -2375,37 +2385,40 @@ export function initIpc(): void {
       }
     }
 
-    // EA versions often lack images[] — fill covers from sibling versions / gallery.
+    // Only fill covers that are still blank after cache backfill (don't re-hit Civitai for cached).
     const afterMeta = inventory.getAllDeferredDownloads()
-    await enrichDeferredPreviews(
-      clientPool,
-      afterMeta,
-      'all',
-      (versionId, previewUrl, previewUrls) => {
-        const row = inventory.getDeferredDownload(versionId)
-        if (!row) return
-        const normalized = normalizePreviewDisplayUrl(previewUrl)
-        if (!isDisplayablePreviewUrl(normalized)) return
-        inventory.upsertDeferredDownload({
-          modelId: row.modelId,
-          versionId: row.versionId,
-          modelName: row.modelName,
-          versionName: row.versionName,
-          modelType: row.modelType,
-          routingTag: row.routingTag,
-          previewUrl: normalized,
-          outputFolder: row.outputFolder,
-          reason: row.reason,
-          failureKind: row.failureKind,
-          lastAttemptAt: row.lastAttemptAt,
-          earlyAccessEndsAt: row.earlyAccessEndsAt,
-          civitaiTags: row.civitaiTags,
-          baseModel: row.baseModel,
-          bumpAttempt: false
-        })
-        downloadQueue.patchItemPreviewUrl(versionId, normalized)
-      }
-    )
+    const needPreview = afterMeta.filter((d) => !isDisplayablePreviewUrl(d.previewUrl))
+    if (needPreview.length) {
+      await enrichDeferredPreviews(
+        clientPool,
+        needPreview,
+        'all',
+        (versionId, previewUrl, previewUrls) => {
+          const row = inventory.getDeferredDownload(versionId)
+          if (!row) return
+          const normalized = normalizePreviewDisplayUrl(previewUrl)
+          if (!isDisplayablePreviewUrl(normalized)) return
+          inventory.upsertDeferredDownload({
+            modelId: row.modelId,
+            versionId: row.versionId,
+            modelName: row.modelName,
+            versionName: row.versionName,
+            modelType: row.modelType,
+            routingTag: row.routingTag,
+            previewUrl: normalized,
+            outputFolder: row.outputFolder,
+            reason: row.reason,
+            failureKind: row.failureKind,
+            lastAttemptAt: row.lastAttemptAt,
+            earlyAccessEndsAt: row.earlyAccessEndsAt,
+            civitaiTags: row.civitaiTags,
+            baseModel: row.baseModel,
+            bumpAttempt: false
+          })
+          downloadQueue.patchItemPreviewUrl(versionId, normalized)
+        }
+      )
+    }
 
     return inventory.getAllDeferredDownloads()
   })
@@ -2588,9 +2601,11 @@ export function initIpc(): void {
 
 export async function onRendererReady(): Promise<void> {
   bindRendererWindow(() => mainWindow)
+  // Drop anything queued while the Loading popup was up (incl. leftover harvest from a
+  // renderer reload). startSession restores Browse from cache after the popup closes.
+  setRendererReady(false)
   setRendererReady(true)
-  flushDeferredRendererMessages()
-  await ensureSchedulerStarted()
+  // Harvest / scan start only after the Loading popup closes (app:startSession).
 }
 
 export function onRendererUnload(): void {

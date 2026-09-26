@@ -319,28 +319,21 @@ export function WatchRulesTab({
   }, [])
 
   const hasEnabledRules = draft.some((r) => r.enabled)
-  // Empty gallery loading only while something is actually fetching from Civitai.
-  // Quiet mode skips this — no SearchBrowsePanel / "Fetching…" placeholder.
+  // Empty gallery banner only while Civitai is actively fetching a page —
+  // never for "awaiting first crawl" / peek wait (that left a stuck Loading above the bar).
   const showBrowseLoading =
     !quietHideGallery &&
     hasEnabledRules &&
     !harvestScopedBrowseResult?.sampleModels?.length &&
-    (browseGalleryAwaiting ||
-      status === 'scanning' ||
-      status === 'checking' ||
-      crawlProgress != null ||
-      testingId != null) &&
-    (Boolean(settings.nightMode) ||
-      status === 'scanning' ||
-      status === 'checking' ||
-      testingId != null ||
-      crawlProgress != null)
+    (testingId != null ||
+      crawlProgress?.phase === 'fetching' ||
+      crawlProgress?.phase === 'fetching-tags' ||
+      crawlProgress?.phase === 'processing')
   // Quiet actions strip — also when harvest runs with cards hidden (not only night mode).
   const harvestFetching =
     crawlProgress?.phase === 'fetching' ||
     crawlProgress?.phase === 'fetching-tags' ||
-    status === 'scanning' ||
-    status === 'checking'
+    crawlProgress?.phase === 'processing'
   const showQuietHarvestHint =
     quietHideGallery && hasEnabledRules && (harvestFetching || (crawlPageMeta?.galleryTotal ?? 0) > 0)
   const showQuietActions =
@@ -355,17 +348,18 @@ export function WatchRulesTab({
       (hasEnabledRules &&
       (showBrowseLoading ||
         testingId != null ||
-        crawlProgress != null ||
+        crawlProgress?.phase === 'fetching' ||
+        crawlProgress?.phase === 'fetching-tags' ||
+        crawlProgress?.phase === 'processing' ||
         status === 'scanning' ||
-        status === 'checking' ||
         Boolean(settings.nightMode))
         ? emptyCrawlBrowsePlaceholder()
         : null)
   const crawlFetching =
-    showBrowseLoading ||
     testingId != null ||
     crawlProgress?.phase === 'fetching' ||
-    crawlProgress?.phase === 'fetching-tags'
+    crawlProgress?.phase === 'fetching-tags' ||
+    crawlProgress?.phase === 'processing'
 
   const activeRules = draft.filter((r) => r.enabled)
   const activeRule =

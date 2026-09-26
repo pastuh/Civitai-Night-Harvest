@@ -4,6 +4,7 @@ import { getSettings, getWatchRules, shouldCrawlAutoDownload } from './settings-
 import type { DownloadQueue } from './download-queue'
 import { getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, isCatalogBackfillDone, clearLegacyUnscopedCursor } from './crawl-state'
 import { sanitizeCrawlCursor } from '../shared/civitai-pagination'
+import { watchRuleCrawlSignature } from '../shared/watch-rule-crawl'
 import {
   runDualRulePageCheck,
   startDownloadsIfQueued,
@@ -56,6 +57,8 @@ export interface CrawlRuleOptions {
     rule: WatchRule
     pageNumber: number
     domain: CivitaiDomain
+    /** peek = newest only; catalog = backfill Page N. */
+    purpose?: 'peek' | 'catalog'
   }) => void
   onCrawlWaiting?: (info: { rule: WatchRule; waitMs: number; domain: CivitaiDomain }) => void
   onCrawlFetchDone?: (info: {
@@ -162,21 +165,34 @@ export class RuleCrawler {
       while (!this.stopRequested) {
         const skipBackfill = !getSettings().backfillCatalog
         const nextPageNumber = skipBackfill ? pagesProcessed + 1 : catalogPage + 1
+        const pageNumber = Math.max(1, nextPageNumber)
         options.onCrawlFetchStart?.({
           rule,
-          pageNumber: Math.max(1, nextPageNumber),
-          domain: crawlDomain
+          pageNumber,
+          domain: crawlDomain,
+          purpose: skipBackfill ? 'peek' : 'catalog'
         })
+
+        const queueOpts = {
+          ...options.queue,
+          pageNumber
+        }
 
         const { peek, backfill, combined, peekSkipped, peekSkippedMs } = await runDualRulePageCheck(
           client,
           downloadQueue,
           rule,
-          options.queue,
+          queueOpts,
           cursor,
           options.pendingVersions ?? [],
           options.onPendingChange,
-          { respectPeekCooldown: true, skipBackfill }
+          {
+            respectPeekCooldown: true,
+            skipBackfill,
+            // Catalog Page 2…N: only the backfill cursor page. Newest peek already ran at
+            // Harvest start — dual peek+backfill doubled API time per page.
+            skipPeek: !skipBackfill
+          }
         )
 
         if (peekSkipped && peekSkippedMs && skipBackfill) {
@@ -235,7 +251,9 @@ export class RuleCrawler {
           domain: crawlDomain
         })
 
-        await Promise.resolve(
+        // Do NOT await gallery merge — that blocked Page N+1 for tens of seconds while
+        // the bar still looked like "Page N". Next Civitai fetch proceeds immediately.
+        void Promise.resolve(
           options.onCrawlPage?.({
             rule,
             pageNumber: skipBackfill ? pagesProcessed : catalogPage,
@@ -243,7 +261,9 @@ export class RuleCrawler {
             client,
             catalogComplete: !skipBackfill && !combined.nextCursor && combined.pageModels > 0
           })
-        )
+        ).catch(() => {
+          /* emitCrawlPage logs its own errors */
+        })
 
         if (backfill.queued > 0) {
           log(
@@ -265,7 +285,7 @@ export class RuleCrawler {
           catalogPage = 0
           setBackfillPage(rule.id, 0, crawlDomain)
           this.lastBackfillHead.delete(backfillHeadKey)
-          const pass = incrementCatalogPass(rule.id, crawlDomain)
+          const pass = incrementCatalogPass(rule.id, crawlDomain, watchRuleCrawlSignature(rule))
           options.onCatalogPassComplete?.(rule, crawlDomain)
           log(
             'info',
@@ -279,7 +299,9 @@ export class RuleCrawler {
         }
 
         if (!this.stopRequested) {
-          await interruptibleCrawlerSleep(2_000, () => this.stopRequested)
+          // Short gap only — was 2s and made "Page N → Page N+1" feel stuck (~20s with API).
+          // Rate limiting is already handled by CIVITAI_CRAWL_PACE_MS on the crawl lane.
+          await interruptibleCrawlerSleep(250, () => this.stopRequested)
         }
       }
 

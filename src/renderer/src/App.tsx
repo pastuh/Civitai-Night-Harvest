@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
+import { flushSync } from 'react-dom'
 import { shouldShowDeferredInDownloadStrip } from '../../shared/early-access'
 import type {
   ActivityEntry,
@@ -37,7 +38,7 @@ import { MissingTab } from './components/MissingTab'
 import { GalleryTab } from './components/GalleryTab'
 import { HelpTab } from './components/HelpTab'
 import { loadEaFavoriteIds, toggleEaFavoriteId } from './ea-favorites'
-import { isDeferredVisibleInAwaitingTab } from '../../shared/deferred-visibility'
+import { deferredIsSessionPause, isDeferredVisibleInAwaitingTab } from '../../shared/deferred-visibility'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
@@ -110,6 +111,8 @@ function shouldShowDownloadStrip(visibility: DownloadStripVisibility, tab: Tab):
 interface BusyState {
   message: string
   subMessage?: string
+  /** Persistent counts under the current step (stays visible while next IPC runs). */
+  statsLine?: string
   syncProgress?: LibrarySyncProgress | null
 }
 
@@ -245,6 +248,8 @@ export default function App() {
   const clearPreferLibrarySession = useCallback(() => setPreferLibrarySession(false), [])
   const clearTagsFocusSearch = useCallback(() => setTagsFocusSearch(null), [])
   const [startupReady, setStartupReady] = useState(false)
+  const startupReadyRef = useRef(false)
+  startupReadyRef.current = startupReady
   const [browseGalleryAwaiting, setBrowseGalleryAwaiting] = useState(true)
   const [watchRulesSaveState, setWatchRulesSaveState] = useState<'saved' | 'saving' | 'unsaved'>('saved')
   const [appIconUrl, setAppIconUrl] = useState<string | null>(null)
@@ -608,69 +613,159 @@ export default function App() {
       setLoadError(null)
       setSyncProgress(null)
 
-      const setBootPhase = (stepKey: string, loc: 'en' | 'lt' = loadedLocale) => {
-        setBusy({
-          message: translate(loc, 'load.starting'),
-          subMessage: translate(loc, stepKey)
+      const paintBusy = async (
+        subMessage: string,
+        loc: 'en' | 'lt' = loadedLocale,
+        statsLine?: string
+      ) => {
+        // flushSync + short timeout so the Loading card actually paints before the next
+        // main-process IPC blocks the renderer event loop.
+        flushSync(() => {
+          setBusy({
+            message: translate(loc, 'load.starting'),
+            subMessage,
+            statsLine
+          })
+        })
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 50)
         })
       }
 
-      setBootPhase('load.stepSettings', 'en')
+      const setBootPhase = async (
+        stepKey: string,
+        loc: 'en' | 'lt' = loadedLocale,
+        vars?: Record<string, string | number>,
+        statsLine?: string
+      ) => {
+        await paintBusy(translate(loc, stepKey, vars), loc, statsLine)
+      }
+
+      let statsLine = ''
+
+      await setBootPhase('load.stepSettings', 'en')
       const s = await window.api.getSettings()
       loadedLocale = s.locale ?? 'en'
       const loc = loadedLocale
       setSettings(s)
 
-      setBootPhase('load.stepRules', loc)
+      await setBootPhase('load.stepRules', loc, undefined, statsLine || undefined)
       const [tags, watch] = await Promise.all([
         window.api.getTagRules(),
         window.api.getWatchRules()
       ])
       setTagRules(tags)
       setWatchRules(watch)
+      const enabledRules = watch.filter((r) => r.enabled).length
+      statsLine = translate(loc, 'load.stepRulesCount', {
+        tags: tags.length,
+        rules: watch.length,
+        enabled: enabledRules
+      })
+      // Keep counts visible while the next step runs — load lists one IPC at a time so
+      // Windows title bar can breathe (Promise.all stacked sync work → Not Responding).
+      await setBootPhase('load.stepLists', loc, undefined, statsLine)
 
-      setBootPhase('load.stepLists', loc)
-      const [act, pend, def, incompleteItems, missingItems, exclusionItems] = await Promise.all([
-        window.api.getActivity(),
-        window.api.getPending(),
-        window.api.getDeferred(),
-        window.api.getIncomplete(),
-        window.api.getMissing(),
-        window.api.getExclusions()
-      ])
-      setActivity(act)
+      const pend = await window.api.getPending()
       applyPendingVersions(pend)
+      const def = await window.api.getDeferred()
       setDeferred(def)
+      const incompleteItems = await window.api.getIncomplete()
       setIncomplete(incompleteItems)
+      const missingItems = await window.api.getMissing()
       setMissing(missingItems)
+      const exclusionItems = await window.api.getExclusions()
       setExclusions(exclusionItems)
       setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+      statsLine = [
+        statsLine,
+        translate(loc, 'load.stepListsCount', {
+          updates: pend.length,
+          ea: def.length,
+          missing: missingItems.length,
+          incomplete: incompleteItems.length
+        })
+      ]
+        .filter(Boolean)
+        .join('\n')
 
-      setBootPhase('load.stepLibrary', loc)
-      const inv = await window.api.getInventory({ syncDisk: false })
-      startTransition(() => {
-        setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
-      })
+      // COUNT only during Loading — full SELECT * + IPC serialize freezes main (Not Responding).
+      await setBootPhase('load.stepLibrary', loc, undefined, statsLine)
+      const libraryCount = await window.api.getInventoryCount()
+      statsLine = [
+        statsLine,
+        translate(loc, 'load.stepLibraryCount', { count: libraryCount })
+      ]
+        .filter(Boolean)
+        .join('\n')
+      await setBootPhase('load.stepLibraryDone', loc, { count: libraryCount }, statsLine)
       // Only await Civitai crawl UI when Harvest is on AND at least one rule can crawl.
       setBrowseGalleryAwaiting(Boolean(s.nightMode) && watch.some((r) => r.enabled))
 
-      // Queue reconcile is silent — Harvest pipeline is cleared each launch; no need for a boot step.
       const q = await window.api.reconcileDownloadQueue()
       setDownloadQueueState({ items: q.items, paused: q.paused || s.crawlAutoDownload === false })
       setStatus(await window.api.getScanStatus())
 
-      setBootPhase('load.stepSession', loc)
-      await window.api.notifyRendererReady()
-      setStartupReady(true)
-    }, translate('en', 'load.stepSettings'))
+      await setBootPhase(
+        'load.stepSessionReady',
+        loc,
+        {
+          tags: tags.length,
+          rules: enabledRules,
+          library: libraryCount
+        },
+        statsLine
+      )
+      // Do NOT notifyRendererReady / startSession here — that opens the IPC flood and
+      // harvest while the Loading popup is still visible (Browse flashes behind it).
+    }, translate('en', 'load.connecting'))
       .then(async () => {
+        // Popup closes as soon as startupReady — heavy SELECT * must not sit under Loading.
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 50)
+        })
+        try {
+          await window.api.notifyRendererReady()
+        } catch {
+          /* ignore */
+        }
+        setStartupReady(true)
+        // Library rows after shell is up — one freeze is better than four during Loading steps.
+        try {
+          const inv = await window.api.getInventory({ syncDisk: false })
+          startTransition(() => {
+            setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+          })
+        } catch {
+          /* Library tab can refresh later */
+        }
+        try {
+          const act = await window.api.getActivity()
+          setActivity(act)
+        } catch {
+          /* ignore */
+        }
+        try {
+          await window.api.startSession()
+        } catch {
+          /* status bar / Activity will surface failures */
+        }
+        try {
+          const pend = await window.api.getPending()
+          applyPendingVersions(pend)
+        } catch {
+          /* ignore */
+        }
+        // Let downloads / startup peek claim the network before deferred preview enrich.
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 12_000)
+        })
         try {
           const enrichedDeferred = await window.api.enrichDeferred()
           setDeferred(enrichedDeferred)
         } catch {
           /* ignore */
         }
-        // Prune Updates rows already waiting in Early access (persisted from prior session).
         try {
           const pend = await window.api.getPending()
           applyPendingVersions(pend)
@@ -680,8 +775,16 @@ export default function App() {
       })
       .catch((err) => {
       setLoadError(err instanceof Error ? err.message : String(err))
-      setStartupReady(true)
-      void window.api.notifyRendererReady()
+      setBusy(null)
+      void window.api
+        .notifyRendererReady()
+        .then(() => {
+          setStartupReady(true)
+          return window.api.startSession()
+        })
+        .catch(() => {
+          setStartupReady(true)
+        })
     })
     const prevQueueMeta = new Map<
       string,
@@ -787,6 +890,8 @@ export default function App() {
       }),
       window.api.onAppStatus(setStatus),
       window.api.onCrawlPage((payload) => {
+        // Loading popup / pre-session — never paint Browse cards behind the overlay.
+        if (!startupReadyRef.current) return
         const gen = payload.galleryGeneration
         if (
           typeof gen === 'number' &&
@@ -857,6 +962,7 @@ export default function App() {
         })
       }),
       window.api.onCrawlBrowseReset((payload) => {
+        if (!startupReadyRef.current) return
         if (typeof payload?.galleryGeneration === 'number') {
           browseGalleryGenerationRef.current = payload.galleryGeneration
         } else {
@@ -874,12 +980,15 @@ export default function App() {
         setBrowseGalleryAwaiting(hasEnabledWatchRulesRef.current)
       }),
       window.api.onCrawlProgress((payload) => {
+        if (!startupReadyRef.current) return
         pendingCrawlProgress = payload
         if (
           payload?.phase === 'fetching' ||
           payload?.phase === 'fetching-tags' ||
           payload?.phase === 'page-done' ||
-          payload?.phase === 'catalog-complete'
+          payload?.phase === 'catalog-complete' ||
+          payload?.phase === 'waiting' ||
+          payload?.phase === 'processing'
         ) {
           setBrowseGalleryAwaiting(false)
         }
@@ -905,15 +1014,26 @@ export default function App() {
             }
           })
         }
-        // Coalesce fetching ticks — status bar stays live enough without thrashing React.
-        if (payload?.phase === 'page-done' || payload?.phase === 'catalog-complete' || payload == null) {
+        // Apply phase changes immediately — coalescing dropped "fetching-tags" / detail updates
+        // so the bar stayed on "Page N" while tags or merge ran for tens of seconds.
+        if (
+          payload?.phase === 'page-done' ||
+          payload?.phase === 'catalog-complete' ||
+          payload?.phase === 'fetching' ||
+          payload?.phase === 'fetching-tags' ||
+          payload?.phase === 'processing' ||
+          payload?.phase === 'waiting' ||
+          payload == null
+        ) {
           if (crawlProgressTimer != null) {
             window.clearTimeout(crawlProgressTimer)
             crawlProgressTimer = null
           }
+          pendingCrawlProgress = undefined
           setCrawlProgress(payload)
           return
         }
+        pendingCrawlProgress = payload
         if (crawlProgressTimer != null) return
         crawlProgressTimer = window.setTimeout(() => {
           crawlProgressTimer = null
@@ -921,7 +1041,7 @@ export default function App() {
             setCrawlProgress(pendingCrawlProgress)
             pendingCrawlProgress = undefined
           }
-        }, 500)
+        }, 200)
       }),
       window.api.onPendingVersions((pend) => {
         // Updates tab needs the drop immediately so Show-temporary can keep the card in place.
@@ -1041,6 +1161,7 @@ export default function App() {
         })
       }),
       window.api.onScanComplete(() => {
+        if (!startupReadyRef.current) return
         setBrowseGalleryAwaiting(false)
         void window.api.getBrowseGallery().then((gallery) => {
           // Quiet (👁): keep gallery empty for a light UI — use Show Browse snapshot to review.
@@ -1049,6 +1170,7 @@ export default function App() {
         void refreshAfterScan()
       }),
       window.api.onBrowsePreviewPref(({ modelId, versionId, previewUrl }) => {
+        if (!startupReadyRef.current) return
         setLiveCrawlBrowse((prev) => patchBrowseModelPreview(prev, modelId, versionId, previewUrl))
       })
     ]
@@ -1631,6 +1753,7 @@ export default function App() {
 
   // Browse was unmounted / gallery updates skipped while away — refresh snapshot when returning.
   useEffect(() => {
+    if (!startupReady) return
     if (tab !== 'watch') return
     if (!(settings?.updateBrowseOnCrawl ?? false)) return
     let cancelled = false
@@ -1839,7 +1962,10 @@ export default function App() {
   const m = getMessages(locale)
   const theme = settings?.theme ?? 'dark'
   const uiExtended = settings?.uiMode === 'extended'
-  const showBusyOverlay = (Boolean(busy) || !settings) && !storageErrorModal
+  const showBusyOverlay =
+    (Boolean(busy) || !settings || !startupReady) && !storageErrorModal
+  /** Boot Loading — hide the shell so Browse cannot flash behind a translucent popup. */
+  const hideShellForBoot = !startupReady
 
   const downloadModeManual = settings?.manualQueueMode ?? false
   const downloadsPaused = settings?.crawlAutoDownload === false
@@ -1895,12 +2021,18 @@ export default function App() {
 
   const awaitingBadgeCount = useMemo(
     () =>
-      deferred.filter(
-        (d) =>
-          d.failureKind !== 'not_found' &&
-          isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)
-      ).length,
-    [deferred, watchRules, eaFavoriteIds]
+      deferred.filter((d) => {
+        if (d.failureKind === 'not_found') return false
+        if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
+        // Session pause lives under that filter — do not inflate the Early access tab badge.
+        if (
+          deferredIsSessionPause(d, settings?.hiddenTags, settings?.bannedTags)
+        ) {
+          return false
+        }
+        return true
+      }).length,
+    [deferred, watchRules, eaFavoriteIds, settings?.hiddenTags, settings?.bannedTags]
   )
 
   const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
@@ -2032,6 +2164,7 @@ export default function App() {
         <AppBusyOverlay
           message={busy?.message ?? m.load.starting}
           subMessage={busy?.subMessage ?? m.load.loadingSettings}
+          statsLine={busy?.statsLine}
           syncProgress={busy?.syncProgress ?? syncProgress}
         />
       )}
@@ -2039,7 +2172,10 @@ export default function App() {
     <div
       className={`app ${settings.blurPreviews ? 'blur-previews' : ''}${
         settings.blurPreviews && settings.blurVideoPreviews ? ' blur-previews-video' : ''
-      } ${theme === 'light' ? 'theme-light' : theme === 'gothic' ? 'theme-gothic' : theme === 'candy' ? 'theme-candy' : theme === 'aroma' ? 'theme-aroma' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}`}
+      } ${theme === 'light' ? 'theme-light' : theme === 'gothic' ? 'theme-gothic' : theme === 'candy' ? 'theme-candy' : theme === 'aroma' ? 'theme-aroma' : ''} ${uiExtended ? 'ui-extended' : 'ui-minimal'} ${showGlobalStatus ? 'has-global-status' : ''}${
+        hideShellForBoot ? ' app-boot-hidden' : ''
+      }`}
+      aria-hidden={hideShellForBoot || undefined}
     >
       <header className="header">
         <div className="header-brand">

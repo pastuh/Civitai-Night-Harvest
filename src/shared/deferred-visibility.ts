@@ -1,6 +1,6 @@
 import type { DeferredDownload, DeferredSource, WatchRule } from './types'
 import { modelMatchesRuleBrowseFilter } from './utils'
-import { modelHasPolicyTag } from './tag-routing'
+import { expandCivitaiTagNames, isPausedOnlyModelTag, modelHasPolicyTag } from './tag-routing'
 
 export type { DeferredSource } from './types'
 
@@ -80,6 +80,27 @@ export function deferredBlockedByPolicyTags(
   return Boolean(route && modelHasPolicyTag([route], paused, banned))
 }
 
+/**
+ * Pause-tag only (not permanent ban) — Session pause filter / exclude from EA tab badge.
+ * Allow-list exceptions stay on the main Early access list.
+ */
+export function deferredIsSessionPause(
+  item: Pick<DeferredDownload, 'modelId' | 'civitaiTags' | 'routingTag'>,
+  pausedTags: readonly string[] | undefined,
+  bannedTags: readonly string[] | undefined,
+  isTagSkipAllowed?: (modelId: number) => boolean
+): boolean {
+  if (isTagSkipAllowed?.(item.modelId)) return false
+  const paused = pausedTags ? [...pausedTags] : []
+  const banned = bannedTags ? [...bannedTags] : []
+  if (!paused.length) return false
+  for (const tag of expandCivitaiTagNames(item.civitaiTags)) {
+    if (isPausedOnlyModelTag(tag, paused, banned)) return true
+  }
+  const route = item.routingTag?.trim()
+  return Boolean(route && isPausedOnlyModelTag(route, paused, banned))
+}
+
 export type DeferredVisibilityOptions = {
   /**
    * @deprecated Pause/ban no longer hide rows from Early Access All.
@@ -91,10 +112,10 @@ export type DeferredVisibilityOptions = {
 }
 
 /**
- * Early access tab visibility:
+ * Early access tab visibility (main All list):
  * - Always: user manual download + EA favorites
  * - Harvest / auto-deferred: while enabled Browse rules still match
- * Pause/Ban tags do NOT hide rows — they are card indicators + Allow only.
+ * Session pause (pause tags) is excluded from All / tab badge — see Session pause filter.
  * (Missing owns non-EA tag-skips, not awaiting-access deferred.)
  */
 export function isDeferredVisibleInAwaitingTab(

@@ -1316,8 +1316,14 @@ body.is-app-busy * {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 12, 18, 0.72);
-  backdrop-filter: blur(2px);
+  background: rgba(10, 12, 18, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+/** Boot Loading — shell stays mounted for state but must not peek through the overlay. */
+.app.app-boot-hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .app-busy-card {
@@ -1375,6 +1381,14 @@ body.is-app-busy * {
   font-size: 0.95rem;
   line-height: 1.4;
   font-weight: 600;
+  max-width: 100%;
+}
+
+.app-busy-stats {
+  margin: 0.55rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre-line;
   max-width: 100%;
 }
 

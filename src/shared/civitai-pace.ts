@@ -13,8 +13,48 @@ let backgroundChain: Promise<void> = Promise.resolve()
 
 let lastCrawlAt = 0
 let crawlChain: Promise<void> = Promise.resolve()
+/** True while a crawl-lane request is running or paced — status bar can explain the gap. */
+let crawlLaneBusy = false
+/** Short label of the in-flight crawl request (catalog search vs tag vs …). */
+let crawlLaneLabel: string | null = null
 
 let interactiveChain: Promise<void> = Promise.resolve()
+
+export type CrawlPaceStatusInfo = {
+  /** Artificial gap before the next crawl GET /models. */
+  waitMs: number
+  /** Waiting behind another crawl request still in flight. */
+  behindPriorRequest: boolean
+  /** What is holding the crawl lane (when behindPriorRequest). */
+  priorLabel?: string | null
+}
+
+export type CrawlHttpStatusInfo =
+  | { kind: 'http-waiting'; path: string }
+  | { kind: 'http-received'; path: string }
+  | { kind: 'http-retry'; path: string; attempt: number; attempts: number }
+
+type CrawlPaceStatusHook = (info: CrawlPaceStatusInfo) => void
+type CrawlHttpStatusHook = (info: CrawlHttpStatusInfo) => void
+let crawlPaceStatusHook: CrawlPaceStatusHook | null = null
+let crawlHttpStatusHook: CrawlHttpStatusHook | null = null
+
+/** Scheduler sets this so the status bar can show pace / queue waits (not a vague "next page…"). */
+export function setCrawlPaceStatusHook(hook: CrawlPaceStatusHook | null): void {
+  crawlPaceStatusHook = hook
+}
+
+export function setCrawlHttpStatusHook(hook: CrawlHttpStatusHook | null): void {
+  crawlHttpStatusHook = hook
+}
+
+export function notifyCrawlHttpStatus(info: CrawlHttpStatusInfo): void {
+  crawlHttpStatusHook?.(info)
+}
+
+export function isCrawlLaneBusy(): boolean {
+  return crawlLaneBusy
+}
 
 /**
  * Serialize Civitai-bound API fetches.
@@ -24,7 +64,8 @@ let interactiveChain: Promise<void> = Promise.resolve()
  */
 export async function paceCivitaiRequest<T>(
   fn: () => Promise<T>,
-  priority: CivitaiPacePriority = 'background'
+  priority: CivitaiPacePriority = 'background',
+  meta?: { label?: string }
 ): Promise<T> {
   if (priority === 'interactive') {
     const scheduled = interactiveChain.then(async () => fn())
@@ -36,12 +77,31 @@ export async function paceCivitaiRequest<T>(
   }
 
   if (priority === 'crawl') {
+    const label = meta?.label?.trim() || 'Civitai search'
+    const behindPrior = crawlLaneBusy
+    if (behindPrior) {
+      crawlPaceStatusHook?.({
+        waitMs: 0,
+        behindPriorRequest: true,
+        priorLabel: crawlLaneLabel
+      })
+    }
     const scheduled = crawlChain.then(async () => {
-      const now = Date.now()
-      const wait = Math.max(0, CIVITAI_CRAWL_PACE_MS - (now - lastCrawlAt))
-      if (wait > 0) await sleep(wait)
-      lastCrawlAt = Date.now()
-      return fn()
+      crawlLaneBusy = true
+      crawlLaneLabel = label
+      try {
+        const now = Date.now()
+        const wait = Math.max(0, CIVITAI_CRAWL_PACE_MS - (now - lastCrawlAt))
+        if (wait > 40) {
+          crawlPaceStatusHook?.({ waitMs: wait, behindPriorRequest: false })
+        }
+        if (wait > 0) await sleep(wait)
+        lastCrawlAt = Date.now()
+        return await fn()
+      } finally {
+        crawlLaneBusy = false
+        crawlLaneLabel = null
+      }
     })
     crawlChain = scheduled.then(
       () => undefined,

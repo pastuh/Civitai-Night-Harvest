@@ -3368,7 +3368,7 @@ button.missing-tag-chip.is-clickable:hover {
   z-index: 9000;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: var(--space-sm);
   padding: 7px 14px;
   background: color-mix(in srgb, var(--chrome-bg) 94%, transparent);
@@ -3459,11 +3459,26 @@ button.missing-tag-chip.is-clickable:hover {
 }
 
 .global-status-text {
+  flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--chrome-text);
+}
+
+.global-status-process {
+  flex: 0 1 auto;
+  max-width: 42%;
+  margin-left: auto;
+  padding-left: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-weight: 600;
+  color: var(--accent, #6cb6ff);
+  opacity: 0.95;
 }
 
 .app.has-global-status .content {

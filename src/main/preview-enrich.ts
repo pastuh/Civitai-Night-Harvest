@@ -309,11 +309,12 @@ export async function resolvePreviewsBatch(
     items.filter((item) => item.refreshCache === true).map((item) => item.versionId)
   )
   const interactive = items.some((item) => item.interactive)
-  if (!interactive) {
-    await applyCachedPreviews(results, {
-      forceVersionIds: forceVersionIds.size ? forceVersionIds : undefined
-    })
-  }
+  // Always map CDN URLs → local preview cache. Skipping this for "interactive"
+  // left Early access / Session pause cards on "No image" even when cached.
+  await applyCachedPreviews(results, {
+    forceVersionIds: forceVersionIds.size ? forceVersionIds : undefined
+  })
+  void interactive
   return results.map((entry) => (entry ? applyPreferredToResolved(entry) : entry))
 }
 
@@ -448,7 +449,7 @@ export async function enrichTestModelPreviews(
   if (!missing.length) return 0
 
   let enriched = 0
-  await mapWithConcurrency(missing, 8, async (m) => {
+  await mapWithConcurrency(missing, 3, async (m) => {
     const resolved = await resolvePreviewsForModelWithFallback(
       pool,
       m.id,

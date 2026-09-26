@@ -472,6 +472,24 @@ function migrateInventorySchema(database: Database.Database): void {
     `CREATE INDEX IF NOT EXISTS idx_browse_card_cache_model ON browse_card_cache(model_id)`
   )
 
+  /**
+   * Browse (Harvest) gallery membership per watch rule — NOT the Library (disk inventory).
+   * browse_card_cache holds card JSON; this table remembers which versions belong to which
+   * rule's harvested list so we can restore Browse UI from DB without re-fetching Civitai.
+   */
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS browse_rule_gallery (
+      rule_id TEXT NOT NULL,
+      version_id INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (rule_id, version_id)
+    );
+  `)
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_browse_rule_gallery_rule_pos
+     ON browse_rule_gallery(rule_id, position)`
+  )
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS version_preview_prefs (
       version_id INTEGER NOT NULL PRIMARY KEY,
@@ -1784,6 +1802,29 @@ export function getAllVersions(): InventoryRecord[] {
   return rows.map((r) => rowToRecord(r as Record<string, unknown>))
 }
 
+/** Short-lived row cache so boot / hydrate / prune do not SELECT * three times in a row. */
+let versionsRowCache: { rows: InventoryRecord[]; at: number } | null = null
+
+export function invalidateVersionsRowCache(): void {
+  versionsRowCache = null
+}
+
+export function getAllVersionsCached(maxAgeMs = 8_000): InventoryRecord[] {
+  const now = Date.now()
+  if (versionsRowCache && now - versionsRowCache.at < maxAgeMs) {
+    return versionsRowCache.rows
+  }
+  const rows = getAllVersions()
+  versionsRowCache = { rows, at: now }
+  return rows
+}
+
+/** Fast COUNT for startup busy UI — does not load card rows. */
+export function countVersions(): number {
+  const row = getDb().prepare('SELECT COUNT(*) AS c FROM versions').get() as { c: number }
+  return Number(row?.c) || 0
+}
+
 /** Fill empty baseModel / modelType / routingTag from custom folder assignment rules. Returns patched count. */
 export function applyCustomAssignmentDefaults(tagRules: TagFolderRule[]): number {
   // Normal Tag folders saves must stay instant — only custom path rules need a library walk.
@@ -1806,7 +1847,7 @@ export function applyCustomAssignmentDefaults(tagRules: TagFolderRule[]): number
 
 /** Single DB read for scan — avoids per-model inventory queries */
 export function buildInventorySnapshot(): InventorySnapshot {
-  const records = getAllVersions()
+  const records = getAllVersionsCached()
   const versionIds = new Set<number>()
   const versionsByModel = new Map<number, InventoryRecord[]>()
   const slugsByFolder = new Map<string, Set<string>>()
@@ -1842,6 +1883,7 @@ let inventorySnapshotCache: { snap: InventorySnapshot; at: number } | null = nul
 
 export function invalidateInventorySnapshotCache(): void {
   inventorySnapshotCache = null
+  versionsRowCache = null
 }
 
 export function getInventorySnapshotCached(maxAgeMs = 45_000): InventorySnapshot {
@@ -2158,8 +2200,9 @@ export function removeSkippedPendingForModel(modelId: number): void {
 /** Drop skipped rows that are owned, banned, deferred, or no longer relevant.
  *  Forgotten update versions are sticky — only clear when that version is owned. */
 export function pruneSkippedPendingVersions(): void {
-  const snapshot = buildInventorySnapshot()
   const rows = getAllSkippedPendingVersions()
+  if (!rows.length) return
+  const snapshot = getInventorySnapshotCached(60_000)
   for (const p of rows) {
     // Forgotten: keep until the user downloads this version (or Unforget).
     if (p.forgotten) {
@@ -2211,18 +2254,25 @@ export function clearLibraryVersionChecked(modelId: number): void {
   getDb().prepare('DELETE FROM library_version_checks WHERE model_id = ?').run(modelId)
 }
 
-/** modelIds whose last check is missing or older than cooldownMs. */
+/** modelIds whose last check is missing or older than cooldownMs (oldest due first). */
 export function filterModelsDueForVersionCheck(modelIds: number[], cooldownMs: number): number[] {
   if (!modelIds.length) return []
   const cutoff = Date.now() - Math.max(0, cooldownMs)
   const stmt = getDb().prepare('SELECT checked_at FROM library_version_checks WHERE model_id = ?')
-  return modelIds.filter((id) => {
+  const due: { id: number; checkedMs: number }[] = []
+  for (const id of modelIds) {
     const row = stmt.get(id) as { checked_at: string } | undefined
-    if (!row?.checked_at) return true
+    if (!row?.checked_at) {
+      due.push({ id, checkedMs: 0 })
+      continue
+    }
     const ms = Date.parse(row.checked_at)
-    if (!Number.isFinite(ms)) return true
-    return ms < cutoff
-  })
+    if (!Number.isFinite(ms) || ms < cutoff) {
+      due.push({ id, checkedMs: Number.isFinite(ms) ? ms : 0 })
+    }
+  }
+  due.sort((a, b) => a.checkedMs - b.checkedMs)
+  return due.map((d) => d.id)
 }
 
 function rowToDeferred(row: Record<string, unknown>): DeferredDownload {
@@ -3051,6 +3101,88 @@ export function getAllBrowseCardCacheCards(): WatchRuleTestModel[] {
   const rows = getDb()
     .prepare('SELECT card_json FROM browse_card_cache')
     .all() as Array<{ card_json: string }>
+  const out: WatchRuleTestModel[] = []
+  for (const row of rows) {
+    try {
+      const card = JSON.parse(row.card_json) as WatchRuleTestModel
+      if (card?.versionId && card.versionId > 0) out.push(card)
+    } catch {
+      /* skip corrupt row */
+    }
+  }
+  return out
+}
+
+/** Append harvested Browse cards to a rule's gallery index (idempotent per version). */
+export function appendBrowseRuleGalleryMembers(ruleId: string, versionIds: number[]): void {
+  if (!ruleId || !versionIds.length) return
+  const db = getDb()
+  const maxRow = db
+    .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM browse_rule_gallery WHERE rule_id = ?')
+    .get(ruleId) as { m: number }
+  let pos = (maxRow?.m ?? -1) + 1
+  const exists = db.prepare(
+    'SELECT 1 AS ok FROM browse_rule_gallery WHERE rule_id = ? AND version_id = ?'
+  )
+  const insert = db.prepare(
+    'INSERT INTO browse_rule_gallery (rule_id, version_id, position) VALUES (?, ?, ?)'
+  )
+  const tx = db.transaction((ids: number[]) => {
+    for (const versionId of ids) {
+      if (versionId <= 0) continue
+      if (exists.get(ruleId, versionId)) continue
+      insert.run(ruleId, versionId, pos++)
+    }
+  })
+  tx(versionIds)
+}
+
+/** Replace a rule's Browse gallery membership (used when rebuilding from global cache). */
+export function replaceBrowseRuleGalleryMembers(ruleId: string, versionIds: number[]): void {
+  if (!ruleId) return
+  const db = getDb()
+  const tx = db.transaction((ids: number[]) => {
+    db.prepare('DELETE FROM browse_rule_gallery WHERE rule_id = ?').run(ruleId)
+    const insert = db.prepare(
+      'INSERT INTO browse_rule_gallery (rule_id, version_id, position) VALUES (?, ?, ?)'
+    )
+    let pos = 0
+    for (const versionId of ids) {
+      if (versionId <= 0) continue
+      insert.run(ruleId, versionId, pos++)
+    }
+  })
+  tx(versionIds)
+}
+
+export function clearBrowseRuleGallery(ruleId: string): void {
+  if (!ruleId) return
+  getDb().prepare('DELETE FROM browse_rule_gallery WHERE rule_id = ?').run(ruleId)
+}
+
+export function countBrowseRuleGallery(ruleId: string): number {
+  if (!ruleId) return 0
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS c FROM browse_rule_gallery WHERE rule_id = ?')
+    .get(ruleId) as { c: number }
+  return row?.c ?? 0
+}
+
+/**
+ * Load Browse gallery cards for one Harvest rule from SQLite (card JSON + rule membership).
+ * This is Browse discovery cache — not Library disk inventory.
+ */
+export function getBrowseRuleGalleryCards(ruleId: string): WatchRuleTestModel[] {
+  if (!ruleId) return []
+  const rows = getDb()
+    .prepare(
+      `SELECT c.card_json
+       FROM browse_rule_gallery g
+       JOIN browse_card_cache c ON c.version_id = g.version_id
+       WHERE g.rule_id = ?
+       ORDER BY g.position ASC`
+    )
+    .all(ruleId) as Array<{ card_json: string }>
   const out: WatchRuleTestModel[] = []
   for (const row of rows) {
     try {

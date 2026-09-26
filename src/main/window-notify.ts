@@ -15,6 +15,10 @@ const MAX_DEFERRED_MESSAGES = 500
 /** Renderer finished first paint — safe to push high-frequency IPC (activity, sync progress). */
 export function setRendererReady(ready: boolean): void {
   rendererReady = ready
+  if (!ready) {
+    // Drop stale crawl/activity while Loading remounts — flush would flash Browse behind the popup.
+    deferredMessages.length = 0
+  }
 }
 
 export function flushDeferredRendererMessages(): void {
@@ -29,7 +33,9 @@ const DEFER_UNTIL_READY = new Set([
   'activity:entry',
   'library:hashProgress',
   'crawl:page',
-  'crawl:browseReset'
+  'crawl:browseReset',
+  'crawl:progress',
+  'scan:complete'
 ])
 
 function flushDeferredMessages(): void {

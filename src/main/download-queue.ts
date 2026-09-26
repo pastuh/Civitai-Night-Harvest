@@ -278,13 +278,9 @@ export class DownloadQueue {
 
   /** Restore queue from disk after restart; interrupted downloads go back to queued. */
   restoreFromDisk(): void {
-    const pathsRepaired = repairBrokenInventoryPaths()
-    if (pathsRepaired > 0) {
-      this.log?.(
-        'success',
-        `Library paths repaired for ${pathsRepaired} model(s) on disk`
-      )
-    }
+    // Do NOT call repairBrokenInventoryPaths() here — it existsSync-walks every library
+    // row and freezes the main process for tens of seconds (Windows “Not Responding”).
+    // Path repair belongs to Settings → Sync library from disk.
 
     const saved = inventory.loadDownloadQueueState()
     if (saved) {
@@ -429,8 +425,9 @@ export class DownloadQueue {
 
   /** Drop queue rows for versions already in library (e.g. after inventory refresh). */
   syncWithInventory(options?: { repairPaths?: boolean }): void {
-    // Full disk path repair is O(library) existsSync — never run on every harvest page.
-    if (options?.repairPaths !== false) {
+    // Full disk path repair is O(library) existsSync — only when caller opts in
+    // (Settings → Sync library). Never on getQueue / reconcile / startup.
+    if (options?.repairPaths === true) {
       repairBrokenInventoryPaths()
     }
     let changed = this.reconcileOwnedInQueue()

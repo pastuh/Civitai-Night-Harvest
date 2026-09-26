@@ -265,7 +265,7 @@ export async function enrichDeferredDownloads(
     if (shouldCheck && checks < maxChecks) {
       checks++
       try {
-        const mini = await client.getVersionMini(item.versionId, { pace: 'crawl' })
+        const mini = await client.getVersionMini(item.versionId, { pace: 'background' })
         let ea = earlyAccessFromMini(mini)
         let patch: Partial<DeferredDownload> = {
           additionalResourceCharge: mini.additionalResourceCharge,
@@ -283,7 +283,7 @@ export async function enrichDeferredDownloads(
           !(item.baseModel || '').trim()
         if (needsFullVersion) {
           try {
-            const fullVersion = await client.getModelVersion(item.versionId, { pace: 'crawl' })
+            const fullVersion = await client.getModelVersion(item.versionId, { pace: 'background' })
             if (!ea.isEarlyAccess && fullVersion.paidAccess && paidAccessProbes < maxPaidAccessProbes) {
               paidAccessProbes++
               ea = earlyAccessFromMini({ ...mini, paidAccess: fullVersion.paidAccess })
@@ -331,7 +331,7 @@ export async function enrichDeferredDownloads(
     if (item.modelId <= 0) continue
     tagFetches++
     try {
-      const model = await client.getModel(item.modelId, { pace: 'crawl' })
+      const model = await client.getModel(item.modelId, { pace: 'background' })
       const tags = model.tags ?? []
       if (!tags.length) continue
       const next = { ...item, civitaiTags: tags, modelName: model.name || item.modelName }

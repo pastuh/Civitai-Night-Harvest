@@ -16,6 +16,9 @@ type Options = {
 }
 
 const BACKGROUND_VIDEO_CHUNK = 3
+/** Cap interactive image resolve storm — rest run as background chunks. */
+const INTERACTIVE_IMAGE_FIRST = 24
+const BACKGROUND_IMAGE_CHUNK = 12
 
 function prefetchVideoPlayUrl(url: string | undefined): void {
   const trimmed = url?.trim()
@@ -191,39 +194,52 @@ export function useModelCardPreviewOverrides(
     if (missingImages.length) {
       void (async () => {
         try {
-          const resolved = await window.api.resolvePreviewBatch(
-            missingImages.map((m) => {
-              const src = resolveRequestSource(m, browseCards[m.versionId])
-              return {
-                modelId: src.modelId,
-                versionId: src.versionId,
-                sourceDomain: src.sourceDomain,
-                nsfw: src.nsfw,
-                nsfwLevel: src.nsfwLevel,
-                strictVersion: true,
-                refreshCache: brokenRef.current.has(m.versionId),
-                interactive: true
+          const runBatch = async (
+            batch: ModelCardPreviewSource[],
+            interactive: boolean
+          ) => {
+            const resolved = await window.api.resolvePreviewBatch(
+              batch.map((m) => {
+                const src = resolveRequestSource(m, browseCards[m.versionId])
+                return {
+                  modelId: src.modelId,
+                  versionId: src.versionId,
+                  sourceDomain: src.sourceDomain,
+                  nsfw: src.nsfw,
+                  nsfwLevel: src.nsfwLevel,
+                  strictVersion: true,
+                  refreshCache: brokenRef.current.has(m.versionId),
+                  interactive
+                }
+              }),
+              contentFilter
+            )
+            const next: Record<number, ModelCardPreviewOverride> = {}
+            for (const r of resolved) {
+              brokenRef.current.delete(r.versionId)
+              const patch = overrideFromResolveResult(r)
+              if (
+                !patch.previewUrls?.length &&
+                !patch.videoPreviewUrl &&
+                !patch.videoPreviewUrls?.length
+              ) {
+                imageStartedRef.current.delete(r.versionId)
+                continue
               }
-            }),
-            contentFilter
-          )
-          const next: Record<number, ModelCardPreviewOverride> = {}
-          for (const r of resolved) {
-            brokenRef.current.delete(r.versionId)
-            const patch = overrideFromResolveResult(r)
-            if (
-              !patch.previewUrls?.length &&
-              !patch.videoPreviewUrl &&
-              !patch.videoPreviewUrls?.length
-            ) {
-              imageStartedRef.current.delete(r.versionId)
-              continue
+              next[r.versionId] = patch
+              prefetchVideoPlayUrl(patch.videoPreviewUrl ?? patch.videoPreviewUrls?.[0])
             }
-            next[r.versionId] = patch
-            prefetchVideoPlayUrl(patch.videoPreviewUrl ?? patch.videoPreviewUrls?.[0])
+            if (Object.keys(next).length) {
+              setOverrides((prev) => mergeOverridePatch(prev, next))
+            }
           }
-          if (Object.keys(next).length) {
-            setOverrides((prev) => mergeOverridePatch(prev, next))
+
+          // First screenful interactive; remainder background so Harvest is not starved.
+          const first = missingImages.slice(0, INTERACTIVE_IMAGE_FIRST)
+          const rest = missingImages.slice(INTERACTIVE_IMAGE_FIRST)
+          if (first.length) await runBatch(first, true)
+          for (let i = 0; i < rest.length; i += BACKGROUND_IMAGE_CHUNK) {
+            await runBatch(rest.slice(i, i + BACKGROUND_IMAGE_CHUNK), false)
           }
         } catch {
           for (const m of missingImages) imageStartedRef.current.delete(m.versionId)

@@ -8,7 +8,7 @@ import type {
 } from './types'
 import { getApiBase, getSiteBase } from './utils'
 import { formatCivitaiHttpError, withNetworkRetry } from './network-retry'
-import { paceCivitaiRequest, type CivitaiPacePriority } from './civitai-pace'
+import { paceCivitaiRequest, notifyCrawlHttpStatus, type CivitaiPacePriority } from './civitai-pace'
 import type { CivitaiVersionMini } from './early-access'
 import { expandCivitaiTagNames } from './tag-routing'
 
@@ -79,9 +79,20 @@ export class CivitaiClient {
     if (init?.body) headers['Content-Type'] = 'application/json'
 
     const pace = init?.pace ?? 'background'
+    const crawlLabel =
+      pace === 'crawl'
+        ? path.startsWith('/models/')
+          ? `GET ${path}`
+          : path === '/models'
+            ? 'catalog/search GET /models'
+            : `GET ${path}`
+        : undefined
     const res = await paceCivitaiRequest(
-      () =>
-        withNetworkRetry(
+      () => {
+        if (pace === 'crawl') {
+          notifyCrawlHttpStatus({ kind: 'http-waiting', path })
+        }
+        return withNetworkRetry(
           'Civitai API',
           () =>
             fetch(url.toString(), {
@@ -90,10 +101,23 @@ export class CivitaiClient {
               body: init?.body,
               signal: AbortSignal.timeout(90_000)
             }),
-          { attempts: 5, baseDelayMs: 2500 }
-        ),
-      pace
+          {
+            attempts: 5,
+            baseDelayMs: 2500,
+            onRetry:
+              pace === 'crawl'
+                ? ({ attempt, attempts }) =>
+                    notifyCrawlHttpStatus({ kind: 'http-retry', path, attempt, attempts })
+                : undefined
+          }
+        )
+      },
+      pace,
+      crawlLabel ? { label: crawlLabel } : undefined
     )
+    if (pace === 'crawl') {
+      notifyCrawlHttpStatus({ kind: 'http-received', path })
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       const detail = formatCivitaiHttpError(res.status, body)
