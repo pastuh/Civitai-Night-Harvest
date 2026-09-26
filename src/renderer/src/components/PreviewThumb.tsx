@@ -68,7 +68,15 @@ export function PreviewThumb({
   }, [urls.join('|'), videoUrl])
   const [index, setIndex] = useState(0)
   const [failed, setFailed] = useState(false)
+  const [imageLoaded, setImageLoaded] = useState(false)
+  const [shimmerVisible, setShimmerVisible] = useState(true)
+  const [awaitTimedOut, setAwaitTimedOut] = useState(false)
   const [pointerInside, setPointerInside] = useState(false)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const loadGenRef = useRef(0)
+  const activeSrc = candidates.length
+    ? candidates[Math.min(index, candidates.length - 1)]
+    : ''
   const [hoverActive, setHoverActive] = useState(false)
   const [showVideoLayer, setShowVideoLayer] = useState(false)
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | undefined>()
@@ -96,8 +104,12 @@ export function PreviewThumb({
   }
 
   useEffect(() => {
+    loadGenRef.current += 1
     setIndex(0)
     setFailed(false)
+    setImageLoaded(false)
+    setShimmerVisible(true)
+    setAwaitTimedOut(false)
     setShowVideoLayer(false)
     setResolvedVideoUrl(undefined)
     setPlayableVideoSrc('')
@@ -106,6 +118,48 @@ export function PreviewThumb({
     fetchStartedRef.current = false
     cacheKeyRef.current = ''
   }, [candidates.join('|'), videoUrl, videoAvailability])
+
+  // Empty urls while EA/Browse resolve runs — shimmer instead of instant "No image".
+  useEffect(() => {
+    if (candidates.length || failed) {
+      setAwaitTimedOut(false)
+      return
+    }
+    const timer = window.setTimeout(() => setAwaitTimedOut(true), 12_000)
+    return () => window.clearTimeout(timer)
+  }, [candidates.length, failed])
+
+  useEffect(() => {
+    loadGenRef.current += 1
+    setImageLoaded(false)
+    setShimmerVisible(true)
+  }, [index])
+
+  // Keep shimmer until pixels are decoded (onLoad alone can fire before paint).
+  const revealLoadedImage = (el: HTMLImageElement | null) => {
+    if (!el || !el.complete || el.naturalWidth <= 0) return
+    const gen = loadGenRef.current
+    const finish = () => {
+      if (gen !== loadGenRef.current) return
+      setImageLoaded(true)
+    }
+    if (typeof el.decode === 'function') {
+      void el.decode().then(finish).catch(finish)
+    } else {
+      finish()
+    }
+  }
+
+  useEffect(() => {
+    if (imageLoaded || !activeSrc) return
+    revealLoadedImage(imgRef.current)
+  }, [activeSrc, index, imageLoaded])
+
+  useEffect(() => {
+    if (!imageLoaded || !shimmerVisible) return
+    const timer = window.setTimeout(() => setShimmerVisible(false), 320)
+    return () => window.clearTimeout(timer)
+  }, [imageLoaded, shimmerVisible])
 
   useEffect(() => {
     if (!pointerInside || !videoPreviews) {
@@ -249,7 +303,8 @@ export function PreviewThumb({
   const showVideoBadge =
     videoPreviews && availability === 'available' && !showVideoLayer && !showSpinner
 
-  if (!candidates.length || failed) {
+  const showEmpty = failed || (!candidates.length && awaitTimedOut)
+  if (showEmpty) {
     return (
       <div className={`${className} placeholder preview-empty`}>
         <span className="preview-empty-icon" aria-hidden>
@@ -260,7 +315,20 @@ export function PreviewThumb({
     )
   }
 
-  const src = candidates[Math.min(index, candidates.length - 1)]
+  if (!candidates.length) {
+    return (
+      <div
+        className={`${className} placeholder preview-thumb-shell preview-thumb-awaiting`}
+        aria-busy="true"
+        aria-label={t('previewThumb.imageLoading')}
+      >
+        <span className="preview-thumb-shimmer" aria-hidden />
+      </div>
+    )
+  }
+
+  const src = activeSrc
+  const showImageShimmer = shimmerVisible
 
   const tryPlayVideo = () => {
     const el = videoRef.current
@@ -279,14 +347,29 @@ export function PreviewThumb({
       className="preview-thumb-shell"
       onMouseEnter={() => setPointerInside(true)}
       onMouseLeave={() => setPointerInside(false)}
+      aria-busy={!imageLoaded || undefined}
     >
+      {showImageShimmer ? (
+        <span
+          className={`preview-thumb-shimmer${imageLoaded ? ' is-fading' : ''}`}
+          aria-hidden
+          onTransitionEnd={(e) => {
+            if (e.propertyName !== 'opacity') return
+            if (imageLoaded) setShimmerVisible(false)
+          }}
+        />
+      ) : null}
       <img
+        ref={imgRef}
         src={src}
         alt=""
-        className={`${className}${showVideoLayer ? ' preview-thumb-img-hidden' : ''}`}
+        className={`${className}${showVideoLayer ? ' preview-thumb-img-hidden' : ''}${!imageLoaded ? ' preview-thumb-img-loading' : ''}`}
         loading={loading}
         decoding="async"
+        onLoad={(e) => revealLoadedImage(e.currentTarget)}
         onError={() => {
+          setImageLoaded(false)
+          setShimmerVisible(true)
           if (index + 1 < candidates.length) {
             setIndex((prev) => prev + 1)
           } else {

@@ -1003,9 +1003,12 @@ export class DownloadQueue {
     }
 
     for (const d of inventory.getAllDeferredDownloads()) {
-      // Keep Early Access / Buzz / auth deferred — pause tags are indicators only.
+      // Keep Early Access / Buzz / auth deferred — pause tags are indicators only
+      // (EA + pause still lives on Early access → Session pause).
       if (isAwaitingAccessFailureKind(d.failureKind)) continue
-      if (!isBlocked({ civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag, modelId: d.modelId })) continue
+      if (!isBlocked({ civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag, modelId: d.modelId })) {
+        continue
+      }
       inventory.removeDeferredDownload(d.versionId)
       removed++
     }

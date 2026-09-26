@@ -1,8 +1,10 @@
-/** Map a preview path/URL for display in <img> / media:// protocol. */
+/** Map a preview path/URL for display in <img> / media:///C:/... protocol. */
 export function toPreviewSrc(url: string): string {
   const trimmed = url?.trim()
   if (!trimmed) return ''
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:') || trimmed.startsWith('media://')) return trimmed
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:') || trimmed.startsWith('media://')) {
+    return trimmed
+  }
   return window.api.toMediaUrl(trimmed)
 }
 

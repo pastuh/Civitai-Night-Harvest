@@ -1,6 +1,11 @@
 import type { DeferredDownload, DeferredSource, WatchRule } from './types'
 import { modelMatchesRuleBrowseFilter } from './utils'
-import { expandCivitaiTagNames, isPausedOnlyModelTag, modelHasPolicyTag } from './tag-routing'
+import {
+  expandCivitaiTagNames,
+  isPausedOnlyModelTag,
+  isPermanentlyBannedModelTag,
+  modelHasPolicyTag
+} from './tag-routing'
 
 export type { DeferredSource } from './types'
 
@@ -81,8 +86,8 @@ export function deferredBlockedByPolicyTags(
 }
 
 /**
- * Pause-tag only (not permanent ban) — Session pause filter / exclude from EA tab badge.
- * Allow-list exceptions stay on the main Early access list.
+ * Pause-tag only (not permanent ban) — policy styling on EA cards.
+ * Not the same as Missing/EA "Session pause" (that is pausedByTag this session).
  */
 export function deferredIsSessionPause(
   item: Pick<DeferredDownload, 'modelId' | 'civitaiTags' | 'routingTag'>,
@@ -91,6 +96,8 @@ export function deferredIsSessionPause(
   isTagSkipAllowed?: (modelId: number) => boolean
 ): boolean {
   if (isTagSkipAllowed?.(item.modelId)) return false
+  // Ban policy wins — those are not "pause".
+  if (deferredHasBannedPolicyTag(item, bannedTags)) return false
   const paused = pausedTags ? [...pausedTags] : []
   const banned = bannedTags ? [...bannedTags] : []
   if (!paused.length) return false
@@ -99,6 +106,20 @@ export function deferredIsSessionPause(
   }
   const route = item.routingTag?.trim()
   return Boolean(route && isPausedOnlyModelTag(route, paused, banned))
+}
+
+/** Permanent ban-by-tag on an EA deferred row (not the same as Session bans). */
+export function deferredHasBannedPolicyTag(
+  item: Pick<DeferredDownload, 'civitaiTags' | 'routingTag'>,
+  bannedTags: readonly string[] | undefined
+): boolean {
+  const banned = bannedTags ? [...bannedTags] : []
+  if (!banned.length) return false
+  for (const tag of expandCivitaiTagNames(item.civitaiTags)) {
+    if (isPermanentlyBannedModelTag(tag, banned)) return true
+  }
+  const route = item.routingTag?.trim()
+  return Boolean(route && isPermanentlyBannedModelTag(route, banned))
 }
 
 export type DeferredVisibilityOptions = {
@@ -115,8 +136,8 @@ export type DeferredVisibilityOptions = {
  * Early access tab visibility (main All list):
  * - Always: user manual download + EA favorites
  * - Harvest / auto-deferred: while enabled Browse rules still match
- * Session pause (pause tags) is excluded from All / tab badge — see Session pause filter.
- * (Missing owns non-EA tag-skips, not awaiting-access deferred.)
+ * Pause-tagged EA stay in All (distinct card style); Session pause filter narrows to them.
+ * Missing owns non-EA tag-skips only.
  */
 export function isDeferredVisibleInAwaitingTab(
   item: DeferredDownload,

@@ -1229,7 +1229,8 @@ export const en = {
     videoBadge: 'Video',
     videoBadgeTitle: 'Video preview on hover',
     videoChecking: 'Checking…',
-    videoLoading: 'Loading video…'
+    videoLoading: 'Loading video…',
+    imageLoading: 'Loading preview…'
   },
   gallery: {
     titleHeading: 'Library',

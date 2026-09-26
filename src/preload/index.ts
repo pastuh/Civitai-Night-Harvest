@@ -470,7 +470,23 @@ const api = {
   acknowledgeUnackedMissing: (): Promise<{ acknowledged: number; items: MissingModel[] }> =>
     ipcRenderer.invoke('missing:acknowledgeUnacked'),
 
-  toMediaUrl: (filePath: string): string => `media://${encodeURIComponent(filePath)}`,
+  /**
+   * Chromium-friendly local file URL for <img>/<video>.
+   * Use media:///C:/... (forward slashes) — encodeURIComponent(whole Windows path)
+   * puts %5C in the host and often fails to load (No image).
+   */
+  toMediaUrl: (filePath: string): string => {
+    const trimmed = filePath?.trim()
+    if (!trimmed) return ''
+    const normalized = trimmed.replace(/\\/g, '/')
+    const abs =
+      /^[A-Za-z]:\//.test(normalized)
+        ? `/${normalized}`
+        : normalized.startsWith('/')
+          ? normalized
+          : `/${normalized}`
+    return `media://${encodeURI(abs)}`
+  },
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showInFolder', filePath),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url),
 

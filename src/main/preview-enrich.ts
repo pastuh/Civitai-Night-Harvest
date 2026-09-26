@@ -14,7 +14,8 @@ import {
 import {
   resolveCachedPreviewUrls,
   localPreviewPathIfCached,
-  invalidateCachedPreviews
+  invalidateCachedPreviews,
+  isUsableStoredPreviewUrl
 } from './preview-cache'
 import * as inventory from './inventory'
 
@@ -549,7 +550,7 @@ export async function enrichDeferredPreviews(
   const missing = items.filter((i) => {
     if (i.versionId <= 0 || i.modelId <= 0) return false
     const normalized = i.previewUrl ? normalizePreviewDisplayUrl(i.previewUrl) : undefined
-    return !isDisplayablePreviewUrl(normalized)
+    return !isUsableStoredPreviewUrl(normalized)
   })
   if (!missing.length) return 0
 

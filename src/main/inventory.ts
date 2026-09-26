@@ -29,6 +29,7 @@ import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import { isAwaitingAccessFailureKind } from '../shared/download-errors'
 import { safePathExists } from './output-paths'
+import { filterUsablePreviewUrls, isUsableStoredPreviewUrl } from './preview-cache'
 
 let db: Database.Database | null = null
 
@@ -1141,7 +1142,8 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
   const tagSkips = getAllTagSkipReviews()
     .filter((s) => !bannedIds.has(s.modelId) && !isModelOwned(s.modelId) && !isTagSkipAllowed(s.modelId))
     .filter((s) => {
-      // Legacy rows: EA/Buzz deferred must not appear on Missing.
+      // EA/Buzz deferred must not appear on Missing — they stay on Early access
+      // (including pause-tagged EA under Session pause).
       if (modelHasAwaitingAccessDeferred(s.modelId, s.versionId)) {
         removeTagSkipReview(s.modelId)
         return false
@@ -2444,9 +2446,36 @@ function coalesceDeferredPreviewUrl(
     const trimmed = raw?.trim()
     if (!trimmed) continue
     const url = normalizePreviewDisplayUrl(trimmed)
-    if (url && isDisplayablePreviewUrl(url)) return url
+    if (url && isUsableStoredPreviewUrl(url)) return url
   }
   return undefined
+}
+
+/**
+ * Clear deferred preview_url when the local cache file is gone so enrich can re-fetch.
+ * Returns how many rows were cleared or replaced from browse cache.
+ */
+export function sanitizeDeferredDeadLocalPreviews(): number {
+  let patched = 0
+  for (const item of getAllDeferredDownloads()) {
+    const url = item.previewUrl?.trim()
+    if (!url) continue
+    if (isUsableStoredPreviewUrl(url)) continue
+    const card = getBrowseCardCache([item.versionId]).get(item.versionId)
+    const replacement = coalesceDeferredPreviewUrl(
+      card?.previewUrl,
+      ...(card?.previewUrls ?? []),
+      card?.videoPreviewUrl,
+      card?.videoPreviewUrls?.[0]
+    )
+    upsertDeferredDownload({
+      ...item,
+      previewUrl: replacement,
+      bumpAttempt: false
+    })
+    patched++
+  }
+  return patched
 }
 
 /** Copy preview URL from browse_card_cache when the deferred row has none (Browse enrich runs first). */
@@ -2484,10 +2513,10 @@ export function backfillDeferredPreviewsFromBrowseCache(): number {
 export function backfillDeferredPreviewsFromInventory(): number {
   let patched = 0
   for (const item of getAllDeferredDownloads()) {
-    if (isDisplayablePreviewUrl(item.previewUrl)) continue
+    if (isUsableStoredPreviewUrl(item.previewUrl)) continue
     const rec = getVersion(item.versionId)
     const path = rec?.previewPath?.trim()
-    if (!path) continue
+    if (!path || !isUsableStoredPreviewUrl(path)) continue
     upsertDeferredDownload({ ...item, previewUrl: path, bumpAttempt: false })
     patched++
   }
@@ -3076,6 +3105,28 @@ export function upsertBrowseCardCache(
   tx(rows)
 }
 
+function sanitizeBrowseCardPreviews(card: WatchRuleTestModel): WatchRuleTestModel {
+  const raw = card.previewUrls?.length
+    ? card.previewUrls
+    : card.previewUrl
+      ? [card.previewUrl]
+      : []
+  const usable = filterUsablePreviewUrls(raw)
+  const prevUrl = card.previewUrl?.trim() || undefined
+  const sameSingle = usable.length === 1 && usable[0] === prevUrl && !card.previewUrls?.length
+  const sameList =
+    Boolean(card.previewUrls?.length) &&
+    usable.length === card.previewUrls!.length &&
+    usable.every((u, i) => u === card.previewUrls![i]) &&
+    usable[0] === prevUrl
+  if (sameSingle || sameList || (!usable.length && !prevUrl)) return card
+  return {
+    ...card,
+    previewUrl: usable[0],
+    previewUrls: usable.length ? usable : undefined
+  }
+}
+
 export function getBrowseCardCache(versionIds: number[]): Map<number, WatchRuleTestModel> {
   const out = new Map<number, WatchRuleTestModel>()
   const ids = versionIds.filter((id) => id > 0)
@@ -3089,7 +3140,7 @@ export function getBrowseCardCache(versionIds: number[]): Map<number, WatchRuleT
   for (const row of rows) {
     try {
       const card = JSON.parse(row.card_json) as WatchRuleTestModel
-      if (card?.versionId) out.set(row.version_id, card)
+      if (card?.versionId) out.set(row.version_id, sanitizeBrowseCardPreviews(card))
     } catch {
       /* skip corrupt row */
     }

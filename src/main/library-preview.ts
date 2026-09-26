@@ -34,7 +34,17 @@ function bufferToPreview(url: string, buffer: Buffer, mime?: string): FetchedPre
 function previewFromLocalMediaUrl(url: string): FetchedPreview | null {
   if (!url.startsWith('media://')) return null
   try {
-    const filePath = stripUrlExtras(decodeURIComponent(url.replace(/^media:\/\//, '')))
+    let filePath = stripUrlExtras(url.replace(/^media:\/\//i, ''))
+    try {
+      filePath = decodeURIComponent(filePath)
+    } catch {
+      try {
+        filePath = decodeURI(filePath)
+      } catch {
+        /* keep */
+      }
+    }
+    if (/^\/[A-Za-z]:[/\\]/.test(filePath)) filePath = filePath.slice(1)
     if (!filePath || !existsSync(filePath)) return null
     return bufferToPreview(url, readFileSync(filePath))
   } catch {

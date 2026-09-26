@@ -2493,6 +2493,81 @@ body.is-app-busy * {
   opacity: 0;
 }
 
+.preview-thumb-shell > .gallery-thumb.preview-thumb-img-loading {
+  opacity: 0;
+}
+
+.preview-thumb-awaiting {
+  min-height: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+}
+
+.preview-thumb-shimmer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--surface2) 70%, var(--bg, var(--surface))),
+    color-mix(in srgb, var(--surface) 75%, var(--bg, var(--surface2)))
+  );
+  transition: opacity 0.28s ease;
+}
+
+.preview-thumb-shimmer.is-fading {
+  opacity: 0;
+}
+
+.preview-thumb-shimmer::after {
+  content: '';
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -50%;
+  width: 38%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    color-mix(in srgb, var(--muted) 0%, transparent) 42%,
+    color-mix(in srgb, var(--muted) 5%, transparent) 49%,
+    color-mix(in srgb, var(--muted) 9%, transparent) 50%,
+    color-mix(in srgb, var(--muted) 5%, transparent) 51%,
+    color-mix(in srgb, var(--muted) 0%, transparent) 58%,
+    transparent 100%
+  );
+  transform: skewX(-16deg);
+  animation: preview-shimmer-sweep 2.2s ease-in-out infinite;
+}
+
+@keyframes preview-shimmer-sweep {
+  0% {
+    transform: skewX(-16deg) translateX(0);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.85;
+  }
+  82% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: skewX(-16deg) translateX(340%);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-thumb-shimmer::after {
+    animation: none;
+    opacity: 0.25;
+    left: 30%;
+    width: 24%;
+  }
+}
+
 .preview-thumb-video {
   position: absolute;
   inset: 0;

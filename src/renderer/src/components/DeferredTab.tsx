@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import type { DeferredDownload, InventoryRecord, TagFolderRule, WatchRule } from '../../../shared/types'
-import { deferredIsSessionPause, isDeferredVisibleInAwaitingTab } from '../../../shared/deferred-visibility'
+import { isDeferredVisibleInAwaitingTab } from '../../../shared/deferred-visibility'
 import {
   DEFERRED_KIND_LABELS,
   MAX_AUTO_DEFERRED_ATTEMPTS,
@@ -42,9 +50,21 @@ type SideFilter =
   | { type: 'wait' }
   | { type: 'buy' }
   | { type: 'favorites' }
+  | { type: 'unseen' }
+  | { type: 'seen' }
   | { type: 'sessionBans' }
   | { type: 'sessionPause' }
   | { type: 'baseModel'; name: string }
+
+type KindFilter = 'all' | 'bannedByTag' | 'pausedByTag'
+
+/** Local calendar day (YYYY-MM-DD) for ban-seen marks (shared with Missing). */
+function localDayKey(d = new Date()): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 interface Props {
   deferred: DeferredDownload[]
@@ -75,8 +95,10 @@ interface Props {
   checkpointFolder?: string
   hiddenTags?: string[]
   bannedTags?: string[]
-  /** Model IDs banned / tag-skipped during this app session (Missing + Browse). */
+  /** Model IDs banned this session (same rule as Missing → Session bans). */
   sessionBanModelIds?: number[]
+  /** Model IDs paused this session (same rule as Missing → Session pause). */
+  sessionPauseModelIds?: number[]
   /** Clear Browse/App ban state after Unban from this tab. */
   onBrowseModelUnbanned?: (modelId: number) => void
   fastTagMode?: boolean
@@ -218,6 +240,15 @@ function itemHasPausedTag(
   return false
 }
 
+function itemHasBannedTag(item: DeferredDownload, bannedTags: string[]): boolean {
+  for (const tag of expandCivitaiTagNames(item.civitaiTags)) {
+    if (isPermanentlyBannedModelTag(tag, bannedTags)) return true
+  }
+  const route = item.routingTag?.trim()
+  if (route && isPermanentlyBannedModelTag(route, bannedTags)) return true
+  return false
+}
+
 export function DeferredTab({
   deferred,
   watchRules = [],
@@ -240,6 +271,7 @@ export function DeferredTab({
   hiddenTags = [],
   bannedTags = [],
   sessionBanModelIds = [],
+  sessionPauseModelIds = [],
   onBrowseModelUnbanned,
   fastTagMode = false,
   confirmTagFolderMoves = true,
@@ -254,6 +286,22 @@ export function DeferredTab({
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
   const [sideFilter, setSideFilter] = useState<SideFilter>({ type: 'all' })
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  const [hideBanned, setHideBanned] = useState(true)
+  const [hidePaused, setHidePaused] = useState(true)
+  const [hideSeen, setHideSeen] = useState(false)
+  const [markSeenMode, setMarkSeenMode] = useState(false)
+  const [banSeenByModelId, setBanSeenByModelId] = useState<Record<number, string>>({})
+  const banSeenByModelIdRef = useRef(banSeenByModelId)
+  banSeenByModelIdRef.current = banSeenByModelId
+  const pendingSeenRef = useRef<Set<number>>(new Set())
+  const seenFlushTimerRef = useRef<number | null>(null)
+  const armedSeenIdRef = useRef<number | null>(null)
+  const armedSeenAtRef = useRef(0)
+  const armedSeenPosRef = useRef({ x: 0, y: 0 })
+  /** Unseen sidebar: keep cards visible after mark until Hide seen (like Missing). */
+  const unseenSnapshotRef = useRef<Set<number>>(new Set())
+  const reviewPoolRef = useRef<DeferredDownload[]>([])
   const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(null)
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [sectionOpen, setSectionOpen] = useState({ baseModels: true })
@@ -299,12 +347,20 @@ export function DeferredTab({
     }
     if (justOpened) {
       setPinFavoriteIds(eaFavoriteIds)
+      armedSeenIdRef.current = null
       void window.api.getTagSkipAllowlist?.().then((snap) => {
         const ids = snap?.modelIds ?? []
         setTagSkipAllowIds(new Set(ids.filter((id) => id > 0)))
       }).catch(() => {
         /* older preload without API — keep local set */
       })
+      if (typeof window.api.getMissingBanSeen === 'function') {
+        void window.api.getMissingBanSeen().then((snap) => {
+          const byId = snap.byModelId ?? {}
+          banSeenByModelIdRef.current = byId
+          setBanSeenByModelId(byId)
+        })
+      }
     }
   }, [isActive, eaFavoriteIds])
 
@@ -402,19 +458,13 @@ export function DeferredTab({
   )
 
   /** Harvest rows from disabled / non-matching Browse rules are hidden.
-   *  Session pause stays out of All — use the Session pause sidebar filter. */
+   *  Pause/ban styling is on the card — All includes paused EA rows. */
   const scopedDeferred = useMemo(
     () =>
-      activeDeferred.filter((d) => {
-        if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
-        if (
-          deferredIsSessionPause(d, hiddenTags, bannedTags, (id) => tagSkipAllowIds.has(id))
-        ) {
-          return false
-        }
-        return true
-      }),
-    [activeDeferred, watchRules, eaFavoriteIds, hiddenTags, bannedTags, tagSkipAllowIds]
+      activeDeferred.filter((d) =>
+        isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)
+      ),
+    [activeDeferred, watchRules, eaFavoriteIds]
   )
 
   const hiddenByRulesCount = useMemo(
@@ -440,14 +490,117 @@ export function DeferredTab({
     () => itemsForMainCounts.filter((d) => liveFavoriteSet.has(d.modelId)).length,
     [itemsForMainCounts, liveFavoriteSet]
   )
+  const sessionPauseSet = useMemo(() => new Set(sessionPauseModelIds), [sessionPauseModelIds])
+  const classifyPolicy = useCallback(
+    (item: DeferredDownload) => {
+      const temporaryAllowed = temporaryAllowedByModelId.has(item.modelId)
+      const sessionBanned =
+        !temporaryAllowed &&
+        (sessionBannedByModelId.has(item.modelId) || sessionBanSet.has(item.modelId))
+      const bannedByTag =
+        !temporaryAllowed &&
+        !sessionBanned &&
+        !tagSkipAllowIds.has(item.modelId) &&
+        itemHasBannedTag(item, bannedTags)
+      const pausedByTag =
+        !temporaryAllowed &&
+        !sessionBanned &&
+        !bannedByTag &&
+        !tagSkipAllowIds.has(item.modelId) &&
+        itemHasPausedTag(item, hiddenTags, bannedTags)
+      return { temporaryAllowed, sessionBanned, bannedByTag, pausedByTag }
+    },
+    [
+      temporaryAllowedByModelId,
+      sessionBannedByModelId,
+      sessionBanSet,
+      tagSkipAllowIds,
+      bannedTags,
+      hiddenTags
+    ]
+  )
+
+  const bannedByTagCount = useMemo(() => {
+    let n = 0
+    for (const d of itemsForMainCounts) {
+      if (classifyPolicy(d).bannedByTag) n++
+    }
+    return n
+  }, [itemsForMainCounts, classifyPolicy])
+
+  const pausedByTagCount = useMemo(() => {
+    let n = 0
+    for (const d of itemsForMainCounts) {
+      if (classifyPolicy(d).pausedByTag) n++
+    }
+    return n
+  }, [itemsForMainCounts, classifyPolicy])
+
+  /** All sidebar count respects Hide banned / Hide paused (like Missing). */
+  const allVisibleCount = useMemo(() => {
+    let n = 0
+    for (const d of itemsForMainCounts) {
+      const c = classifyPolicy(d)
+      if (hideBanned && (c.sessionBanned || c.bannedByTag)) continue
+      if (hidePaused && c.pausedByTag) continue
+      n++
+    }
+    return n
+  }, [itemsForMainCounts, classifyPolicy, hideBanned, hidePaused])
+
+  /** Ban / pause cards on EA that can be Mark seen (same store as Missing). */
+  const canMarkDeferredSeen = useCallback(
+    (item: DeferredDownload) => {
+      if (temporaryAllowedByModelId.has(item.modelId)) return false
+      const c = classifyPolicy(item)
+      return (
+        c.sessionBanned ||
+        c.bannedByTag ||
+        c.pausedByTag ||
+        sessionPauseSet.has(item.modelId)
+      )
+    },
+    [classifyPolicy, temporaryAllowedByModelId, sessionPauseSet]
+  )
+
+  const reviewableItems = useMemo(() => {
+    const map = new Map<number, DeferredDownload>()
+    for (const d of itemsForMainCounts) {
+      if (canMarkDeferredSeen(d)) map.set(d.modelId, d)
+    }
+    for (const d of sessionBannedList) {
+      if (!temporaryAllowedByModelId.has(d.modelId)) map.set(d.modelId, d)
+    }
+    return [...map.values()]
+  }, [
+    itemsForMainCounts,
+    canMarkDeferredSeen,
+    sessionBannedList,
+    temporaryAllowedByModelId
+  ])
+  reviewPoolRef.current = reviewableItems
+
+  const unseenBanCount = useMemo(() => {
+    let n = 0
+    for (const d of reviewableItems) {
+      if (!banSeenByModelId[d.modelId]) n++
+    }
+    return n
+  }, [reviewableItems, banSeenByModelId])
+
+  const seenBanCount = useMemo(() => {
+    let n = 0
+    for (const d of reviewableItems) {
+      if (banSeenByModelId[d.modelId]) n++
+    }
+    return n
+  }, [reviewableItems, banSeenByModelId])
+
   const sessionPausePool = useMemo(
     () =>
-      // Indicator filter: pause-tagged EA rows (still shown in All with pause style).
-      activeDeferred.filter(
-        (d) =>
-          itemHasPausedTag(d, hiddenTags, bannedTags) && !tagSkipAllowIds.has(d.modelId)
-      ),
-    [activeDeferred, hiddenTags, bannedTags, tagSkipAllowIds]
+      // Same meaning as Missing → Session pause: paused this session, still on EA list.
+      activeDeferred.filter((d) => sessionPauseSet.has(d.modelId)),
+    [activeDeferred, sessionPauseSet]
   )
   const sessionPauseCount = useMemo(() => {
     if (!modelTypeFilter) return sessionPausePool.length
@@ -528,11 +681,29 @@ export function DeferredTab({
       const merged = new Map<number, DeferredDownload>()
       for (const d of sessionPausePool) merged.set(d.modelId, d)
       for (const d of temporaryAllowedByModelId.values()) {
-        if (!merged.has(d.modelId) && itemHasPausedTag(d, hiddenTags, bannedTags)) {
+        if (!merged.has(d.modelId) && sessionPauseSet.has(d.modelId)) {
           merged.set(d.modelId, d)
         }
       }
       list = [...merged.values()]
+    } else if (sideFilter.type === 'unseen' || sideFilter.type === 'seen') {
+      const merged = new Map<number, DeferredDownload>()
+      for (const d of scopedDeferred) {
+        if (canMarkDeferredSeen(d)) merged.set(d.modelId, d)
+      }
+      for (const d of sessionBannedList) {
+        if (!temporaryAllowedByModelId.has(d.modelId)) merged.set(d.modelId, d)
+      }
+      for (const d of sessionBanLive) {
+        if (!temporaryAllowedByModelId.has(d.modelId)) merged.set(d.modelId, d)
+      }
+      list = [...merged.values()].filter((d) => {
+        const seen = Boolean(banSeenByModelId[d.modelId])
+        if (sideFilter.type === 'seen') return seen
+        if (!seen) return true
+        if (hideSeen) return false
+        return unseenSnapshotRef.current.has(d.modelId)
+      })
     } else if (sideFilter.type === 'favorites') {
       list = scopedDeferred.filter((d) => liveFavoriteSet.has(d.modelId))
     } else if (sideFilter.type === 'wait') {
@@ -543,6 +714,10 @@ export function DeferredTab({
       list = scopedDeferred.filter((d) =>
         baseModelsMatch(deferredBaseModelLabel(d, browseCards, inventoryByVersion), sideFilter.name)
       )
+    } else if (kindFilter === 'bannedByTag') {
+      list = scopedDeferred.filter((d) => classifyPolicy(d).bannedByTag)
+    } else if (kindFilter === 'pausedByTag') {
+      list = scopedDeferred.filter((d) => classifyPolicy(d).pausedByTag)
     } else {
       list = scopedDeferred
     }
@@ -554,31 +729,101 @@ export function DeferredTab({
     if (unlockDayFilter) {
       list = list.filter((d) => unlockDayKey(d.earlyAccessEndsAt) === unlockDayFilter)
     }
+
+    // Hide banned / paused — only plain All (like Missing). Search still shows matches.
+    if (
+      !q &&
+      kindFilter === 'all' &&
+      sideFilter.type === 'all' &&
+      !modelTypeFilter &&
+      !unlockDayFilter
+    ) {
+      list = list.filter((d) => {
+        const c = classifyPolicy(d)
+        if (hideBanned && (c.sessionBanned || c.bannedByTag)) return false
+        if (hidePaused && c.pausedByTag) return false
+        return true
+      })
+    }
+
+    // Hide seen — any view except the Seen filter (like Missing).
+    if (!q && hideSeen && sideFilter.type !== 'seen') {
+      list = list.filter((d) => {
+        if (!canMarkDeferredSeen(d)) return true
+        return !banSeenByModelId[d.modelId]
+      })
+    }
+
     if (q) list = list.filter((d) => matchesSearch(d, q))
     return list
   }, [
     search,
     sideFilter,
+    kindFilter,
     modelTypeFilter,
     unlockDayFilter,
+    hideBanned,
+    hidePaused,
+    hideSeen,
+    banSeenByModelId,
     scopedDeferred,
     sessionBannedList,
     sessionBanLive,
     sessionBanSet,
     sessionPausePool,
+    sessionPauseSet,
     temporaryAllowedByModelId,
-    hiddenTags,
-    bannedTags,
     liveFavoriteSet,
     pinFavoriteSet,
     deferredSort,
     browseCards,
-    inventoryByVersion
+    inventoryByVersion,
+    classifyPolicy,
+    canMarkDeferredSeen
   ])
 
-  const applySideFilter = useCallback((next: SideFilter) => {
-    setSideFilter(next)
+  const applySideFilter = useCallback(
+    (next: SideFilter) => {
+      setSideFilter(next)
+      setKindFilter('all')
+      if (next.type === 'unseen') {
+        const snapshot = new Set<number>()
+        for (const d of reviewPoolRef.current) {
+          if (!banSeenByModelIdRef.current[d.modelId]) snapshot.add(d.modelId)
+        }
+        unseenSnapshotRef.current = snapshot
+      }
+      if (next.type === 'seen') {
+        setHideSeen(false)
+        setHideBanned(false)
+        setHidePaused(false)
+      }
+    },
+    []
+  )
+
+  const applyKindFilter = useCallback((next: KindFilter) => {
+    setKindFilter(next)
+    setSideFilter({ type: 'all' })
+    setUnlockDayFilter(null)
+    if (next === 'all') setModelTypeFilter(null)
   }, [])
+
+  const onHideBannedChange = useCallback(
+    (checked: boolean) => {
+      setHideBanned(checked)
+      if (checked && kindFilter === 'bannedByTag') setKindFilter('all')
+    },
+    [kindFilter]
+  )
+
+  const onHidePausedChange = useCallback(
+    (checked: boolean) => {
+      setHidePaused(checked)
+      if (checked && kindFilter === 'pausedByTag') setKindFilter('all')
+    },
+    [kindFilter]
+  )
 
   const applyModelTypeFilter = useCallback((name: string) => {
     setModelTypeFilter((prev) =>
@@ -586,7 +831,83 @@ export function DeferredTab({
     )
   }, [])
 
-  const clearSideFilter = useCallback(() => setSideFilter({ type: 'all' }), [])
+  const clearSideFilter = useCallback(() => {
+    setSideFilter({ type: 'all' })
+    setKindFilter('all')
+  }, [])
+
+  const flushPendingSeen = useCallback(() => {
+    const ids = [...pendingSeenRef.current]
+    pendingSeenRef.current.clear()
+    if (!ids.length) return
+    if (typeof window.api.markMissingBanSeen !== 'function') return
+    const day = localDayKey()
+    void window.api.markMissingBanSeen(ids, day).then((snap) => {
+      const byId = snap.byModelId ?? {}
+      banSeenByModelIdRef.current = byId
+      setBanSeenByModelId(byId)
+    })
+  }, [])
+
+  const queueBanSeen = useCallback(
+    (modelId: number, opts?: { force?: boolean }) => {
+      if (!isActive) return
+      if (!opts?.force && !markSeenMode) return
+      if (banSeenByModelIdRef.current[modelId]) return
+      if (pendingSeenRef.current.has(modelId)) return
+      pendingSeenRef.current.add(modelId)
+      if (armedSeenIdRef.current === modelId) armedSeenIdRef.current = null
+      const day = localDayKey()
+      banSeenByModelIdRef.current = { ...banSeenByModelIdRef.current, [modelId]: day }
+      setBanSeenByModelId((prev) => (prev[modelId] ? prev : { ...prev, [modelId]: day }))
+      if (seenFlushTimerRef.current != null) return
+      seenFlushTimerRef.current = window.setTimeout(() => {
+        seenFlushTimerRef.current = null
+        flushPendingSeen()
+      }, 250)
+    },
+    [flushPendingSeen, isActive, markSeenMode]
+  )
+
+  const armBanSeenOnEnter = useCallback(
+    (modelId: number, e: ReactPointerEvent<HTMLElement>) => {
+      if (!markSeenMode) return
+      armedSeenIdRef.current = modelId
+      armedSeenAtRef.current = performance.now()
+      armedSeenPosRef.current = { x: e.clientX, y: e.clientY }
+    },
+    [markSeenMode]
+  )
+
+  const tryMarkBanSeenOnSideLeave = useCallback(
+    (modelId: number, e: ReactPointerEvent<HTMLElement>) => {
+      if (!markSeenMode) return
+      if (armedSeenIdRef.current !== modelId) return
+      armedSeenIdRef.current = null
+      if (performance.now() - armedSeenAtRef.current < 30) return
+
+      const { clientX: x, clientY: y } = e
+      const dx = Math.abs(x - armedSeenPosRef.current.x)
+      const dy = Math.abs(y - armedSeenPosRef.current.y)
+      if (dx < 8 && dy < 8) return
+
+      const rect = e.currentTarget.getBoundingClientRect()
+      if (x >= rect.left && x <= rect.right) return
+      if (dx < 8) return
+      queueBanSeen(modelId)
+    },
+    [markSeenMode, queueBanSeen]
+  )
+
+  useEffect(() => {
+    return () => {
+      if (seenFlushTimerRef.current != null) {
+        window.clearTimeout(seenFlushTimerRef.current)
+        seenFlushTimerRef.current = null
+      }
+      flushPendingSeen()
+    }
+  }, [flushPendingSeen])
 
   const sideFilterActive = useCallback(
     (f: SideFilter) => {
@@ -777,13 +1098,11 @@ export function DeferredTab({
     )
   }
 
-  // Keep chrome (sidebar Session pause/bans) even when All is empty — pause-tag harvest
-  // rows are intentionally hidden from All but still live in sessionPausePool.
+  // Keep chrome (sidebar Session pause/bans) even when All is empty.
   if (
     !scopedDeferred.length &&
     !sessionBannedByModelId.size &&
     !sessionBanLive.length &&
-    !sessionPausePool.length &&
     !temporaryAllowedByModelId.size
   ) {
     return (
@@ -810,17 +1129,61 @@ export function DeferredTab({
         />
         <div className="browse-results-filters-box">
           <div className="browse-results-filters-row">
-            {onBanFunctionModeChange && (
+            <label className="checkbox-field missing-hide-banned">
+              <input
+                type="checkbox"
+                checked={hideBanned}
+                onChange={(e) => onHideBannedChange(e.target.checked)}
+              />
+              {t('missingTab.hideBanned')}
+            </label>
+            <label className="checkbox-field missing-hide-paused">
+              <input
+                type="checkbox"
+                checked={hidePaused}
+                onChange={(e) => onHidePausedChange(e.target.checked)}
+              />
+              {t('missingTab.hidePaused')}
+            </label>
+            <label
+              className="checkbox-field missing-hide-seen"
+              title={t('missingTab.hideSeenHint')}
+            >
+              <input
+                type="checkbox"
+                checked={hideSeen}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  setHideSeen(checked)
+                  if (checked && sideFilter.type === 'seen') {
+                    setSideFilter({ type: 'all' })
+                  }
+                }}
+              />
+              {t('missingTab.hideSeen')}
+            </label>
+            <div className="browse-mode-toggles">
               <button
                 type="button"
-                className={`btn-sm browse-ban-toggle ${banMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                onClick={toggleBanMode}
-                title={t('browse.banModeTitle')}
-                aria-pressed={banMode}
+                className={`btn-sm browse-ban-toggle ${markSeenMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                onClick={() => setMarkSeenMode((v) => !v)}
+                title={t('missingTab.markSeenModeTitle')}
+                aria-pressed={markSeenMode}
               >
-                {banMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                {markSeenMode ? t('missingTab.markSeenModeOn') : t('missingTab.markSeenModeOff')}
               </button>
-            )}
+              {onBanFunctionModeChange && (
+                <button
+                  type="button"
+                  className={`btn-sm browse-ban-toggle ${banMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                  onClick={toggleBanMode}
+                  title={t('browse.banModeTitle')}
+                  aria-pressed={banMode}
+                >
+                  {banMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                </button>
+              )}
+            </div>
           </div>
         </div>
         <div className="browse-results-controls-box">
@@ -892,12 +1255,28 @@ export function DeferredTab({
                         !temporaryAllowed &&
                         (sessionBannedByModelId.has(item.modelId) ||
                           sessionBanSet.has(item.modelId))
+                      const bannedTagged =
+                        !temporaryAllowed &&
+                        !sessionBanned &&
+                        !tagSkipAllowIds.has(item.modelId) &&
+                        itemHasBannedTag(item, bannedTags)
                       const pausedTagged =
                         !temporaryAllowed &&
+                        !sessionBanned &&
+                        !bannedTagged &&
                         !tagSkipAllowIds.has(item.modelId) &&
                         itemHasPausedTag(item, hiddenTags, bannedTags)
                       const showUnban = sessionBanned
-                      const showAllow = !sessionBanned && pausedTagged
+                      const showAllow = !sessionBanned && (pausedTagged || bannedTagged)
+                      const isBanSeen =
+                        !temporaryAllowed &&
+                        canMarkDeferredSeen(item) &&
+                        Boolean(banSeenByModelId[item.modelId])
+                      const pendingSeen =
+                        !temporaryAllowed &&
+                        markSeenMode &&
+                        canMarkDeferredSeen(item) &&
+                        !banSeenByModelId[item.modelId]
                       const folderLabel = shortCardFolderLabel(
                         item.routingTag,
                         null,
@@ -938,17 +1317,27 @@ export function DeferredTab({
                           className={[
                             temporaryAllowed
                               ? 'pending-card-temporary'
-                              : sessionBanned
+                              : sessionBanned || bannedTagged
                                 ? 'missing-card-banned-manual'
                                 : pausedTagged
                                   ? 'missing-card-paused-tag'
                                   : canWait
                                     ? 'deferred-access-wait'
                                     : 'deferred-access-buy',
-                            favorited && !temporaryAllowed ? 'is-ea-favorite' : ''
+                            favorited && !temporaryAllowed ? 'is-ea-favorite' : '',
+                            isBanSeen ? 'is-ban-seen' : ''
                           ]
                             .filter(Boolean)
                             .join(' ')}
+                          dataBanSeenPending={pendingSeen ? item.modelId : undefined}
+                          onPointerEnter={
+                            pendingSeen ? (e) => armBanSeenOnEnter(item.modelId, e) : undefined
+                          }
+                          onPointerLeave={
+                            pendingSeen
+                              ? (e) => tryMarkBanSeenOnSideLeave(item.modelId, e)
+                              : undefined
+                          }
                           title={item.modelName}
                           badges={
                             <>
@@ -989,6 +1378,10 @@ export function DeferredTab({
                                 ) : sessionBanned ? (
                                   <span className="missing-kind-badge">
                                     {t('missingTab.kindBannedManual')}
+                                  </span>
+                                ) : bannedTagged ? (
+                                  <span className="missing-kind-badge">
+                                    {t('missingTab.kindBannedByTag')}
                                   </span>
                                 ) : pausedTagged ? (
                                   <span className="missing-kind-badge">
@@ -1092,6 +1485,7 @@ export function DeferredTab({
                           videoPreviews={browseVideoPreviews}
                           videoAvailability={videoAvailability}
                           videoFetch={previewSource}
+                          previewLoading="lazy"
                           onPreviewAllFailed={() => markPreviewBroken(item.versionId)}
                           titleActions={
                             <>
@@ -1219,15 +1613,20 @@ export function DeferredTab({
                 <button
                   type="button"
                   className={`sidebar-tag ${
-                    sideFilterActive({ type: 'all' }) && !modelTypeFilter ? 'active' : ''
+                    sideFilterActive({ type: 'all' }) &&
+                    kindFilter === 'all' &&
+                    !modelTypeFilter
+                      ? 'active'
+                      : ''
                   }`}
                   onClick={() => {
                     applySideFilter({ type: 'all' })
+                    setKindFilter('all')
                     setModelTypeFilter(null)
                   }}
                 >
                   <span className="tag-name">{t('missingTab.sidebarAll')}</span>
-                  <span className="muted tag-count-inline">{itemsForMainCounts.length}</span>
+                  <span className="muted tag-count-inline">{allVisibleCount}</span>
                 </button>
                 <button
                   type="button"
@@ -1259,6 +1658,24 @@ export function DeferredTab({
                 ) : null}
                 <button
                   type="button"
+                  className={`sidebar-tag ${sideFilterActive({ type: 'unseen' }) ? 'active' : ''}`}
+                  onClick={() => applySideFilter({ type: 'unseen' })}
+                  title={t('missingTab.unseenBansHint')}
+                >
+                  <span className="tag-name">{t('missingTab.unseenBans')}</span>
+                  <span className="muted tag-count-inline">{unseenBanCount}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-tag ${sideFilterActive({ type: 'seen' }) ? 'active' : ''}`}
+                  onClick={() => applySideFilter({ type: 'seen' })}
+                  title={t('missingTab.seenBansHint')}
+                >
+                  <span className="tag-name">{t('missingTab.seenBans')}</span>
+                  <span className="muted tag-count-inline">{seenBanCount}</span>
+                </button>
+                <button
+                  type="button"
                   className={`sidebar-tag ${
                     sideFilterActive({ type: 'sessionBans' }) ? 'active' : ''
                   }`}
@@ -1276,6 +1693,26 @@ export function DeferredTab({
                 >
                   <span className="tag-name">{t('missingTab.sessionPause')}</span>
                   <span className="muted tag-count-inline">{sessionPauseCount}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-tag ${
+                    kindFilter === 'bannedByTag' && sideFilter.type === 'all' ? 'active' : ''
+                  }`}
+                  onClick={() => applyKindFilter('bannedByTag')}
+                >
+                  <span className="tag-name">{t('missingTab.filterBannedByTag')}</span>
+                  <span className="muted tag-count-inline">{bannedByTagCount}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-tag ${
+                    kindFilter === 'pausedByTag' && sideFilter.type === 'all' ? 'active' : ''
+                  }`}
+                  onClick={() => applyKindFilter('pausedByTag')}
+                >
+                  <span className="tag-name">{t('missingTab.filterPausedByTag')}</span>
+                  <span className="muted tag-count-inline">{pausedByTagCount}</span>
                 </button>
 
                 {typeCounts.length > 0 ? (
@@ -1408,6 +1845,17 @@ export function DeferredTab({
             </button>
           )}
           <div className="context-menu-divider" />
+          {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
+            canMarkDeferredSeen(contextMenu.item) &&
+            !banSeenByModelId[contextMenu.item.modelId] && (
+              <button
+                {...contextMenuButtonProps(() => {
+                  queueBanSeen(contextMenu.item.modelId, { force: true })
+                }, () => setContextMenu(null))}
+              >
+                {t('missingTab.markSeenModeOn')}
+              </button>
+            )}
           {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
             (sessionBannedByModelId.has(contextMenu.item.modelId) ||
               sessionBanSet.has(contextMenu.item.modelId)) && (

@@ -81,7 +81,7 @@ export async function cachePreviewUrl(
   }
 }
 
-/** Prefer cached local paths; fall back to original remote URL when cache fails. */
+/** Prefer cached local paths; keep original HTTPS as fallback when media:// fails in UI. */
 export async function resolveCachedPreviewUrls(
   urls: string[],
   options?: { force?: boolean }
@@ -106,10 +106,25 @@ export async function resolveCachedPreviewUrls(
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()))
 
-  for (const entry of results) {
-    if (!entry || seen.has(entry)) continue
-    seen.add(entry)
-    out.push(entry)
+  for (let i = 0; i < results.length; i++) {
+    const entry = results[i]
+    const original = unique[i]
+    if (entry && !seen.has(entry)) {
+      seen.add(entry)
+      out.push(entry)
+    }
+    // Local cache path first, CDN second — Early access cards used to store only the
+    // disk path; if media:// failed to load, the card stuck on "No image".
+    if (
+      entry &&
+      original &&
+      entry !== original &&
+      /^https?:\/\//i.test(original) &&
+      !seen.has(original)
+    ) {
+      seen.add(original)
+      out.push(original)
+    }
   }
   return out
 }
@@ -121,4 +136,36 @@ export function localPreviewPathIfCached(url: string): string | undefined {
     return existsSync(trimmed) ? trimmed : undefined
   }
   return readCachedPreviewPath(trimmed) ?? undefined
+}
+
+/** True when a stored preview URL can actually be shown (remote OK, or local file exists). */
+export function isUsableStoredPreviewUrl(url?: string | null): boolean {
+  const trimmed = url?.trim()
+  if (!trimmed) return false
+  if (/^https?:\/\//i.test(trimmed) || /^media:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) {
+    return true
+  }
+  // Windows / POSIX absolute path — must exist on disk (dead cache paths → No image).
+  if (trimmed.includes('\\') || /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('/')) {
+    try {
+      return existsSync(trimmed) && statSync(trimmed).size >= 128
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
+/** Drop missing local files; keep HTTPS / media / data. */
+export function filterUsablePreviewUrls(urls: string[] | undefined): string[] {
+  if (!urls?.length) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of urls) {
+    const u = raw?.trim()
+    if (!u || seen.has(u) || !isUsableStoredPreviewUrl(u)) continue
+    seen.add(u)
+    out.push(u)
+  }
+  return out
 }

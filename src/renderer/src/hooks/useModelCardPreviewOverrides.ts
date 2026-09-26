@@ -115,6 +115,7 @@ export function useModelCardPreviewOverrides(
   const imageStartedRef = useRef(new Set<number>())
   const videoStartedRef = useRef(new Set<number>())
   const brokenRef = useRef(new Set<number>())
+  const [brokenTick, setBrokenTick] = useState(0)
   const [dbReloadKey, setDbReloadKey] = useState(0)
   const itemsRef = useRef(items)
   itemsRef.current = items
@@ -136,6 +137,14 @@ export function useModelCardPreviewOverrides(
     if (brokenRef.current.has(versionId)) return
     brokenRef.current.add(versionId)
     imageStartedRef.current.delete(versionId)
+    // Drop stale override so the next resolve can replace a dead local media:// path.
+    setOverrides((prev) => {
+      if (!prev[versionId]) return prev
+      const next = { ...prev }
+      delete next[versionId]
+      return next
+    })
+    setBrokenTick((t) => t + 1)
   }, [])
 
   const knownVersionIdsRef = useRef(new Set<number>())
@@ -304,7 +313,7 @@ export function useModelCardPreviewOverrides(
     return () => {
       cancelled = true
     }
-  }, [enabled, versionIdsKey, overrides, browseCards, contentFilter, fetchVideo])
+  }, [enabled, versionIdsKey, overrides, browseCards, contentFilter, fetchVideo, brokenTick])
 
   return { overrides, browseCards, markPreviewBroken }
 }

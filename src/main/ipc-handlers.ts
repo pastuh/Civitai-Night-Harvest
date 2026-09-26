@@ -32,6 +32,7 @@ import * as inventory from './inventory'
 import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync, findSuspiciousModelFiles } from './library-sync'
 import { setLibraryPreviewFromUrl } from './library-preview'
 import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, resolveVideoPreviewsBatch, enrichDeferredPreviews } from './preview-enrich'
+import { isUsableStoredPreviewUrl } from './preview-cache'
 import { cacheVideoPreviewUrl } from './preview-video-cache'
 import { countVideoPreviewSyncCandidates, syncAllVideoPreviews } from './preview-video-sync'
 import { finalizeBrowseCards } from './browse-cache'
@@ -453,22 +454,39 @@ export function setMainWindow(win: BrowserWindow): void {
   win.on('leave-full-screen', notifyFullscreen)
 }
 
+/** Decode media:// URL → absolute filesystem path (Windows + POSIX). */
+function mediaRequestToFilePath(requestUrl: string): string {
+  let raw = requestUrl.replace(/^media:\/\//i, '')
+  const q = raw.indexOf('?')
+  if (q >= 0) raw = raw.slice(0, q)
+  const hash = raw.indexOf('#')
+  if (hash >= 0) raw = raw.slice(0, hash)
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    try {
+      decoded = decodeURI(raw)
+    } catch {
+      decoded = raw
+    }
+  }
+  // New form: media:///C:/Users/... → "/C:/Users/..."
+  if (/^\/[A-Za-z]:[/\\]/.test(decoded)) decoded = decoded.slice(1)
+  return decoded
+}
+
 export function registerMediaProtocol(): void {
   try {
     protocol.registerFileProtocol('media', (request, callback) => {
       try {
-        let url = decodeURIComponent(request.url.replace(/^media:\/\//, ''))
-        // Cache-busting query (?t=…) must not be part of the filesystem path.
-        const q = url.indexOf('?')
-        if (q >= 0) url = url.slice(0, q)
-        const hash = url.indexOf('#')
-        if (hash >= 0) url = url.slice(0, hash)
+        const filePath = mediaRequestToFilePath(request.url)
         // Never let Chromium open files on a missing drive — freezes the app.
-        if (!isOutputPathRootReachable(url)) {
+        if (!filePath || !isOutputPathRootReachable(filePath)) {
           callback({ error: -6 /* net::ERR_FILE_NOT_FOUND */ })
           return
         }
-        callback({ path: url })
+        callback({ path: filePath })
       } catch {
         callback({ error: -2 })
       }
@@ -677,7 +695,14 @@ export function initIpc(): void {
 
   ipcMain.handle('preview:resolveVideoPlayUrl', async (_e, url: string) => {
     const path = await cacheVideoPreviewUrl(url)
-    return path ? `media://${encodeURIComponent(path)}` : null
+    if (!path) return null
+    const normalized = path.replace(/\\/g, '/')
+    const abs = /^[A-Za-z]:\//.test(normalized)
+      ? `/${normalized}`
+      : normalized.startsWith('/')
+        ? normalized
+        : `/${normalized}`
+    return `media://${encodeURI(abs)}`
   })
 
   ipcMain.handle('preview:getVideoPreview', (_e, versionIds: number[]) => {
@@ -2299,7 +2324,10 @@ export function initIpc(): void {
     return { byVersionId: inventory.getPendingSeenMap() }
   })
 
-  ipcMain.handle('deferred:get', () => inventory.getAllDeferredDownloads())
+  ipcMain.handle('deferred:get', () => {
+    inventory.sanitizeDeferredDeadLocalPreviews()
+    return inventory.getAllDeferredDownloads()
+  })
 
   ipcMain.handle('deferred:enrich', async () => {
     const items = inventory.getAllDeferredDownloads()
@@ -2366,6 +2394,7 @@ export function initIpc(): void {
 
     inventory.backfillDeferredBaseModelsFromBrowseCache()
     inventory.backfillDeferredPreviewsFromInventory()
+    inventory.sanitizeDeferredDeadLocalPreviews()
     inventory.backfillDeferredPreviewsFromBrowseCache()
     downloadQueue.reconcileEarlyAccessFromBrowseCache()
     // Prefer cache for baseModel — only fetch a few missing IDs (avoid boot API storm).
@@ -2387,7 +2416,7 @@ export function initIpc(): void {
 
     // Only fill covers that are still blank after cache backfill (don't re-hit Civitai for cached).
     const afterMeta = inventory.getAllDeferredDownloads()
-    const needPreview = afterMeta.filter((d) => !isDisplayablePreviewUrl(d.previewUrl))
+    const needPreview = afterMeta.filter((d) => !isUsableStoredPreviewUrl(d.previewUrl))
     if (needPreview.length) {
       await enrichDeferredPreviews(
         clientPool,
@@ -2397,7 +2426,7 @@ export function initIpc(): void {
           const row = inventory.getDeferredDownload(versionId)
           if (!row) return
           const normalized = normalizePreviewDisplayUrl(previewUrl)
-          if (!isDisplayablePreviewUrl(normalized)) return
+          if (!isUsableStoredPreviewUrl(normalized)) return
           inventory.upsertDeferredDownload({
             modelId: row.modelId,
             versionId: row.versionId,
@@ -2415,7 +2444,7 @@ export function initIpc(): void {
             baseModel: row.baseModel,
             bumpAttempt: false
           })
-          downloadQueue.patchItemPreviewUrl(versionId, normalized)
+          downloadQueue.patchItemPreviewUrl(versionId, normalized!)
         }
       )
     }

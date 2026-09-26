@@ -38,7 +38,7 @@ import { MissingTab } from './components/MissingTab'
 import { GalleryTab } from './components/GalleryTab'
 import { HelpTab } from './components/HelpTab'
 import { loadEaFavoriteIds, toggleEaFavoriteId } from './ea-favorites'
-import { deferredIsSessionPause, isDeferredVisibleInAwaitingTab } from '../../shared/deferred-visibility'
+import { isDeferredVisibleInAwaitingTab } from '../../shared/deferred-visibility'
 import { PostDownloadTagModal } from './components/PostDownloadTagModal'
 import { NightModeBanner } from './components/NightModeBanner'
 import { CrawlStatusIndicator, getCrawlLiveState } from './components/CrawlStatusIndicator'
@@ -77,13 +77,28 @@ import { applyAppearanceToDocument, appearanceFromSettings } from '../../shared/
 /** Wall-clock when this renderer session started — Activity log default filter. */
 const APP_SESSION_STARTED_AT = Date.now()
 
+/** Session bans (Missing / EA) — manual or ban-by-tag this session. Not pause. */
 function collectSessionBanIds(
   items: Array<{ kind: string; modelId: number; at: string }>,
   prev: number[] = []
 ): number[] {
   const next = new Set(prev)
   for (const x of items) {
-    if (x.kind !== 'bannedManual' && x.kind !== 'bannedByTag' && x.kind !== 'pausedByTag' && x.kind !== 'forgotten') continue
+    if (x.kind !== 'bannedManual' && x.kind !== 'bannedByTag' && x.kind !== 'forgotten') continue
+    const ts = Date.parse(x.at)
+    if (Number.isFinite(ts) && ts >= APP_SESSION_STARTED_AT) next.add(x.modelId)
+  }
+  return [...next]
+}
+
+/** Session pause (Missing / EA) — pausedByTag rows from this session. Same rule as MissingTab. */
+function collectSessionPauseIds(
+  items: Array<{ kind: string; modelId: number; at: string }>,
+  prev: number[] = []
+): number[] {
+  const next = new Set(prev)
+  for (const x of items) {
+    if (x.kind !== 'pausedByTag') continue
     const ts = Date.parse(x.at)
     if (Number.isFinite(ts) && ts >= APP_SESSION_STARTED_AT) next.add(x.modelId)
   }
@@ -182,6 +197,7 @@ export default function App() {
   const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null)
   const [sessionDownloadIds, setSessionDownloadIds] = useState<number[]>([])
   const [sessionBanModelIds, setSessionBanModelIds] = useState<number[]>([])
+  const [sessionPauseModelIds, setSessionPauseModelIds] = useState<number[]>([])
   const [libraryHighlightIds, setLibraryHighlightIds] = useState<number[]>([])
   /** One-shot: open Library on Session downloads (badge click). Cleared after Gallery consumes it. */
   const [preferLibrarySession, setPreferLibrarySession] = useState(false)
@@ -558,6 +574,7 @@ export default function App() {
           setMissing(missingItems)
           setExclusions(exclusionItems)
           setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+          setSessionPauseModelIds((prev) => collectSessionPauseIds(exclusionItems, prev))
           setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
           setForgottenModelIds(
             new Set(banned.filter((b) => b.forgotten).map((b) => b.modelId).filter((id) => id > 0))
@@ -677,6 +694,7 @@ export default function App() {
       const exclusionItems = await window.api.getExclusions()
       setExclusions(exclusionItems)
       setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+      setSessionPauseModelIds((prev) => collectSessionPauseIds(exclusionItems, prev))
       statsLine = [
         statsLine,
         translate(loc, 'load.stepListsCount', {
@@ -1067,6 +1085,7 @@ export default function App() {
       window.api.onExclusionsList((items) => {
         setExclusions(items)
         setSessionBanModelIds((prev) => collectSessionBanIds(items, prev))
+        setSessionPauseModelIds((prev) => collectSessionPauseIds(items, prev))
         setForgottenModelIds(
           new Set(items.filter((i) => i.kind === 'forgotten').map((i) => i.modelId))
         )
@@ -1913,6 +1932,7 @@ export default function App() {
     setMissing(missingItems)
     setExclusions(exclusionItems)
     setSessionBanModelIds((prev) => collectSessionBanIds(exclusionItems, prev))
+    setSessionPauseModelIds((prev) => collectSessionPauseIds(exclusionItems, prev))
     setBannedModelIds(new Set(banned.map((b) => b.modelId).filter((id) => id > 0)))
     setForgottenModelIds(
       new Set(banned.filter((b) => b.forgotten).map((b) => b.modelId).filter((id) => id > 0))
@@ -2024,15 +2044,12 @@ export default function App() {
       deferred.filter((d) => {
         if (d.failureKind === 'not_found') return false
         if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
-        // Session pause lives under that filter — do not inflate the Early access tab badge.
-        if (
-          deferredIsSessionPause(d, settings?.hiddenTags, settings?.bannedTags)
-        ) {
-          return false
-        }
+        // Same as Missing: badge ignores Session bans / Session pause.
+        if (sessionBanModelIds.includes(d.modelId)) return false
+        if (sessionPauseModelIds.includes(d.modelId)) return false
         return true
       }).length,
-    [deferred, watchRules, eaFavoriteIds, settings?.hiddenTags, settings?.bannedTags]
+    [deferred, watchRules, eaFavoriteIds, sessionBanModelIds, sessionPauseModelIds]
   )
 
   const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
@@ -2757,6 +2774,7 @@ export default function App() {
               onSaveTagRules={saveTagRules}
               onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'awaiting' })}
               sessionBanModelIds={sessionBanModelIds}
+              sessionPauseModelIds={sessionPauseModelIds}
               onBrowseModelUnbanned={(modelId) => markBrowseModelBan(modelId, false)}
               isActive={awaitingInteractive}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
