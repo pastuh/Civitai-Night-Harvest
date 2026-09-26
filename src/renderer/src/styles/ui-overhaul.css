@@ -2251,36 +2251,79 @@ label.field-label {
   --card-accent: #e85a3c;
 }
 
-/* EA Wait / Buzz — bottom-left on preview (right stays free for play-video cue). */
+/* EA Wait / Buzz — icon badges, bottom-left (right stays free for play-video cue). */
 .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access {
   top: auto;
   bottom: 6px;
   left: 6px;
   right: auto;
   z-index: 2;
-  font-size: 9px;
-  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   border-radius: 3px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
   pointer-events: none;
-  border: 1px solid color-mix(in srgb, var(--card-accent, #5eb8d4) 45%, transparent);
-  background: color-mix(in srgb, var(--card-accent, #5eb8d4) 42%, rgba(0, 0, 0, 0.72));
-  color: color-mix(in srgb, var(--card-accent, #5eb8d4) 55%, white);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
-.theme-light .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access {
-  background: color-mix(in srgb, var(--card-accent, #5eb8d4) 28%, rgba(255, 255, 255, 0.92));
-  color: color-mix(in srgb, var(--card-accent, #5eb8d4) 72%, #1a1a1a);
-  border-color: color-mix(in srgb, var(--card-accent, #5eb8d4) 40%, transparent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+.status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access .badge-ea-svg {
+  display: block;
+  flex-shrink: 0;
 }
 
-.theme-aroma .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access {
-  background: color-mix(in srgb, var(--card-accent, #5eb8d4) 35%, rgba(40, 28, 36, 0.78));
-  color: color-mix(in srgb, var(--card-accent, #5eb8d4) 50%, #fff5f8);
+/* Wait (clock) — yellow / amber */
+.status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-early {
+  border: 1px solid color-mix(in srgb, #e6b84d 45%, transparent);
+  background: color-mix(in srgb, #e6b84d 42%, rgba(0, 0, 0, 0.72));
+  color: color-mix(in srgb, #f5e6a8 70%, #fff);
+}
+
+/* Buzz (dollar) — green */
+.status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-paid {
+  border: 1px solid color-mix(in srgb, #3dba6e 45%, transparent);
+  background: color-mix(in srgb, #3dba6e 42%, rgba(0, 0, 0, 0.72));
+  color: color-mix(in srgb, #b8f0cc 65%, #fff);
+}
+
+.theme-light .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-early {
+  background: color-mix(in srgb, #e6b84d 32%, rgba(255, 255, 255, 0.92));
+  color: color-mix(in srgb, #a67c00 85%, #1a1a1a);
+  border-color: color-mix(in srgb, #c9a227 40%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.theme-light .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-paid {
+  background: color-mix(in srgb, #3dba6e 28%, rgba(255, 255, 255, 0.92));
+  color: color-mix(in srgb, #1a7a42 82%, #1a1a1a);
+  border-color: color-mix(in srgb, #2f9e5a 38%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.theme-aroma .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-early {
+  background: color-mix(in srgb, #e6b84d 38%, rgba(40, 28, 36, 0.78));
+  color: color-mix(in srgb, #ffe9a8 55%, #fff5f8);
+  border-color: color-mix(in srgb, #e6b84d 40%, transparent);
+}
+
+.theme-aroma .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-paid {
+  background: color-mix(in srgb, #3dba6e 36%, rgba(40, 28, 36, 0.78));
+  color: color-mix(in srgb, #b8f0cc 50%, #fff5f8);
+  border-color: color-mix(in srgb, #3dba6e 40%, transparent);
+}
+
+.theme-gothic .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-early {
+  background: color-mix(in srgb, #d4a84a 40%, rgba(20, 16, 12, 0.78));
+  color: color-mix(in srgb, #f0d78a 60%, #fff);
+  border-color: color-mix(in srgb, #d4a84a 42%, transparent);
+}
+
+.theme-gothic .status-gallery-card .gallery-thumb-wrap .model-badge.badge-ea-access.badge-paid {
+  background: color-mix(in srgb, #3a9e62 40%, rgba(20, 16, 12, 0.78));
+  color: color-mix(in srgb, #a8e4c0 55%, #fff);
+  border-color: color-mix(in srgb, #3a9e62 42%, transparent);
 }
 
 .missing-tab-header-actions {
@@ -3448,6 +3491,18 @@ button.missing-tag-chip.is-clickable:hover {
   animation: global-status-pulse 1.4s ease-in-out infinite;
 }
 
+/* Downloadable new/update found on the latest Harvest page (not pause/ban/forgotten). */
+.global-status-pulse.is-found {
+  width: 0;
+  height: 0;
+  border-radius: 0;
+  background: transparent;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid var(--success, #22c55e);
+  animation: global-status-found 1.6s ease-in-out infinite;
+}
+
 .global-status-pulse.is-scanning {
   background: var(--accent);
   animation: global-status-pulse 1.1s ease-in-out infinite;
@@ -3490,6 +3545,18 @@ button.missing-tag-chip.is-clickable:hover {
   }
 }
 
+@keyframes global-status-found {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.65;
+    transform: translateY(1px);
+  }
+}
+
 .global-status-text {
   flex: 1;
   min-width: 0;
@@ -3497,6 +3564,11 @@ button.missing-tag-chip.is-clickable:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--chrome-text);
+}
+
+/* Match header Harvest loader (active-download spinner top color). */
+.global-status-text.is-harvesting {
+  color: #22c55e;
 }
 
 .global-status-process {

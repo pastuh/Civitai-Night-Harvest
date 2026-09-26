@@ -3207,23 +3207,8 @@ export function SearchBrowsePanel({
             <span className="legend-rating-mature">NSFW</span> {t('browse.legendNsfwBadge')}
           </p>
         </div>
-        <div className="search-browse-actions row browse-results-actions-row">
-          {canLoadMorePages && (
-            <button
-              type="button"
-              className="primary"
-              onClick={() => void onLoadMore()}
-              disabled={loadingMore}
-              title={
-                nightMode && result.crawlSource
-                  ? t('browse.loadMoreStallTitle')
-                  : t('browse.loadMoreTitle')
-              }
-            >
-              {t('browse.loadMore', { label: loadedLabel })}
-            </button>
-          )}
-          {showQueueAll && (
+        {showQueueAll ? (
+          <div className="search-browse-actions row browse-results-actions-row">
             <button
               type="button"
               className="primary queue-all-btn"
@@ -3233,8 +3218,8 @@ export function SearchBrowsePanel({
             >
               {queueAllLoading ? t('browse.crawling') : t('browse.queueAll')}
             </button>
-          )}
-        </div>
+          </div>
+        ) : null}
         </div>
       </div>
 

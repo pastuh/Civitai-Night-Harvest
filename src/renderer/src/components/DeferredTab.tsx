@@ -1685,7 +1685,7 @@ export function DeferredTab({
                           thumbBadges={
                             isEarlyAccess ? (
                               <span
-                                className={`model-badge badge-ea-access ${
+                                className={`model-badge badge-ea-access badge-ea-icon ${
                                   canWait ? 'badge-early' : 'badge-paid'
                                 }`}
                                 title={
@@ -1693,10 +1693,55 @@ export function DeferredTab({
                                     ? t('deferredTab.reasonWait')
                                     : t('deferredTab.reasonBuy')
                                 }
+                                aria-label={
+                                  canWait
+                                    ? t('deferredTab.badgeWait')
+                                    : t('deferredTab.badgeBuy')
+                                }
                               >
-                                {canWait
-                                  ? t('deferredTab.badgeWait')
-                                  : t('deferredTab.badgeBuy')}
+                                {canWait ? (
+                                  <svg
+                                    className="badge-ea-svg"
+                                    viewBox="0 0 16 16"
+                                    width="11"
+                                    height="11"
+                                    aria-hidden
+                                  >
+                                    <circle
+                                      cx="8"
+                                      cy="8"
+                                      r="6.25"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.4"
+                                    />
+                                    <path
+                                      d="M8 4.75V8l2.35 1.4"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.4"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                ) : (
+                                  <svg
+                                    className="badge-ea-svg"
+                                    viewBox="0 0 16 16"
+                                    width="11"
+                                    height="11"
+                                    aria-hidden
+                                  >
+                                    <path
+                                      d="M8 2.5v11M10.6 5.2c0-1.15-1.1-1.85-2.6-1.85S5.4 4.05 5.4 5.15c0 1 .7 1.55 2.35 1.95l.55.15c1.85.5 2.7 1.2 2.7 2.45 0 1.35-1.2 2.2-2.95 2.2S5.2 10.9 5.2 9.55"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.4"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                )}
                               </span>
                             ) : null
                           }

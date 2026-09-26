@@ -1677,6 +1677,7 @@ export const lt: Messages = {
       'Sustabdyta po {checked} (resolved {resolved}): {reason}. Spauskite Tikrinti API vėliau dar kartą.',
     download: 'Siųsti → eilė',
     downloadWithUrl: 'Naudoti nuorodą → eilė',
+    queued: 'Eilėje',
     pasteUrl: 'Įklijuoti URL…',
     pasteUrlHint:
       'Civitai /models/{id} kartais grąžina be versijų. Įklijuokite download nuorodą iš svetainės (…/api/download/models/VERSION_ID).',
@@ -1865,14 +1866,13 @@ export const lt: Messages = {
     queuedCount: '{count} eilėje',
     queuedPausedCount: '{count} eilėje (pauzė)',
     failedCount: '{count} nepavyko',
-    unlockTodayCount: '{count} atrakina šiandien',
-    unlockTodayRating: '{count} atrakina šiandien ({details})',
-    ratingSfw: '{count} SFW',
-    ratingNsfw: '{count} NSFW',
-    ratingUnknown: '{count} nežinoma',
     detailMore: '(+{count} daugiau)',
     bytesReceived: 'gauta {bytes}',
     readyWaitingFetch: 'Harvest įjungtas — peek laukia.',
+    harvesting: 'Harvesting…',
+    dotFound: 'Šiame puslapyje rasta {count} siunčiamų',
+    dotFoundQueued: 'Iš šio puslapio į eilę: {count}',
+    dotFoundRecent: 'Neseniai rasta siunčiamų modelių',
     outputDriveOffline:
       'Išvesties diskas nepasiekiamas — Harvest išjungtas, atsisiuntimai pauzėje. Pataisykite aplankus Nustatymuose.'
   }

@@ -1661,6 +1661,7 @@ export const en = {
       'Stopped early after {checked} (resolved {resolved}): {reason}. Click Recheck API again in a minute.',
     download: 'Download → queue',
     downloadWithUrl: 'Use link → queue',
+    queued: 'Queued',
     pasteUrl: 'Paste URL…',
     pasteUrlHint:
       'Civitai /models/{id} sometimes returns no versions. Paste the download link from the site (…/api/download/models/VERSION_ID).',
@@ -1849,14 +1850,13 @@ export const en = {
     queuedCount: '{count} in queue',
     queuedPausedCount: '{count} in queue (paused)',
     failedCount: '{count} failed',
-    unlockTodayCount: '{count} unlock today',
-    unlockTodayRating: '{count} unlock today ({details})',
-    ratingSfw: '{count} SFW',
-    ratingNsfw: '{count} NSFW',
-    ratingUnknown: '{count} unknown',
     detailMore: '(+{count} more)',
     bytesReceived: '{bytes} received',
     readyWaitingFetch: 'Harvest on — peek idle.',
+    harvesting: 'Harvesting…',
+    dotFound: 'Found {count} downloadable on this page',
+    dotFoundQueued: 'Queued {count} from this page',
+    dotFoundRecent: 'Recent page had downloadable finds',
     outputDriveOffline:
       'Output drive offline — Harvest off, downloads paused. Fix folders in Settings.'
   }

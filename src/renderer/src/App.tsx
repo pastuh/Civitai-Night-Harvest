@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
 import { flushSync } from 'react-dom'
-import { shouldShowDeferredInDownloadStrip } from '../../shared/early-access'
 import type {
   ActivityEntry,
   AppSettingsPublic,
@@ -1264,11 +1263,6 @@ export default function App() {
       : translate(loc, 'app.nextScanHours', { h })
   }, [scheduleInfo, status, crawlScanning, settings?.locale, settings?.nightMode])
 
-  const unlockTodayCount = useMemo(
-    () => deferred.filter((d) => shouldShowDeferredInDownloadStrip(d)).length,
-    [deferred]
-  )
-
   const awaitingVersionIds = useMemo(
     () => new Set(deferred.map((d) => d.versionId)),
     [deferred]
@@ -1779,15 +1773,6 @@ export default function App() {
     return inventory.filter((r) => ids.has(r.modelId))
   }, [pending, inventory])
 
-  const nsfwByVersionId = useMemo(() => {
-    const map = new Map<number, boolean | undefined>()
-    for (const r of inventory) {
-      if (r.isNsfw === true || r.isNsfw === false) map.set(r.versionId, r.isNsfw)
-      else map.set(r.versionId, undefined)
-    }
-    return map
-  }, [inventory])
-
   // Browse was unmounted / gallery updates skipped while away — refresh snapshot when returning.
   useEffect(() => {
     if (!startupReady) return
@@ -2045,7 +2030,6 @@ export default function App() {
     status === 'downloading' ||
     Boolean(crawlProgress) ||
     hasStatusPipeline ||
-    unlockTodayCount > 0 ||
     (startupReady && Boolean(settings?.nightMode) && !storageOffline && !busy) ||
     Boolean(tagFoldersReturnTo) ||
     Boolean(modelDetailTarget)
@@ -2993,8 +2977,6 @@ export default function App() {
       <GlobalStatusBar
         status={status}
         uiExtended={uiExtended}
-        deferredDownloads={deferred}
-        nsfwByVersionId={nsfwByVersionId}
         onNavigateBack={
           modelDetailTarget
             ? closeModelDetail

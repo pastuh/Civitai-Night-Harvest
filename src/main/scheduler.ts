@@ -2483,6 +2483,7 @@ export class ScanScheduler {
           catalogComplete,
           hasMorePages: morePages,
           pageQueued: page.queued,
+          pageFound: page.newModels + page.newVersions,
           galleryMode: 'full',
           galleryGeneration: pageGeneration,
           result: emptyResult
@@ -2520,6 +2521,7 @@ export class ScanScheduler {
           catalogComplete,
           hasMorePages: morePages,
           pageQueued: page.queued,
+          pageFound: page.newModels + page.newVersions,
           galleryMode: 'full',
           galleryGeneration: pageGeneration,
           result: emptyResult
@@ -2552,6 +2554,7 @@ export class ScanScheduler {
         catalogComplete,
         hasMorePages: morePages,
         pageQueued: page.queued,
+        pageFound: page.newModels + page.newVersions,
         galleryMode,
         galleryGeneration: pageGeneration,
         result
@@ -2817,6 +2820,7 @@ export class ScanScheduler {
           pageModelsOnPage: page.pageModels,
           apiModelsOnPage: fromApi,
           pageQueued: page.queued,
+          pageFound: page.newModels + page.newVersions,
           domain,
           detail
         })

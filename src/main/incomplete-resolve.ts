@@ -14,6 +14,8 @@ import type { DownloadQueue } from './download-queue'
 import { sendToRenderer } from './window-notify'
 
 const PAGE_FETCH_TIMEOUT_MS = 45_000
+/** Shorter HTML scrape during Recheck — empty-version models must not stall the whole run. */
+const RECHECK_SCRAPE_TIMEOUT_MS = 12_000
 
 export function emitIncompleteList(getWindow: () => BrowserWindow | null): void {
   sendToRenderer(getWindow, 'incomplete:list', inventory.getAllIncompleteModels())
@@ -83,9 +85,11 @@ export function parseVersionIdFromUserUrl(raw: string): number | null {
 
 export async function scrapeVersionIdFromModelPage(
   domain: CivitaiDomain,
-  modelId: number
+  modelId: number,
+  opts?: { timeoutMs?: number }
 ): Promise<number | null> {
   const host = domain === 'red' ? 'civitai.red' : 'civitai.com'
+  const timeoutMs = opts?.timeoutMs ?? PAGE_FETCH_TIMEOUT_MS
   const urls = [
     `https://${host}/models/${modelId}`,
     // Slugless URL often 308-redirects; follow redirects via fetch
@@ -99,7 +103,7 @@ export async function scrapeVersionIdFromModelPage(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         },
         redirect: 'follow',
-        signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS)
+        signal: AbortSignal.timeout(timeoutMs)
       })
       if (!res.ok) continue
       const html = await res.text()
@@ -273,7 +277,8 @@ export async function downloadIncompleteModel(options: {
 
 const INCOMPLETE_CHECK_COOLDOWN_MS = 30 * 60_000
 const INCOMPLETE_CHECK_BATCH = 8
-const INCOMPLETE_BATCH_PAUSE_MS = 400
+/** Soft UI yield between batches on force runs (API uses interactive pace — no 1.25s lane gap). */
+const INCOMPLETE_BATCH_PAUSE_MS = 80
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -301,6 +306,8 @@ export async function recheckIncompleteModels(
   // Force (Recheck API button): walk the whole list in small batches.
   // Background cooldown pass: one batch only (avoid harvest storms).
   const limit = options.force ? due.length : Math.min(due.length, INCOMPLETE_CHECK_BATCH)
+  // User-initiated Recheck must not sit behind the 1.25s background API lane.
+  const apiPace = options.force ? ('interactive' as const) : ('background' as const)
 
   if (options.force && limit > 0) {
     emitIncompleteRecheckProgress(getWindow, {
@@ -324,31 +331,38 @@ export async function recheckIncompleteModels(
     try {
       const domain = item.sourceDomain === 'red' ? 'red' : 'com'
       const client = pool.forDomain(domain)
-      const model = await client.getModel(item.modelId)
-      let versionId = model.modelVersions?.[0]?.id ?? 0
-      let versionName = model.modelVersions?.[0]?.name || ''
-      let baseModel = model.modelVersions?.[0]?.baseModel || item.baseModel
-      let previewUrl =
-        pickPreviewImage(model.modelVersions?.[0]?.images) ?? item.previewUrl
+      const model = await client.getModel(item.modelId, { pace: apiPace })
+      const firstVer = model.modelVersions?.[0]
+      let versionId = firstVer?.id ?? 0
+      let versionName = firstVer?.name || ''
+      let baseModel = firstVer?.baseModel || item.baseModel
+      let previewUrl = pickPreviewImage(firstVer?.images) ?? item.previewUrl
       const nsfw = model.nsfw ?? item.nsfw
       const nsfwLevel = model.nsfwLevel ?? item.nsfwLevel
 
       if (!versionId) {
         // /models/{id} sometimes returns empty modelVersions[] while the site still has a
         // published version — recover via HTML scrape or leave for paste-URL download.
-        const scraped = await scrapeVersionIdFromModelPage(domain, item.modelId)
+        const scraped = await scrapeVersionIdFromModelPage(domain, item.modelId, {
+          timeoutMs: options.force ? RECHECK_SCRAPE_TIMEOUT_MS : PAGE_FETCH_TIMEOUT_MS
+        })
         if (scraped) versionId = scraped
       }
 
       if (versionId > 0) {
-        // Prefer version endpoint (same path model-detail uses) for name + preview.
-        try {
-          const full = await client.getModelVersion(versionId)
-          versionName = full.name || versionName || `v${versionId}`
-          baseModel = full.baseModel || baseModel
-          previewUrl = pickPreviewImage(full.images) ?? previewUrl
-        } catch {
-          if (!versionName) versionName = `v${versionId}`
+        // Prefer version endpoint only when model payload lacked name/preview (same path as detail).
+        const needsEnrich = !versionName || !previewUrl
+        if (needsEnrich) {
+          try {
+            const full = await client.getModelVersion(versionId, { pace: apiPace })
+            versionName = full.name || versionName || `v${versionId}`
+            baseModel = full.baseModel || baseModel
+            previewUrl = pickPreviewImage(full.images) ?? previewUrl
+          } catch {
+            if (!versionName) versionName = `v${versionId}`
+          }
+        } else if (!versionName) {
+          versionName = `v${versionId}`
         }
         inventory.updateIncompleteModelResolved(item.modelId, {
           resolvedVersionId: versionId,
@@ -392,7 +406,7 @@ export async function recheckIncompleteModels(
       }
     }
 
-    // Progressive UI refresh + gentle pacing between models on full force runs.
+    // Progressive UI refresh + brief yield between batches on full force runs.
     if (options.force && (checked % INCOMPLETE_CHECK_BATCH === 0 || i === limit - 1)) {
       emitIncompleteList(getWindow)
       if (i < limit - 1) await sleep(INCOMPLETE_BATCH_PAUSE_MS)

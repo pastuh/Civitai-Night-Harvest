@@ -25,6 +25,9 @@ import {
   type ModelCardPreviewSource
 } from '../utils/model-card-preview'
 
+type IncompleteHoldKind = 'queued' | 'banned'
+type IncompleteHold = { item: IncompleteModel; kind: IncompleteHoldKind }
+
 interface Props {
   items: IncompleteModel[]
   inventory?: InventoryRecord[]
@@ -90,7 +93,7 @@ export function IncompleteTab({
   const [banTarget, setBanTarget] = useState<IncompleteModel | null>(null)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   /** Download/Ban holds — dimmed in place until leaving Incomplete. */
-  const [temporaryByModelId, setTemporaryByModelId] = useState<Map<number, IncompleteModel>>(
+  const [temporaryByModelId, setTemporaryByModelId] = useState<Map<number, IncompleteHold>>(
     () => new Map()
   )
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
@@ -122,11 +125,12 @@ export function IncompleteTab({
     void onRefreshRef.current()
   }, [isActive])
 
-  const holdUntilLeave = useCallback((item: IncompleteModel) => {
+  const holdUntilLeave = useCallback((item: IncompleteModel, kind: IncompleteHoldKind) => {
     setTemporaryByModelId((prev) => {
-      if (prev.get(item.modelId) === item) return prev
+      const existing = prev.get(item.modelId)
+      if (existing && existing.item === item && existing.kind === kind) return prev
       const next = new Map(prev)
-      next.set(item.modelId, item)
+      next.set(item.modelId, { item, kind })
       return next
     })
   }, [])
@@ -138,7 +142,7 @@ export function IncompleteTab({
       byId.set(item.modelId, item)
     }
     for (const [id, held] of temporaryByModelId) {
-      if (!byId.has(id)) byId.set(id, held)
+      if (!byId.has(id)) byId.set(id, held.item)
     }
     return [...byId.values()]
   }, [items, hiddenModelIds, temporaryByModelId])
@@ -277,40 +281,25 @@ export function IncompleteTab({
       delete next[item.modelId]
       return next
     })
-    // Hold immediately so queue success cannot yank the card before refresh settles.
-    holdUntilLeave(item)
     try {
       const result = await window.api.downloadIncomplete({
         modelId: item.modelId,
         downloadUrl
       })
       if (result.status === 'need_url') {
-        setTemporaryByModelId((prev) => {
-          const next = new Map(prev)
-          next.delete(item.modelId)
-          return next
-        })
         setPasteModelId(item.modelId)
         setPastedUrl('')
       } else if (result.status === 'failed') {
-        setTemporaryByModelId((prev) => {
-          const next = new Map(prev)
-          next.delete(item.modelId)
-          return next
-        })
         setCardError((prev) => ({ ...prev, [item.modelId]: result.reason }))
       } else if (result.status === 'queued' || result.status === 'skipped') {
+        // Dim in place with Queued label — do not flash a generic "Done".
+        holdUntilLeave(item, 'queued')
         clearPaste()
         if (result.items) onItemsReplace?.(result.items)
         await onQueueRefresh?.()
       }
       if (!result.items) await onRefresh()
     } catch (err) {
-      setTemporaryByModelId((prev) => {
-        const next = new Map(prev)
-        next.delete(item.modelId)
-        return next
-      })
       setCardError((prev) => ({
         ...prev,
         [item.modelId]: err instanceof Error ? err.message : String(err)
@@ -326,7 +315,7 @@ export function IncompleteTab({
     if (!item || busyId === item.modelId) return
     setBusyId(item.modelId)
     if (pasteModelId === item.modelId) clearPaste()
-    holdUntilLeave(item)
+    holdUntilLeave(item, 'banned')
     setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
     onBrowseModelBanned?.(item.modelId, {
       name: item.modelName,
@@ -448,7 +437,9 @@ export function IncompleteTab({
                     {sorted.map((item) => {
                       const waiting = formatWaitDuration(item.detectedAt, new Date().toISOString())
                       const ready = Boolean(item.resolvedVersionId)
-                      const temporary = temporaryByModelId.has(item.modelId)
+                      const hold = temporaryByModelId.get(item.modelId)
+                      const temporary = Boolean(hold)
+                      const queuedHold = hold?.kind === 'queued'
                       const showPaste = pasteModelId === item.modelId && !temporary
                       const errorText = cardError[item.modelId] || item.lastError
                       const nsfwFields = resolveIncompleteNsfw(item, browseCards, ownedByModel)
@@ -506,7 +497,7 @@ export function IncompleteTab({
                               modelType={item.modelType}
                               authorLine={item.author || undefined}
                               statusChips={
-                                temporary ? (
+                                hold?.kind === 'banned' ? (
                                   <span className="status-card-skipped-badge">
                                     {t('pending.temporaryBadge')}
                                   </span>
@@ -519,7 +510,7 @@ export function IncompleteTab({
                                 )
                               }
                             >
-                              {ready && !temporary ? (
+                              {ready && hold?.kind !== 'banned' ? (
                                 <div className="muted status-card-detail">
                                   v{item.resolvedVersionId}
                                 </div>
@@ -527,7 +518,7 @@ export function IncompleteTab({
                             </ModelCardInfo>
                           }
                           details={
-                            temporary ? null : (
+                            hold?.kind === 'banned' ? null : (
                               <>
                                 <div className="muted status-card-detail">
                                   {t('incompleteTab.waiting', { duration: waiting })}
@@ -548,7 +539,7 @@ export function IncompleteTab({
                             versionId > 0 ? () => markPreviewBroken(versionId) : undefined
                           }
                           titleActions={
-                            onOpenModelDetail ? (
+                            hold?.kind === 'banned' || !onOpenModelDetail ? null : (
                               <>
                                 <button
                                   type="button"
@@ -576,10 +567,14 @@ export function IncompleteTab({
                                   ↗
                                 </button>
                               </>
-                            ) : null
+                            )
                           }
                           actions={
-                            temporary ? null : (
+                            hold?.kind === 'banned' ? null : queuedHold ? (
+                              <button type="button" className="primary" disabled>
+                                {t('incompleteTab.queued')}
+                              </button>
+                            ) : (
                               <>
                                 {showPaste ? (
                                   <div className="incomplete-url-prompt">

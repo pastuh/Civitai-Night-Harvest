@@ -603,9 +603,7 @@ function processModel(
         return null
       }
 
-      offered++
-      if (offered === 1) result.newModels++
-      else result.newVersions++
+      const why = newModelSkipReason()
       if (tryDeferEarlyAccess(version)) continue
       if (
         tryQueue(
@@ -615,31 +613,35 @@ function processModel(
             : `Queued ${model.name} → ${version.name}`
         )
       ) {
+        offered++
+        if (offered === 1) result.newModels++
+        else result.newVersions++
         continue
       }
-      if (!options.queueEnabled) {
+      if (!why) {
+        // Auto-download off — still a downloadable find for Browse / Queue all.
+        offered++
+        if (offered === 1) result.newModels++
+        else result.newVersions++
         logModelEvent(options, rule.id, 'info', `New model found: ${model.name}`, model, version)
+      } else if (why === 'no matching tag') {
+        logModelEvent(
+          options,
+          rule.id,
+          'info',
+          `New model found: ${model.name} — no matching tag`,
+          model,
+          version
+        )
       } else {
-        const why = newModelSkipReason()
-        if (why === 'no matching tag') {
-          logModelEvent(
-            options,
-            rule.id,
-            'info',
-            `New model found: ${model.name} — no matching tag`,
-            model,
-            version
-          )
-        } else if (why) {
-          logModelEvent(
-            options,
-            rule.id,
-            'info',
-            `New model found: ${model.name} — ${why}`,
-            model,
-            version
-          )
-        }
+        logModelEvent(
+          options,
+          rule.id,
+          'info',
+          `New model found: ${model.name} — ${why}`,
+          model,
+          version
+        )
       }
     }
     if (!offered) result.upToDate++

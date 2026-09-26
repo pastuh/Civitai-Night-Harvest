@@ -1012,6 +1012,8 @@ export interface CrawlPagePayload {
   hasMorePages?: boolean
   /** Models queued for download from this API page */
   pageQueued?: number
+  /** Downloadable new/update finds on this page (excludes pause/ban/forgotten). */
+  pageFound?: number
   /**
    * `delta` — result.sampleModels are this page only; renderer merges into live gallery.
    * `full` — replace live gallery (snapshots / quiet empty / resets).
@@ -1064,6 +1066,11 @@ export interface CrawlProgressPayload {
   pageModelsOnPage?: number
   /** Models queued for download from this API page (status: Download starting…) */
   pageQueued?: number
+  /**
+   * New models + owned-model updates found on this page that are downloadable
+   * (not pause/ban/forgotten / early-access-only). Drives the status-bar “found” cue.
+   */
+  pageFound?: number
   /** Raw models returned on this API page before rule filters */
   apiModelsOnPage?: number
   /** When phase is waiting — ms until next peek (initial; use waitUntil for live countdown) */

@@ -4,8 +4,6 @@ import type {
 
   AppStatus,
 
-  DeferredDownload,
-
   DownloadQueueItem,
 
   LibrarySyncProgress,
@@ -14,8 +12,6 @@ import type {
   CrawlProgressPayload
 
 } from '../../../shared/types'
-
-import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
 
 import { formatBytes } from '../../../shared/utils'
 
@@ -29,9 +25,6 @@ interface Props {
   queuePaused?: boolean
   /** Extended UI shows detailed per-item status. Minimal shows only counts. */
   uiExtended?: boolean
-  deferredDownloads?: DeferredDownload[]
-  /** Optional NSFW flags for unlock-today breakdown (avoids full inventory scans). */
-  nsfwByVersionId?: Map<number, boolean | undefined>
   extraMessage?: string | null
   syncProgress?: LibrarySyncProgress | null
   /** Hide paused queue counts while startup sync / scan is in progress */
@@ -59,8 +52,6 @@ interface Props {
   onNavigateBack?: () => void
   navigateBackTitle?: string
 }
-
-const EMPTY_NSFW_MAP = new Map<number, boolean | undefined>()
 
 function syncProgressLabel(
 
@@ -464,29 +455,6 @@ function downloadPct(item: DownloadQueueItem): number {
 
 
 
-function unlockTodayBreakdown(
-  deferred: DeferredDownload[],
-  nsfwByVersionId: Map<number, boolean | undefined>
-): { total: number; sfw: number; nsfw: number; unknown: number } {
-  const today = deferred.filter((d) => shouldShowDeferredInDownloadStrip(d))
-  let sfw = 0
-  let nsfw = 0
-  let unknown = 0
-  for (const d of today) {
-    if (!nsfwByVersionId.has(d.versionId)) {
-      unknown++
-      continue
-    }
-    const flag = nsfwByVersionId.get(d.versionId)
-    if (flag === true) nsfw++
-    else if (flag === false) sfw++
-    else unknown++
-  }
-  return { total: today.length, sfw, nsfw, unknown }
-}
-
-
-
 function pipelineSummary(
 
   t: (key: string, vars?: Record<string, string | number>) => string,
@@ -497,8 +465,6 @@ function pipelineSummary(
 
   failed: DownloadQueueItem[],
 
-  unlockToday: { total: number; sfw: number; nsfw: number; unknown: number },
-
   queuePaused: boolean,
 
   suppressIdlePipeline: boolean
@@ -507,11 +473,7 @@ function pipelineSummary(
 
   const parts: string[] = []
 
-  if (downloading.length > 0) {
-
-    parts.push(t('globalStatus.downloadingCount', { count: downloading.length }))
-
-  }
+  // Skip "N downloading" — the green pulse + Browse queue strip already show that.
 
   const hideIdleQueue = suppressIdlePipeline && downloading.length === 0
 
@@ -535,70 +497,38 @@ function pipelineSummary(
 
   }
 
-  if (unlockToday.total > 0) {
-
-    const rating = [
-
-      unlockToday.sfw > 0 ? t('globalStatus.ratingSfw', { count: unlockToday.sfw }) : '',
-
-      unlockToday.nsfw > 0 ? t('globalStatus.ratingNsfw', { count: unlockToday.nsfw }) : ''
-
-    ]
-
-      .filter(Boolean)
-
-      .join(', ')
-
-    parts.push(
-
-      rating
-
-        ? t('globalStatus.unlockTodayRating', { count: unlockToday.total, details: rating })
-
-        : t('globalStatus.unlockTodayCount', { count: unlockToday.total })
-
-    )
-
-  }
-
   return parts.length ? parts.join(' · ') : null
 
 }
 
 
 
-type StatusDotKind = 'error' | 'paused' | 'scanning' | 'processing' | 'active' | 'idle'
-
-
+type StatusDotKind =
+  | 'error'
+  | 'paused'
+  | 'scanning'
+  | 'processing'
+  | 'active'
+  | 'found'
+  | 'idle'
 
 function resolveStatusDotKind(
-
   status: AppStatus,
-
   downloading: DownloadQueueItem[],
-
   queued: DownloadQueueItem[],
-
   failed: DownloadQueueItem[],
-
   queuePaused: boolean,
-
-  hasActivity: boolean
-
+  hasActivity: boolean,
+  pageFoundSignal: boolean
 ): StatusDotKind {
-
   if (failed.length > 0 && downloading.length === 0) return 'error'
-
-  if (status === 'scanning') return 'scanning'
-
-  if (status === 'checking' || hasActivity) return 'processing'
-
+  // Green triangle — this page (or latch) has downloadable new/update finds.
+  if (pageFoundSignal && downloading.length === 0) return 'found'
   if (downloading.length > 0 || status === 'downloading') return 'active'
-
+  if (status === 'scanning') return 'scanning'
+  if (status === 'checking' || hasActivity) return 'processing'
   if (queuePaused && queued.length > 0) return 'paused'
-
   return 'idle'
-
 }
 
 
@@ -607,8 +537,6 @@ export function GlobalStatusBar({
   status,
   queue: queueProp,
   queuePaused: queuePausedProp,
-  deferredDownloads = [],
-  nsfwByVersionId,
   extraMessage,
   syncProgress,
   suppressIdlePipeline = false,
@@ -633,12 +561,32 @@ export function GlobalStatusBar({
   const t = useT()
 
   const [waitTick, setWaitTick] = useState(0)
+  /** Keep the green “found” cue briefly after a page with downloadable finds. */
+  const [foundLatch, setFoundLatch] = useState(false)
 
   useEffect(() => {
     if (crawlProgress?.phase !== 'waiting') return
     const id = window.setInterval(() => setWaitTick((n) => n + 1), 5000)
     return () => window.clearInterval(id)
   }, [crawlProgress?.phase, crawlProgress?.waitUntil, crawlProgress?.ruleId])
+
+  useEffect(() => {
+    const n = (crawlProgress?.pageQueued ?? 0) + (crawlProgress?.pageFound ?? 0)
+    if (n <= 0) return
+    setFoundLatch(true)
+    const id = window.setTimeout(() => setFoundLatch(false), 10_000)
+    return () => window.clearTimeout(id)
+  }, [
+    crawlProgress?.pageQueued,
+    crawlProgress?.pageFound,
+    crawlProgress?.pageNumber,
+    crawlProgress?.ruleId
+  ])
+
+  const pageFoundSignal =
+    foundLatch ||
+    (crawlProgress?.pageQueued ?? 0) > 0 ||
+    (crawlProgress?.pageFound ?? 0) > 0
 
   const remainingWaitMs = useMemo(() => {
     void waitTick
@@ -667,18 +615,10 @@ export function GlobalStatusBar({
 
 
 
-  const unlockToday = useMemo(
-    () => unlockTodayBreakdown(deferredDownloads, nsfwByVersionId ?? EMPTY_NSFW_MAP),
-    [deferredDownloads, nsfwByVersionId]
-  )
-
-
-
   const activityLabel = useMemo(
 
-    () =>
-
-      primaryActivityLabel(t, {
+    () => {
+      const label = primaryActivityLabel(t, {
 
         status,
 
@@ -710,7 +650,13 @@ export function GlobalStatusBar({
 
         showReadyIdle
 
-      }),
+      })
+      // Downloads continue while Harvest peek is idle — don't say "peek idle".
+      if (downloading.length > 0 && (showReadyIdle || !label)) {
+        return t('globalStatus.harvesting')
+      }
+      return label
+    },
 
     [
 
@@ -744,11 +690,15 @@ export function GlobalStatusBar({
 
       galleryAwaiting,
 
-      showReadyIdle
+      showReadyIdle,
+
+      downloading.length
 
     ]
 
   )
+
+  const harvestingLabel = downloading.length > 0 && activityLabel === t('globalStatus.harvesting')
 
 
 
@@ -766,15 +716,13 @@ export function GlobalStatusBar({
 
         failed,
 
-        unlockToday,
-
         queuePaused,
 
         suppressIdlePipeline
 
       ),
 
-    [t, downloading, queued, failed, unlockToday, queuePaused, suppressIdlePipeline]
+    [t, downloading, queued, failed, queuePaused, suppressIdlePipeline]
 
   )
 
@@ -913,7 +861,8 @@ export function GlobalStatusBar({
     }
     // Local SQLite cache is silent — never show "Saving…" as if fetch is blocked.
     if (crawlProgress.phase === 'processing') return t('globalStatus.processNextPage')
-    if (crawlProgress.phase === 'waiting') return t('globalStatus.processWaiting')
+    // Idle peek wait — left side already has countdown / idle text; bare "Waiting…" is noise.
+    if (crawlProgress.phase === 'waiting') return null
     if (crawlProgress.phase === 'page-done') {
       if ((crawlProgress.pageQueued ?? 0) > 0 || crawlProgress.detail?.includes('Download')) {
         return t('globalStatus.processDownloadStarting')
@@ -935,8 +884,18 @@ export function GlobalStatusBar({
     queued,
     failed,
     queuePaused,
-    Boolean(activityLabel || processDetail)
+    Boolean(activityLabel || processDetail),
+    pageFoundSignal
   )
+
+  const foundTitle =
+    (crawlProgress?.pageQueued ?? 0) > 0
+      ? t('globalStatus.dotFoundQueued', {
+          count: crawlProgress?.pageQueued ?? 0
+        })
+      : (crawlProgress?.pageFound ?? 0) > 0
+        ? t('globalStatus.dotFound', { count: crawlProgress?.pageFound ?? 0 })
+        : t('globalStatus.dotFoundRecent')
 
   return (
     <footer className="global-status-bar" role="status" aria-live="polite">
@@ -952,9 +911,15 @@ export function GlobalStatusBar({
         </button>
       ) : null}
 
-      <span className={`global-status-pulse is-${dotKind}`} aria-hidden />
+      <span
+        className={`global-status-pulse is-${dotKind}`}
+        aria-hidden
+        title={dotKind === 'found' ? foundTitle : undefined}
+      />
 
-      <span className="global-status-text">{segments.join(' · ')}</span>
+      <span className={`global-status-text${harvestingLabel ? ' is-harvesting' : ''}`}>
+        {segments.join(' · ')}
+      </span>
 
       {processDetail ? (
         <span className="global-status-process" title={processDetail}>

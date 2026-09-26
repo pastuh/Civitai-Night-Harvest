@@ -164,11 +164,6 @@ function LibraryModelCardInner({
           {t('pending.temporaryBadge')}
         </span>
       ) : null}
-      {isCheckpoint ? (
-        <span className="library-type-badge is-checkpoint" title={t('gallery.filterCheckpoint')}>
-          {t('gallery.filterCheckpoint')}
-        </span>
-      ) : null}
       {unrecognized ? (
         <span className="library-unrecognized-badge" title={t('gallery.unrecognizedHint')}>
           {t('gallery.unrecognized')}
@@ -292,23 +287,30 @@ function LibraryModelCardInner({
           }}
           title={record.versionName}
         />
-        {!hideBaseModelOnCards && baseModelDisplay && (
+        {!hideBaseModelOnCards && (baseModelDisplay || isCheckpoint) && (
           <div className="library-base-model-line">
-            {onBaseModelClick ? (
-              <button
-                type="button"
-                className="base-model-filter-chip"
-                title={baseModelDisplay}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onBaseModelClick(baseModelDisplay)
-                }}
-              >
-                {baseModelDisplay}
-              </button>
-            ) : (
-              <span>{baseModelDisplay}</span>
-            )}
+            {baseModelDisplay ? (
+              onBaseModelClick ? (
+                <button
+                  type="button"
+                  className="base-model-filter-chip"
+                  title={baseModelDisplay}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onBaseModelClick(baseModelDisplay)
+                  }}
+                >
+                  {baseModelDisplay}
+                </button>
+              ) : (
+                <span>{baseModelDisplay}</span>
+              )
+            ) : null}
+            {isCheckpoint ? (
+              <span className="library-type-badge is-checkpoint" title={t('gallery.filterCheckpoint')}>
+                {t('gallery.filterCheckpoint')}
+              </span>
+            ) : null}
             {checkpointType && (
               <span className="checkpoint-badge" title={t('gallery.checkpointType')}>
                 {checkpointType}
