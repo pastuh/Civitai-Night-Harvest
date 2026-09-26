@@ -12,6 +12,7 @@ import type {
 import { formatBytes, modelMatchesAnyEnabledWatchRule, parseRuleFilterTags, isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import { isDeferredVisibleInAwaitingTab } from '../shared/deferred-visibility'
 import type { DeferredDownload, DeferredSource } from '../shared/types'
+import { canWaitForDeferredUnlock } from '../shared/early-access'
 import {
   classifyDownloadFailure,
   humanizeDownloadError,
@@ -139,11 +140,7 @@ export class DownloadQueue {
   private shouldKeepAwaitingDeferred(entry: DeferredDownload): boolean {
     const settings = getSettings()
     const favorites = settings.eaFavoriteModelIds ?? []
-    return isDeferredVisibleInAwaitingTab(entry, getWatchRules(), favorites, {
-      pausedTags: settings.hiddenTags,
-      bannedTags: settings.bannedTags,
-      isTagSkipAllowed: (modelId) => inventory.isTagSkipAllowed(modelId)
-    })
+    return isDeferredVisibleInAwaitingTab(entry, getWatchRules(), favorites)
   }
 
   /** EA tab hides non-matching harvest rows in UI; keep DB rows for enrich/reconcile. */
@@ -156,8 +153,6 @@ export class DownloadQueue {
     const rules = getWatchRules()
     const settings = getSettings()
     const favorites = settings.eaFavoriteModelIds ?? []
-    const pausedTags = settings.hiddenTags ?? []
-    const bannedTags = settings.bannedTags ?? []
     const tagRules = getTagRules()
     let added = 0
     for (const card of inventory.getAllBrowseCardCacheCards()) {
@@ -192,12 +187,6 @@ export class DownloadQueue {
         continue
       }
       if (card.isBanned || inventory.isModelBanned(card.id)) continue
-      if (
-        !inventory.isTagSkipAllowed(card.id) &&
-        modelHasPolicyTag(card.tags ?? [], pausedTags, bannedTags)
-      ) {
-        continue
-      }
 
       const stub: DeferredDownload = {
         modelId: card.id,
@@ -217,13 +206,7 @@ export class DownloadQueue {
         earlyAccessEndsAt: card.earlyAccessEndsAt,
         deferredSource: 'harvest'
       }
-      if (
-        !isDeferredVisibleInAwaitingTab(stub, rules, favorites, {
-          pausedTags,
-          bannedTags,
-          isTagSkipAllowed: (modelId) => inventory.isTagSkipAllowed(modelId)
-        })
-      ) {
+      if (!isDeferredVisibleInAwaitingTab(stub, rules, favorites)) {
         continue
       }
 
@@ -544,6 +527,8 @@ export class DownloadQueue {
         !inventory.isTagSkipAllowed(item.modelId) &&
         queueItemBlockedByPolicyTags(item, pausedTags, bannedTags)
       ) {
+        // Awaiting-access stays on EA; do not delete for pause alone.
+        if (isAwaitingAccessFailureKind(item.failureKind)) continue
         this.items = this.items.filter((i) => i.id !== item.id)
         inventory.removeDeferredDownload(item.versionId)
         continue
@@ -600,6 +585,7 @@ export class DownloadQueue {
           bannedTags
         )
       ) {
+        if (isAwaitingAccessFailureKind(d.failureKind)) continue
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
@@ -852,6 +838,23 @@ export class DownloadQueue {
         this.retryFailed(existing.id)
         return existing.id
       }
+      // Allow / manual retry on an Early-access deferred row: mark manual and promote when
+      // the gate is no longer a waitable unlock (otherwise stay deferred, allowlisted by caller).
+      if (existing && meta.manual === true && existing.status === 'deferred') {
+        existing.manual = true
+        const deferredRow = inventory.getDeferredDownload(request.versionId)
+        if (deferredRow && canWaitForDeferredUnlock(deferredRow)) {
+          this.broadcast()
+          this.emitDeferred()
+          return existing.id
+        }
+        this.requeueDeferredVersion(request.versionId, { force: true })
+        const after = this.items.find((i) => i.versionId === request.versionId)
+        if (after) after.manual = true
+        this.broadcast()
+        if (after?.status === 'queued' && !this.paused) void this.pump()
+        return after?.id ?? existing.id
+      }
       return existing?.id ?? ''
     }
 
@@ -1003,6 +1006,8 @@ export class DownloadQueue {
     }
 
     for (const d of inventory.getAllDeferredDownloads()) {
+      // Keep Early Access / Buzz / auth deferred — pause tags are indicators only.
+      if (isAwaitingAccessFailureKind(d.failureKind)) continue
       if (!isBlocked({ civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag, modelId: d.modelId })) continue
       inventory.removeDeferredDownload(d.versionId)
       removed++
@@ -1516,8 +1521,12 @@ export class DownloadQueue {
           bannedTags
         )
       ) {
-        inventory.removeDeferredDownload(d.versionId)
-        continue
+        if (isAwaitingAccessFailureKind(d.failureKind)) {
+          // Keep EA row; still merge into queue below.
+        } else {
+          inventory.removeDeferredDownload(d.versionId)
+          continue
+        }
       }
       if (this.items.some((i) => i.versionId === d.versionId)) continue
 

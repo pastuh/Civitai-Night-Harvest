@@ -654,7 +654,7 @@ export default function App() {
       // Only await Civitai crawl UI when Harvest is on AND at least one rule can crawl.
       setBrowseGalleryAwaiting(Boolean(s.nightMode) && watch.some((r) => r.enabled))
 
-      setBootPhase('load.stepQueue', loc)
+      // Queue reconcile is silent — Harvest pipeline is cleared each launch; no need for a boot step.
       const q = await window.api.reconcileDownloadQueue()
       setDownloadQueueState({ items: q.items, paused: q.paused || s.crawlAutoDownload === false })
       setStatus(await window.api.getScanStatus())
@@ -1898,12 +1898,9 @@ export default function App() {
       deferred.filter(
         (d) =>
           d.failureKind !== 'not_found' &&
-          isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds, {
-            pausedTags: settings?.hiddenTags,
-            bannedTags: settings?.bannedTags
-          })
+          isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)
       ).length,
-    [deferred, watchRules, eaFavoriteIds, settings?.hiddenTags, settings?.bannedTags]
+    [deferred, watchRules, eaFavoriteIds]
   )
 
   const mainTabs: { id: Tab; label: string; badge?: number; badgePrefix?: string; title?: string }[] = [
@@ -2624,6 +2621,7 @@ export default function App() {
               onSaveTagRules={saveTagRules}
               onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'awaiting' })}
               sessionBanModelIds={sessionBanModelIds}
+              onBrowseModelUnbanned={(modelId) => markBrowseModelBan(modelId, false)}
               isActive={awaitingInteractive}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
             />

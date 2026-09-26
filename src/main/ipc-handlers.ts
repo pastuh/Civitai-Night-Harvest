@@ -511,7 +511,8 @@ export function initIpc(): void {
   sched = scheduler
   downloadQueue.restoreFromDisk()
 
-  /** Queue one model as manual so blocked tags cannot re-skip it. */
+  /** Queue one model as manual so blocked tags cannot re-skip it.
+   *  Returns whether the item is actively queued (not merely still deferred/EA-waiting). */
   function tryManualQueueExclusionModel(
     modelId: number,
     stub?: {
@@ -524,9 +525,9 @@ export function initIpc(): void {
       tags?: string[]
       sourceDomain?: CivitaiDomain
     }
-  ): boolean {
-    if (!modelId || modelId <= 0) return false
-    if (inventory.isModelBanned(modelId)) return false
+  ): { queued: boolean } {
+    if (!modelId || modelId <= 0) return { queued: false }
+    if (inventory.isModelBanned(modelId)) return { queued: false }
     // Prefer stub from Missing/ban row — avoid rematerializing the whole Browse gallery
     // (preferred-preview SQL) on every Allow click.
     let browse: import('../shared/types').WatchRuleTestModel | undefined
@@ -537,8 +538,8 @@ export function initIpc(): void {
         .find((m) => m.id === modelId)
     }
     const versionId = stubVersionId || browse?.versionId
-    if (!versionId || versionId <= 0) return false
-    if (inventory.hasVersion(versionId)) return false
+    if (!versionId || versionId <= 0) return { queued: false }
+    if (inventory.hasVersion(versionId)) return { queued: false }
     const id = downloadQueue.enqueue(
       {
         modelId,
@@ -555,9 +556,11 @@ export function initIpc(): void {
         manual: true
       }
     )
-    if (!id) return false
-    if (!downloadQueue.getState().paused) downloadQueue.start()
-    return true
+    if (!id) return { queued: false }
+    const after = downloadQueue.getItems().find((i) => i.versionId === versionId)
+    const queued = after?.status === 'queued' || after?.status === 'downloading'
+    if (queued && !downloadQueue.getState().paused) downloadQueue.start()
+    return { queued }
   }
 
   ipcMain.handle('settings:get', () => toPublicSettings(getSettings()))
@@ -1222,7 +1225,7 @@ export function initIpc(): void {
     inventory.removeTagSkipReview(modelId)
     inventory.clearBrowseCardCacheForModel(modelId)
     scheduler.markModelUnbannedInBrowseGallery(modelId)
-    const queued = tryManualQueueExclusionModel(modelId, {
+    const result = tryManualQueueExclusionModel(modelId, {
       versionId: banned?.versionId ?? tagSkip?.versionId,
       modelName: banned?.modelName ?? tagSkip?.modelName,
       modelType: banned?.modelType ?? tagSkip?.modelType,
@@ -1234,14 +1237,14 @@ export function initIpc(): void {
     })
     scheduler.log(
       'info',
-      queued
+      result.queued
         ? `Unbanned model ${modelId} — queued for download (manual, ignores blocked tags)`
         : `Removed exclusion for model ${modelId}`,
       undefined,
       { source: 'system', modelId }
     )
     emitExclusionRemoved(() => mainWindow, { modelId })
-    return { modelId, queued }
+    return { modelId, queued: result.queued }
   })
 
   ipcMain.handle('model:getBanned', () => inventory.getBannedModels())
@@ -1447,24 +1450,46 @@ export function initIpc(): void {
   })
 
   /** Allow one tag-skipped model: persistent exception + remove review + manual queue. */
-  ipcMain.handle('exclusions:allowTagSkip', (_e, modelId: number) => {
+  ipcMain.handle(
+    'exclusions:allowTagSkip',
+    (
+      _e,
+      modelId: number,
+      stub?: {
+        versionId?: number
+        modelName?: string
+        modelType?: string
+        baseModel?: string
+        author?: string
+        previewUrl?: string
+        tags?: string[]
+        sourceDomain?: CivitaiDomain
+      }
+    ) => {
     const tagSkip = inventory.getTagSkipReview(modelId)
     inventory.addTagSkipAllow(modelId)
     inventory.removeTagSkipReview(modelId)
-    const queued = tryManualQueueExclusionModel(modelId, {
-      versionId: tagSkip?.versionId,
-      modelName: tagSkip?.modelName,
-      modelType: tagSkip?.modelType,
-      baseModel: tagSkip?.baseModel,
-      author: tagSkip?.author,
-      previewUrl: tagSkip?.previewUrl,
-      tags: tagSkip?.tags,
-      sourceDomain: tagSkip?.sourceDomain
+    const result = tryManualQueueExclusionModel(modelId, {
+      versionId: stub?.versionId ?? tagSkip?.versionId,
+      modelName: stub?.modelName ?? tagSkip?.modelName,
+      modelType: stub?.modelType ?? tagSkip?.modelType,
+      baseModel: stub?.baseModel ?? tagSkip?.baseModel,
+      author: stub?.author ?? tagSkip?.author,
+      previewUrl: stub?.previewUrl ?? tagSkip?.previewUrl,
+      tags: stub?.tags?.length ? stub.tags : tagSkip?.tags,
+      sourceDomain: stub?.sourceDomain ?? tagSkip?.sourceDomain
     })
-    if (queued) {
+    if (result.queued) {
       scheduler.log(
         'info',
         `Allowed tag-skipped model ${modelId} — queued (manual; allowlisted vs pause/ban tags)`,
+        undefined,
+        { source: 'system', modelId }
+      )
+    } else {
+      scheduler.log(
+        'info',
+        `Allowed tag-skipped model ${modelId} — allowlisted (stays Early access until unlock / gate clears)`,
         undefined,
         { source: 'system', modelId }
       )
@@ -1473,8 +1498,12 @@ export function initIpc(): void {
       modelId,
       kinds: ['bannedByTag', 'pausedByTag']
     })
-    return { modelId, queued }
+    return { modelId, queued: result.queued }
   })
+
+  ipcMain.handle('exclusions:getTagSkipAllowlist', () => ({
+    modelIds: inventory.getTagSkipAllowlistIds()
+  }))
 
   ipcMain.handle('exclusions:acknowledgeTagSkip', (_e, modelId: number) => {
     inventory.acknowledgeTagSkipReview(modelId)

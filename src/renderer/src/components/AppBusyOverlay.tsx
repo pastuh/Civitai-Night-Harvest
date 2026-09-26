@@ -105,12 +105,15 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
                 ? t('appBusy.identityHint')
                 : progress
                   ? t('appBusy.syncHint')
-                  : t('appBusy.preparingHint')
+                  : null
+  // Boot overlay: step + wait spinner only — no extra "no disk scan" footnote.
 
   return (
     <div className="app-busy-overlay" role="alertdialog" aria-modal="true" aria-busy="true">
-      <div className={`app-busy-card app-busy-card-stable${showSyncProgress ? '' : ' app-busy-card-simple'}`}>
-        <strong>{message}</strong>
+      <div
+        className={`app-busy-card${showSyncProgress ? ' app-busy-card-stable' : ' app-busy-card-simple'}`}
+      >
+        <strong className="app-busy-title">{message}</strong>
 
         {!showSyncProgress && step && step !== message && (
           <p className="app-busy-step">{step}</p>
@@ -119,7 +122,7 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
         {!showSyncProgress && (
           <div className="app-busy-simple-row" aria-hidden>
             <span className="app-busy-spinner" />
-            <span className="muted">{t('appBusy.waitHint')}</span>
+            <span className="muted app-busy-wait-label">{t('appBusy.waitHint')}</span>
           </div>
         )}
 
@@ -169,10 +172,12 @@ export function AppBusyOverlay({ message, subMessage, syncProgress }: Props) {
           </div>
         )}
 
-        <div className="app-busy-hint-stack">
-          {contextHint && <p className="muted app-busy-hint app-busy-sync-why">{contextHint}</p>}
-          {showSyncProgress && <p className="muted app-busy-hint">{t('appBusy.waitHint')}</p>}
-        </div>
+        {(contextHint || showSyncProgress) && (
+          <div className="app-busy-hint-stack">
+            {contextHint && <p className="muted app-busy-hint app-busy-sync-why">{contextHint}</p>}
+            {showSyncProgress && <p className="muted app-busy-hint">{t('appBusy.waitHint')}</p>}
+          </div>
+        )}
       </div>
     </div>
   )

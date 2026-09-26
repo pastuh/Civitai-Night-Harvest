@@ -1168,8 +1168,8 @@ export interface InventoryGetOptions {
    */
   diskImportOnly?: boolean
   /**
-   * Hash local/custom rows, detect duplicates vs library, and look up Civitai by SHA256.
-   * Settings → Sync folders; not used on startup.
+   * Hash local/custom rows and detect duplicates vs library only (offline).
+   * Never sends private SHA256 to Civitai. Settings → Sync folders; not used on startup.
    */
   recognizeLocalModels?: boolean
   repairPreviews?: boolean

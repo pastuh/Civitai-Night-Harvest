@@ -241,7 +241,7 @@ export const en = {
       slugSyncSkipped: 'skipped {skipped} (name collision or file missing)',
       slugSyncRepaired: 'repaired {repaired} paths',
       diskSyncHint:
-        'Scans LoRA and Checkpoint folders (and tag folders) for model files, imports .swarm.json models and unrecognized customs, hashes customs, checks duplicates vs Library and Civitai (SHA256), removes stale DB entries, fixes old invented LoRA strength hints in .swarm.json, flags tiny/truncated .safetensors, then updates the download queue. Not run automatically on app start — press this button when you want it.',
+        'Scans LoRA and Checkpoint folders (and tag folders) for model files, imports .swarm.json models and unrecognized customs, hashes customs locally for duplicate detection (SHA256 never sent to Civitai), removes stale DB entries, fixes old invented LoRA strength hints in .swarm.json, flags tiny/truncated .safetensors, then updates the download queue. Not run automatically on app start — press this button when you want it.',
       diskSyncDone: 'Disk sync finished — see Library tab for the summary.',
       activityLogHint:
         'Controls what is saved to the activity log and SQLite database. Less logging reduces disk writes and UI updates during long crawls.',
@@ -434,7 +434,7 @@ export const en = {
     libraryTypeFilter:
       'Sidebar **LoRA** / **Checkpoint** — filter by type. Checkpoint cards show a small type badge',
     libraryUnrecognized:
-      '**Unrecognized** — local or custom files without a Civitai match. Deleting them always asks for confirmation',
+      '**Unrecognized** — local or custom files without Civitai identity (sidecars). Deleting them always asks for confirmation',
     libraryUnavailable:
       '**Unavailable on Civitai** — files already known as taken down or archived (from saved info). The filter appears only when such files exist; Sync does **not** re-check every model live',
     libraryDeleteSafety:
@@ -1125,7 +1125,6 @@ export const en = {
     stepRules: 'Loading Tag folders and Browse harvest rules…',
     stepLists: 'Loading Updates, Early access, Missing, and ban lists…',
     stepLibrary: 'Loading your model library from the database…',
-    stepQueue: 'Restoring the download queue…',
     stepSession: 'Handing off to the main window…'
   },
   app: {
@@ -1171,7 +1170,6 @@ export const en = {
     phaseRecognize: 'Recognizing custom / local models',
     phaseRename: 'Renaming library files',
     phasePreview: 'Checking library previews',
-    preparingHint: 'No disk scan on startup — only local data is being read.',
     checkingHint:
       'Verifying that each library model file still exists on disk (e.g. 250 / 1200). Deleted files are removed from the inventory.',
     renameHint: 'Renaming model files on disk — this runs once and finishes when the summary appears.',
@@ -1183,6 +1181,21 @@ export const en = {
     previewHint:
       'Checks each library model for preview.jpg and swarm thumbnail; downloads missing images from Civitai (up to 8 per startup).',
     waitHint: 'Please wait — other actions are paused.'
+  },
+  postDownloadTag: {
+    title: 'Choose download folder',
+    lead: 'This model matches several tag folders. Pick where to keep the {type} file on disk.',
+    modelFallback: 'model',
+    savedTo: 'Saved to',
+    currentRoute: 'Current route',
+    civitaiTags: 'Civitai tags',
+    noFolderMapped: 'No folder mapped',
+    keepHere: 'Keep here',
+    useFolder: 'Use this folder',
+    createFolder: 'Create folder',
+    moving: 'Moving…',
+    creating: 'Creating…',
+    keepCurrent: 'Keep current location'
   },
   syncSummary: {
     scanned: 'scanned {count} on-disk file(s)',
@@ -1361,7 +1374,7 @@ export const en = {
     modelTypes: 'Model types',
     untaggedFolder: 'Untagged folder',
     unrecognized: 'Unrecognized',
-    unrecognizedHint: 'Custom / local file without Civitai identity (no .swarm.json or unmatched hash)',
+    unrecognizedHint: 'Custom / local file without Civitai identity (no .swarm.json / sidecar from this app)',
     duplicateOf: 'Duplicate of {name}',
     deleteLocal: 'Delete local files',
     deleteLocalConfirm:
@@ -1594,6 +1607,8 @@ export const en = {
     unlockCalendarHint: 'Days with models that unlock for free. Click a day to filter.',
     unlockCalendarRangeHint: 'Click a marked day to show models unlocking then. Click again to clear.',
     sessionBannedBadge: 'Banned this session',
+    allowlistedWaiting:
+      'Allowed — pause tags ignored. Stays in Early access until unlock (then queues automatically).',
     policyTagsHint: 'Models whose tags match pause / ban-by-tag policy.'
   },
   incompleteTab: {

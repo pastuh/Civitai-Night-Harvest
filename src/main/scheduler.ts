@@ -573,24 +573,32 @@ export class ScanScheduler {
         scanned++
         const hit = firstPolicyMatch(m.tags ?? [], newlyPaused, newlyBanned)
         if (hit) {
-          inventory.recordTagSkipReview({
-            modelId: m.id,
-            versionId: m.versionId,
-            modelName: m.name,
-            modelType: m.type,
-            author: m.creator || '',
-            baseModel: m.baseModel || '',
-            previewUrl: m.previewUrl,
-            pageUrl: m.pageUrl,
-            sourceDomain: m.sourceDomain,
-            tags: m.tags ?? [],
-            blockedTag: hit.policyTag,
-            matchedModelTag: hit.modelTag,
-            policy: hit.kind,
-            downloadCount: m.downloadCount,
-            thumbsUpCount: m.thumbsUpCount
-          })
-          matched++
+          // EA / awaiting-access stay on Early Access — pause/ban is an indicator there.
+          if (
+            m.isEarlyAccess ||
+            inventory.modelHasAwaitingAccessDeferred(m.id, m.versionId)
+          ) {
+            inventory.removeTagSkipReview(m.id)
+          } else {
+            inventory.recordTagSkipReview({
+              modelId: m.id,
+              versionId: m.versionId,
+              modelName: m.name,
+              modelType: m.type,
+              author: m.creator || '',
+              baseModel: m.baseModel || '',
+              previewUrl: m.previewUrl,
+              pageUrl: m.pageUrl,
+              sourceDomain: m.sourceDomain,
+              tags: m.tags ?? [],
+              blockedTag: hit.policyTag,
+              matchedModelTag: hit.modelTag,
+              policy: hit.kind,
+              downloadCount: m.downloadCount,
+              thumbsUpCount: m.thumbsUpCount
+            })
+            matched++
+          }
         }
         if (scanned % 40 === 0 || scanned === total) {
           emitProgress({

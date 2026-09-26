@@ -351,9 +351,21 @@ const api = {
   dismissTagSkip: (modelId: number): Promise<{ modelId: number }> =>
     ipcRenderer.invoke('exclusions:dismissTagSkip', modelId),
   allowTagSkip: (
-    modelId: number
+    modelId: number,
+    stub?: {
+      versionId?: number
+      modelName?: string
+      modelType?: string
+      baseModel?: string
+      author?: string
+      previewUrl?: string
+      tags?: string[]
+      sourceDomain?: 'com' | 'red'
+    }
   ): Promise<{ modelId: number; queued: boolean }> =>
-    ipcRenderer.invoke('exclusions:allowTagSkip', modelId),
+    ipcRenderer.invoke('exclusions:allowTagSkip', modelId, stub),
+  getTagSkipAllowlist: (): Promise<{ modelIds: number[] }> =>
+    ipcRenderer.invoke('exclusions:getTagSkipAllowlist'),
   acknowledgeTagSkip: (modelId: number): Promise<{ modelId: number }> =>
     ipcRenderer.invoke('exclusions:acknowledgeTagSkip', modelId),
   getMissingBanSeen: (): Promise<{

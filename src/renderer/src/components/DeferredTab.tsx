@@ -77,6 +77,8 @@ interface Props {
   bannedTags?: string[]
   /** Model IDs banned / tag-skipped during this app session (Missing + Browse). */
   sessionBanModelIds?: number[]
+  /** Clear Browse/App ban state after Unban from this tab. */
+  onBrowseModelUnbanned?: (modelId: number) => void
   fastTagMode?: boolean
   confirmTagFolderMoves?: boolean
   onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
@@ -238,6 +240,7 @@ export function DeferredTab({
   hiddenTags = [],
   bannedTags = [],
   sessionBanModelIds = [],
+  onBrowseModelUnbanned,
   fastTagMode = false,
   confirmTagFolderMoves = true,
   onSaveTagRules,
@@ -264,6 +267,12 @@ export function DeferredTab({
   const [sessionBannedByModelId, setSessionBannedByModelId] = useState<
     Map<number, DeferredDownload>
   >(() => new Map())
+  /** Allowed/unbanned cards kept in-grid until Early Access tab is left. */
+  const [temporaryAllowedByModelId, setTemporaryAllowedByModelId] = useState<
+    Map<number, DeferredDownload>
+  >(() => new Map())
+  /** Tag-skip allowlist ids from Allow this session (visibility + pause filter). */
+  const [tagSkipAllowIds, setTagSkipAllowIds] = useState<Set<number>>(() => new Set())
   /** Favorites used for sort — refreshed only when entering the tab (no jump while starring). */
   const [pinFavoriteIds, setPinFavoriteIds] = useState<number[]>(eaFavoriteIds)
   const [contextMenu, setContextMenu] = useState<{
@@ -284,7 +293,19 @@ export function DeferredTab({
   useEffect(() => {
     const justOpened = isActive && !wasActiveRef.current
     wasActiveRef.current = isActive
-    if (justOpened) setPinFavoriteIds(eaFavoriteIds)
+    if (!isActive) {
+      setTemporaryAllowedByModelId(new Map())
+      return
+    }
+    if (justOpened) {
+      setPinFavoriteIds(eaFavoriteIds)
+      void window.api.getTagSkipAllowlist?.().then((snap) => {
+        const ids = snap?.modelIds ?? []
+        setTagSkipAllowIds(new Set(ids.filter((id) => id > 0)))
+      }).catch(() => {
+        /* older preload without API — keep local set */
+      })
+    }
   }, [isActive, eaFavoriteIds])
 
   const toggleBanMode = useCallback(() => {
@@ -388,15 +409,18 @@ export function DeferredTab({
   const scopedDeferred = useMemo(
     () =>
       activeDeferred.filter((d) =>
-        isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds, {
-          pausedTags: hiddenTags,
-          bannedTags
-        })
+        isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)
       ),
-    [activeDeferred, watchRules, eaFavoriteIds, hiddenTags, bannedTags]
+    [activeDeferred, watchRules, eaFavoriteIds]
   )
 
-  const hiddenByRulesCount = activeDeferred.length - scopedDeferred.length
+  const hiddenByRulesCount = useMemo(
+    () =>
+      activeDeferred.filter(
+        (d) => !isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)
+      ).length,
+    [activeDeferred, watchRules, eaFavoriteIds]
+  )
 
   const itemsForMainCounts = useMemo(() => {
     if (!modelTypeFilter) return scopedDeferred
@@ -414,8 +438,13 @@ export function DeferredTab({
     [itemsForMainCounts, liveFavoriteSet]
   )
   const sessionPausePool = useMemo(
-    () => scopedDeferred.filter((d) => itemHasPausedTag(d, hiddenTags, bannedTags)),
-    [scopedDeferred, hiddenTags, bannedTags]
+    () =>
+      // Indicator filter: pause-tagged EA rows (still shown in All with pause style).
+      activeDeferred.filter(
+        (d) =>
+          itemHasPausedTag(d, hiddenTags, bannedTags) && !tagSkipAllowIds.has(d.modelId)
+      ),
+    [activeDeferred, hiddenTags, bannedTags, tagSkipAllowIds]
   )
   const sessionPauseCount = useMemo(() => {
     if (!modelTypeFilter) return sessionPausePool.length
@@ -483,13 +512,24 @@ export function DeferredTab({
     const q = search.trim().toLowerCase()
     let list: DeferredDownload[]
     if (sideFilter.type === 'sessionBans') {
-      list = sortDeferred(
-        [...sessionBannedList, ...sessionBanLive],
-        pinFavoriteSet,
-        deferredSort
-      )
+      const merged = new Map<number, DeferredDownload>()
+      for (const d of sessionBannedList) merged.set(d.modelId, d)
+      for (const d of sessionBanLive) merged.set(d.modelId, d)
+      for (const d of temporaryAllowedByModelId.values()) {
+        if (sessionBanSet.has(d.modelId) && !merged.has(d.modelId)) {
+          merged.set(d.modelId, d)
+        }
+      }
+      list = sortDeferred([...merged.values()], pinFavoriteSet, deferredSort)
     } else if (sideFilter.type === 'sessionPause') {
-      list = sessionPausePool
+      const merged = new Map<number, DeferredDownload>()
+      for (const d of sessionPausePool) merged.set(d.modelId, d)
+      for (const d of temporaryAllowedByModelId.values()) {
+        if (!merged.has(d.modelId) && itemHasPausedTag(d, hiddenTags, bannedTags)) {
+          merged.set(d.modelId, d)
+        }
+      }
+      list = [...merged.values()]
     } else if (sideFilter.type === 'favorites') {
       list = scopedDeferred.filter((d) => liveFavoriteSet.has(d.modelId))
     } else if (sideFilter.type === 'wait') {
@@ -521,7 +561,11 @@ export function DeferredTab({
     scopedDeferred,
     sessionBannedList,
     sessionBanLive,
+    sessionBanSet,
     sessionPausePool,
+    temporaryAllowedByModelId,
+    hiddenTags,
+    bannedTags,
     liveFavoriteSet,
     pinFavoriteSet,
     deferredSort,
@@ -628,6 +672,98 @@ export function DeferredTab({
     [banConfirmSkipForSession, confirmBan]
   )
 
+  const holdAllowedUntilLeave = useCallback((item: DeferredDownload) => {
+    setTemporaryAllowedByModelId((prev) => {
+      if (prev.get(item.modelId) === item) return prev
+      const next = new Map(prev)
+      next.set(item.modelId, item)
+      return next
+    })
+  }, [])
+
+  const unban = useCallback(
+    async (item: DeferredDownload) => {
+      if (busyId === item.modelId) return
+      setBusyId(item.modelId)
+      setTagMessage('')
+      holdAllowedUntilLeave(item)
+      setSessionBannedByModelId((prev) => {
+        if (!prev.has(item.modelId)) return prev
+        const next = new Map(prev)
+        next.delete(item.modelId)
+        return next
+      })
+      setHiddenModelIds((prev) => {
+        if (!prev.has(item.modelId)) return prev
+        const next = new Set(prev)
+        next.delete(item.modelId)
+        return next
+      })
+      onBrowseModelUnbanned?.(item.modelId)
+      try {
+        const result = await window.api.unbanModel(item.modelId)
+        if (result && typeof result === 'object' && 'queued' in result && result.queued) {
+          setTagMessage(t('missingTab.unbanQueued'))
+        }
+        await onRefresh()
+      } catch (err) {
+        setTemporaryAllowedByModelId((prev) => {
+          const next = new Map(prev)
+          next.delete(item.modelId)
+          return next
+        })
+        setTagMessage(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [busyId, holdAllowedUntilLeave, onBrowseModelUnbanned, onRefresh, t]
+  )
+
+  const allowTagSkip = useCallback(
+    async (item: DeferredDownload) => {
+      if (busyId === item.modelId) return
+      setBusyId(item.modelId)
+      setTagMessage('')
+      holdAllowedUntilLeave(item)
+      setTagSkipAllowIds((prev) => {
+        if (prev.has(item.modelId)) return prev
+        const next = new Set(prev)
+        next.add(item.modelId)
+        return next
+      })
+      try {
+        const result = await window.api.allowTagSkip(item.modelId, {
+          versionId: item.versionId,
+          modelName: item.modelName,
+          modelType: item.modelType,
+          baseModel: item.baseModel,
+          previewUrl: item.previewUrl,
+          tags: item.civitaiTags,
+          sourceDomain: domain === 'both' ? 'com' : domain
+        })
+        if (result.queued) setTagMessage(t('missingTab.unbanQueued'))
+        else setTagMessage(t('deferredTab.allowlistedWaiting'))
+        await onRefresh()
+      } catch (err) {
+        setTemporaryAllowedByModelId((prev) => {
+          const next = new Map(prev)
+          next.delete(item.modelId)
+          return next
+        })
+        setTagSkipAllowIds((prev) => {
+          const next = new Set(prev)
+          next.delete(item.modelId)
+          return next
+        })
+        setTagMessage(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [busyId, domain, holdAllowedUntilLeave, onRefresh, t]
+  )
+
   if (!deferred.length && !hiddenModelIds.size && !sessionBannedByModelId.size) {
     return (
       <div className="panel status-tab-panel">
@@ -638,7 +774,15 @@ export function DeferredTab({
     )
   }
 
-  if (!scopedDeferred.length && !sessionBannedByModelId.size && !sessionBanLive.length) {
+  // Keep chrome (sidebar Session pause/bans) even when All is empty — pause-tag harvest
+  // rows are intentionally hidden from All but still live in sessionPausePool.
+  if (
+    !scopedDeferred.length &&
+    !sessionBannedByModelId.size &&
+    !sessionBanLive.length &&
+    !sessionPausePool.length &&
+    !temporaryAllowedByModelId.size
+  ) {
     return (
       <div className="panel status-tab-panel">
         <p className="muted">
@@ -740,7 +884,17 @@ export function DeferredTab({
                         new Date().toISOString()
                       )
                       const favorited = liveFavoriteSet.has(item.modelId)
-                      const sessionBanned = sessionBannedByModelId.has(item.modelId)
+                      const temporaryAllowed = temporaryAllowedByModelId.has(item.modelId)
+                      const sessionBanned =
+                        !temporaryAllowed &&
+                        (sessionBannedByModelId.has(item.modelId) ||
+                          sessionBanSet.has(item.modelId))
+                      const pausedTagged =
+                        !temporaryAllowed &&
+                        !tagSkipAllowIds.has(item.modelId) &&
+                        itemHasPausedTag(item, hiddenTags, bannedTags)
+                      const showUnban = sessionBanned
+                      const showAllow = !sessionBanned && pausedTagged
                       const folderLabel = shortCardFolderLabel(
                         item.routingTag,
                         null,
@@ -779,9 +933,16 @@ export function DeferredTab({
                         <StatusModelCard
                           key={item.versionId}
                           className={[
-                            canWait ? 'deferred-access-wait' : 'deferred-access-buy',
-                            favorited ? 'is-ea-favorite' : '',
-                            sessionBanned ? 'missing-card-banned-manual' : ''
+                            temporaryAllowed
+                              ? 'pending-card-temporary'
+                              : sessionBanned
+                                ? 'missing-card-banned-manual'
+                                : pausedTagged
+                                  ? 'missing-card-paused-tag'
+                                  : canWait
+                                    ? 'deferred-access-wait'
+                                    : 'deferred-access-buy',
+                            favorited && !temporaryAllowed ? 'is-ea-favorite' : ''
                           ]
                             .filter(Boolean)
                             .join(' ')}
@@ -818,9 +979,17 @@ export function DeferredTab({
                               )}
                               modelType={resolveDeferredModelType(item)}
                               statusChips={
-                                sessionBanned ? (
-                                  <span className="status-card-skipped-badge">
-                                    {t('deferredTab.sessionBannedBadge')}
+                                temporaryAllowed ? (
+                                  <span className="missing-kind-badge">
+                                    {t('missingTab.allowedBadge')}
+                                  </span>
+                                ) : sessionBanned ? (
+                                  <span className="missing-kind-badge">
+                                    {t('missingTab.kindBannedManual')}
+                                  </span>
+                                ) : pausedTagged ? (
+                                  <span className="missing-kind-badge">
+                                    {t('missingTab.kindPausedByTag')}
                                   </span>
                                 ) : null
                               }
@@ -968,7 +1137,7 @@ export function DeferredTab({
                               >
                                 ↗
                               </button>
-                              {banMode && !sessionBanned && (
+                              {banMode && !sessionBanned && !temporaryAllowed && (
                                 <button
                                   type="button"
                                   className="gallery-ban-inline-btn electron-no-drag"
@@ -980,6 +1149,34 @@ export function DeferredTab({
                                 </button>
                               )}
                             </>
+                          }
+                          actions={
+                            temporaryAllowed ? null : showUnban || showAllow ? (
+                              <>
+                                {showUnban ? (
+                                  <button
+                                    type="button"
+                                    className="btn-sm"
+                                    disabled={busyId === item.modelId}
+                                    onClick={() => void unban(item)}
+                                    title={t('missingTab.unbanHint')}
+                                  >
+                                    {t('missingTab.unban')}
+                                  </button>
+                                ) : null}
+                                {showAllow ? (
+                                  <button
+                                    type="button"
+                                    className="btn-sm"
+                                    disabled={busyId === item.modelId}
+                                    onClick={() => void allowTagSkip(item)}
+                                    title={t('missingTab.allowTagSkipHint')}
+                                  >
+                                    {t('missingTab.allow')}
+                                  </button>
+                                ) : null}
+                              </>
+                            ) : null
                           }
                         />
                       )
@@ -1208,14 +1405,41 @@ export function DeferredTab({
             </button>
           )}
           <div className="context-menu-divider" />
-          <button
-            {...contextMenuButtonProps(() => {
-              requestBan(contextMenu.item)
-            }, () => setContextMenu(null))}
-            className="context-menu-danger"
-          >
-            {t('gallery.excludeBan')}
-          </button>
+          {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
+            (sessionBannedByModelId.has(contextMenu.item.modelId) ||
+              sessionBanSet.has(contextMenu.item.modelId)) && (
+              <button
+                {...contextMenuButtonProps(() => {
+                  void unban(contextMenu.item)
+                }, () => setContextMenu(null))}
+              >
+                {t('missingTab.unban')}
+              </button>
+            )}
+          {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
+            !sessionBannedByModelId.has(contextMenu.item.modelId) &&
+            !sessionBanSet.has(contextMenu.item.modelId) &&
+            !tagSkipAllowIds.has(contextMenu.item.modelId) &&
+            itemHasPausedTag(contextMenu.item, hiddenTags, bannedTags) && (
+              <button
+                {...contextMenuButtonProps(() => {
+                  void allowTagSkip(contextMenu.item)
+                }, () => setContextMenu(null))}
+              >
+                {t('missingTab.allow')}
+              </button>
+            )}
+          {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
+            !sessionBannedByModelId.has(contextMenu.item.modelId) && (
+              <button
+                {...contextMenuButtonProps(() => {
+                  requestBan(contextMenu.item)
+                }, () => setContextMenu(null))}
+                className="context-menu-danger"
+              >
+                {t('gallery.excludeBan')}
+              </button>
+            )}
         </ContextMenuPortal>
       )}
 

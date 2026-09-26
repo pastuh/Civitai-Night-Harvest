@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { TagAssignmentPrompt, TagFolderRule } from '../../../shared/types'
 import { displayFolderForTag, findRuleForTag, ruleCoversTag } from '../../../shared/tag-routing'
+import { useT } from '../i18n/context'
 import { PreviewThumb } from './PreviewThumb'
 
 interface Props {
@@ -22,6 +24,7 @@ export function PostDownloadTagModal({
   onAssigned,
   onSaveTagRules
 }: Props) {
+  const t = useT()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -64,14 +67,23 @@ export function PostDownloadTagModal({
       ? prompt.matchingFolderTags
       : prompt.tags.filter((t) => findRuleForTag(t, tagRules))
 
-  return (
-    <div className="modal-overlay">
-      <div className="modal-card tag-assignment-modal" role="dialog" aria-labelledby="tag-assignment-title">
-        <h3 id="tag-assignment-title">Choose download folder</h3>
-        <p className="muted tag-assignment-lead">
-          You queued this model manually. Several tag folders match — pick where to store the{' '}
-          <strong>{prompt.modelType || 'model'}</strong> file on disk.
-        </p>
+  const modelType = prompt.modelType || t('postDownloadTag.modelFallback')
+
+  return createPortal(
+    <div className="modal-overlay tag-assignment-overlay" onClick={onDismiss}>
+      <div
+        className="modal-card tag-assignment-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tag-assignment-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="tag-assignment-header">
+          <h3 id="tag-assignment-title">{t('postDownloadTag.title')}</h3>
+          <p className="muted tag-assignment-lead">
+            {t('postDownloadTag.lead', { type: modelType })}
+          </p>
+        </header>
 
         <div className="tag-assignment-model">
           <PreviewThumb
@@ -79,36 +91,45 @@ export function PostDownloadTagModal({
             className="tag-assignment-preview"
           />
           <div className="tag-assignment-model-meta">
-            <strong className="tag-assignment-model-name">{prompt.modelName}</strong>
+            <strong className="tag-assignment-model-name" title={prompt.modelName}>
+              {prompt.modelName}
+            </strong>
             <div className="muted tag-assignment-model-details">
               {prompt.modelType}
               {prompt.author ? ` · ${prompt.author}` : ''}
               {' · '}
               v{prompt.versionId}
             </div>
-            {prompt.outputFolder && (
-              <div className="muted tag-assignment-saved-as">
-                Saved to: <code>{prompt.outputFolder}</code>
+            {prompt.outputFolder ? (
+              <div className="muted tag-assignment-saved-as" title={prompt.outputFolder}>
+                <span className="tag-assignment-label">{t('postDownloadTag.savedTo')}</span>
+                <code>{prompt.outputFolder}</code>
               </div>
-            )}
-            {currentFolder && (
-              <div className="muted tag-assignment-current">
-                Current route: <code>{prompt.currentRoutingTag}</code> → <code>{currentFolder}</code>
+            ) : null}
+            {currentFolder ? (
+              <div
+                className="muted tag-assignment-current"
+                title={`${prompt.currentRoutingTag} → ${currentFolder}`}
+              >
+                <span className="tag-assignment-label">{t('postDownloadTag.currentRoute')}</span>
+                <code>
+                  {prompt.currentRoutingTag} → {currentFolder}
+                </code>
               </div>
-            )}
-            {prompt.tags.length > 0 && (
+            ) : null}
+            {prompt.tags.length > 0 ? (
               <div className="tag-assignment-civitai-tags">
-                <span className="muted">Civitai tags:</span>
+                <span className="muted tag-assignment-label">{t('postDownloadTag.civitaiTags')}</span>
                 {prompt.tags.slice(0, 12).map((tag) => (
                   <span key={tag} className="tag-chip small">
                     {tag}
                   </span>
                 ))}
-                {prompt.tags.length > 12 && (
-                  <span className="muted">+{prompt.tags.length - 12} more</span>
-                )}
+                {prompt.tags.length > 12 ? (
+                  <span className="muted">+{prompt.tags.length - 12}</span>
+                ) : null}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -117,13 +138,15 @@ export function PostDownloadTagModal({
             const mapped = displayFolderForTag(tag, tagRules, loraFolder, checkpointFolder)
             const isCurrent = prompt.currentRoutingTag.toLowerCase() === tag.toLowerCase()
             return (
-              <div key={tag} className={`tag-assignment-row ${isCurrent ? 'current' : ''}`}>
+              <div key={tag} className={`tag-assignment-row${isCurrent ? ' current' : ''}`}>
                 <div className="tag-assignment-info">
                   <span className="tag-chip">{tag}</span>
                   {mapped ? (
-                    <span className="muted tag-assignment-path">{mapped}</span>
+                    <span className="muted tag-assignment-path" title={mapped}>
+                      {mapped}
+                    </span>
                   ) : (
-                    <span className="muted">No folder mapped</span>
+                    <span className="muted">{t('postDownloadTag.noFolderMapped')}</span>
                   )}
                 </div>
                 <div className="tag-assignment-actions">
@@ -134,7 +157,11 @@ export function PostDownloadTagModal({
                       disabled={!!busy}
                       onClick={() => void assignTag(tag)}
                     >
-                      {busy === tag ? 'Moving…' : isCurrent ? 'Keep here' : 'Use this folder'}
+                      {busy === tag
+                        ? t('postDownloadTag.moving')
+                        : isCurrent
+                          ? t('postDownloadTag.keepHere')
+                          : t('postDownloadTag.useFolder')}
                     </button>
                   ) : (
                     <button
@@ -142,7 +169,7 @@ export function PostDownloadTagModal({
                       disabled={!!busy}
                       onClick={() => void createFolderAndAssign(tag)}
                     >
-                      {busy === tag ? 'Creating…' : 'Create folder'}
+                      {busy === tag ? t('postDownloadTag.creating') : t('postDownloadTag.createFolder')}
                     </button>
                   )}
                 </div>
@@ -151,14 +178,15 @@ export function PostDownloadTagModal({
           })}
         </div>
 
-        {error && <p className="load-more-error">{error}</p>}
+        {error ? <p className="load-more-error tag-assignment-error">{error}</p> : null}
 
-        <div className="modal-footer">
+        <div className="modal-footer tag-assignment-footer">
           <button type="button" onClick={onDismiss} disabled={!!busy}>
-            Keep current location
+            {t('postDownloadTag.keepCurrent')}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

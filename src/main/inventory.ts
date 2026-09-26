@@ -27,6 +27,7 @@ import { MAX_MISSING_CONFIRM_HITS, MAX_TAG_SKIP_REVIEWS } from '../shared/types'
 import { expandCivitaiTagNames, matchingHiddenTags, applyCustomAssignmentDefaultsToRecord } from '../shared/tag-routing'
 import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
+import { isAwaitingAccessFailureKind } from '../shared/download-errors'
 import { safePathExists } from './output-paths'
 
 let db: Database.Database | null = null
@@ -858,6 +859,8 @@ export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
   if (isTagSkipAllowed(input.modelId)) return null
   if (isModelOwned(input.modelId)) return null
   if (input.versionId && input.versionId > 0 && hasVersion(input.versionId)) return null
+  // Early access / Buzz / auth gates live on the EA tab — never Missing tag-skip.
+  if (modelHasAwaitingAccessDeferred(input.modelId, input.versionId)) return null
 
   const policy: TagPolicyKind = input.policy === 'banned' ? 'banned' : 'paused'
   const now = new Date().toISOString()
@@ -1119,6 +1122,14 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
 
   const tagSkips = getAllTagSkipReviews()
     .filter((s) => !bannedIds.has(s.modelId) && !isModelOwned(s.modelId) && !isTagSkipAllowed(s.modelId))
+    .filter((s) => {
+      // Legacy rows: EA/Buzz deferred must not appear on Missing.
+      if (modelHasAwaitingAccessDeferred(s.modelId, s.versionId)) {
+        removeTagSkipReview(s.modelId)
+        return false
+      }
+      return true
+    })
     .map(
       (s): ExclusionReviewItem => ({
         kind: s.policy === 'banned' ? 'bannedByTag' : 'pausedByTag',
@@ -1538,6 +1549,18 @@ export function getSlugsInFolder(folder: string): string[] {
 export function getDeferredDownload(versionId: number): DeferredDownload | null {
   const row = getDb().prepare('SELECT * FROM deferred_downloads WHERE version_id = ?').get(versionId)
   return row ? rowToDeferred(row as Record<string, unknown>) : null
+}
+
+/** True when this model (or version) is waiting on Early Access / Buzz / auth — not Missing. */
+export function modelHasAwaitingAccessDeferred(modelId: number, versionId?: number): boolean {
+  if (versionId && versionId > 0) {
+    const byVersion = getDeferredDownload(versionId)
+    if (byVersion && isAwaitingAccessFailureKind(byVersion.failureKind)) return true
+  }
+  if (!modelId || modelId <= 0) return false
+  return getAllDeferredDownloads().some(
+    (d) => d.modelId === modelId && isAwaitingAccessFailureKind(d.failureKind)
+  )
 }
 
 export function addVersion(record: InventoryRecord): void {

@@ -64,7 +64,7 @@ export function isDeferredPinned(
   return item.deferredSource === 'manual'
 }
 
-/** True when harvest/auto row hits a Pause or Ban tag (Missing policy). */
+/** True when harvest/auto row hits a Pause or Ban tag (styling / Allow indicator). */
 export function deferredBlockedByPolicyTags(
   item: Pick<DeferredDownload, 'modelId' | 'civitaiTags' | 'routingTag'>,
   pausedTags: readonly string[] | undefined,
@@ -81,36 +81,30 @@ export function deferredBlockedByPolicyTags(
 }
 
 export type DeferredVisibilityOptions = {
+  /**
+   * @deprecated Pause/ban no longer hide rows from Early Access All.
+   * Kept optional for call-site compatibility; ignored by visibility.
+   */
   pausedTags?: readonly string[]
   bannedTags?: readonly string[]
-  /** Missing → Allow / tag-skip allowlist — paused tags no longer hide the row. */
   isTagSkipAllowed?: (modelId: number) => boolean
 }
 
 /**
  * Early access tab visibility:
  * - Always: user manual download + EA favorites
- * - Harvest / auto-deferred: only while enabled Browse rules still match,
- *   and not Pause/Ban-tag blocked (those stay on Missing unless manually allowed)
+ * - Harvest / auto-deferred: while enabled Browse rules still match
+ * Pause/Ban tags do NOT hide rows — they are card indicators + Allow only.
+ * (Missing owns non-EA tag-skips, not awaiting-access deferred.)
  */
 export function isDeferredVisibleInAwaitingTab(
   item: DeferredDownload,
   rules: WatchRule[],
   eaFavoriteModelIds: ReadonlySet<number> | readonly number[],
-  options?: DeferredVisibilityOptions
+  _options?: DeferredVisibilityOptions
 ): boolean {
+  void _options
   if (isDeferredPinned(item, eaFavoriteModelIds)) return true
-
-  if (
-    deferredBlockedByPolicyTags(
-      item,
-      options?.pausedTags,
-      options?.bannedTags,
-      options?.isTagSkipAllowed
-    )
-  ) {
-    return false
-  }
 
   const enabled = rules.filter((r) => r.enabled)
   if (!enabled.length) return false

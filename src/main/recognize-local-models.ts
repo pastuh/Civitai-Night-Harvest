@@ -6,8 +6,6 @@ import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
 import * as inventory from './inventory'
 import { getTagRules } from './settings-store'
 import { sha256File } from './library-hash-verify'
-import { writeCivitaiSidecar } from './model-sidecar'
-import { deleteVersionFromLibrary } from './model-delete'
 
 export type RecognizeLocalResult = {
   hashed: number
@@ -28,7 +26,8 @@ function pathKey(p: string): string {
 const AUTO_HASH_MAX_BYTES = 10 * 1024 * 1024 * 1024
 
 /**
- * Hash local/custom rows, mark SHA256 duplicates vs library, promote via Civitai by-hash.
+ * Hash local/custom rows and mark SHA256 duplicates vs library only.
+ * Never sends hashes to Civitai — private / unrecognized files stay offline.
  */
 export async function recognizeLocalModels(
   pool: CivitaiClientPool,
@@ -37,6 +36,8 @@ export async function recognizeLocalModels(
     onProgress?: (p: LibrarySyncProgress) => void
   } = {}
 ): Promise<RecognizeLocalResult> {
+  void pool
+  void options.domain
   const result: RecognizeLocalResult = {
     hashed: 0,
     duplicatesMarked: 0,
@@ -56,12 +57,15 @@ export async function recognizeLocalModels(
       existsSync(r.modelPath) &&
       !isCustomAssignmentInventoryRecord(r, tagRules)
   )
-  if (!locals.length) return result
+  if (!locals.length) {
+    result.stillUnrecognized = inventory.getAllVersions().filter((r) => isLocalInventoryRecord(r)).length
+    return result
+  }
 
   const onProgress = options.onProgress
   const total = locals.length
 
-  // 1) Ensure hashes
+  // 1) Ensure hashes (local only — never uploaded)
   for (let i = 0; i < locals.length; i++) {
     const record = locals[i]
     onProgress?.({
@@ -114,7 +118,7 @@ export async function recognizeLocalModels(
     anyByHash.set(h, list)
   }
 
-  // 2) Local duplicate detection
+  // 2) Local duplicate detection only (compare against hashes already in this library DB)
   for (const record of localNow) {
     const hash = record.fileHashSha256?.toUpperCase()
     if (!hash) continue
@@ -142,126 +146,7 @@ export async function recognizeLocalModels(
     }
   }
 
-  // 3) Civitai API lookup for locals still without civitai identity
-  const needApi = localNow.filter((r) => r.fileHashSha256)
-  const domain = options.domain ?? pool.primaryDomain()
-  const client = pool.forDomain(domain)
-
-  for (let i = 0; i < needApi.length; i += 100) {
-    const batch = needApi.slice(i, i + 100)
-    onProgress?.({
-      phase: 'recognize',
-      current: Math.min(i + batch.length, needApi.length),
-      total: needApi.length,
-      modelName: batch[0]?.modelName ?? '…',
-      action: 'Looking up local files on Civitai by SHA256'
-    })
-    try {
-      const resolved = await client.lookupVersionIdsByHashes(batch.map((b) => b.fileHashSha256!))
-      const byHash = new Map(resolved.map((r) => [r.hash.toUpperCase(), r.modelVersionId]))
-
-      for (const record of batch) {
-        const hash = record.fileHashSha256!.toUpperCase()
-        const foundVersionId = byHash.get(hash)
-        if (foundVersionId == null) continue
-
-        const owned = inventory.getVersion(foundVersionId)
-        if (owned && pathKey(owned.modelPath) !== pathKey(record.modelPath)) {
-          if (record.duplicateOfVersionId !== foundVersionId) {
-            inventory.patchVersionFileMeta(record.versionId, {
-              duplicateOfVersionId: foundVersionId
-            })
-            result.duplicatesMarked++
-          }
-          continue
-        }
-
-        // Resolve modelId + names for promote
-        let modelId = 0
-        let modelName = record.modelName
-        let versionName = record.versionName
-        let baseModel = record.baseModel
-        try {
-          const byHashFull = (await client.getModelVersionByHash(hash)) as {
-            name?: string
-            baseModel?: string
-            modelId?: number
-            model?: { id?: number; name?: string }
-          }
-          modelId = Number(byHashFull.modelId) || Number(byHashFull.model?.id) || 0
-          versionName = byHashFull.name || versionName
-          baseModel = byHashFull.baseModel || baseModel
-          if (byHashFull.model?.name) modelName = byHashFull.model.name
-        } catch (err) {
-          result.errors.push(
-            `${record.modelName}: API details ${err instanceof Error ? err.message : String(err)}`
-          )
-        }
-
-        if (modelId > 0 && inventory.isModelBanned(modelId)) {
-          try {
-            await deleteVersionFromLibrary(record.versionId)
-          } catch {
-            inventory.removeVersion(record.versionId)
-          }
-          result.bannedSkipped++
-          continue
-        }
-
-        if (owned && pathKey(owned.modelPath) === pathKey(record.modelPath)) {
-          // Same path already has civitai row somehow — remove synthetic
-          inventory.removeVersion(record.versionId)
-          continue
-        }
-
-        if (foundVersionId > 0 && inventory.versionIdExists(foundVersionId)) {
-          // Already owned under that version id — mark duplicate, keep local file row
-          if (!owned || pathKey(owned.modelPath) !== pathKey(record.modelPath)) {
-            inventory.patchVersionFileMeta(record.versionId, {
-              duplicateOfVersionId: foundVersionId
-            })
-            result.duplicatesMarked++
-          }
-          continue
-        }
-
-        if (modelId <= 0) {
-          continue
-        }
-
-        try {
-          const promoted = inventory.promoteLocalVersion(record.versionId, {
-            ...record,
-            modelId,
-            versionId: foundVersionId,
-            modelName: modelName || record.modelName,
-            versionName: versionName || record.versionName,
-            baseModel: baseModel || record.baseModel,
-            origin: 'civitai',
-            duplicateOfVersionId: undefined,
-            fileHashSha256: hash,
-            civitaiDomain: domain
-          })
-          try {
-            writeCivitaiSidecar(promoted.modelPath, {
-              modelId: promoted.modelId,
-              versionId: promoted.versionId,
-              sha256: hash
-            })
-          } catch {
-            /* sidecar best-effort */
-          }
-          result.promoted++
-        } catch (err) {
-          result.errors.push(
-            `${record.modelName}: promote ${err instanceof Error ? err.message : String(err)}`
-          )
-        }
-      }
-    } catch (err) {
-      result.errors.push(`${domain}: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
+  // Intentionally no Civitai by-hash lookup — private/local SHA256 never leaves the machine.
 
   result.stillUnrecognized = inventory
     .getAllVersions()

@@ -243,7 +243,7 @@ export const lt: Messages = {
       slugSyncSkipped: 'praleista {skipped} (konfliktas ar failas nerastas)',
       slugSyncRepaired: 'atstatyta {repaired} kelių',
       diskSyncHint:
-        'Skenuoja LoRA ir Checkpoint aplankus (ir tag aplankus): importuoja modelius su .swarm.json ir neatpažintus custom, skaičiuoja hash, tikrina dublikatus Library ir Civitai (SHA256), pašalina pasenusius įrašus, pataiso senuose .swarm.json išgalvotus LoRA strength hint’us, pažymi per mažus / nukirstus .safetensors, atnaujina eilę. Paleidžiant app automatiškai nebegroja — spauskite šį mygtuką, kai reikia.',
+        'Skenuoja LoRA ir Checkpoint aplankus (ir tag aplankus): importuoja modelius su .swarm.json ir neatpažintus custom, skaičiuoja hash lokaliai dublikatams (SHA256 niekada nesiunčiamas į Civitai), pašalina pasenusius įrašus, pataiso senuose .swarm.json išgalvotus LoRA strength hint’us, pažymi per mažus / nukirstus .safetensors, atnaujina eilę. Paleidžiant app automatiškai nebegroja — spauskite šį mygtuką, kai reikia.',
       diskSyncDone: 'Disko sync baigtas — santrauka Library skirtuke.',
       activityLogHint:
         'Valdo, kas rašoma į veiklos logą ir SQLite. Mažiau logų = mažiau disko rašymo ir UI atnaujinimų ilgų crawl metu.',
@@ -437,7 +437,7 @@ export const lt: Messages = {
     libraryTypeFilter:
       'Šoninė juosta **LoRA** / **Checkpoint** — filtras pagal tipą. Checkpoint kortelės turi tipų ženkliuką',
     libraryUnrecognized:
-      '**Neatpažinti** — lokalūs / nestandartiniai failai be Civitai atitikmens. Trinant visada klausiama patvirtinimo',
+      '**Neatpažinti** — lokalūs / nestandartiniai failai be Civitai tapatybės (sidecar). Trinant visada klausiama patvirtinimo',
     libraryUnavailable:
       '**Nepasiekiama Civitai** — failai, kurie jau žinomi kaip taken down / archived (iš išsaugotos info). Filtras matomas tik kai tokių yra; Sync **neperskenuoja** visos bibliotekos gyvai',
     libraryDeleteSafety:
@@ -1135,7 +1135,6 @@ export const lt: Messages = {
     stepRules: 'Kraunami Tag folders ir Browse harvest taisyklės…',
     stepLists: 'Kraunami Updates, Early access, Missing ir ban sąrašai…',
     stepLibrary: 'Kraunama modelių biblioteka iš duomenų bazės…',
-    stepQueue: 'Atkuriama atsisiuntimų eilė…',
     stepSession: 'Perduodama pagrindiniam langui…'
   },
   app: {
@@ -1181,7 +1180,6 @@ export const lt: Messages = {
     phaseRecognize: 'Atpažįstami custom / vietiniai modeliai',
     phaseRename: 'Pervadinami bibliotekos failai',
     phasePreview: 'Tikrinamos bibliotekos preview',
-    preparingHint: 'Paleidime disko neskenuojama — skaitomi tik lokalūs duomenys.',
     checkingHint:
       'Tikrinama, ar kiekvienas bibliotekos modelio failas dar yra diske (pvz. 250 / 1200). Ištrinti failai pašalinami iš inventoriaus.',
     renameHint: 'Pervadinami modelių failai diske — baigsis, kai pasirodys santrauka.',
@@ -1193,6 +1191,21 @@ export const lt: Messages = {
     previewHint:
       'Tikrina ar kiekvienas bibliotekos modelis turi preview.jpg ir swarm miniatiūrą; trūkstamas atsisiunčia iš Civitai (iki 8 per paleidimą).',
     waitHint: 'Palaukite — kiti veiksmai pauzuoti.'
+  },
+  postDownloadTag: {
+    title: 'Pasirinkite atsisiuntimo aplanką',
+    lead: 'Šis modelis atitinka kelis tag aplankus. Pasirinkite, kur laikyti {type} failą diske.',
+    modelFallback: 'modelio',
+    savedTo: 'Išsaugota',
+    currentRoute: 'Dabartinis maršrutas',
+    civitaiTags: 'Civitai tagai',
+    noFolderMapped: 'Aplankas nepriskirtas',
+    keepHere: 'Palikti čia',
+    useFolder: 'Naudoti šį aplanką',
+    createFolder: 'Sukurti aplanką',
+    moving: 'Perkeliama…',
+    creating: 'Kuriama…',
+    keepCurrent: 'Palikti dabartinę vietą'
   },
   syncSummary: {
     scanned: 'nuskanuota {count} failų diske',
@@ -1372,7 +1385,7 @@ export const lt: Messages = {
     modelTypes: 'Modelių tipai',
     untaggedFolder: 'Be aplanko tag',
     unrecognized: 'Neatpažinti',
-    unrecognizedHint: 'Custom / vietinis failas be Civitai tapatybės (nėra .swarm.json arba nesutapo hash)',
+    unrecognizedHint: 'Custom / vietinis failas be Civitai tapatybės (nėra .swarm.json / sidecar iš šios app)',
     duplicateOf: 'Dublikatas: {name}',
     deleteLocal: 'Ištrinti vietinius failus',
     deleteLocalConfirm:
@@ -1610,6 +1623,8 @@ export const lt: Messages = {
     unlockCalendarRangeHint:
       'Spustelėkite pažymėtą dieną — modeliai, kurie tada atrakinsis. Dar kartą — nuimti filtrą.',
     sessionBannedBadge: 'Banned šią sesiją',
+    allowlistedWaiting:
+      'Allowed — pause tag’ai ignoruojami. Lieka Early access iki unlock (tada automatiškai į queue).',
     policyTagsHint: 'Modeliai, kurių tagai atitinka pause / ban-by-tag politiką.'
   },
   incompleteTab: {

@@ -405,32 +405,6 @@ function processModel(
   const settings = getSettings()
   const pausedTags = settings.hiddenTags ?? []
   const bannedTags = settings.bannedTags ?? []
-  const policyHit =
-    !inventory.isTagSkipAllowed(model.id) &&
-    firstPolicyMatch(model.tags ?? [], pausedTags, bannedTags)
-  // Pause/Ban tags: send brand-new models to Missing — but never hide Updates for
-  // a model the user already owns (pack siblings / other files on the same page).
-  if (policyHit && !isOwnedModel) {
-    const version = model.modelVersions?.[0]
-    const domain = downloadDomainForModel(model, client.getDomain())
-    inventory.recordTagSkipReview({
-      modelId: model.id,
-      versionId: version?.id,
-      modelName: model.name,
-      modelType: model.type,
-      author: model.creator?.username || '',
-      baseModel: version?.baseModel || '',
-      previewUrl: resolveModelPreviewUrl(model),
-      pageUrl: getModelPageUrl(domain, model.id, version?.id),
-      sourceDomain: domain,
-      tags: model.tags ?? [],
-      blockedTag: policyHit.policyTag,
-      matchedModelTag: policyHit.modelTag,
-      policy: policyHit.kind,
-      ...pickVersionStats(version)
-    })
-    return
-  }
 
   refreshPendingPreviewsFromModel(model, ctx)
 
@@ -443,15 +417,6 @@ function processModel(
     if (inventory.isModelBanned(model.id)) return false
     if (inventory.isMissingUnavailable(model.id)) return false
     if (inventory.hasVersion(version.id)) return false
-    {
-      const s = getSettings()
-      if (
-        !inventory.isTagSkipAllowed(model.id) &&
-        modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags)
-      ) {
-        return false
-      }
-    }
     if (inventory.getDeferredDownload(version.id)) {
       result.upToDate++
       return true
@@ -481,6 +446,7 @@ function processModel(
       baseModel: version.baseModel
     })
     if (deferred) {
+      inventory.removeTagSkipReview(model.id)
       result.deferredEarlyAccess++
       logModelEvent(
         options,
@@ -492,6 +458,42 @@ function processModel(
       )
     }
     return deferred
+  }
+
+  const policyHit =
+    !inventory.isTagSkipAllowed(model.id) &&
+    firstPolicyMatch(model.tags ?? [], pausedTags, bannedTags)
+  // Pause/Ban on brand-new models: Early Access versions → EA tab (indicator only).
+  // Non-EA → Missing tag-skip. Never hide Updates for an already-owned model.
+  if (policyHit && !isOwnedModel) {
+    const versions = model.modelVersions ?? []
+    let deferredEa = false
+    for (const version of versions) {
+      if (tryDeferEarlyAccess(version)) deferredEa = true
+    }
+    if (!deferredEa) {
+      const version = versions[0]
+      const domain = downloadDomainForModel(model, client.getDomain())
+      inventory.recordTagSkipReview({
+        modelId: model.id,
+        versionId: version?.id,
+        modelName: model.name,
+        modelType: model.type,
+        author: model.creator?.username || '',
+        baseModel: version?.baseModel || '',
+        previewUrl: resolveModelPreviewUrl(model),
+        pageUrl: getModelPageUrl(domain, model.id, version?.id),
+        sourceDomain: domain,
+        tags: model.tags ?? [],
+        blockedTag: policyHit.policyTag,
+        matchedModelTag: policyHit.modelTag,
+        policy: policyHit.kind,
+        ...pickVersionStats(version)
+      })
+    } else {
+      inventory.removeTagSkipReview(model.id)
+    }
+    return
   }
 
   const tryQueue = (version: CivitaiModelVersion, label: string): boolean => {
@@ -1016,7 +1018,45 @@ export function queueEligibleTestModels(
       skipped.banned++
       continue
     }
-    // Pause/Ban tags → Missing only. Do not auto-defer EA (manual Allow from Missing can still).
+    // Early Access first — pause/ban are indicators on EA, not Missing diversions.
+    if (m.isEarlyAccess) {
+      skipped.earlyAccess++
+      if (
+        !inventory.getDeferredDownload(m.versionId) &&
+        !downloadQueue.hasActiveItem(m.versionId)
+      ) {
+        const matchedUsedTag = findFirstUsedTag(m.tags ?? [], usedTags)
+        if (!options.requireTagMatch || matchedUsedTag) {
+          const activeTag = options.requireTagMatch ? (matchedUsedTag ?? '') : ''
+          const { routingTag } = resolveModelRoutingTag(
+            m.tags ?? [],
+            activeTag,
+            tagRules,
+            m.baseModel
+          )
+          if (
+            downloadQueue.deferEarlyAccess({
+              modelId: m.id,
+              versionId: m.versionId,
+              modelName: m.name,
+              modelType: m.type,
+              routingTag,
+              previewUrl: m.previewUrl,
+              reason: formatEarlyAccessReason(m.earlyAccessEndsAt),
+              earlyAccessEndsAt: m.earlyAccessEndsAt,
+              civitaiTags: m.tags,
+              downloadCount: m.downloadCount,
+              thumbsUpCount: m.thumbsUpCount,
+              baseModel: m.baseModel
+            })
+          ) {
+            inventory.removeTagSkipReview(m.id)
+          }
+        }
+      }
+      continue
+    }
+    // Pause/Ban tags → Missing only for non-EA public models.
     const policyHit =
       !tagSkipAllow.has(m.id) && firstPolicyMatch(m.tags ?? [], pausedTags, bannedTags)
     if (policyHit) {
@@ -1038,40 +1078,6 @@ export function queueEligibleTestModels(
         thumbsUpCount: m.thumbsUpCount
       })
       skipped.hiddenTag++
-      continue
-    }
-    if (m.isEarlyAccess) {
-      skipped.earlyAccess++
-      // Route straight to Early access — never flash as queued (white border) first.
-      if (
-        !inventory.getDeferredDownload(m.versionId) &&
-        !downloadQueue.hasActiveItem(m.versionId)
-      ) {
-        const matchedUsedTag = findFirstUsedTag(m.tags ?? [], usedTags)
-        if (!options.requireTagMatch || matchedUsedTag) {
-          const activeTag = options.requireTagMatch ? (matchedUsedTag ?? '') : ''
-          const { routingTag } = resolveModelRoutingTag(
-            m.tags ?? [],
-            activeTag,
-            tagRules,
-            m.baseModel
-          )
-          downloadQueue.deferEarlyAccess({
-            modelId: m.id,
-            versionId: m.versionId,
-            modelName: m.name,
-            modelType: m.type,
-            routingTag,
-            previewUrl: m.previewUrl,
-            reason: formatEarlyAccessReason(m.earlyAccessEndsAt),
-            earlyAccessEndsAt: m.earlyAccessEndsAt,
-            civitaiTags: m.tags,
-            downloadCount: m.downloadCount,
-            thumbsUpCount: m.thumbsUpCount,
-            baseModel: m.baseModel
-          })
-        }
-      }
       continue
     }
     if (inventory.getDeferredDownload(m.versionId)) {
