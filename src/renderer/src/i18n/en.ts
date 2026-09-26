@@ -1853,7 +1853,7 @@ export const en = {
     detailMore: '(+{count} more)',
     bytesReceived: '{bytes} received',
     readyWaitingFetch: 'Harvest on — peek idle.',
-    harvesting: 'Harvesting…',
+    downloading: 'Downloading…',
     dotFound: 'Found {count} downloadable on this page',
     dotFoundQueued: 'Queued {count} from this page',
     dotFoundRecent: 'Recent page had downloadable finds',

@@ -1869,7 +1869,7 @@ export const lt: Messages = {
     detailMore: '(+{count} daugiau)',
     bytesReceived: 'gauta {bytes}',
     readyWaitingFetch: 'Harvest įjungtas — peek laukia.',
-    harvesting: 'Harvesting…',
+    downloading: 'Downloading…',
     dotFound: 'Šiame puslapyje rasta {count} siunčiamų',
     dotFoundQueued: 'Iš šio puslapio į eilę: {count}',
     dotFoundRecent: 'Neseniai rasta siunčiamų modelių',

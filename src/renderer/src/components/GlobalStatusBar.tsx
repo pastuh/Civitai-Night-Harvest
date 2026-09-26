@@ -522,8 +522,8 @@ function resolveStatusDotKind(
   pageFoundSignal: boolean
 ): StatusDotKind {
   if (failed.length > 0 && downloading.length === 0) return 'error'
-  // Green triangle — this page (or latch) has downloadable new/update finds.
-  if (pageFoundSignal && downloading.length === 0) return 'found'
+  // Green triangle — downloadable finds / active download pipeline from that find.
+  if (pageFoundSignal) return 'found'
   if (downloading.length > 0 || status === 'downloading') return 'active'
   if (status === 'scanning') return 'scanning'
   if (status === 'checking' || hasActivity) return 'processing'
@@ -561,7 +561,7 @@ export function GlobalStatusBar({
   const t = useT()
 
   const [waitTick, setWaitTick] = useState(0)
-  /** Keep the green “found” cue briefly after a page with downloadable finds. */
+  /** Green triangle while Harvest found work is still downloading / queued. */
   const [foundLatch, setFoundLatch] = useState(false)
 
   useEffect(() => {
@@ -569,24 +569,6 @@ export function GlobalStatusBar({
     const id = window.setInterval(() => setWaitTick((n) => n + 1), 5000)
     return () => window.clearInterval(id)
   }, [crawlProgress?.phase, crawlProgress?.waitUntil, crawlProgress?.ruleId])
-
-  useEffect(() => {
-    const n = (crawlProgress?.pageQueued ?? 0) + (crawlProgress?.pageFound ?? 0)
-    if (n <= 0) return
-    setFoundLatch(true)
-    const id = window.setTimeout(() => setFoundLatch(false), 10_000)
-    return () => window.clearTimeout(id)
-  }, [
-    crawlProgress?.pageQueued,
-    crawlProgress?.pageFound,
-    crawlProgress?.pageNumber,
-    crawlProgress?.ruleId
-  ])
-
-  const pageFoundSignal =
-    foundLatch ||
-    (crawlProgress?.pageQueued ?? 0) > 0 ||
-    (crawlProgress?.pageFound ?? 0) > 0
 
   const remainingWaitMs = useMemo(() => {
     void waitTick
@@ -598,11 +580,8 @@ export function GlobalStatusBar({
   }, [crawlProgress, waitTick])
 
   const downloading = useMemo(
-
     () => queue.filter((i) => i.status === 'downloading'),
-
     [queue]
-
   )
 
   const queued = useMemo(() => queue.filter((i) => i.status === 'queued'), [queue])
@@ -613,7 +592,26 @@ export function GlobalStatusBar({
 
   const primaryFailed = failed[0]
 
+  useEffect(() => {
+    const n = (crawlProgress?.pageQueued ?? 0) + (crawlProgress?.pageFound ?? 0)
+    if (n > 0) setFoundLatch(true)
+  }, [
+    crawlProgress?.pageQueued,
+    crawlProgress?.pageFound,
+    crawlProgress?.pageNumber,
+    crawlProgress?.ruleId
+  ])
 
+  useEffect(() => {
+    if (!foundLatch) return
+    const pipelineBusy = downloading.length > 0 || queued.length > 0
+    if (pipelineBusy) return
+    // Finds with nothing in the pipeline — brief cue, then clear.
+    const id = window.setTimeout(() => setFoundLatch(false), 2500)
+    return () => window.clearTimeout(id)
+  }, [foundLatch, downloading.length, queued.length])
+
+  const pageFoundSignal = foundLatch
 
   const activityLabel = useMemo(
 
@@ -651,9 +649,9 @@ export function GlobalStatusBar({
         showReadyIdle
 
       })
-      // Downloads continue while Harvest peek is idle — don't say "peek idle".
+      // Downloads during idle peek — say Downloading, not "Harvest on — peek idle".
       if (downloading.length > 0 && (showReadyIdle || !label)) {
-        return t('globalStatus.harvesting')
+        return t('globalStatus.downloading')
       }
       return label
     },
@@ -698,7 +696,7 @@ export function GlobalStatusBar({
 
   )
 
-  const harvestingLabel = downloading.length > 0 && activityLabel === t('globalStatus.harvesting')
+  const downloadingLabel = downloading.length > 0 && activityLabel === t('globalStatus.downloading')
 
 
 
@@ -917,7 +915,7 @@ export function GlobalStatusBar({
         title={dotKind === 'found' ? foundTitle : undefined}
       />
 
-      <span className={`global-status-text${harvestingLabel ? ' is-harvesting' : ''}`}>
+      <span className={`global-status-text${downloadingLabel ? ' is-downloading-label' : ''}`}>
         {segments.join(' · ')}
       </span>
 
