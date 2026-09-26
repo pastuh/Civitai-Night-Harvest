@@ -2776,7 +2776,7 @@ export default function App() {
               sessionBanModelIds={sessionBanModelIds}
               sessionPauseModelIds={sessionPauseModelIds}
               onBrowseModelUnbanned={(modelId) => markBrowseModelBan(modelId, false)}
-              isActive={awaitingInteractive}
+              isActive={awaitingOnTab}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
             />
           </div>

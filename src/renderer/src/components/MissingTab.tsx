@@ -230,9 +230,14 @@ export const MissingTab = memo(function MissingTab({
   const [temporaryAllowedByKey, setTemporaryAllowedByKey] = useState(
     () => new Map<string, ExclusionReviewItem>()
   )
+  /** Just-acknowledged Missing cards — dimmed in place until leaving the tab. */
+  const [sessionDimmedKeys, setSessionDimmedKeys] = useState(() => new Set<string>())
   const sessionOrderRef = useRef<string[]>([])
   const mainScrollRef = useRef<HTMLDivElement>(null)
   const savedScrollTopRef = useRef<number | null>(null)
+  /** Display order for the current filter+sort (frozen after first paint). */
+  const missingViewOrderRef = useRef<string[]>([])
+  const missingOrderFilterKeyRef = useRef('')
 
   const workingItems = useMemo(() => {
     const byKey = new Map<string, ExclusionReviewItem>()
@@ -395,7 +400,10 @@ export const MissingTab = memo(function MissingTab({
       // Leaving Missing clears temporary Allowed cards and session order.
       setTemporaryAllowedByKey(new Map())
       setOptimisticRemovedKeys(new Set())
+      setSessionDimmedKeys(new Set())
       sessionOrderRef.current = []
+      missingViewOrderRef.current = []
+      missingOrderFilterKeyRef.current = ''
       return
     }
     if (!justOpened) return
@@ -923,51 +931,86 @@ export const MissingTab = memo(function MissingTab({
       return exclusionItemMatchesSearch(m, q)
     })
     list = [...list]
-    // Do NOT sort by seen — that made Session bans cards jump when the green border applied.
-    const ackRank = (m: ExclusionReviewItem) =>
-      m.kind === 'bannedManual' ? 1 : m.acknowledged ? 1 : 0
-    if (sortMode === 'name') {
-      list.sort(
-        (a, b) =>
-          ackRank(a) - ackRank(b) ||
-          a.modelName.localeCompare(b.modelName) ||
-          (b.hitCount ?? 0) - (a.hitCount ?? 0)
-      )
-    } else if (sortMode === 'hits') {
-      list.sort(
-        (a, b) =>
-          ackRank(a) - ackRank(b) ||
-          (b.hitCount ?? 0) - (a.hitCount ?? 0) ||
-          new Date(b.at).getTime() - new Date(a.at).getTime()
-      )
-    } else if (sortMode === 'downloads') {
-      list.sort(
-        (a, b) =>
-          ackRank(a) - ackRank(b) ||
-          compareOptionalCount(a.downloadCount, b.downloadCount) ||
-          a.modelName.localeCompare(b.modelName)
-      )
-    } else if (sortMode === 'likes') {
-      list.sort(
-        (a, b) =>
-          ackRank(a) - ackRank(b) ||
-          compareOptionalCount(a.thumbsUpCount, b.thumbsUpCount) ||
-          a.modelName.localeCompare(b.modelName)
-      )
-    } else {
-      list.sort(
-        (a, b) =>
-          ackRank(a) - ackRank(b) ||
-          new Date(b.at).getTime() - new Date(a.at).getTime()
-      )
+    // First paint of a filter+sort: apply sortMode. Later: freeze that order so
+    // Allow / Acknowledge / refresh cannot reshuffle cards mid-review.
+    const filterKey = [
+      kindFilter,
+      sideFilter.type === 'baseModel'
+        ? `base:${sideFilter.name}`
+        : sideFilter.type === 'blockedTag'
+          ? `tag:${sideFilter.tag}`
+          : sideFilter.type === 'byDate'
+            ? `day:${sideFilter.day}`
+            : sideFilter.type === 'byDateRange'
+              ? `range:${sideFilter.from}:${sideFilter.to}`
+              : sideFilter.type,
+      modelTypeFilter ?? '',
+      baseModelFilter ?? '',
+      sortMode,
+      sortAscending ? 'asc' : 'desc'
+    ].join('|')
+    const isNewView = missingOrderFilterKeyRef.current !== filterKey
+    if (isNewView) {
+      missingOrderFilterKeyRef.current = filterKey
+      missingViewOrderRef.current = []
+      const ackRank = (m: ExclusionReviewItem) =>
+        m.kind === 'bannedManual' ? 1 : m.acknowledged ? 1 : 0
+      if (sortMode === 'name') {
+        list.sort(
+          (a, b) =>
+            ackRank(a) - ackRank(b) ||
+            a.modelName.localeCompare(b.modelName) ||
+            (b.hitCount ?? 0) - (a.hitCount ?? 0)
+        )
+      } else if (sortMode === 'hits') {
+        list.sort(
+          (a, b) =>
+            ackRank(a) - ackRank(b) ||
+            (b.hitCount ?? 0) - (a.hitCount ?? 0) ||
+            new Date(b.at).getTime() - new Date(a.at).getTime()
+        )
+      } else if (sortMode === 'downloads') {
+        list.sort(
+          (a, b) =>
+            ackRank(a) - ackRank(b) ||
+            compareOptionalCount(a.downloadCount, b.downloadCount) ||
+            a.modelName.localeCompare(b.modelName)
+        )
+      } else if (sortMode === 'likes') {
+        list.sort(
+          (a, b) =>
+            ackRank(a) - ackRank(b) ||
+            compareOptionalCount(a.thumbsUpCount, b.thumbsUpCount) ||
+            a.modelName.localeCompare(b.modelName)
+        )
+      } else {
+        list.sort(
+          (a, b) =>
+            ackRank(a) - ackRank(b) ||
+            new Date(b.at).getTime() - new Date(a.at).getTime()
+        )
+      }
+      if (sortAscending) {
+        list.reverse()
+        list.sort((a, b) => ackRank(a) - ackRank(b))
+      }
     }
-    if (sortAscending) {
-      // Keep ackRank groups: reverse within the already-sorted list carefully by flipping
-      // only the secondary order — simplest usable approach for Missing.
-      list.reverse()
-      list.sort((a, b) => ackRank(a) - ackRank(b))
+    const viewOrder = missingViewOrderRef.current
+    const byKey = new Map(list.map((m) => [exclusionItemKey(m), m]))
+    const seenKeys = new Set(viewOrder)
+    for (const m of list) {
+      const key = exclusionItemKey(m)
+      if (!seenKeys.has(key)) {
+        viewOrder.push(key)
+        seenKeys.add(key)
+      }
     }
-    return list
+    const stable: ExclusionReviewItem[] = []
+    for (const key of viewOrder) {
+      const item = byKey.get(key)
+      if (item) stable.push(item)
+    }
+    return stable
   }, [
     workingItems,
     kindFilter,
@@ -985,7 +1028,9 @@ export const MissingTab = memo(function MissingTab({
     search,
     sortMode,
     sortAscending,
-    banSeenByModelId
+    banSeenByModelId,
+    sessionDimmedKeys,
+    temporaryAllowedByKey
   ])
 
   const resultsResetKey = useMemo(
@@ -1180,10 +1225,23 @@ export const MissingTab = memo(function MissingTab({
     async (item: ExclusionReviewItem) => {
       if (item.kind !== 'missing') return
       setBusyId(item.modelId)
+      // Dim in place until leaving Missing — avoid ackRank reshuffle / grid jump.
+      setSessionDimmedKeys((prev) => {
+        const key = exclusionItemKey(item)
+        if (prev.has(key)) return prev
+        const next = new Set(prev)
+        next.add(key)
+        return next
+      })
       try {
         await window.api.acknowledgeMissing(item.modelId)
         // exclusions:list updates the same card in place — keep scroll / no full refresh.
       } catch (err) {
+        setSessionDimmedKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(exclusionItemKey(item))
+          return next
+        })
         setMessage(err instanceof Error ? err.message : String(err))
       } finally {
         setBusyId(null)
@@ -1524,6 +1582,7 @@ export const MissingTab = memo(function MissingTab({
             {visibleItems.map((item) => {
             const itemKey = exclusionItemKey(item)
             const temporaryAllowed = temporaryAllowedByKey.has(itemKey)
+            const sessionDimmed = sessionDimmedKeys.has(itemKey)
             const status: MissingModelStatus | undefined = item.status
             const isBanSeen =
               !temporaryAllowed &&
@@ -1535,7 +1594,7 @@ export const MissingTab = memo(function MissingTab({
               canMarkExclusionSeen(item.kind) &&
               !banSeenByModelId[item.modelId]
             const cardClass = [
-              temporaryAllowed
+              temporaryAllowed || sessionDimmed
                 ? 'pending-card-temporary'
                 : item.kind === 'missing'
                 ? status === 'unavailable'
@@ -1550,12 +1609,14 @@ export const MissingTab = memo(function MissingTab({
                       : 'missing-card-banned-tag',
               item.fromEarlyAccess ? 'is-from-early-access' : '',
               !temporaryAllowed &&
+              !sessionDimmed &&
               item.kind !== 'bannedManual' &&
               item.kind !== 'forgotten' &&
               item.kind !== 'excludedVersion' &&
               item.acknowledged
                 ? 'is-acknowledged'
                 : !temporaryAllowed &&
+                    !sessionDimmed &&
                     item.kind !== 'bannedManual' &&
                     item.kind !== 'forgotten' &&
                     item.kind !== 'excludedVersion'

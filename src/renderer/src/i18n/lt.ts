@@ -942,7 +942,7 @@ export const lt: Messages = {
     hideSeenHint: 'Slėpti atnaujinimus, kuriuos pažymėjote kaip seen (įskaitant skipped)',
     hideConfirmed: 'Slėpti confirmed',
     hideConfirmedHint:
-      'Slepia Done korteles ir jau į eilę įdėtas versijas — kad nauji atnaujinimai liktų matomi',
+      'Kai Settings → Show temporary išjungta: slepia Done ir jau į eilę įdėtas. Su Show temporary — jos lieka pritemdytos vietoje, kol išeisite iš Updates.',
     markSeen: 'Mark seen',
     markSeenModeOff: 'Mark seen Off',
     markSeenModeOn: 'Mark seen On',
@@ -1769,7 +1769,7 @@ export const lt: Messages = {
     openCivitai: 'Civitai ↗',
     confirm: 'Acknowledge',
     confirmHint:
-      'Tik 404 — patvirtinti Missing kortelę (badge). Lieka Missing ir toliau tikrinamas iki Unavailable'
+      'Tik 404 — patvirtinti Missing kortelę (badge). Lieka pritemdyta vietoje, kol išeisite iš Missing; toliau tikrinama iki Unavailable'
   },
   globalStatus: {
     preparingDownloads: 'Ruošiami atsisiuntimai…',

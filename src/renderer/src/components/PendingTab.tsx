@@ -210,6 +210,8 @@ export const PendingTab = memo(function PendingTab({
   /** Version-scoped Ban hide — does not hide sibling update offers for the same model. */
   const [hiddenVersionIds, setHiddenVersionIds] = useState<Set<number>>(() => new Set())
   const [busyVersionIds, setBusyVersionIds] = useState<Set<number>>(() => new Set())
+  /** Versions confirmed (Download) this visit — stay visible before queue map catches up. */
+  const [sessionConfirmedIds, setSessionConfirmedIds] = useState(() => new Set<number>())
   const [banTarget, setBanTarget] = useState<PendingVersion | null>(null)
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
@@ -348,6 +350,9 @@ export const PendingTab = memo(function PendingTab({
     tempHoldRef.current = { order: [], snaps: new Map(), everActive: new Set() }
   }, [showTemporaryUpdates])
 
+  // Note: PendingTab unmounts when leaving Updates, which resets tempHoldRef.
+  // Do not clear on isActive=false (model detail overlay) — that would drop Done holds.
+
   const openContextMenu = useCallback((e: React.MouseEvent, row: DisplayRow) => {
     e.preventDefault()
     e.stopPropagation()
@@ -460,6 +465,14 @@ export const PendingTab = memo(function PendingTab({
         hold.order.push(item.versionId)
       }
     }
+    // Optimistic: treat as confirmed immediately so Unseen/Hide-confirmed cannot
+    // drop the card before queueByVersionId catches up after onQueueRefresh.
+    setSessionConfirmedIds((prev) => {
+      if (prev.has(item.versionId)) return prev
+      const next = new Set(prev)
+      next.add(item.versionId)
+      return next
+    })
     markBusy(item.versionId, true)
     try {
       await window.api.approvePending({
@@ -467,6 +480,13 @@ export const PendingTab = memo(function PendingTab({
         versionId: item.versionId
       })
       await onQueueRefresh?.()
+    } catch {
+      setSessionConfirmedIds((prev) => {
+        if (!prev.has(item.versionId)) return prev
+        const next = new Set(prev)
+        next.delete(item.versionId)
+        return next
+      })
     } finally {
       markBusy(item.versionId, false)
     }
@@ -760,10 +780,11 @@ export const PendingTab = memo(function PendingTab({
   )
   const isConfirmedOffer = useCallback(
     (versionId: number) => {
+      if (sessionConfirmedIds.has(versionId)) return true
       const q = queueByVersionId.get(versionId)
       return q?.status === 'queued' || q?.status === 'downloading'
     },
-    [queueByVersionId]
+    [queueByVersionId, sessionConfirmedIds]
   )
   const unseenCount = useMemo(
     () =>
@@ -787,14 +808,24 @@ export const PendingTab = memo(function PendingTab({
       const temporary = Boolean(row.temporary)
       const queueItem = queueByVersionId.get(item.versionId)
       const confirmedQueued =
-        queueItem?.status === 'queued' || queueItem?.status === 'downloading'
+        sessionConfirmedIds.has(item.versionId) ||
+        queueItem?.status === 'queued' ||
+        queueItem?.status === 'downloading'
 
-      // Hide confirmed: Done (temporary) + already queued — keep the grid on new offers.
-      if (hideConfirmed && (temporary || confirmedQueued)) return false
+      // Hide confirmed: Done + queued — only when Settings → Show temporary is off.
+      // With Show temporary on, those cards stay dimmed in place until you leave Updates.
+      if (
+        hideConfirmed &&
+        !showTemporaryUpdates &&
+        (temporary || confirmedQueued)
+      ) {
+        return false
+      }
 
       // Temporary settled cards stay in the grid for layout stability — ignore
       // status side-filters / Hide seen (still respect type, base, rating, search).
-      if (!temporary) {
+      // Session-confirmed (just Download) also stay when Show temporary is on.
+      if (!temporary && !(showTemporaryUpdates && confirmedQueued)) {
         if (sideFilter.type === 'forgotten') {
           if (!forgotten) return false
         } else if (forgotten) {
@@ -807,16 +838,19 @@ export const PendingTab = memo(function PendingTab({
 
         if (sideFilter.type === 'skipped' && !skipped) return false
         if (sideFilter.type === 'unseen' && (skipped || forgotten)) return false
-        if (sideFilter.type === 'unseen' && confirmedQueued) return false
+        // Keep Download/queued visible on Unseen when Show temporary is on (no grid jump).
+        if (sideFilter.type === 'unseen' && confirmedQueued && !showTemporaryUpdates) {
+          return false
+        }
 
         const isSeen = Boolean(pendingSeenByVersionId[item.versionId])
 
         if (sideFilter.type === 'unseen') {
           if (isSeen) {
-            if (hideSeen) return false
+            if (hideSeen && !showTemporaryUpdates) return false
             if (!unseenSnapshotRef.current.has(item.versionId)) return false
           }
-        } else if (!forgotten && hideSeen && isSeen) {
+        } else if (!forgotten && hideSeen && isSeen && !showTemporaryUpdates) {
           return false
         }
       }
@@ -877,6 +911,7 @@ export const PendingTab = memo(function PendingTab({
     hideSeen,
     hideConfirmed,
     queueByVersionId,
+    sessionConfirmedIds,
     pendingSeenByVersionId,
     ownedPrimaryByModel,
     ratingFilter,
@@ -1188,8 +1223,11 @@ export const PendingTab = memo(function PendingTab({
                       const nsfw = resolveNsfw(item, owned)
                       const ratingInfo = describeNsfwRatingForCard(nsfw.nsfw, nsfw.nsfwLevel)
                       const queueItem = queueByVersionId.get(item.versionId)
+                      const sessionConfirmed = sessionConfirmedIds.has(item.versionId)
                       const isDownloading = queueItem?.status === 'downloading'
-                      const isQueued = queueItem?.status === 'queued'
+                      const isQueued =
+                        queueItem?.status === 'queued' ||
+                        (sessionConfirmed && !isDownloading && queueItem?.status !== 'failed')
                       const isFailed = queueItem?.status === 'failed'
                       const inQueue = isDownloading || isQueued
                       const autoUpdate = autoUpdateModelIds.has(item.modelId)
@@ -1205,7 +1243,9 @@ export const PendingTab = memo(function PendingTab({
                               ? t('downloadsStrip.statusFailed')
                               : ''
                       const cardClass = [
-                        temporary ? 'pending-card-temporary' : '',
+                        temporary || (sessionConfirmed && showTemporaryUpdates)
+                          ? 'pending-card-temporary'
+                          : '',
                         forgotten ? 'status-forgotten' : '',
                         skipped ? 'status-skipped' : '',
                         !temporary && inQueue ? 'in-queue' : '',

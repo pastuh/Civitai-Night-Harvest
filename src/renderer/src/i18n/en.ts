@@ -933,7 +933,7 @@ export const en = {
     hideSeenHint: 'Hide update offers you marked as seen (including skipped)',
     hideConfirmed: 'Hide confirmed',
     hideConfirmedHint:
-      'Hide Done cards and versions already queued for download — so new updates stay visible',
+      'When Settings → Show temporary is off: hide Done cards and versions already queued. With Show temporary on, those stay dimmed in place until you leave Updates.',
     markSeen: 'Mark seen',
     markSeenModeOff: 'Mark seen Off',
     markSeenModeOn: 'Mark seen On',
@@ -1753,7 +1753,7 @@ export const en = {
     openCivitai: 'Civitai ↗',
     confirm: 'Acknowledge',
     confirmHint:
-      '404 only — acknowledge this Missing card (badge). Stays in Missing and keeps verifying until Unavailable'
+      '404 only — acknowledge this Missing card (badge). Stays dimmed in place until you leave Missing; keeps verifying until Unavailable'
   },
   globalStatus: {
     preparingDownloads: 'Preparing downloads…',

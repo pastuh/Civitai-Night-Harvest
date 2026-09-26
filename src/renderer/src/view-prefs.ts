@@ -158,7 +158,8 @@ export interface PendingViewPrefs {
 
 export const DEFAULT_PENDING_VIEW_PREFS: PendingViewPrefs = {
   hideSeen: false,
-  hideConfirmed: true,
+  /** Off by default so Settings → Show temporary can keep Done/queued cards in place. */
+  hideConfirmed: false,
   markSeenMode: false,
   showForgotten: false,
   showSkipped: false,
@@ -281,7 +282,7 @@ export function coercePendingViewPrefs(raw: Partial<PendingViewPrefs> | null | u
   }
   return {
     ...base,
-    hideConfirmed: base.hideConfirmed !== false,
+    hideConfirmed: base.hideConfirmed === true,
     sortMode: normalizePendingSort(base.sortMode),
     ratingFilter: base.ratingFilter ?? 'all',
     sideFilter,

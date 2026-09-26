@@ -319,6 +319,10 @@ export function DeferredTab({
   const [temporaryAllowedByModelId, setTemporaryAllowedByModelId] = useState<
     Map<number, DeferredDownload>
   >(() => new Map())
+  /** Why the hold exists — keep Allow cards on Paused/Banned-by-tag filters. */
+  const [temporaryHoldKindByModelId, setTemporaryHoldKindByModelId] = useState<
+    Map<number, 'pausedByTag' | 'bannedByTag' | 'sessionBan'>
+  >(() => new Map())
   /** Tag-skip allowlist ids from Allow this session (visibility + pause filter). */
   const [tagSkipAllowIds, setTagSkipAllowIds] = useState<Set<number>>(() => new Set())
   /** Favorites used for sort — refreshed only when entering the tab (no jump while starring). */
@@ -332,6 +336,9 @@ export function DeferredTab({
   const wasActiveRef = useRef(false)
   const deferredVersionSnapshotRef = useRef('')
   const enrichBusyRef = useRef(false)
+  /** First-seen card order for the current filter — Allow/Unban must not reshuffle. */
+  const sessionOrderRef = useRef<number[]>([])
+  const sessionOrderFilterKeyRef = useRef('')
   const [banConfirmSkipForSession, setBanConfirmSkipForSession] = useState(false)
 
   useEffect(() => {
@@ -343,6 +350,9 @@ export function DeferredTab({
     wasActiveRef.current = isActive
     if (!isActive) {
       setTemporaryAllowedByModelId(new Map())
+      setTemporaryHoldKindByModelId(new Map())
+      sessionOrderRef.current = []
+      sessionOrderFilterKeyRef.current = ''
       return
     }
     if (justOpened) {
@@ -715,11 +725,43 @@ export function DeferredTab({
         baseModelsMatch(deferredBaseModelLabel(d, browseCards, inventoryByVersion), sideFilter.name)
       )
     } else if (kindFilter === 'bannedByTag') {
-      list = scopedDeferred.filter((d) => classifyPolicy(d).bannedByTag)
+      const merged = new Map<number, DeferredDownload>()
+      for (const d of scopedDeferred) {
+        const c = classifyPolicy(d)
+        if (c.bannedByTag || temporaryHoldKindByModelId.get(d.modelId) === 'bannedByTag') {
+          merged.set(d.modelId, d)
+        }
+      }
+      for (const [id, held] of temporaryAllowedByModelId) {
+        if (temporaryHoldKindByModelId.get(id) === 'bannedByTag' && !merged.has(id)) {
+          merged.set(id, held)
+        }
+      }
+      list = [...merged.values()]
     } else if (kindFilter === 'pausedByTag') {
-      list = scopedDeferred.filter((d) => classifyPolicy(d).pausedByTag)
+      const merged = new Map<number, DeferredDownload>()
+      for (const d of scopedDeferred) {
+        const c = classifyPolicy(d)
+        if (c.pausedByTag || temporaryHoldKindByModelId.get(d.modelId) === 'pausedByTag') {
+          merged.set(d.modelId, d)
+        }
+      }
+      for (const [id, held] of temporaryAllowedByModelId) {
+        if (temporaryHoldKindByModelId.get(id) === 'pausedByTag' && !merged.has(id)) {
+          merged.set(id, held)
+        }
+      }
+      list = [...merged.values()]
     } else {
       list = scopedDeferred
+      // Keep Allow/Unban holds visible on All until leave (even if refresh dropped them).
+      if (temporaryAllowedByModelId.size) {
+        const merged = new Map(list.map((d) => [d.modelId, d]))
+        for (const [id, held] of temporaryAllowedByModelId) {
+          if (!merged.has(id)) merged.set(id, held)
+        }
+        list = [...merged.values()]
+      }
     }
 
     if (modelTypeFilter) {
@@ -755,7 +797,35 @@ export function DeferredTab({
     }
 
     if (q) list = list.filter((d) => matchesSearch(d, q))
-    return list
+
+    // Freeze first-seen order for this filter view so Allow / Unban / refresh cannot
+    // shove a card to the top (sortDeferred would re-rank after onRefresh).
+    const filterKey = [
+      sideFilter.type === 'baseModel' ? `base:${sideFilter.name}` : sideFilter.type,
+      kindFilter,
+      modelTypeFilter ?? '',
+      unlockDayFilter ?? '',
+      deferredSort
+    ].join('|')
+    if (sessionOrderFilterKeyRef.current !== filterKey) {
+      sessionOrderFilterKeyRef.current = filterKey
+      sessionOrderRef.current = []
+    }
+    const order = sessionOrderRef.current
+    const byId = new Map(list.map((d) => [d.modelId, d]))
+    const seen = new Set(order)
+    for (const d of list) {
+      if (!seen.has(d.modelId)) {
+        order.push(d.modelId)
+        seen.add(d.modelId)
+      }
+    }
+    const stable: DeferredDownload[] = []
+    for (const id of order) {
+      const item = byId.get(id)
+      if (item) stable.push(item)
+    }
+    return stable
   }, [
     search,
     sideFilter,
@@ -773,6 +843,7 @@ export function DeferredTab({
     sessionPausePool,
     sessionPauseSet,
     temporaryAllowedByModelId,
+    temporaryHoldKindByModelId,
     liveFavoriteSet,
     pinFavoriteSet,
     deferredSort,
@@ -996,21 +1067,30 @@ export function DeferredTab({
     [banConfirmSkipForSession, confirmBan]
   )
 
-  const holdAllowedUntilLeave = useCallback((item: DeferredDownload) => {
-    setTemporaryAllowedByModelId((prev) => {
-      if (prev.get(item.modelId) === item) return prev
-      const next = new Map(prev)
-      next.set(item.modelId, item)
-      return next
-    })
-  }, [])
+  const holdAllowedUntilLeave = useCallback(
+    (item: DeferredDownload, kind: 'pausedByTag' | 'bannedByTag' | 'sessionBan') => {
+      setTemporaryAllowedByModelId((prev) => {
+        if (prev.get(item.modelId) === item) return prev
+        const next = new Map(prev)
+        next.set(item.modelId, item)
+        return next
+      })
+      setTemporaryHoldKindByModelId((prev) => {
+        if (prev.get(item.modelId) === kind) return prev
+        const next = new Map(prev)
+        next.set(item.modelId, kind)
+        return next
+      })
+    },
+    []
+  )
 
   const unban = useCallback(
     async (item: DeferredDownload) => {
       if (busyId === item.modelId) return
       setBusyId(item.modelId)
       setTagMessage('')
-      holdAllowedUntilLeave(item)
+      holdAllowedUntilLeave(item, 'sessionBan')
       setSessionBannedByModelId((prev) => {
         if (!prev.has(item.modelId)) return prev
         const next = new Map(prev)
@@ -1036,6 +1116,11 @@ export function DeferredTab({
           next.delete(item.modelId)
           return next
         })
+        setTemporaryHoldKindByModelId((prev) => {
+          const next = new Map(prev)
+          next.delete(item.modelId)
+          return next
+        })
         setTagMessage(err instanceof Error ? err.message : String(err))
       } finally {
         setBusyId(null)
@@ -1049,7 +1134,8 @@ export function DeferredTab({
       if (busyId === item.modelId) return
       setBusyId(item.modelId)
       setTagMessage('')
-      holdAllowedUntilLeave(item)
+      const holdKind = itemHasBannedTag(item, bannedTags) ? 'bannedByTag' : 'pausedByTag'
+      holdAllowedUntilLeave(item, holdKind)
       setTagSkipAllowIds((prev) => {
         if (prev.has(item.modelId)) return prev
         const next = new Set(prev)
@@ -1075,6 +1161,11 @@ export function DeferredTab({
           next.delete(item.modelId)
           return next
         })
+        setTemporaryHoldKindByModelId((prev) => {
+          const next = new Map(prev)
+          next.delete(item.modelId)
+          return next
+        })
         setTagSkipAllowIds((prev) => {
           const next = new Set(prev)
           next.delete(item.modelId)
@@ -1085,7 +1176,7 @@ export function DeferredTab({
         setBusyId(null)
       }
     },
-    [busyId, domain, holdAllowedUntilLeave, onRefresh, t]
+    [bannedTags, busyId, domain, holdAllowedUntilLeave, onRefresh, t]
   )
 
   if (!deferred.length && !hiddenModelIds.size && !sessionBannedByModelId.size) {

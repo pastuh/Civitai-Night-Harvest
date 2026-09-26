@@ -1853,16 +1853,16 @@ body.is-app-busy * {
   opacity: 1;
 }
 
-/* Only already-handled temporary placeholders stay soft. */
+/* Already-handled temporary placeholders stay soft (instant — no fade flicker). */
 .status-gallery-card.pending-card-temporary,
 .gallery-card.pending-card-temporary {
   opacity: 0.55;
-  transition: opacity 0.15s ease;
 }
 
 .status-gallery-card.pending-card-temporary:hover,
 .gallery-card.pending-card-temporary:hover {
   opacity: 1;
+  transition: opacity 0.12s ease;
 }
 
 .status-gallery-card.pending-card-skipped {
