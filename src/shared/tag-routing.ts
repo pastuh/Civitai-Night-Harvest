@@ -468,6 +468,130 @@ export function countLibraryTagFolderReconcile(
   return n
 }
 
+export type TagFolderReconcilePreviewItem = {
+  versionId: number
+  modelId: number
+  modelName: string
+  versionName: string
+  baseModel: string
+  winnerTag: string
+  civitaiTags: string[]
+  previewPath: string
+  fromFolder: string
+  toFolder: string
+  fromFolderLeaf: string
+  toFolderLeaf: string
+}
+
+/**
+ * Same candidates as countLibraryTagFolderReconcile, with from→to folder preview rows.
+ * Pass `limit` to cap rows; omit for the full list.
+ */
+export async function listLibraryTagFolderReconcileAsync(
+  inventory: {
+    versionId: number
+    modelId?: number
+    modelName: string
+    versionName?: string
+    baseModel?: string
+    previewPath?: string
+    routingTag: string
+    outputFolder: string
+    civitaiTags?: string[]
+    routingLocked?: boolean
+    modelType?: string
+  }[],
+  tagRules: TagFolderRule[],
+  loraFolder: string,
+  checkpointFolder: string,
+  opts?: { cancelled?: () => boolean; yieldEvery?: number; limit?: number }
+): Promise<TagFolderReconcilePreviewItem[]> {
+  if (!tagRules.length) return []
+  const index = buildTagRuleMatchIndex(tagRules)
+  const yieldEvery = opts?.yieldEvery ?? 48
+  const limit = opts?.limit
+  const out: TagFolderReconcilePreviewItem[] = []
+  for (let i = 0; i < inventory.length; i++) {
+    if (opts?.cancelled?.()) return out
+    if (i > 0 && i % yieldEvery === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      if (opts?.cancelled?.()) return out
+    }
+    const r = inventory[i]
+    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules, index)
+    if (!winner) continue
+    if (shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) continue
+    const rule = findRuleForTag(winner, tagRules, index)
+    const inferred = inferModelTypeFromFolders(r.outputFolder, loraFolder, checkpointFolder)
+    const toFolder = rule
+      ? resolveTagRuleFolderPath(rule, loraFolder, checkpointFolder, inferred, r.baseModel)
+      : ''
+    const fromFolder = r.outputFolder || ''
+    out.push({
+      versionId: r.versionId,
+      modelId: r.modelId ?? 0,
+      modelName: r.modelName,
+      versionName: r.versionName ?? '',
+      baseModel: r.baseModel ?? '',
+      winnerTag: winner,
+      civitaiTags: [...(r.civitaiTags ?? [])],
+      previewPath: r.previewPath ?? '',
+      fromFolder,
+      toFolder,
+      fromFolderLeaf: folderLeaf(fromFolder),
+      toFolderLeaf: folderLeaf(toFolder)
+    })
+    if (limit != null && out.length >= limit) break
+  }
+  out.sort((a, b) => {
+    const tagCmp = a.winnerTag.localeCompare(b.winnerTag, undefined, { sensitivity: 'base' })
+    if (tagCmp !== 0) return tagCmp
+    return a.modelName.localeCompare(b.modelName, undefined, { sensitivity: 'base' })
+  })
+  return out
+}
+
+/** Recompute from→to paths after the user picks a different winning tag in the preview. */
+export function withReconcilePreviewWinner(
+  item: TagFolderReconcilePreviewItem,
+  winnerTag: string,
+  tagRules: TagFolderRule[],
+  loraFolder: string,
+  checkpointFolder: string,
+  inventoryHint?: { outputFolder?: string; baseModel?: string; modelType?: string }
+): TagFolderReconcilePreviewItem {
+  const winner = winnerTag.trim()
+  if (!winner) return item
+  const rule = findRuleForTag(winner, tagRules)
+  const inferred = inferModelTypeFromFolders(
+    inventoryHint?.outputFolder ?? item.fromFolder,
+    loraFolder,
+    checkpointFolder
+  )
+  const toFolder = rule
+    ? resolveTagRuleFolderPath(
+        rule,
+        loraFolder,
+        checkpointFolder,
+        inventoryHint?.modelType || inferred,
+        inventoryHint?.baseModel ?? item.baseModel
+      )
+    : ''
+  return {
+    ...item,
+    winnerTag: winner,
+    toFolder,
+    toFolderLeaf: folderLeaf(toFolder)
+  }
+}
+
+function folderLeaf(path: string): string {
+  const n = normalizeFolderPath(path)
+  if (!n) return path || '—'
+  const parts = n.split(/[/\\]/).filter(Boolean)
+  return parts[parts.length - 1] || n
+}
+
 /**
  * Same as countLibraryTagFolderReconcile, but yields so the renderer stays responsive
  * (assign-tag / Apply button must not freeze the UI on large libraries).

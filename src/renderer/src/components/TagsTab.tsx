@@ -1,4 +1,4 @@
-﻿import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent as ReactMouseEvent } from 'react'
+﻿import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 
 import type { HiddenTagApplyProgress, InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { tagsEqual, fuzzyTagMatch, tagAliasMatch } from '../../../shared/tag-fuzzy'
@@ -10,6 +10,9 @@ import {
   parseTagRuleNames,
   ruleCoversTag,
   countLibraryTagFolderReconcileAsync,
+  listLibraryTagFolderReconcileAsync,
+  withReconcilePreviewWinner,
+  type TagFolderReconcilePreviewItem,
   countInventoryUnderFolderPath,
   expandCivitaiTagNames,
   tagFolderFilterMatch,
@@ -21,6 +24,7 @@ import {
 } from '../../../shared/tag-routing'
 import { TagAutocompleteInput } from './TagAutocompleteInput'
 import { ConfirmModal } from './ConfirmModal'
+import { TagFolderReconcilePreviewPage } from './TagFolderReconcilePreviewPage'
 import { useT } from '../i18n/context'
 
 interface Props {
@@ -348,7 +352,7 @@ export function TagsTab({
   const [letterFilter, setLetterFilter] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [massAssign, setMassAssign] = useState(false)
+  const [massAssign, setMassAssign] = useState(true)
   const [massSelected, setMassSelected] = useState<Set<string>>(() => new Set())
   const [massFolderName, setMassFolderName] = useState('')
   const [hideAssigned, setHideAssigned] = useState(false)
@@ -390,17 +394,24 @@ export function TagsTab({
     message: string
     title: string
     confirmLabel: string
+    detail?: ReactNode
     resolve: (ok: boolean) => void
   } | null>(null)
+  const [reconcilePreviewOpen, setReconcilePreviewOpen] = useState(false)
+  const [reconcilePreviewLoading, setReconcilePreviewLoading] = useState(false)
+  const [reconcilePreviewItems, setReconcilePreviewItems] = useState<TagFolderReconcilePreviewItem[]>(
+    []
+  )
   const statusClearTimer = useRef<number | null>(null)
 
   const askConfirm = useCallback(
-    (message: string) =>
+    (message: string, detail?: ReactNode) =>
       new Promise<boolean>((resolve) => {
         setPendingConfirm({
           message,
           title: t('tagsTab.confirmMoveTitle'),
           confirmLabel: t('tagsTab.confirmMove'),
+          detail,
           resolve
         })
       }),
@@ -1001,6 +1012,44 @@ export function TagsTab({
     }
   }, [inventory, deferredDraft, loraFolder, checkpointFolder])
 
+  const openReconcilePreview = async () => {
+    if (backgroundMoving || reconcilePreviewOpen) return
+    setReconcilePreviewOpen(true)
+    setReconcilePreviewLoading(true)
+    setReconcilePreviewItems([])
+    requestAnimationFrame(() => {
+      const content = document.querySelector('.content')
+      if (content instanceof HTMLElement) content.scrollTop = 0
+    })
+    try {
+      const items = await listLibraryTagFolderReconcileAsync(
+        inventory,
+        draft,
+        loraFolder,
+        checkpointFolder
+      )
+      setReconcilePreviewItems(items)
+      setReconcilePendingCount(items.length)
+      setReconcileCountReady(true)
+      if (items.length === 0) {
+        setStatusMessage(t('tagsTab.reconcileNone'), 5000)
+        setReconcilePreviewOpen(false)
+      }
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
+      setReconcilePreviewOpen(false)
+    } finally {
+      setReconcilePreviewLoading(false)
+    }
+  }
+
+  const closeReconcilePreview = () => {
+    if (backgroundMoving) return
+    setReconcilePreviewOpen(false)
+    setReconcilePreviewItems([])
+    setReconcilePreviewLoading(false)
+  }
+
   const runLibraryReconcile = async (opts?: { confirm?: boolean }) => {
     const count = reconcileCountReady
       ? reconcilePendingCount
@@ -1009,13 +1058,10 @@ export function TagsTab({
       setStatusMessage(t('tagsTab.reconcileNone'), 5000)
       return null
     }
-    if (
-      opts?.confirm !== false &&
-      confirmTagFolderMoves &&
-      count > 1 &&
-      !(await askConfirm(t('tagsTab.reconcileConfirm', { count })))
-    ) {
-      return null
+    if (opts?.confirm !== false) {
+      if (!(await askConfirm(t('tagsTab.reconcileConfirm', { count })))) {
+        return null
+      }
     }
     setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
@@ -1034,6 +1080,45 @@ export function TagsTab({
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
       return null
+    } finally {
+      setBackgroundMoving(false)
+    }
+  }
+
+  const confirmReconcileFromPreview = async () => {
+    if (!reconcilePreviewItems.length || backgroundMoving) return
+    setBackgroundMoving(true)
+    setStatusMessage(t('tagsTab.transferring'))
+    try {
+      const byTag = new Map<string, number[]>()
+      for (const item of reconcilePreviewItems) {
+        const tag = item.winnerTag.trim()
+        if (!tag) continue
+        const list = byTag.get(tag)
+        if (list) list.push(item.versionId)
+        else byTag.set(tag, [item.versionId])
+      }
+      let moved = 0
+      let skipped = 0
+      for (const [tag, versionIds] of byTag) {
+        const result = await window.api.assignTag(versionIds, tag, { lockRouting: false })
+        moved += result.length
+        skipped += Math.max(0, versionIds.length - result.length)
+      }
+      setStatusMessage(
+        t('tagsTab.reconcileDone', {
+          moved,
+          skipped,
+          queueUpdated: 0
+        }),
+        8000
+      )
+      await onRefresh?.()
+      setReconcilePreviewOpen(false)
+      setReconcilePreviewItems([])
+      setReconcilePendingCount(0)
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
       setBackgroundMoving(false)
     }
@@ -1450,7 +1535,44 @@ const dirty = useMemo(() => {
   }, [librarySearch, tableTagPool, pinAssignLabels])
 
   return (
-    <div className="panel tags-tab">
+    <div className={`panel tags-tab${reconcilePreviewOpen ? ' tags-tab-has-reconcile' : ''}`}>
+      {reconcilePreviewOpen ? (
+        <TagFolderReconcilePreviewPage
+          items={reconcilePreviewItems}
+          loading={reconcilePreviewLoading}
+          moving={Boolean(backgroundMoving)}
+          tagRules={draft}
+          inventory={inventory}
+          tagSuggestions={tableTagPool}
+          loraFolder={loraFolder}
+          checkpointFolder={checkpointFolder}
+          confirmTagFolderMoves={confirmTagFolderMoves}
+          onBack={closeReconcilePreview}
+          onConfirm={() => void confirmReconcileFromPreview()}
+          onSwitchToTag={(versionId, tag, rules) => {
+            setReconcilePreviewItems((prev) => {
+              const next = prev.map((item) => {
+                if (item.versionId !== versionId) return item
+                const rec = inventory.find((r) => r.versionId === versionId)
+                return withReconcilePreviewWinner(item, tag, rules, loraFolder, checkpointFolder, {
+                  outputFolder: rec?.outputFolder ?? item.fromFolder,
+                  baseModel: rec?.baseModel ?? item.baseModel,
+                  modelType: rec?.modelType
+                })
+              })
+              return [...next].sort((a, b) => {
+                const tagCmp = a.winnerTag.localeCompare(b.winnerTag, undefined, {
+                  sensitivity: 'base'
+                })
+                if (tagCmp !== 0) return tagCmp
+                return a.modelName.localeCompare(b.modelName, undefined, { sensitivity: 'base' })
+              })
+            })
+          }}
+          onSaveTagRules={persistRules}
+          onStatus={(message) => setStatusMessage(message, 5000)}
+        />
+      ) : null}
       <div className="tag-library-browser">
         <div className="tag-library-toolbar">
           <span
@@ -1499,14 +1621,18 @@ const dirty = useMemo(() => {
             disabled={
               Boolean(backgroundMoving) || !reconcileCountReady || reconcilePendingCount === 0
             }
-            title={t('tagsTab.reconcileHint')}
-            onClick={() => void runLibraryReconcile()}
+            title={
+              reconcileCountReady
+                ? t('tagsTab.reconcileHint', { count: reconcilePendingCount })
+                : t('tagsTab.reconcileHintCounting')
+            }
+            onClick={() => void openReconcilePreview()}
           >
             {backgroundMoving
               ? t('tagsTab.transferring')
               : !reconcileCountReady
-                ? t('tagsTab.reconcileApply', { count: '…' })
-                : t('tagsTab.reconcileApply', { count: reconcilePendingCount })}
+                ? `${t('tagsTab.reconcileApplyShort')} (…)`
+                : `${t('tagsTab.reconcileApplyShort')} (${reconcilePendingCount})`}
           </button>
           <label className="tags-hide-assigned-toggle">
             <input
@@ -1529,10 +1655,23 @@ const dirty = useMemo(() => {
               {t('tagsTab.hideSingles')}
             </label>
           )}
-          <div className="tags-toolbar-end">
+        </div>
+
+        <div className="tags-mass-row">
+          <div className="tags-mass-controls">
+            <button
+              type="button"
+              className={`btn-sm tags-mass-mode-toggle ${massAssign ? 'tags-mass-mode-on' : 'tags-mass-mode-off'}`}
+              onClick={() => setMassAssign((v) => !v)}
+              title={t('tagsTab.massAssignTitle')}
+              aria-pressed={massAssign}
+            >
+              {massAssign ? t('tagsTab.massAssignOn') : t('tagsTab.massAssignOff')}
+            </button>
             {massAssign && (
               <>
                 <TagAutocompleteInput
+                  className="tags-mass-folder"
                   value={massFolderName}
                   onChange={setMassFolderName}
                   suggestions={folderNameSuggestions}
@@ -1547,7 +1686,7 @@ const dirty = useMemo(() => {
                     !massSelected.size ||
                     !massFolderName.trim() ||
                     saveState === 'saving' ||
-                    !!backgroundMoving 
+                    !!backgroundMoving
                   }
                   onClick={() => void applyMassAssign()}
                 >
@@ -1557,15 +1696,6 @@ const dirty = useMemo(() => {
                 </button>
               </>
             )}
-            <button
-              type="button"
-              className={`btn-sm tags-mass-mode-toggle ${massAssign ? 'tags-mass-mode-on' : 'tags-mass-mode-off'}`}
-              onClick={() => setMassAssign((v) => !v)}
-              title={t('tagsTab.massAssignTitle')}
-              aria-pressed={massAssign}
-            >
-              {massAssign ? t('tagsTab.massAssignOn') : t('tagsTab.massAssignOff')}
-            </button>
           </div>
         </div>
 
@@ -1949,6 +2079,7 @@ const dirty = useMemo(() => {
         <ConfirmModal
           title={pendingConfirm.title}
           message={pendingConfirm.message}
+          detail={pendingConfirm.detail}
           confirmLabel={pendingConfirm.confirmLabel}
           onConfirm={() => closeConfirm(true)}
           onCancel={() => closeConfirm(false)}

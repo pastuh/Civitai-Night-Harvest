@@ -3,7 +3,10 @@ import type { AppLocale } from '../../../shared/locale'
 import { en, type Messages } from './en'
 import { lt } from './lt'
 
-const catalogs: Record<AppLocale, Messages> = { en, lt }
+function messagesFor(locale: AppLocale): Messages {
+  // Live ESM bindings — never snapshot into a stale `{ en, lt }` object (HMR-safe).
+  return locale === 'lt' ? lt : en
+}
 
 function getNested(obj: Record<string, unknown>, path: string): string | undefined {
   const parts = path.split('.')
@@ -15,19 +18,24 @@ function getNested(obj: Record<string, unknown>, path: string): string | undefin
   return typeof cur === 'string' ? cur : undefined
 }
 
+/** Supports `{key}` and `{{key}}` placeholders. */
 function interpolate(template: string, vars?: Record<string, string | number>): string {
   if (!vars) return template
-  return template.replace(/\{(\w+)\}/g, (_, key: string) =>
-    vars[key] !== undefined ? String(vars[key]) : `{${key}}`
-  )
+  return template.replace(/\{\{(\w+)\}\}|\{(\w+)\}/g, (match, doubleKey: string, singleKey: string) => {
+    const key = doubleKey || singleKey
+    return vars[key] !== undefined ? String(vars[key]) : match
+  })
 }
 
-export function translate(locale: AppLocale, key: string, vars?: Record<string, string | number>): string {
-  const messages = catalogs[locale] ?? en
-  const fallback = catalogs.en
+export function translate(
+  locale: AppLocale,
+  key: string,
+  vars?: Record<string, string | number>
+): string {
+  const messages = messagesFor(locale)
   const raw =
     getNested(messages as unknown as Record<string, unknown>, key) ??
-    getNested(fallback as unknown as Record<string, unknown>, key) ??
+    getNested(en as unknown as Record<string, unknown>, key) ??
     key
   return interpolate(raw, vars)
 }
@@ -36,11 +44,14 @@ export type TranslateFn = (key: string, vars?: Record<string, string | number>) 
 
 const I18nContext = createContext<{ locale: AppLocale; t: TranslateFn }>({
   locale: 'en',
-  t: (key) => getNested(en as unknown as Record<string, unknown>, key) ?? key
+  t: (key, vars) => {
+    const raw = getNested(en as unknown as Record<string, unknown>, key) ?? key
+    return interpolate(raw, vars)
+  }
 })
 
 export function getMessages(locale: AppLocale): Messages {
-  return catalogs[locale] ?? en
+  return messagesFor(locale)
 }
 
 export function I18nProvider({
@@ -51,15 +62,7 @@ export function I18nProvider({
   children: ReactNode
 }) {
   const value = useMemo(() => {
-    const messages = catalogs[locale] ?? en
-    const fallback = catalogs.en
-    const t: TranslateFn = (key, vars) => {
-      const raw =
-        getNested(messages as unknown as Record<string, unknown>, key) ??
-        getNested(fallback as unknown as Record<string, unknown>, key) ??
-        key
-      return interpolate(raw, vars)
-    }
+    const t: TranslateFn = (key, vars) => translate(locale, key, vars)
     return { locale, t }
   }, [locale])
 
@@ -75,5 +78,5 @@ export function useT(): TranslateFn {
 }
 
 export function statusLabel(locale: AppLocale, status: keyof Messages['status']): string {
-  return catalogs[locale].status[status]
+  return messagesFor(locale).status[status]
 }

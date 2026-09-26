@@ -1469,7 +1469,7 @@ export const en = {
     backToBrowse: 'Back to Browse',
     backToMissing: 'Back to Missing',
     lead:
-      'Check tags to route downloads and move unsorted library models into {LoRA}/{base model}/{folder}. Use “Apply to library” to re-sort everything after priority changes. Models placed manually in Library are skipped.',
+      'Check tags to route downloads and move unsorted library models into {LoRA}/{base model}/{folder}. Use “Move misplaced” to sort models that already match a rule but are still in the wrong folder. Models placed manually in Library are skipped.',
     searchPlaceholder: 'Search or add tags…',
     clearSearch: 'Clear tag search',
     addTag: 'Add',
@@ -1557,11 +1557,27 @@ export const en = {
     massAssignedMove:
       'Saved {count} tags → {folder}; moved {moved}, skipped {skipped} (manual/already sorted)',
     transferring: 'Transferring models by tag to folder…',
-    reconcileApply: 'Apply to library ({count})',
+    reconcileApply: 'Move misplaced ({count})',
+    reconcileApplyShort: 'Move misplaced',
     reconcileHint:
-      'Move or re-route all library models that match Tag folder rules but are not in the winning folder yet. Also runs automatically when you change a folder name or priority.',
+      '{count} LoRAs already have a Civitai tag that matches a Tag Folders rule, but the file is still in another folder (often Unsorted) or has no routing tag yet. This does not run on app start — only when you click here, or after you rename a folder / change priority / mass-assign (file moves are deliberate). Checkpoints and manually locked Library placements are skipped.',
+    reconcileHintCounting: 'Counting library models that still need to be moved into their tag folders…',
     reconcileConfirm:
-      'Apply tag-folder rules to {count} library models? Manual (locked) placements are skipped.',
+      'Move {count} LoRAs into the folder of their winning Tag Folders tag? Checkpoints and manual/locked placements are skipped.',
+    reconcilePreviewTitle: 'Move misplaced ({count})',
+    reconcilePreviewLead:
+      'Grouped by the tag folder each LoRA will move into. Click a tag to switch this model to that folder (or assign a folder if the tag has none yet). Back cancels — Move applies the plan.',
+    reconcileConfirmMove: 'Move {count} models',
+    reconcileConfirmMoveShort: 'Move models',
+    reconcileViaTag: 'via {tag}',
+    reconcileDestLabel: 'Folder',
+    reconcileTagsLabel: 'Model tags',
+    reconcileWinnerTagHint: 'Winning Tag Folders rule: {tag} (click another tag to switch)',
+    reconcileSwitchTagHint: 'Switch this model to “{tag}” folder',
+    reconcileAssignTagHint: 'Assign a folder for “{tag}”, then route this model there',
+    reconcileSwitchedTag: 'Switched planned folder to “{tag}”',
+    reconcileGroupCount: '{count}',
+    reconcileNoTags: 'No Civitai tags saved for this model',
     reconcileDone:
       'Library sorted: moved {moved}, skipped {skipped}, queue updated {queueUpdated}',
     reconcileNone: 'All matching library models are already in the correct tag folders',

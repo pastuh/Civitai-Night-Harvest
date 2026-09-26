@@ -4364,12 +4364,25 @@ button.missing-tag-chip.is-clickable:hover {
   cursor: pointer;
 }
 
-.tags-toolbar-end {
+.tags-mass-row {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  margin-left: auto;
+  margin: 0 0 var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.tags-mass-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
   flex: 0 0 auto;
+}
+
+.tags-mass-row .tags-mass-folder.tag-autocomplete {
+  flex: 0 1 160px;
+  min-width: 120px;
+  max-width: 200px;
 }
 
 .tags-mass-mode-toggle {

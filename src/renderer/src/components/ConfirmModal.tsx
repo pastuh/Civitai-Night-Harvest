@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 import { useT } from '../i18n/context'
@@ -6,6 +6,8 @@ import { useT } from '../i18n/context'
 interface Props {
   title?: string
   message: string
+  /** Optional scrollable detail under the message (e.g. model move preview). */
+  detail?: ReactNode
   confirmLabel?: string
   cancelLabel?: string
   /**
@@ -31,6 +33,7 @@ interface Props {
 export function ConfirmModal({
   title,
   message,
+  detail,
   confirmLabel,
   cancelLabel,
   secondaryConfirmLabel,
@@ -83,6 +86,7 @@ export function ConfirmModal({
       >
         <h3 id="confirm-modal-title">{title ?? t('common.confirmTitle')}</h3>
         <p className="confirm-modal-message">{message}</p>
+        {detail ? <div className="confirm-modal-detail">{detail}</div> : null}
         <div className="modal-footer confirm-modal-actions">
           {dontAskAgainLabel ? (
             <label className="checkbox-field confirm-modal-dont-ask">

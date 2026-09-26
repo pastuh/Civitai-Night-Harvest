@@ -23,6 +23,8 @@ interface Props {
   confirmTagFolderMoves?: boolean
   loraFolder: string
   checkpointFolder: string
+  /** When true, only save the Tag Folders rule — do not move library files yet. */
+  deferMove?: boolean
   onClose: () => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onRefresh: () => Promise<void>
@@ -44,6 +46,7 @@ export function FastTagAssignModal({
   inventory,
   tagSuggestions: tagPool = [],
   confirmTagFolderMoves = true,
+  deferMove = false,
   loraFolder,
   checkpointFolder,
   onClose,
@@ -153,6 +156,11 @@ export function FastTagAssignModal({
           : [...tagRules.filter((r) => !ruleCoversTag(r, sourceTag)), entry]
 
         await onSaveTagRules(next)
+        if (deferMove) {
+          onDone(t('tagsTab.ruleSaved', { tag: sourceTag }))
+          onClose()
+          return
+        }
         const result = await window.api.assignByCivitaiTag(sourceTag, sourceTag)
         await onRefresh()
         onDone(
@@ -170,12 +178,17 @@ export function FastTagAssignModal({
         setBusy(false)
       }
     },
-    [sourceTag, tagRules, onSaveTagRules, onRefresh, onDone, onClose, t]
+    [sourceTag, tagRules, deferMove, onSaveTagRules, onRefresh, onDone, onClose, t]
   )
 
   const apply = () => {
     const folderOrTag = tagValue.trim()
     if (!folderOrTag || busy || pendingConfirm) return
+
+    if (deferMove) {
+      void runAssign(folderOrTag)
+      return
+    }
 
     const movable = countMovableByCivitaiTag(
       inventory,

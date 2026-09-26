@@ -1708,11 +1708,15 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'inventory:assignTag',
-    async (_e, payload: { versionIds: number[]; tagName: string }) => {
+    async (
+      _e,
+      payload: { versionIds: number[]; tagName: string; lockRouting?: boolean }
+    ) => {
       const versionIds = payload.versionIds.filter((id) => id > 0)
       const total = versionIds.length
       const moved: InventoryRecord[] = []
       const tagRules = getTagRules()
+      const lockRouting = payload.lockRouting !== false
       for (let i = 0; i < versionIds.length; i++) {
         const versionId = versionIds[i]
         const record = inventory.getVersion(versionId)
@@ -1731,7 +1735,7 @@ export function initIpc(): void {
           try {
             moved.push(
               await moveRecordToTagFolder(record, payload.tagName, tagRules, {
-                lockRouting: true
+                lockRouting
               })
             )
           } catch {

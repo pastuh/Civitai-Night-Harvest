@@ -127,8 +127,16 @@ const api = {
   toggleFullscreen: (): Promise<boolean> => ipcRenderer.invoke('window:toggleFullscreen'),
   isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:isFullScreen'),
   enrichDeferred: (): Promise<DeferredDownload[]> => ipcRenderer.invoke('deferred:enrich'),
-  assignTag: (versionIds: number[], tagName: string): Promise<InventoryRecord[]> =>
-    ipcRenderer.invoke('inventory:assignTag', { versionIds, tagName }),
+  assignTag: (
+    versionIds: number[],
+    tagName: string,
+    opts?: { lockRouting?: boolean }
+  ): Promise<InventoryRecord[]> =>
+    ipcRenderer.invoke('inventory:assignTag', {
+      versionIds,
+      tagName,
+      lockRouting: opts?.lockRouting
+    }),
   assignByCivitaiTag: (
     civitaiTag: string,
     routingTag: string

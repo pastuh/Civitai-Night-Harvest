@@ -1480,7 +1480,7 @@ export const lt: Messages = {
     backToBrowse: 'Atgal į Browse',
     backToMissing: 'Atgal į Missing',
     lead:
-      'Pažymėkite tagus — maršrutizuoja atsisiuntimus ir perkelia nesurūšiuotus bibliotekos modelius į {LoRA}/{base modelis}/{aplankas}. „Taikyti bibliotekai“ perskirsto viską po prioritetų keitimo. Rankiniu būdu Bibliotekoje padėti modeliai praleidžiami.',
+      'Pažymėkite tagus — maršrutizuoja atsisiuntimus ir perkelia nesurūšiuotus bibliotekos modelius į {LoRA}/{base modelis}/{aplankas}. „Perkelti neteisingus“ surūšiuoja modelius, kurie jau atitinka taisyklę, bet dar yra neteisingame aplanke. Rankiniu būdu Bibliotekoje padėti modeliai praleidžiami.',
     searchPlaceholder: 'Ieškoti ar pridėti tagų…',
     clearSearch: 'Išvalyti tagų paiešką',
     addTag: 'Pridėti',
@@ -1571,11 +1571,27 @@ export const lt: Messages = {
     massAssignedMove:
       'Išsaugota {count} tag. → {folder}; perkelta {moved}, praleista {skipped} (rankinis/jau surūšiuota)',
     transferring: 'Perkeliami modeliai pagal tag į aplanką…',
-    reconcileApply: 'Taikyti bibliotekai ({count})',
+    reconcileApply: 'Perkelti neteisingus ({count})',
+    reconcileApplyShort: 'Perkelti neteisingus',
     reconcileHint:
-      'Perkelia / perskirsto visus Library modelius, kurie atitinka Tag folders taisykles, bet dar nėra laiminčiame aplanke. Automatiškai paleidžiama ir keičiant aplanko vardą ar prioritetą.',
+      '{count} LoRA jau turi Civitai tagą, kuris atitinka Tag Folders taisyklę, bet failas vis dar kitame aplanke (dažnai Unsorted) arba be routing tago. Paleidžiama ne paleidus app — tik paspaudus čia, arba po aplanko pervadinimo / prioriteto / mass-assign (failų perkėlimas sąmoningas). Checkpoint ir rankiniai/užrakinti Library priskyrimai praleidžiami.',
+    reconcileHintCounting: 'Skaičiuojami modeliai, kuriuos dar reikia perkelti į tag aplankus…',
     reconcileConfirm:
-      'Taikyti tag-folder taisykles {count} bibliotekos modeliams? Rankiniai (užrakinti) praleidžiami.',
+      'Perkelti {count} LoRA į jų laiminčio Tag Folders tago aplanką? Checkpoint ir rankiniai/užrakinti praleidžiami.',
+    reconcilePreviewTitle: 'Perkelti neteisingus ({count})',
+    reconcilePreviewLead:
+      'Sugrupuota pagal tag folderį, į kurį LoRA bus perkelta. Spauskite tagą — perjungti modelį į tą folderį (arba priskirti folderį, jei taisyklės dar nėra). Back atšaukia — Move vykdo planą.',
+    reconcileConfirmMove: 'Perkelti {count} modelius',
+    reconcileConfirmMoveShort: 'Perkelti modelius',
+    reconcileViaTag: 'per {tag}',
+    reconcileDestLabel: 'Aplankas',
+    reconcileTagsLabel: 'Modelio tagai',
+    reconcileWinnerTagHint: 'Laiminti Tag Folders taisyklė: {tag} (spauskite kitą tagą perjungti)',
+    reconcileSwitchTagHint: 'Perjungti šį modelį į „{tag}“ folderį',
+    reconcileAssignTagHint: 'Priskirti folderį tagui „{tag}“, tada nukreipti šį modelį ten',
+    reconcileSwitchedTag: 'Planuojamas folderis perjungtas į „{tag}“',
+    reconcileGroupCount: '{count}',
+    reconcileNoTags: 'Šiam modeliui nėra išsaugotų Civitai tagų',
     reconcileDone:
       'Biblioteka surūšiuota: perkelta {moved}, praleista {skipped}, eilė {queueUpdated}',
     reconcileNone: 'Visi atitinkantys modeliai jau teisinguose tag aplankuose',
