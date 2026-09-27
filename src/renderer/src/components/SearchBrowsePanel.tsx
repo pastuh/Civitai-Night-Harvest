@@ -50,7 +50,7 @@ import {
   modelModeLabel
 } from '../../../shared/civitai-meta'
 import { baseModelLabel } from '../../../shared/base-model-label'
-import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag, expandCivitaiTagNames, parseTagRuleNames } from '../../../shared/tag-routing'
+import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, modelHasPolicyTag, resolveModelRoutingTag, expandCivitaiTagNames, parseTagRuleNames, type TagPolicyOptions } from '../../../shared/tag-routing'
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { PreviewThumb } from './PreviewThumb'
@@ -3401,6 +3401,7 @@ export function SearchBrowsePanel({
             checkpointFolder={checkpointFolder}
             hiddenTags={hiddenTags}
             bannedTags={bannedTags}
+            tagPolicyOptions={tagPolicyOptions}
             banFunctionMode={banMode}
             onTagClick={onCardTagClick}
             onEnqueue={onCardEnqueue}
@@ -3824,6 +3825,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   checkpointFolder,
   hiddenTags,
   bannedTags = [],
+  tagPolicyOptions,
   banFunctionMode,
   onTagClick,
   onEnqueue,
@@ -3857,6 +3859,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
   checkpointFolder: string
   hiddenTags: string[]
   bannedTags?: string[]
+  tagPolicyOptions?: TagPolicyOptions
   banFunctionMode: boolean
   onTagClick: (tag: string) => void
   onEnqueue: (model: WatchRuleTestModel) => void
@@ -3885,7 +3888,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
               key={`pair:${unit.key}`}
               high={unit.high}
               low={unit.low}
-              searchQuery={deferredSearchQuery}
+              searchQuery={searchQuery}
               queueItemFor={queueItemFor}
               queuePaused={queuePaused}
               queuing={queuingId === unit.high.versionId || queuingId === unit.low.versionId}

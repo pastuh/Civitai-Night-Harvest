@@ -645,13 +645,18 @@ export default function App() {
         loc: 'en' | 'lt' = loadedLocale,
         statsLine?: string
       ) => {
-        // flushSync + short timeout so the Loading card actually paints before the next
-        // main-process IPC blocks the renderer event loop.
-        flushSync(() => {
-          setBusy({
-            message: translate(loc, 'load.starting'),
-            subMessage,
-            statsLine
+        // Defer flushSync off the current React lifecycle (avoids the yellow warning),
+        // then yield so the Loading card paints before the next blocking IPC.
+        await new Promise<void>((resolve) => {
+          queueMicrotask(() => {
+            flushSync(() => {
+              setBusy({
+                message: translate(loc, 'load.starting'),
+                subMessage,
+                statsLine
+              })
+            })
+            resolve()
           })
         })
         await new Promise<void>((resolve) => {

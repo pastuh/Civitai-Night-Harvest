@@ -65,6 +65,7 @@ import {
   outputFoldersConfigured
 } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, clearOutputPathReachCache, probeConfiguredOutputFolders, isOutputPathRootReachable, isConfiguredOutputOffline } from './output-paths'
+import { downloadIncompleteModel } from './incomplete-resolve'
 
 let storageAlertSent = false
 
@@ -2538,7 +2539,6 @@ export function initIpc(): void {
   ipcMain.handle(
     'incomplete:download',
     async (_e, payload: { modelId: number; downloadUrl?: string }) => {
-      const { downloadIncompleteModel } = await import('./incomplete-resolve')
       const result = await downloadIncompleteModel({
         pool: clientPool,
         downloadQueue,

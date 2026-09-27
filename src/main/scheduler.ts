@@ -176,11 +176,11 @@ export class ScanScheduler {
       ruleId: last.ruleId,
       ruleName: last.ruleName,
       ruleNames: last.ruleNames,
-      pageNumber,
       domain: last.domain,
       fetchPurpose: last.purpose ?? 'catalog',
       phase: 'fetching',
       ...extra,
+      // Keep resolved page after ...extra so callers cannot clobber it.
       pageNumber,
       detail
     })
