@@ -1449,6 +1449,7 @@ export const lt: Messages = {
     assignFolderByTagShort: 'Priskirti tagą',
     assignFolderPlaceholder: 'Tago pavadinimas…',
     assignFolderConfirm: 'Priskirti tagui',
+    assignRecentlyUsed: 'Neseniai naudoti',
     markSfw: 'Pažymėti kaip SFW',
     markNsfw: 'Pažymėti kaip NSFW',
     unbanAllow: 'Unban — leisti atsisiuntimus',

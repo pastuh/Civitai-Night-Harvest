@@ -1438,6 +1438,7 @@ export const en = {
     assignFolderByTagShort: 'Assign tag',
     assignFolderPlaceholder: 'Tag name…',
     assignFolderConfirm: 'Assign to tag',
+    assignRecentlyUsed: 'Recently used',
     markSfw: 'Mark as SFW',
     markNsfw: 'Mark as NSFW',
     unbanAllow: 'Unban — allow downloads',

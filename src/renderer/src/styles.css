@@ -4508,6 +4508,55 @@ select.browse-content-filter {
   transform-origin: center;
 }
 
+.library-assign-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  min-height: 0;
+  max-width: 9.5rem;
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Same 🌙 glyph; grayscale + brightness so it follows theme (white on aroma/dark). */
+  filter: grayscale(1) brightness(1.85) contrast(1.05);
+}
+
+.library-assign-chip:hover:not(:disabled) {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.library-assign-chip.is-open {
+  opacity: 1;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--text) 32%, var(--border));
+}
+
+.library-assign-chip-manual {
+  filter: none;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  font-weight: 600;
+}
+
+.library-assign-chip-manual:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.theme-light .library-assign-chip:not(.library-assign-chip-manual),
+.theme-candy .library-assign-chip:not(.library-assign-chip-manual) {
+  filter: grayscale(1) brightness(0.35) contrast(1.1);
+}
+
 .header-harvest-btn {
   display: inline-flex;
   align-items: center;
@@ -4557,16 +4606,97 @@ select.browse-content-filter {
   z-index: 12000;
 }
 
-.tags-reconcile-assign-modal {
+.modal-card.tags-reconcile-assign-modal {
   width: min(420px, 100%);
+  height: auto;
+  max-height: min(90vh, 640px);
+  display: block;
   overflow: visible;
 }
 
+.tags-reconcile-assign-modal .assign-modal-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.tags-reconcile-assign-modal .assign-modal-top-text {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.tags-reconcile-assign-modal .assign-modal-top-text h3 {
+  margin: 0 0 4px;
+}
+
 .tags-reconcile-assign-modal .tags-reconcile-assign-model {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 13px;
   line-height: 1.4;
   word-break: break-word;
+}
+
+.tags-reconcile-assign-modal .assign-modal-actions {
+  margin: 0;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.tags-reconcile-assign-modal .assign-modal-cancel {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 0;
+}
+
+.tags-reconcile-assign-modal .assign-recent-tags {
+  margin: 0 0 12px;
+}
+
+.tags-reconcile-assign-modal .assign-recent-tags-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.tags-reconcile-assign-modal .assign-recent-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tags-reconcile-assign-modal .assign-recent-tag-chip {
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.tags-reconcile-assign-modal .assign-recent-tag-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.tags-reconcile-assign-modal .assign-modal-search-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tags-reconcile-assign-modal .assign-modal-search {
+  position: relative;
+  z-index: 2;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tags-reconcile-assign-modal .assign-modal-confirm {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  margin-top: 0;
+  align-self: stretch;
+  max-height: 38px;
 }
 
 .tags-reconcile-assign-modal .tag-autocomplete {
@@ -4575,9 +4705,17 @@ select.browse-content-filter {
   width: 100%;
 }
 
+/* Overlay list — does not stretch the popup. */
 .tags-reconcile-assign-modal .tag-autocomplete-list {
-  max-height: min(280px, 40vh);
-  z-index: 3;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  bottom: auto;
+  margin: 0;
+  max-height: min(220px, 36vh);
+  z-index: 6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .tags-reconcile-assign-menu .context-menu-subtitle {

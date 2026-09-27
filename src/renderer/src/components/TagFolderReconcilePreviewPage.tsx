@@ -10,7 +10,7 @@ import {
 } from '../../../shared/tag-routing'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
 import { FastTagAssignModal } from './FastTagAssignModal'
-import { TagAutocompleteInput } from './TagAutocompleteInput'
+import { AssignModelToTagModal } from './AssignModelToTagModal'
 import { ConfirmModal } from './ConfirmModal'
 import { LibraryModelCard } from './LibraryModelCard'
 import type { ModelDetailTarget } from './ModelDetailPage'
@@ -101,7 +101,6 @@ export function TagFolderReconcilePreviewPage({
     versionId: number
     modelName: string
   } | null>(null)
-  const [assignTagQuery, setAssignTagQuery] = useState('')
   const [assignBusy, setAssignBusy] = useState(false)
   const [cardContextMenu, setCardContextMenu] = useState<{
     x: number
@@ -299,7 +298,6 @@ export function TagFolderReconcilePreviewPage({
     const removed = items.find((i) => i.versionId === versionId) ?? null
     setAssignBusy(true)
     setAssignPopup(null)
-    setAssignTagQuery('')
     // Drop the card immediately — avoid switch+re-sort flash before remove.
     removeItem(versionId)
     try {
@@ -350,7 +348,6 @@ export function TagFolderReconcilePreviewPage({
 
   const closeAssignMenu = useCallback(() => {
     setAssignPopup(null)
-    setAssignTagQuery('')
   }, [])
 
   const closeCardContextMenu = useCallback(() => {
@@ -360,7 +357,6 @@ export function TagFolderReconcilePreviewPage({
   const openAssignPopup = useCallback((versionId: number, modelName: string) => {
     setCardContextMenu(null)
     setAssignPopup({ versionId, modelName })
-    setAssignTagQuery('')
   }, [])
 
   const openCardContextMenu = useCallback(
@@ -656,58 +652,15 @@ export function TagFolderReconcilePreviewPage({
 
   const assignModal =
     assignPopup != null ? (
-      <div
-        className="modal-overlay tags-reconcile-assign-modal-layer"
-        onClick={closeAssignMenu}
-      >
-        <div
-          className="modal-card tags-reconcile-assign-modal"
-          role="dialog"
-          aria-modal
-          aria-labelledby="tags-reconcile-assign-title"
-          onClick={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <h3 id="tags-reconcile-assign-title">{t('gallery.assignFolderByTag')}</h3>
-          <p className="muted tags-reconcile-assign-model">{assignPopup.modelName}</p>
-          <TagAutocompleteInput
-            className="tags-reconcile-assign-input"
-            value={assignTagQuery}
-            onChange={setAssignTagQuery}
-            suggestions={folderTagSuggestions}
-            singleTag
-            autoFocus
-            matchMode="fuzzy"
-            placeholder={t('gallery.assignFolderPlaceholder')}
-            clearable
-            clearLabel={t('gallery.clearSearch')}
-            disabled={moving || assignBusy}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
-                e.preventDefault()
-                void assignModelToTag(assignPopup.versionId, assignTagQuery)
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                closeAssignMenu()
-              }
-            }}
-          />
-          <div className="modal-footer">
-            <button type="button" onClick={closeAssignMenu} disabled={assignBusy}>
-              {t('common.cancel')}
-            </button>
-            <button
-              type="button"
-              className="primary"
-              disabled={moving || assignBusy || !assignTagQuery.trim()}
-              onClick={() => void assignModelToTag(assignPopup.versionId, assignTagQuery)}
-            >
-              {assignBusy ? t('tagsTab.transferring') : t('gallery.assignFolderConfirm')}
-            </button>
-          </div>
-        </div>
-      </div>
+      <AssignModelToTagModal
+        modelName={assignPopup.modelName}
+        suggestions={folderTagSuggestions}
+        disabled={moving}
+        busy={assignBusy}
+        confirmBusyLabel={t('tagsTab.transferring')}
+        onClose={closeAssignMenu}
+        onConfirm={(tag) => void assignModelToTag(assignPopup.versionId, tag)}
+      />
     ) : null
 
   return (

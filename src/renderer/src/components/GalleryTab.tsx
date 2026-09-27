@@ -53,7 +53,7 @@ import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
-import { TagAutocompleteInput } from './TagAutocompleteInput'
+import { AssignModelToTagModal } from './AssignModelToTagModal'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
 import {
   normalizeResultsDisplayMode,
@@ -378,8 +378,10 @@ function GalleryTabInner({
     const el = document.querySelector('.content')
     if (el instanceof HTMLElement) el.scrollTop = top
   }, [])
-  const [assignFolderOpen, setAssignFolderOpen] = useState(false)
-  const [assignTagQuery, setAssignTagQuery] = useState('')
+  const [quickAssignTarget, setQuickAssignTarget] = useState<{
+    versionId: number
+    modelName: string
+  } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [highlightVersionId, setHighlightVersionId] = useState<number | null>(null)
   /** Flash all owned versions of a model (Open in Library from New Versions). */
@@ -1474,8 +1476,6 @@ function GalleryTabInner({
   const openContextMenu = useCallback(
     (e: MouseEvent, modelId: number, modelName: string, versionId?: number) => {
       e.preventDefault()
-      setAssignFolderOpen(false)
-      setAssignTagQuery('')
       setContextMenu({ x: e.clientX, y: e.clientY, modelId, modelName, versionId })
     },
     []
@@ -1538,8 +1538,7 @@ function GalleryTabInner({
     const ids =
       selected.has(versionId) && selected.size > 0 ? [...selected] : [versionId]
     setContextMenu(null)
-    setAssignFolderOpen(false)
-    setAssignTagQuery('')
+    setQuickAssignTarget(null)
     setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
     // Background move — keep Library interactive while files transfer.
     void (async () => {
@@ -1557,6 +1556,15 @@ function GalleryTabInner({
       }
     })()
   }
+
+  const openQuickAssign = useCallback((record: InventoryRecord) => {
+    setContextMenu(null)
+    setQuickAssignTarget({ versionId: record.versionId, modelName: record.modelName })
+  }, [])
+
+  const closeQuickAssign = useCallback(() => {
+    setQuickAssignTarget(null)
+  }, [])
 
   const routeTagAndMove = async (tagName: string) => {
     if (!selected.size) {
@@ -1976,6 +1984,8 @@ function GalleryTabInner({
               onOpenContextMenu={openContextMenu}
               onOpenDetails={openLibraryDetails}
               onCivitaiTagClick={openTagInFolders}
+              onQuickAssign={openQuickAssign}
+              quickAssignVersionId={quickAssignTarget?.versionId ?? null}
               onBaseModelClick={filterByBaseModel}
               blockedTags={blockedTags}
               pausedTags={pausedTags}
@@ -2487,51 +2497,21 @@ function GalleryTabInner({
               </button>
             )}
             {contextMenu.versionId != null && (
-              <>
-                {!assignFolderOpen ? (
-                  <button
-                    type="button"
-                    disabled={moving}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setAssignFolderOpen(true)
-                    }}
-                  >
-                    {t('gallery.assignFolderByTag')}
-                  </button>
-                ) : (
-                  <div
-                    className="context-menu-assign-folder"
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    <div className="context-menu-subtitle">{t('gallery.assignFolderByTag')}</div>
-                    <TagAutocompleteInput
-                      value={assignTagQuery}
-                      onChange={setAssignTagQuery}
-                      suggestions={folderTagSuggestions}
-                      singleTag
-                      autoFocus
-                      matchMode="fuzzy"
-                      placeholder={t('gallery.assignFolderPlaceholder')}
-                      confirmLabel={t('gallery.assignFolderConfirm')}
-                      confirmText="→"
-                      clearable
-                      clearLabel={t('gallery.clearSearch')}
-                      disabled={moving}
-                      onConfirm={() =>
-                        void assignFolderByTag(assignTagQuery, contextMenu.versionId)
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
-                          e.preventDefault()
-                          void assignFolderByTag(assignTagQuery, contextMenu.versionId)
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-              </>
+              <button
+                type="button"
+                disabled={moving}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setQuickAssignTarget({
+                    versionId: contextMenu.versionId!,
+                    modelName: contextMenu.modelName
+                  })
+                  setContextMenu(null)
+                }}
+              >
+                {t('gallery.assignFolderByTag')}
+              </button>
             )}
             {contextMenu.versionId != null && !menuLocal && (
               <>
@@ -2647,6 +2627,15 @@ function GalleryTabInner({
             )}
         </ContextMenuPortal>
       )}
+      {quickAssignTarget ? (
+        <AssignModelToTagModal
+          modelName={quickAssignTarget.modelName}
+          suggestions={folderTagSuggestions}
+          disabled={moving}
+          onClose={closeQuickAssign}
+          onConfirm={(tag) => assignFolderByTag(tag, quickAssignTarget.versionId)}
+        />
+      ) : null}
       {fastTagTarget != null && (
         <FastTagAssignModal
           tag={fastTagTarget}
@@ -2808,6 +2797,8 @@ type LibraryCardGridProps = {
   ) => void
   onOpenDetails: (record: InventoryRecord) => void
   onCivitaiTagClick: (tag: string, record: InventoryRecord) => void
+  onQuickAssign?: (record: InventoryRecord) => void
+  quickAssignVersionId?: number | null
   onBaseModelClick?: (baseModel: string) => void
   eaFavoriteSet?: Set<number>
   onToggleEaFavorite?: (modelId: number) => void
@@ -2843,6 +2834,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   onOpenContextMenu,
   onOpenDetails,
   onCivitaiTagClick,
+  onQuickAssign,
+  quickAssignVersionId = null,
   onBaseModelClick,
   eaFavoriteSet,
   onToggleEaFavorite,
@@ -2893,6 +2886,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             onOpenContextMenu={onOpenContextMenu}
             onOpenDetails={onOpenDetails}
             onCivitaiTagClick={onCivitaiTagClick}
+            onQuickAssign={onQuickAssign}
+            quickAssignOpen={quickAssignVersionId === unit.high.versionId}
             onBaseModelClick={onBaseModelClick}
             eaFavorited={eaFavoriteSet?.has(unit.high.modelId) ?? false}
             onToggleEaFavorite={onToggleEaFavorite}
@@ -2935,6 +2930,8 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             onOpenContextMenu={onOpenContextMenu}
             onOpenDetails={onOpenDetails}
             onCivitaiTagClick={onCivitaiTagClick}
+            onQuickAssign={onQuickAssign}
+            quickAssignOpen={quickAssignVersionId === unit.item.versionId}
             onBaseModelClick={onBaseModelClick}
             eaFavorited={eaFavoriteSet?.has(unit.item.modelId) ?? false}
             onToggleEaFavorite={onToggleEaFavorite}

@@ -75,6 +75,10 @@ export type LibraryModelCardProps = {
   bodyPrefix?: ReactNode
   /** Extra controls at the start of the tag row (e.g. subtle assign menu trigger). */
   tagsExtra?: ReactNode
+  /** Library quick-assign (🌙 when exactly one Civitai tag; manual route shows folder text instead). */
+  onQuickAssign?: (record: InventoryRecord) => void
+  /** Highlight the lead assign chip while its popup is open. */
+  quickAssignOpen?: boolean
 }
 
 function LibraryModelCardInner({
@@ -112,7 +116,9 @@ function LibraryModelCardInner({
   routingTagOverride,
   hideSelectChrome = false,
   bodyPrefix,
-  tagsExtra
+  tagsExtra,
+  onQuickAssign,
+  quickAssignOpen = false
 }: LibraryModelCardProps) {
   const t = useT()
   const localPreviewPath =
@@ -150,6 +156,12 @@ function LibraryModelCardInner({
       ? new Set(hideCardTags.map((x) => x.toLowerCase()))
       : null
   const allTags = expandCivitaiTagNames(record.civitaiTags)
+  const manualLeadLabel =
+    record.routingLocked && !temporary
+      ? (record.routingTag?.trim() || folderLabel || '').trim() || null
+      : null
+  const showMoonLead =
+    Boolean(onQuickAssign) && !manualLeadLabel && !temporary && allTags.length === 1
   const visibleTags = allTags.filter((tag) => {
     if (hideTagSet?.has(tag.trim().toLowerCase())) return false
     if (hideAssignedTags) {
@@ -160,11 +172,54 @@ function LibraryModelCardInner({
       })
       if (role !== 'unmapped') return false
     }
+    // Manual route is shown in the lead chip — skip the cyan "final" duplicate.
+    if (manualLeadLabel) {
+      const role = cardTagFolderRole(tag, {
+        routingTag: effectiveRoutingTag,
+        folderLabel,
+        tagRules
+      })
+      if (role === 'final') return false
+    }
     return true
   })
   const hiddenTagCount = allTags.length - visibleTags.length
   const showHiddenTagsPlaceholder = hiddenTagCount > 0
   const shownTags = showAllTags ? visibleTags : visibleTags.slice(0, 6)
+
+  const leadAssignChip =
+    manualLeadLabel || showMoonLead ? (
+      <button
+        type="button"
+        className={`tag-chip library-assign-chip${
+          manualLeadLabel ? ' library-assign-chip-manual' : ''
+        }${quickAssignOpen ? ' is-open' : ''}`}
+        disabled={!onQuickAssign || temporary}
+        title={
+          manualLeadLabel
+            ? t('gallery.manualFolderHint', { folder: manualLeadLabel })
+            : t('gallery.assignFolderByTag')
+        }
+        aria-label={
+          manualLeadLabel
+            ? t('gallery.manualFolderHint', { folder: manualLeadLabel })
+            : t('gallery.assignFolderByTag')
+        }
+        aria-expanded={quickAssignOpen}
+        onClick={(e) => {
+          e.stopPropagation()
+          onQuickAssign?.(record)
+        }}
+      >
+        {manualLeadLabel ? (
+          manualLeadLabel
+        ) : (
+          <span className="moon-flip" aria-hidden>
+            🌙
+          </span>
+        )}
+      </button>
+    ) : null
 
   return (
     <div
@@ -390,22 +445,28 @@ function LibraryModelCardInner({
           </div>
         )}
         {folderLine || record.routingLocked ? (
-          <div
-            className={`gallery-folder-line ${folderLine ? 'is-assigned' : ''} ${record.routingLocked ? 'is-manual' : ''}`}
-            title={
-              record.routingLocked
-                ? t('gallery.manualFolderHint', { folder: folderLine || record.routingTag || '—' })
-                : folderLine || undefined
-            }
-          >
-            {folderLine ? <span className="gallery-folder-path">{folderLine}</span> : null}
-            {record.routingLocked ? (
-              <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
-            ) : null}
-          </div>
+          !manualLeadLabel ? (
+            <div
+              className={`gallery-folder-line ${folderLine ? 'is-assigned' : ''} ${record.routingLocked ? 'is-manual' : ''}`}
+              title={
+                record.routingLocked
+                  ? t('gallery.manualFolderHint', { folder: folderLine || record.routingTag || '—' })
+                  : folderLine || undefined
+              }
+            >
+              {folderLine ? <span className="gallery-folder-path">{folderLine}</span> : null}
+              {record.routingLocked ? (
+                <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
+              ) : null}
+            </div>
+          ) : null
         ) : null}
-        {(shownTags.length > 0 || showHiddenTagsPlaceholder || tagsExtra) && (
+        {(shownTags.length > 0 ||
+          showHiddenTagsPlaceholder ||
+          leadAssignChip ||
+          tagsExtra) && (
           <div className="tag-row library-card-tags">
+            {leadAssignChip}
             {tagsExtra}
             {shownTags.map((tag) => {
               const role = cardTagFolderRole(tag, {

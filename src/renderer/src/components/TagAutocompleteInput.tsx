@@ -38,6 +38,8 @@ interface Props {
    * browse list is shown (useful when prefilled with the source tag).
    */
   emptyQueryWhenValueEquals?: string
+  /** When false, do not list suggestions until the user types (default true). */
+  suggestWhenEmpty?: boolean
 }
 
 function tokenBeforeCursor(value: string, cursor: number): { prefix: string; token: string; start: number } {
@@ -69,10 +71,13 @@ function filterItems(
   const starts: string[] = []
   const contains: string[] = []
   for (const s of items) {
-    if (fuzzyTagMatch(queryToken, s)) {
-      if (s.toLowerCase().startsWith(queryToken)) starts.push(s)
-      else contains.push(s)
+    const lower = s.toLowerCase()
+    // Prefix match even for 1–2 chars (fuzzyTagMatch requires length ≥ 3 for includes).
+    if (lower.startsWith(queryToken)) {
+      starts.push(s)
+      continue
     }
+    if (fuzzyTagMatch(queryToken, s)) contains.push(s)
   }
   return [...starts, ...contains].slice(0, limit)
 }
@@ -97,12 +102,20 @@ export function TagAutocompleteInput({
   singleTag = false,
   matchMode = 'fuzzy',
   maxSuggestions,
-  emptyQueryWhenValueEquals
+  emptyQueryWhenValueEquals,
+  suggestWhenEmpty = true
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [cursor, setCursor] = useState(value.length)
+  /** After picking a suggestion we re-focus the input — do not reopen the list over footer actions. */
+  const skipOpenOnFocusRef = useRef(false)
+
+  // Keep token parsing aligned when the parent updates `value` (e.g. chip fill).
+  useEffect(() => {
+    setCursor(value.length)
+  }, [value])
 
   const { token } = useMemo(() => tokenBeforeCursor(value, cursor), [value, cursor])
 
@@ -137,6 +150,7 @@ export function TagAutocompleteInput({
   }, [groupedSuggestions, suggestions])
 
   const matchGroups = useMemo(() => {
+    if (!queryToken && !suggestWhenEmpty) return []
     if (!groupedSuggestions?.length) {
       const items = filterItems(flatPool, queryToken, matchMode, matchLimit)
       return items.length ? [{ label: '', items }] : []
@@ -151,7 +165,7 @@ export function TagAutocompleteInput({
       remaining -= items.length
     }
     return out
-  }, [groupedSuggestions, flatPool, queryToken, matchMode, matchLimit])
+  }, [groupedSuggestions, flatPool, queryToken, matchMode, matchLimit, suggestWhenEmpty])
 
   const matches = useMemo(
     () => matchGroups.flatMap((g) => g.items),
@@ -165,6 +179,7 @@ export function TagAutocompleteInput({
   const applySuggestion = (tag: string) => {
     if (singleTag) {
       onChange(tag)
+      skipOpenOnFocusRef.current = true
       setOpen(false)
       requestAnimationFrame(() => {
         inputRef.current?.focus()
@@ -178,6 +193,7 @@ export function TagAutocompleteInput({
     const next = `${prefix}${tag}${needsSep ? ', ' : ''}${after.replace(/^[\s,;]+/, '')}`
     onChange(next)
     const pos = start + tag.length + (needsSep ? 2 : 0)
+    skipOpenOnFocusRef.current = true
     setOpen(false)
     requestAnimationFrame(() => {
       inputRef.current?.focus()
@@ -246,7 +262,13 @@ export function TagAutocompleteInput({
             setCursor(e.target.selectionStart ?? e.target.value.length)
             setOpen(true)
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            if (skipOpenOnFocusRef.current) {
+              skipOpenOnFocusRef.current = false
+              return
+            }
+            setOpen(true)
+          }}
           onBlur={() => {
             window.setTimeout(() => {
               setOpen(false)

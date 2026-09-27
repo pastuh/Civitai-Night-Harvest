@@ -64,6 +64,8 @@ export type LibraryQualityPairCardProps = {
   browseVideoPreviews?: boolean
   highPreviewOverride?: ModelCardPreviewOverride
   lowPreviewOverride?: ModelCardPreviewOverride
+  onQuickAssign?: (record: InventoryRecord) => void
+  quickAssignOpen?: boolean
 }
 
 function LibraryQualityPairCardInner({
@@ -98,7 +100,9 @@ function LibraryQualityPairCardInner({
   previewCacheBust,
   browseVideoPreviews = false,
   highPreviewOverride,
-  lowPreviewOverride
+  lowPreviewOverride,
+  onQuickAssign,
+  quickAssignOpen = false
 }: LibraryQualityPairCardProps) {
   const t = useT()
   const record = high
@@ -164,6 +168,56 @@ function LibraryQualityPairCardInner({
     return true
   })
   const shownTags = visibleTags.slice(0, 6)
+  const manualLeadLabel =
+    record.routingLocked && !temporary
+      ? (record.routingTag?.trim() || folderLabel || '').trim() || null
+      : null
+  const showMoonLead =
+    Boolean(onQuickAssign) && !manualLeadLabel && !temporary && allTags.length === 1
+  const tagsForRow = manualLeadLabel
+    ? shownTags.filter(
+        (tag) =>
+          cardTagFolderRole(tag, {
+            routingTag: record.routingTag,
+            folderLabel,
+            tagRules
+          }) !== 'final'
+      )
+    : shownTags
+
+  const leadAssignChip =
+    manualLeadLabel || showMoonLead ? (
+      <button
+        type="button"
+        className={`tag-chip library-assign-chip${
+          manualLeadLabel ? ' library-assign-chip-manual' : ''
+        }${quickAssignOpen ? ' is-open' : ''}`}
+        disabled={!onQuickAssign || temporary}
+        title={
+          manualLeadLabel
+            ? t('gallery.manualFolderHint', { folder: manualLeadLabel })
+            : t('gallery.assignFolderByTag')
+        }
+        aria-label={
+          manualLeadLabel
+            ? t('gallery.manualFolderHint', { folder: manualLeadLabel })
+            : t('gallery.assignFolderByTag')
+        }
+        aria-expanded={quickAssignOpen}
+        onClick={(e) => {
+          e.stopPropagation()
+          onQuickAssign?.(record)
+        }}
+      >
+        {manualLeadLabel ? (
+          manualLeadLabel
+        ) : (
+          <span className="moon-flip" aria-hidden>
+            🌙
+          </span>
+        )}
+      </button>
+    ) : null
 
   const toggleBoth = () => {
     if (selected) {
@@ -339,15 +393,18 @@ function LibraryQualityPairCardInner({
         )}
         {metaExtra && <div className="gallery-meta-line muted">{metaExtra}</div>}
         {folderLine || record.routingLocked ? (
-          <div
-            className={`gallery-folder-line ${folderLine ? 'is-assigned' : ''} ${record.routingLocked ? 'is-manual' : ''}`}
-          >
-            {folderLine ? <span className="gallery-folder-path">{folderLine}</span> : null}
-          </div>
+          !manualLeadLabel ? (
+            <div
+              className={`gallery-folder-line ${folderLine ? 'is-assigned' : ''} ${record.routingLocked ? 'is-manual' : ''}`}
+            >
+              {folderLine ? <span className="gallery-folder-path">{folderLine}</span> : null}
+            </div>
+          ) : null
         ) : null}
-        {shownTags.length > 0 && (
+        {(tagsForRow.length > 0 || leadAssignChip) && (
           <div className="tag-row library-card-tags">
-            {shownTags.map((tag) => {
+            {leadAssignChip}
+            {tagsForRow.map((tag) => {
               const role = cardTagFolderRole(tag, {
                 routingTag: record.routingTag,
                 folderLabel,
