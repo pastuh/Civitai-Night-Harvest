@@ -29,7 +29,8 @@ import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import type { ModelDetailTarget } from './ModelDetailPage'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
-import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
+import { useModelCardPreviewOverrides, modelCardPreviewTrackKey } from '../hooks/useModelCardPreviewOverrides'
+import { usePreviewViewportPriority } from '../hooks/usePreviewViewportPriority'
 import {
   exclusionCardPreviewSource,
   resolveModelCardThumb,
@@ -1158,11 +1159,19 @@ export const MissingTab = memo(function MissingTab({
     [visibleItems, localPreviewByModelId, ownedPrimaryByModel]
   )
 
+  const previewWatchKey = useMemo(
+    () => visibleItems.map((item) => `${item.modelId}:${item.versionId ?? 0}`).join(','),
+    [visibleItems]
+  )
+  const previewViewport = usePreviewViewportPriority(mainScrollRef, isActive, previewWatchKey)
+
   const { overrides: previewOverrides, browseCards, markPreviewBroken } =
     useModelCardPreviewOverrides(previewSources, {
       enabled: isActive,
       contentFilter: 'all',
-      fetchVideo: browseVideoPreviews
+      fetchVideo: browseVideoPreviews,
+      priorityVersionIdsRef: previewViewport.idsRef,
+      priorityEpoch: previewViewport.epoch
     })
 
   const flushPendingSeen = useCallback(() => {
@@ -1715,6 +1724,10 @@ export const MissingTab = memo(function MissingTab({
               .join(' ')
             const owned = ownedPrimaryByModel.get(item.modelId)
             const versionId = item.versionId ?? owned?.versionId ?? 0
+            const previewTrackKey = modelCardPreviewTrackKey({
+              modelId: item.modelId,
+              versionId
+            })
             const browseCard = versionId > 0 ? browseCards[versionId] : undefined
             const versionLabel =
               (item.versionName ?? '').trim() ||
@@ -1734,12 +1747,12 @@ export const MissingTab = memo(function MissingTab({
             })
             const cardThumb = resolveModelCardThumb(
               previewSource,
-              versionId > 0 ? previewOverrides[versionId] : undefined,
+              previewTrackKey !== 0 ? previewOverrides[previewTrackKey] : undefined,
               browseCard
             )
             const videoAvailability = videoPreviewAvailabilityFor(
               previewSource,
-              versionId > 0 ? previewOverrides[versionId] : undefined
+              previewTrackKey !== 0 ? previewOverrides[previewTrackKey] : undefined
             )
             const nsfwFields = resolveMissingNsfw(item)
             const ratingInfo = describeNsfwRatingForCard(
@@ -1777,8 +1790,16 @@ export const MissingTab = memo(function MissingTab({
                 videoPreviews={browseVideoPreviews}
                 videoAvailability={videoAvailability}
                 videoFetch={previewSource}
+                previewVersionId={previewTrackKey !== 0 ? previewTrackKey : undefined}
+                previewLoading={
+                  previewTrackKey === 0 || previewViewport.ids.has(previewTrackKey)
+                    ? 'eager'
+                    : 'lazy'
+                }
                 onPreviewAllFailed={
-                  versionId > 0 ? () => markPreviewBroken(versionId) : undefined
+                  previewTrackKey !== 0
+                    ? () => markPreviewBroken(previewTrackKey)
+                    : undefined
                 }
                 onOpen={onOpenModelDetail ? () => openDetails(item) : undefined}
                 titleActions={

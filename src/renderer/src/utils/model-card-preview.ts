@@ -22,6 +22,11 @@ export type ModelCardPreviewOverride = {
   videoPreviewUrls?: string[]
   /** Persisted in DB — version confirmed to have no Civitai video preview. */
   videoAbsent?: boolean
+  /**
+   * Stub/cache URLs failed in the UI — ignore stored paths until a fresh
+   * resolve fills previewUrls (keeps the card on shimmer instead of a dead "No image").
+   */
+  discardStored?: boolean
 }
 
 export type VideoPreviewAvailability = 'available' | 'absent' | 'unknown'
@@ -121,6 +126,19 @@ export function resolveModelCardThumb(
   cache?: WatchRuleTestModel | null,
   localPreviewPath?: string
 ): { urls: string[]; videoUrl?: string } {
+  if (override?.discardStored) {
+    const imageUrls = normalizedImageCandidates(
+      override.previewUrls,
+      override.previewUrl ? [override.previewUrl] : undefined,
+      override.videoPreviewUrls,
+      override.videoPreviewUrl ? [override.videoPreviewUrl] : undefined
+    )
+    return {
+      urls: mapPreviewSrcs(imageUrls),
+      videoUrl: videoPreviewUrlFor(override)
+    }
+  }
+
   const videoUrl =
     videoPreviewUrlFor(override ?? {}) ??
     videoPreviewUrlFor(cache ?? {}) ??

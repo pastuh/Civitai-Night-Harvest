@@ -1233,7 +1233,8 @@ export const en = {
     videoBadgeTitle: 'Video preview on hover',
     videoChecking: 'Checking…',
     videoLoading: 'Loading video…',
-    imageLoading: 'Loading preview…'
+    imageLoading: 'Loading preview…',
+    imageLoadingRemote: 'Loading preview from Civitai…'
   },
   gallery: {
     titleHeading: 'Library',

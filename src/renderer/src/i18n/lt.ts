@@ -1243,7 +1243,8 @@ export const lt: Messages = {
     videoBadgeTitle: 'Video peržiūra užvedus pelę',
     videoChecking: 'Tikrinama…',
     videoLoading: 'Kraunama video…',
-    imageLoading: 'Kraunamas preview…'
+    imageLoading: 'Kraunamas preview…',
+    imageLoadingRemote: 'Kraunamas preview iš Civitai…'
   },
   gallery: {
     titleHeading: 'Biblioteka',

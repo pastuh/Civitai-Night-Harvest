@@ -2228,6 +2228,7 @@ label.field-label {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
   /* Equal-height rows + sticky footer actions need real layout (not content-visibility stubs). */
   content-visibility: visible;
   contain: layout style;
@@ -2602,6 +2603,7 @@ button.missing-tag-chip.is-clickable:hover {
   flex-direction: column;
   flex: 1;
   gap: 2px;
+  min-width: 0;
   min-height: 0;
 }
 

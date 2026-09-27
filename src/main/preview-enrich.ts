@@ -105,7 +105,7 @@ function modelNeedsPreview(model: Pick<WatchRuleTestModel, 'previewUrl' | 'previ
 
 export async function applyCachedPreviews(
   results: ResolvedPreview[],
-  options?: { forceVersionIds?: Set<number> }
+  options?: { forceVersionIds?: Set<number>; deferDownload?: boolean }
 ): Promise<ResolvedPreview[]> {
   await mapWithConcurrency(results, 6, async (entry) => {
     if (!entry.previewUrls.length) return
@@ -113,7 +113,10 @@ export async function applyCachedPreviews(
     if (force) {
       invalidateCachedPreviews(entry.previewUrls.filter((u) => u.startsWith('http')))
     }
-    entry.previewUrls = await resolveCachedPreviewUrls(entry.previewUrls, { force })
+    entry.previewUrls = await resolveCachedPreviewUrls(entry.previewUrls, {
+      force,
+      deferDownload: options?.deferDownload === true
+    })
     entry.previewUrl = entry.previewUrls[0]
   })
   return results
@@ -310,12 +313,13 @@ export async function resolvePreviewsBatch(
     items.filter((item) => item.refreshCache === true).map((item) => item.versionId)
   )
   const interactive = items.some((item) => item.interactive)
-  // Always map CDN URLs → local preview cache. Skipping this for "interactive"
-  // left Early access / Session pause cards on "No image" even when cached.
+  // Interactive (on-screen cards / model details): return CDN URLs immediately and
+  // warm the disk cache in the background. Blocking downloads made Missing thumbs
+  // wait far longer than opening the same model in details.
   await applyCachedPreviews(results, {
-    forceVersionIds: forceVersionIds.size ? forceVersionIds : undefined
+    forceVersionIds: forceVersionIds.size ? forceVersionIds : undefined,
+    deferDownload: interactive
   })
-  void interactive
   return results.map((entry) => (entry ? applyPreferredToResolved(entry) : entry))
 }
 

@@ -84,13 +84,44 @@ export async function cachePreviewUrl(
 /** Prefer cached local paths; keep original HTTPS as fallback when media:// fails in UI. */
 export async function resolveCachedPreviewUrls(
   urls: string[],
-  options?: { force?: boolean }
+  options?: { force?: boolean; /** Skip network download — use disk hit or keep HTTPS. */ deferDownload?: boolean }
 ): Promise<string[]> {
   const unique = urls.filter(Boolean)
   if (!unique.length) return []
 
   const out: string[] = []
   const seen = new Set<string>()
+  const deferDownload = options?.deferDownload === true
+
+  if (deferDownload) {
+    for (const url of unique) {
+      if (options?.force && (url.startsWith('http://') || url.startsWith('https://'))) {
+        invalidateCachedPreview(url)
+      }
+      const existing =
+        !options?.force && (url.startsWith('http://') || url.startsWith('https://'))
+          ? readCachedPreviewPath(url)
+          : !url.startsWith('http://') &&
+              !url.startsWith('https://') &&
+              existsSync(url) &&
+              statSync(url).size >= 128
+            ? url
+            : null
+      if (existing && !seen.has(existing)) {
+        seen.add(existing)
+        out.push(existing)
+      }
+      if (url && !seen.has(url)) {
+        seen.add(url)
+        out.push(url)
+      }
+      // Warm disk cache without blocking the card thumb.
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        void cachePreviewUrl(url, options?.force ? { force: true } : undefined).catch(() => {})
+      }
+    }
+    return out
+  }
 
   let index = 0
   const workerCount = Math.min(WORKERS, unique.length)

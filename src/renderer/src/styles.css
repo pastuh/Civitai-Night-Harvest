@@ -1979,6 +1979,8 @@ body.is-app-busy * {
 
 .gallery-card {
   position: relative;
+  /* Allow grid columns to stay equal — long titles ellipsis instead of stretching the track. */
+  min-width: 0;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-top: 3px solid var(--card-accent, var(--border));
@@ -2548,6 +2550,22 @@ body.is-app-busy * {
   animation: preview-shimmer-sweep 2.2s ease-in-out infinite;
 }
 
+/** API resolve in progress — same soft stripe color, wider bar than local-cache load. */
+.preview-thumb-shimmer.is-remote::after {
+  width: 68%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    color-mix(in srgb, var(--muted) 0%, transparent) 36%,
+    color-mix(in srgb, var(--muted) 7%, transparent) 47%,
+    color-mix(in srgb, var(--muted) 12%, transparent) 50%,
+    color-mix(in srgb, var(--muted) 7%, transparent) 53%,
+    color-mix(in srgb, var(--muted) 0%, transparent) 64%,
+    transparent 100%
+  );
+  animation: preview-shimmer-sweep 2.2s ease-in-out infinite;
+}
+
 @keyframes preview-shimmer-sweep {
   0% {
     transform: skewX(-16deg) translateX(0);
@@ -2571,6 +2589,11 @@ body.is-app-busy * {
     opacity: 0.25;
     left: 30%;
     width: 24%;
+  }
+
+  .preview-thumb-shimmer.is-remote::after {
+    opacity: 0.3;
+    width: 40%;
   }
 }
 
@@ -2937,6 +2960,7 @@ body.is-app-busy * {
 
 .gallery-card-body {
   position: relative;
+  min-width: 0;
   padding: 0 10px 8px;
 }
 
@@ -3150,17 +3174,28 @@ body.is-app-busy * {
   bottom: 6px;
 }
 
+/* Truncate long titles to 2 lines — font size / weight from `.gallery-card-body strong`. */
+.gallery-card-body .gallery-card-title-row > strong {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  hyphens: none;
+}
+
 .gallery-card-title-row strong {
   flex: 1;
   min-width: 0;
   display: block;
   color: var(--gallery-card-title-fg, rgba(255, 255, 255, 0.94));
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  word-break: normal;
-  hyphens: none;
 }
 
 .gallery-card-title-actions {

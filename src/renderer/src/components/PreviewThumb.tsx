@@ -70,10 +70,19 @@ export function PreviewThumb({
   const [failed, setFailed] = useState(false)
   const [imageLoaded, setImageLoaded] = useState(false)
   const [shimmerVisible, setShimmerVisible] = useState(true)
-  const [awaitTimedOut, setAwaitTimedOut] = useState(false)
+  /** Local/cache URLs died — keep remote shimmer while parent refetches from API. */
+  const [awaitingRemote, setAwaitingRemote] = useState(false)
+  /**
+   * After an API wait, keep the wide (remote) shimmer until the image paints —
+   * switching to the narrow cache shimmer first causes a visible "wave".
+   */
+  const [remoteShimmerUntilPaint, setRemoteShimmerUntilPaint] = useState(
+    () => urls.filter(Boolean).length === 0 && !videoUrl?.trim()
+  )
   const [pointerInside, setPointerInside] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   const loadGenRef = useRef(0)
+  const hadNoCandidatesRef = useRef(candidates.length === 0)
   const activeSrc = candidates.length
     ? candidates[Math.min(index, candidates.length - 1)]
     : ''
@@ -104,12 +113,18 @@ export function PreviewThumb({
   }
 
   useEffect(() => {
+    const len = candidates.length
+    const cameFromEmpty = hadNoCandidatesRef.current
+    hadNoCandidatesRef.current = len === 0
+
     loadGenRef.current += 1
     setIndex(0)
     setFailed(false)
+    setAwaitingRemote(false)
     setImageLoaded(false)
     setShimmerVisible(true)
-    setAwaitTimedOut(false)
+    // Empty → API wait, or first URLs after empty: keep wide shimmer until paint.
+    setRemoteShimmerUntilPaint(len === 0 || cameFromEmpty)
     setShowVideoLayer(false)
     setResolvedVideoUrl(undefined)
     setPlayableVideoSrc('')
@@ -119,15 +134,22 @@ export function PreviewThumb({
     cacheKeyRef.current = ''
   }, [candidates.join('|'), videoUrl, videoAvailability])
 
-  // Empty urls while EA/Browse resolve runs — shimmer instead of instant "No image".
+  const onAllFailedRef = useRef(onAllFailed)
+  onAllFailedRef.current = onAllFailed
+  const emptyKickSentRef = useRef(false)
+
+  // No local URL yet — nudge parent once to resolve from API; keep shimmer (never "No image").
   useEffect(() => {
-    if (candidates.length || failed) {
-      setAwaitTimedOut(false)
+    if (candidates.length) {
+      emptyKickSentRef.current = false
       return
     }
-    const timer = window.setTimeout(() => setAwaitTimedOut(true), 12_000)
+    if (emptyKickSentRef.current) return
+    emptyKickSentRef.current = true
+    // Let the first paint show remote shimmer, then ask for an API resolve.
+    const timer = window.setTimeout(() => onAllFailedRef.current?.(), 0)
     return () => window.clearTimeout(timer)
-  }, [candidates.length, failed])
+  }, [candidates.length])
 
   useEffect(() => {
     loadGenRef.current += 1
@@ -142,6 +164,7 @@ export function PreviewThumb({
     const finish = () => {
       if (gen !== loadGenRef.current) return
       setImageLoaded(true)
+      setRemoteShimmerUntilPaint(false)
     }
     if (typeof el.decode === 'function') {
       void el.decode().then(finish).catch(finish)
@@ -303,26 +326,27 @@ export function PreviewThumb({
   const showVideoBadge =
     videoPreviews && availability === 'available' && !showVideoLayer && !showSpinner
 
-  const showEmpty = failed || (!candidates.length && awaitTimedOut)
-  if (showEmpty) {
+  // Waiting for API (no URL yet, or cache URLs died and parent is refetching).
+  if (!candidates.length || awaitingRemote) {
+    return (
+      <div
+        className={`${className} placeholder preview-thumb-shell preview-thumb-awaiting`}
+        aria-busy="true"
+        aria-label={t('previewThumb.imageLoadingRemote')}
+      >
+        <span className="preview-thumb-shimmer is-remote" aria-hidden />
+      </div>
+    )
+  }
+
+  // Only after local candidates failed and there is no API retry hook.
+  if (failed) {
     return (
       <div className={`${className} placeholder preview-empty`}>
         <span className="preview-empty-icon" aria-hidden>
           🖼
         </span>
         <span className="preview-empty-label">No image</span>
-      </div>
-    )
-  }
-
-  if (!candidates.length) {
-    return (
-      <div
-        className={`${className} placeholder preview-thumb-shell preview-thumb-awaiting`}
-        aria-busy="true"
-        aria-label={t('previewThumb.imageLoading')}
-      >
-        <span className="preview-thumb-shimmer" aria-hidden />
       </div>
     )
   }
@@ -351,7 +375,7 @@ export function PreviewThumb({
     >
       {showImageShimmer ? (
         <span
-          className={`preview-thumb-shimmer${imageLoaded ? ' is-fading' : ''}`}
+          className={`preview-thumb-shimmer${remoteShimmerUntilPaint ? ' is-remote' : ''}${imageLoaded ? ' is-fading' : ''}`}
           aria-hidden
           onTransitionEnd={(e) => {
             if (e.propertyName !== 'opacity') return
@@ -372,9 +396,16 @@ export function PreviewThumb({
           setShimmerVisible(true)
           if (index + 1 < candidates.length) {
             setIndex((prev) => prev + 1)
+            return
+          }
+          // Prefer API refetch shimmer over a flash of "No image".
+          if (onAllFailedRef.current) {
+            setAwaitingRemote(true)
+            setRemoteShimmerUntilPaint(true)
+            setFailed(false)
+            onAllFailedRef.current()
           } else {
             setFailed(true)
-            onAllFailed?.()
           }
           onError?.()
         }}

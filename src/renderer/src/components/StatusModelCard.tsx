@@ -37,6 +37,8 @@ interface Props {
   onPreviewAllFailed?: () => void
   /** Prefer eager on dense status grids — lazy reloads thumbs after Allow layout shifts. */
   previewLoading?: 'lazy' | 'eager'
+  /** Lets the page prefer preview fetches for cards actually on screen. */
+  previewVersionId?: number
 }
 
 export const StatusModelCard = memo(function StatusModelCard({
@@ -62,7 +64,8 @@ export const StatusModelCard = memo(function StatusModelCard({
   onPointerEnter,
   onPointerLeave,
   onPreviewAllFailed,
-  previewLoading = 'eager'
+  previewLoading = 'eager',
+  previewVersionId
 }: Props) {
   const thumbUrls = mapPreviewSrcs(
     previewUrls?.length ? previewUrls : previewUrl ? [previewUrl] : []
@@ -71,6 +74,9 @@ export const StatusModelCard = memo(function StatusModelCard({
   return (
     <div
       className={`gallery-card status-gallery-card${onOpen ? ' status-model-card-clickable' : ''}${className ? ` ${className}` : ''}`}
+      data-preview-version={
+        previewVersionId != null && previewVersionId > 0 ? String(previewVersionId) : undefined
+      }
       data-ban-seen-pending={
         dataBanSeenPending != null && dataBanSeenPending > 0
           ? String(dataBanSeenPending)
