@@ -670,6 +670,19 @@ export function SettingsTab({
             {t('settings.fields.autoDownloadNewVersions')}
           </label>
         </div>
+        <div className="field field-checkbox">
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.allowHighPriorityTagBypass ?? false}
+              onChange={(e) => update('allowHighPriorityTagBypass', e.target.checked)}
+            />
+            {t('settings.fields.allowHighPriorityTagBypass')}
+          </label>
+          <span className="muted settings-field-note">
+            {t('settings.notes.allowHighPriorityTagBypass')}
+          </span>
+        </div>
         <RangeSlider
           label={t('settings.fields.scanInterval')}
           value={draft.scanIntervalMinutes}

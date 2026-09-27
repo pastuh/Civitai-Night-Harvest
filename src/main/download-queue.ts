@@ -24,7 +24,6 @@ import {
 import { formatWaitDuration } from '../shared/utils'
 import {
   shouldPromptTagAssignment,
-  modelHasPolicyTag,
   findRuleForTag,
   normalizeHiddenTags,
   pickBestMatchingFolderTag,
@@ -48,7 +47,7 @@ function countAutoPipelineItems(items: DownloadQueueItem[]): number {
 import * as inventory from './inventory'
 import { clearMissingModel, noteMissingModel404 } from './missing-models'
 import { deleteModelFromLibrary } from './model-delete'
-import { getSettings, getTagRules, getWatchRules, shouldCrawlAutoDownload } from './settings-store'
+import { getSettings, getTagRules, getTagPolicyOptions, getWatchRules, shouldCrawlAutoDownload } from './settings-store'
 import { sendToRenderer } from './window-notify'
 import { repairBrokenInventoryPaths } from './library-sync'
 import { checkConfiguredOutputFoldersReachable } from './output-paths'
@@ -514,6 +513,7 @@ export class DownloadQueue {
     const settings = getSettings()
     const pausedTags = settings.hiddenTags ?? []
     const bannedTags = settings.bannedTags ?? []
+    const policyOpts = getTagPolicyOptions()
     const atAutoCap = () =>
       !manual && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP
 
@@ -522,7 +522,7 @@ export class DownloadQueue {
       if (atAutoCap()) break
       if (
         !inventory.isTagSkipAllowed(item.modelId) &&
-        queueItemBlockedByPolicyTags(item, pausedTags, bannedTags)
+        queueItemBlockedByPolicyTags(item, pausedTags, bannedTags, policyOpts)
       ) {
         // Awaiting-access stays on EA; do not delete for pause alone.
         if (isAwaitingAccessFailureKind(item.failureKind)) continue
@@ -579,7 +579,8 @@ export class DownloadQueue {
         queueItemBlockedByPolicyTags(
           { civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag },
           pausedTags,
-          bannedTags
+          bannedTags,
+          policyOpts
         )
       ) {
         if (isAwaitingAccessFailureKind(d.failureKind)) continue
@@ -817,7 +818,12 @@ export class DownloadQueue {
     if (
       meta.manual !== true &&
       !inventory.isTagSkipAllowed(request.modelId) &&
-      modelHasPolicyTag(meta.civitaiTags ?? [], pausedTags, bannedTags)
+      queueItemBlockedByPolicyTags(
+        { civitaiTags: meta.civitaiTags, routingTag: request.routingTag ?? meta.routingTag },
+        pausedTags,
+        bannedTags,
+        getTagPolicyOptions()
+      )
     ) {
       return ''
     }
@@ -976,13 +982,14 @@ export class DownloadQueue {
     const settings = getSettings()
     const paused = settings.hiddenTags ?? []
     const banned = settings.bannedTags ?? []
+    const policyOpts = getTagPolicyOptions()
     const explicit = skipTags != null ? normalizeHiddenTags(skipTags) : null
     if (explicit ? !explicit.length : !effectiveSkipTags(paused, banned).length) return 0
 
     const isBlocked = (item: { civitaiTags?: string[]; routingTag?: string; modelId?: number }) => {
       if (item.modelId && inventory.isTagSkipAllowed(item.modelId)) return false
-      if (explicit) return queueItemBlockedByPolicyTags(item, explicit, [])
-      return queueItemBlockedByPolicyTags(item, paused, banned)
+      if (explicit) return queueItemBlockedByPolicyTags(item, explicit, [], policyOpts)
+      return queueItemBlockedByPolicyTags(item, paused, banned, policyOpts)
     }
 
     let removed = 0
@@ -1509,6 +1516,7 @@ export class DownloadQueue {
     const settings = getSettings()
     const pausedTags = settings.hiddenTags ?? []
     const bannedTags = settings.bannedTags ?? []
+    const policyOpts = getTagPolicyOptions()
     for (const d of inventory.getAllDeferredDownloads()) {
       if (inventory.hasVersion(d.versionId)) continue
       if (inventory.isModelBanned(d.modelId)) continue
@@ -1518,7 +1526,8 @@ export class DownloadQueue {
         queueItemBlockedByPolicyTags(
           { civitaiTags: d.civitaiTags ?? [], routingTag: d.routingTag },
           pausedTags,
-          bannedTags
+          bannedTags,
+          policyOpts
         )
       ) {
         if (isAwaitingAccessFailureKind(d.failureKind)) {
@@ -2223,8 +2232,11 @@ export class DownloadQueue {
         if (result.failureKind === 'interrupted') this.scheduleQuickRetry()
       } else if (result.status === 'skipped') {
         const reason = result.reason ?? 'Skipped'
+        if (result.civitaiTags?.length) item.civitaiTags = result.civitaiTags
         const quiet =
-          /already in inventory|already exists|excluded from downloads/i.test(reason)
+          /already in inventory|already exists|excluded from downloads|Blocked by (paused|banned) tag/i.test(
+            reason
+          )
         if (quiet) {
           if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
           logItem('info', `Skip ${itemLabel()}: ${reason}`)

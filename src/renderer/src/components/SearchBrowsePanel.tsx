@@ -160,6 +160,8 @@ interface Props {
   onHiddenTagsChange?: (tags: string[]) => Promise<void>
   /** Permanent ban-by-tag — purple chips; also skip in gallery when hide blocked. */
   bannedTags?: string[]
+  /** Pause/ban do not hide/skip when a Tag Folders rule has priority ≥ 2. */
+  allowHighPriorityTagBypass?: boolean
   /** Forgotten models — always hidden in Browse (even when Show banned). */
   forgottenModelIds?: Set<number>
   crawlStatus?: RuleCrawlStatus | null
@@ -523,6 +525,7 @@ export function SearchBrowsePanel({
   hiddenTags = [],
   onHiddenTagsChange,
   bannedTags = [],
+  allowHighPriorityTagBypass = false,
   forgottenModelIds,
   crawlStatus,
   enabledBrowseRules = [],
@@ -580,6 +583,14 @@ export function SearchBrowsePanel({
     startTransition(() => setBanMode(next))
     void onBanFunctionModeChange?.(next)
   }, [banMode, onBanFunctionModeChange])
+
+  const tagPolicyOptions = useMemo(
+    () => ({
+      highPriorityBypass: allowHighPriorityTagBypass,
+      tagRules
+    }),
+    [allowHighPriorityTagBypass, tagRules]
+  )
 
   const awaitingAccessVersionIds = useMemo(
     () => deferredVersionIds ?? new Set<number>(),
@@ -1440,7 +1451,7 @@ export function SearchBrowsePanel({
       if (!inActiveQueue) {
         if (forgottenModelIds?.has(m.id)) continue
         if (hideBanned && m.isBanned) continue
-        if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) continue
+        if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags, tagPolicyOptions)) continue
         if (hideAwaitingAccess && awaitingAccessVersionIds.has(m.versionId)) continue
         if (onlyMissing && m.inInventory) continue
         if (tagFilter && !modelHasFuzzyTag(m.tags, tagFilter)) continue
@@ -1469,6 +1480,7 @@ export function SearchBrowsePanel({
     forgottenPendingVersionIds,
     hiddenTags,
     bannedTags,
+    tagPolicyOptions,
     forgottenModelIds,
     tagFilter,
     deferredSearchQuery,
@@ -1874,7 +1886,7 @@ export function SearchBrowsePanel({
         counts.banned++
         continue
       }
-      if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags)) {
+      if (!showBlockedModels && modelHasPolicyTag(m.tags, hiddenTags, bannedTags, tagPolicyOptions)) {
         counts.skipped++
         continue
       }
@@ -1901,6 +1913,7 @@ export function SearchBrowsePanel({
     showBlockedModels,
     hiddenTags,
     bannedTags,
+    tagPolicyOptions,
     onlyMissing,
     result.crawlSource,
     tagFilter,
@@ -1988,9 +2001,9 @@ export function SearchBrowsePanel({
           !m.isEarlyAccess &&
           !awaitingAccessVersionIds.has(m.versionId) &&
           !pipelineVersionIds.has(m.versionId) &&
-          modelHasPolicyTag(m.tags, hiddenTags, bannedTags)
+          modelHasPolicyTag(m.tags, hiddenTags, bannedTags, tagPolicyOptions)
       ).length,
-    [ruleScopedModels, awaitingAccessVersionIds, pipelineVersionIds, hiddenTags, bannedTags]
+    [ruleScopedModels, awaitingAccessVersionIds, pipelineVersionIds, hiddenTags, bannedTags, tagPolicyOptions]
   )
 
   const eligibleNotQueuedCount = Math.max(0, notQueuedMissingCount - blockedBySkipTagCount)
@@ -2042,7 +2055,7 @@ export function SearchBrowsePanel({
         excluded++
         continue
       }
-      if (modelHasPolicyTag(m.tags ?? [], hiddenTags, bannedTags)) {
+      if (modelHasPolicyTag(m.tags ?? [], hiddenTags, bannedTags, tagPolicyOptions)) {
         skipTag++
         continue
       }
@@ -2079,6 +2092,7 @@ export function SearchBrowsePanel({
     ruleScopedModels,
     hiddenTags,
     bannedTags,
+    tagPolicyOptions,
     awaitingAccessVersionIds,
     localBanned,
     localUnbanned,
@@ -3926,7 +3940,7 @@ const BrowseModelGrid = memo(function BrowseModelGrid({
             tagRules={tagRules}
             loraFolder={loraFolder}
             checkpointFolder={checkpointFolder}
-            tagSkipBlocked={modelHasPolicyTag(m.tags, hiddenTags, bannedTags)}
+            tagSkipBlocked={modelHasPolicyTag(m.tags, hiddenTags, bannedTags, tagPolicyOptions)}
             blockedTags={bannedTags}
             pausedTags={hiddenTags}
             onTagClick={onTagClick}

@@ -1044,6 +1044,7 @@ export function WatchRulesTab({
           onRefreshInventory={onRefreshInventory}
           hiddenTags={settings.hiddenTags ?? []}
           bannedTags={settings.bannedTags ?? []}
+          allowHighPriorityTagBypass={settings.allowHighPriorityTagBypass ?? false}
           forgottenModelIds={forgottenModelIds}
           onHiddenTagsChange={async (tags) => onSaveSettings({ hiddenTags: tags })}
           crawlStatus={crawlStatus}

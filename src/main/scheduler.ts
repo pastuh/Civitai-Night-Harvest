@@ -28,7 +28,7 @@ import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, 
 import { DownloadQueue, AUTO_QUEUE_PIPELINE_CAP } from './download-queue'
 import * as inventory from './inventory'
 import { deleteModelFromLibrary } from './model-delete'
-import { getSettings, getWatchRules, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
+import { getSettings, getWatchRules, getTagPolicyOptions, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
 import { isNetworkOfflineCircuitOpen } from '../shared/network-retry'
@@ -789,7 +789,7 @@ export class ScanScheduler {
 
       for (const m of gallery) {
         scanned++
-        const hit = firstPolicyMatch(m.tags ?? [], newlyPaused, newlyBanned)
+        const hit = firstPolicyMatch(m.tags ?? [], newlyPaused, newlyBanned, getTagPolicyOptions())
         if (hit) {
           // EA / awaiting-access stay on Early Access — pause/ban is an indicator there.
           if (
@@ -2295,6 +2295,7 @@ export class ScanScheduler {
     const settings = getSettings()
     const paused = settings.hiddenTags ?? []
     const banned = settings.bannedTags ?? []
+    const policyOpts = getTagPolicyOptions()
     const sets = this.getBrowseStatsSets()
     let owned = 0
     let excluded = 0
@@ -2318,7 +2319,7 @@ export class ScanScheduler {
         excluded++
         return
       }
-      if (!sets.tagSkipAllow.has(m.id) && modelHasPolicyTag(m.tags ?? [], paused, banned)) {
+      if (!sets.tagSkipAllow.has(m.id) && modelHasPolicyTag(m.tags ?? [], paused, banned, policyOpts)) {
         skipTag++
         return
       }

@@ -957,21 +957,60 @@ export function matchingPolicyTags(
   return out
 }
 
+/** Folder-rule priority that can override pause/ban when the settings toggle is on (≥ 2, or fixed 0). */
+export const TAG_POLICY_HIGH_PRIORITY_MIN = 2
+
+export type TagPolicyOptions = {
+  /** When true, a matching tag-folder rule at priority ≥ 2 (or fixed 0) cancels pause/ban block. */
+  highPriorityBypass?: boolean
+  tagRules?: TagFolderRule[]
+}
+
+/** True when any model tag matches a Tag Folders rule at high priority (≥ 2 or fixed 0). */
+export function modelHasHighPriorityFolderTag(
+  modelTags: string[] | undefined,
+  tagRules: TagFolderRule[] | undefined,
+  minPriority: number = TAG_POLICY_HIGH_PRIORITY_MIN
+): boolean {
+  if (!tagRules?.length) return false
+  const matching = getMatchingFolderTags(modelTags ?? [], tagRules)
+  if (!matching.length) return false
+  const minRank = tagPriorityRank(minPriority)
+  for (const tag of matching) {
+    if (tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules))) >= minRank) return true
+  }
+  return false
+}
+
+function policyBypassedByHighPriority(
+  modelTags: string[] | undefined,
+  options?: TagPolicyOptions
+): boolean {
+  return Boolean(
+    options?.highPriorityBypass && modelHasHighPriorityFolderTag(modelTags, options.tagRules)
+  )
+}
+
 export function firstPolicyMatch(
   modelTags: string[] | undefined,
   pausedTags: string[] | undefined,
-  bannedTags: string[] | undefined
+  bannedTags: string[] | undefined,
+  options?: TagPolicyOptions
 ): PolicyTagMatch | null {
   const hits = matchingPolicyTags(modelTags, pausedTags, bannedTags)
-  return hits.find((h) => h.kind === 'banned') ?? hits[0] ?? null
+  const hit = hits.find((h) => h.kind === 'banned') ?? hits[0] ?? null
+  if (!hit) return null
+  if (policyBypassedByHighPriority(modelTags, options)) return null
+  return hit
 }
 
 export function modelHasPolicyTag(
   modelTags: string[] | undefined,
   pausedTags: string[] | undefined,
-  bannedTags: string[] | undefined
+  bannedTags: string[] | undefined,
+  options?: TagPolicyOptions
 ): boolean {
-  return matchingPolicyTags(modelTags, pausedTags, bannedTags).length > 0
+  return firstPolicyMatch(modelTags, pausedTags, bannedTags, options) != null
 }
 
 /** Permanent ban-by-tag chip (purple). */
@@ -1017,8 +1056,14 @@ export function queueItemBlockedByHiddenTags(
 export function queueItemBlockedByPolicyTags(
   item: { civitaiTags?: string[]; routingTag?: string },
   pausedTags: string[] | undefined,
-  bannedTags: string[] | undefined
+  bannedTags: string[] | undefined,
+  options?: TagPolicyOptions
 ): boolean {
+  const tagsForPriority = [
+    ...(item.civitaiTags ?? []),
+    ...(item.routingTag?.trim() ? [item.routingTag.trim()] : [])
+  ]
+  if (policyBypassedByHighPriority(tagsForPriority, options)) return false
   return queueItemBlockedByHiddenTags(item, effectiveSkipTags(pausedTags, bannedTags))
 }
 

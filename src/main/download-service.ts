@@ -12,15 +12,18 @@ import type {
   DownloadResult,
   TagFolderRule
 } from '../shared/types'
-import { extractModelFileMeta, buildModelSlug, pickPrimaryFile, resolveUniqueSlug, resolveUniqueSlugForVersion, resolveVersionPreviewCandidates } from '../shared/utils'
-import { resolveModelOutputFolder, UNSORTED_FOLDER_NAME } from '../shared/tag-routing'
-import { findRuleForTag } from '../shared/tag-routing'
+import { extractModelFileMeta, buildModelSlug, pickPrimaryFile, resolveUniqueSlug, resolveUniqueSlugForVersion, resolveVersionPreviewCandidates, getModelPageUrl, resolveModelPreviewUrl } from '../shared/utils'
+import {
+  resolveModelOutputFolder,
+  UNSORTED_FOLDER_NAME,
+  firstPolicyMatch
+} from '../shared/tag-routing'
 import {
   resolveDownloadDomainForVersion,
   isDownloadDomainFailure,
   headersForDownloadDomain
 } from '../shared/download-domain'
-import { modelStatsFromSearch, checkpointTypeLabel } from '../shared/civitai-meta'
+import { modelStatsFromSearch, checkpointTypeLabel, pickVersionStats } from '../shared/civitai-meta'
 import { sha256File } from './library-hash-verify'
 import type { ClassifiedDownloadFailure } from '../shared/download-errors'
 import {
@@ -337,6 +340,53 @@ export class DownloadService {
           reason: 'Banned',
           modelId: model.id,
           versionId
+        }
+      }
+
+      // Safety net: Browse/search often omits tags; only the model detail response is complete.
+      // Brand-new models matching pause/ban → Missing (not Library). Owned updates still allowed.
+      if (
+        !request.force &&
+        !inventory.isTagSkipAllowed(model.id) &&
+        !inventory.isModelOwned(model.id)
+      ) {
+        const policyHit = firstPolicyMatch(
+          model.tags ?? [],
+          settings.hiddenTags,
+          settings.bannedTags,
+          {
+            highPriorityBypass: settings.allowHighPriorityTagBypass === true,
+            tagRules: getTagRules()
+          }
+        )
+        if (policyHit) {
+          const domain = client.getDomain()
+          inventory.recordTagSkipReview({
+            modelId: model.id,
+            versionId,
+            modelName: model.name,
+            modelType: model.type,
+            author: model.creator?.username || '',
+            baseModel: version.baseModel || '',
+            previewUrl:
+              request.previewUrl?.trim() ||
+              resolveModelPreviewUrl(model) ||
+              undefined,
+            pageUrl: getModelPageUrl(domain, model.id, versionId),
+            sourceDomain: domain,
+            tags: model.tags ?? [],
+            blockedTag: policyHit.policyTag,
+            matchedModelTag: policyHit.modelTag,
+            policy: policyHit.kind,
+            ...pickVersionStats(version)
+          })
+          return {
+            status: 'skipped',
+            reason: `Blocked by ${policyHit.kind} tag "${policyHit.policyTag}"`,
+            modelId: model.id,
+            versionId,
+            civitaiTags: model.tags ?? []
+          }
         }
       }
 

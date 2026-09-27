@@ -17,10 +17,10 @@ import type {
 import { buildModelSlug, parseModelId, apiNsfwParam, apiEarlyAccessParam, apiTagSearchVariants, matchesContentFilter, resolveSearchDomains, aggregateResultTags, browseModelDedupeKey, preferBrowseModel, domainLabel, civitaiSearchParamsFromRule, parseRuleFilterTags, getDefaultFolderForType, isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import {
   findRuleForTag,
-  modelHasPolicyTag,
   normalizeHiddenTags,
   parseTagRuleNames,
   pickBestMatchingFolderTag,
+  queueItemBlockedByPolicyTags,
   shouldSkipTagBulkMove
 } from '../shared/tag-routing'
 import { modelHasExactTag } from '../shared/tag-fuzzy'
@@ -53,6 +53,7 @@ import {
   getSettings,
   getAppearanceBootstrap,
   getTagRules,
+  getTagPolicyOptions,
   getWatchRules,
   saveSettings,
   saveSettingsFromUi,
@@ -2009,7 +2010,15 @@ export function initIpc(): void {
     if (
       meta?.manual !== true &&
       !inventory.isTagSkipAllowed(request.modelId) &&
-      modelHasPolicyTag(meta?.civitaiTags ?? [], settings.hiddenTags, settings.bannedTags)
+      queueItemBlockedByPolicyTags(
+        {
+          civitaiTags: meta?.civitaiTags,
+          routingTag: request.routingTag ?? meta?.routingTag
+        },
+        settings.hiddenTags,
+        settings.bannedTags,
+        getTagPolicyOptions()
+      )
     ) {
       return ''
     }

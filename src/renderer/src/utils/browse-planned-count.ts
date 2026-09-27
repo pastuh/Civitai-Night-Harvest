@@ -6,7 +6,7 @@ import type {
   WatchRule,
   WatchRuleTestModel
 } from '../../../shared/types'
-import { modelHasPolicyTag } from '../../../shared/tag-routing'
+import { modelHasPolicyTag, type TagPolicyOptions } from '../../../shared/tag-routing'
 import { modelMatchesAnyEnabledWatchRule } from '../../../shared/utils'
 
 export interface BrowsePlannedCountInput {
@@ -19,6 +19,7 @@ export interface BrowsePlannedCountInput {
   bannedModelIds: Set<number>
   hiddenTags: string[]
   bannedTags?: string[]
+  tagPolicyOptions?: TagPolicyOptions
 }
 
 /**
@@ -57,7 +58,7 @@ export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): S
     if (m.inInventory || ownedVersionIds.has(m.versionId)) continue
     if (m.isBanned || input.bannedModelIds.has(m.id)) continue
     if (m.isEarlyAccess || deferredIds.has(m.versionId)) continue
-    if (modelHasPolicyTag(m.tags ?? [], input.hiddenTags, input.bannedTags)) continue
+    if (modelHasPolicyTag(m.tags ?? [], input.hiddenTags, input.bannedTags, input.tagPolicyOptions)) continue
     if (ownedModelIds.has(m.id) || pendingModelIds.has(m.id) || pendingVersionIds.has(m.versionId)) {
       continue
     }

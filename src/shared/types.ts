@@ -91,6 +91,11 @@ export interface AppSettings {
   /** Permanent ban-by-tag (Missing) — skip auto-download until unbanned */
   bannedTags: string[]
   /**
+   * When true, pause/ban tags do not block auto-download if the model also matches
+   * a Tag Folders rule with priority ≥ 2 (or fixed priority 0).
+   */
+  allowHighPriorityTagBypass: boolean
+  /**
    * Library: folder-assigned tags to ignore when “Ignore excluded” is on
    * (e.g. concept) so Hide folder-assigned still shows those models.
    */
@@ -216,6 +221,7 @@ export interface AppSettingsPublic {
   fastTagMode: boolean
   hiddenTags: string[]
   bannedTags: string[]
+  allowHighPriorityTagBypass: boolean
   libraryExcludedTags: string[]
   launchAtLogin: boolean
   newestPeekIntervalMinutes: number
@@ -275,6 +281,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fastTagMode: false,
   hiddenTags: [],
   bannedTags: [],
+  allowHighPriorityTagBypass: false,
   libraryExcludedTags: [],
   launchAtLogin: false,
   newestPeekIntervalMinutes: 15,

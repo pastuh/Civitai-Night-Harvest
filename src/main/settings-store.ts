@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from '../shared/types'
 import { DEFAULT_ACTIVITY_LOG_VERBOSITY } from '../shared/activity-log-policy'
 import { normalizeLocale } from '../shared/locale'
 import { clampGridSizePx, DEFAULT_GALLERY_GRID_MIN_PX, DEFAULT_QUEUE_GRID_MIN_PX } from '../shared/grid-size'
-import { normalizeHiddenTags } from '../shared/tag-routing'
+import { normalizeHiddenTags, type TagPolicyOptions } from '../shared/tag-routing'
 import { getCheckpointFolder, getLoraFolder, hasAllOutputFolders } from '../shared/utils'
 import { applyLaunchAtLogin } from './launch-at-login'
 import { appearanceFromSettings, type AppearanceBootstrap } from '../shared/appearance'
@@ -193,6 +193,9 @@ export function getSettings(): AppSettings {
   }
   if (raw.fastTagMode === undefined) {
     raw.fastTagMode = false
+  }
+  if (raw.allowHighPriorityTagBypass === undefined) {
+    raw.allowHighPriorityTagBypass = false
   }
   if (raw.launchAtLogin === undefined) {
     raw.launchAtLogin = false
@@ -439,6 +442,15 @@ export function shouldCrawlAutoDownload(): boolean {
 /** Whether crawl/scan may auto-add models to the download queue. */
 export function shouldAutoQueue(): boolean {
   return getSettings().manualQueueMode !== true
+}
+
+/** Options for pause/ban checks — high-priority Tag Folders bypass when enabled. */
+export function getTagPolicyOptions(): TagPolicyOptions {
+  const s = getSettings()
+  return {
+    highPriorityBypass: s.allowHighPriorityTagBypass === true,
+    tagRules: getTagRules()
+  }
 }
 
 /**

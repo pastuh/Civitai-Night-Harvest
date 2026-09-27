@@ -1,4 +1,4 @@
-import { memo, type MouseEvent } from 'react'
+import { memo, type MouseEvent, type ReactNode } from 'react'
 import type { InventoryRecord, TagFolderRule } from '../../../shared/types'
 import { formatCompactCount, civitaiModeBadgeLabel, checkpointTypeLabel, isModelTakenDown } from '../../../shared/civitai-meta'
 import { formatAuthorWithWeight, formatWaitDuration, getModelPageUrl } from '../../../shared/utils'
@@ -65,6 +65,14 @@ export type LibraryModelCardProps = {
   previewCacheBust?: number
   browseVideoPreviews?: boolean
   previewOverride?: ModelCardPreviewOverride
+  /** Show every tag (Library normally caps at 6). */
+  showAllTags?: boolean
+  /** Prefer this routing tag for folder-role chip styling (e.g. reconcile winner). */
+  routingTagOverride?: string | null
+  /** Hide checkbox and disable select / context-menu chrome. */
+  hideSelectChrome?: boolean
+  /** Content at the top of the card body (directly under the preview). */
+  bodyPrefix?: ReactNode
 }
 
 function LibraryModelCardInner({
@@ -97,7 +105,11 @@ function LibraryModelCardInner({
   onToggleEaFavorite,
   previewCacheBust,
   browseVideoPreviews = false,
-  previewOverride
+  previewOverride,
+  showAllTags = false,
+  routingTagOverride,
+  hideSelectChrome = false,
+  bodyPrefix
 }: LibraryModelCardProps) {
   const t = useT()
   const localPreviewPath =
@@ -119,6 +131,8 @@ function LibraryModelCardInner({
   })
   const folderLine = folderLineIfNotDuplicatingTag(folderLabel, record.civitaiTags)
   const unrecognized = isUnrecognizedInventoryRecord(record)
+  const effectiveRoutingTag =
+    routingTagOverride !== undefined ? routingTagOverride : record.routingTag
   const isCheckpoint = (() => {
     const mt = (record.modelType || '').trim().toUpperCase()
     if (mt === 'CHECKPOINT') return true
@@ -137,7 +151,7 @@ function LibraryModelCardInner({
     if (hideTagSet?.has(tag.trim().toLowerCase())) return false
     if (hideAssignedTags) {
       const role = cardTagFolderRole(tag, {
-        routingTag: record.routingTag,
+        routingTag: effectiveRoutingTag,
         folderLabel,
         tagRules
       })
@@ -147,14 +161,16 @@ function LibraryModelCardInner({
   })
   const hiddenTagCount = allTags.length - visibleTags.length
   const showHiddenTagsPlaceholder = hiddenTagCount > 0
-  const shownTags = visibleTags.slice(0, 6)
+  const shownTags = showAllTags ? visibleTags : visibleTags.slice(0, 6)
 
   return (
     <div
       className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${temporary ? 'pending-card-temporary' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''} ${isCheckpoint ? 'library-checkpoint' : 'library-lora'}`}
-      onClick={temporary ? undefined : () => onToggleSelect(record.versionId)}
+      onClick={
+        temporary || hideSelectChrome ? undefined : () => onToggleSelect(record.versionId)
+      }
       onContextMenu={
-        temporary
+        temporary || hideSelectChrome
           ? undefined
           : (e) => onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
@@ -185,14 +201,16 @@ function LibraryModelCardInner({
           {ratingInfo.label}
         </span>
       ) : null}
-      <input
-        type="checkbox"
-        checked={selected}
-        disabled={temporary}
-        onChange={() => onToggleSelect(record.versionId)}
-        onClick={(e) => e.stopPropagation()}
-        className="gallery-check"
-      />
+      {!hideSelectChrome ? (
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={temporary}
+          onChange={() => onToggleSelect(record.versionId)}
+          onClick={(e) => e.stopPropagation()}
+          className="gallery-check"
+        />
+      ) : null}
       {civitaiModeBadgeLabel(record.civitaiMode) && (
         <span
           className={`civitai-mode-badge ${isModelTakenDown(record.civitaiMode) ? 'taken-down' : 'archived'}`}
@@ -217,6 +235,7 @@ function LibraryModelCardInner({
         />
       </div>
       <div className="gallery-card-body">
+        {bodyPrefix}
         <div className="gallery-card-title-row">
           <strong title={record.modelName}>{record.modelName}</strong>
           {eaFavorited && onToggleEaFavorite ? (
@@ -361,7 +380,7 @@ function LibraryModelCardInner({
           <div className="tag-row library-card-tags">
             {shownTags.map((tag) => {
               const role = cardTagFolderRole(tag, {
-                routingTag: record.routingTag,
+                routingTag: effectiveRoutingTag,
                 folderLabel,
                 tagRules
               })
@@ -371,7 +390,7 @@ function LibraryModelCardInner({
                 role === 'final'
                   ? t('gallery.tagRoleFinalHint', { tag })
                   : role === 'mapped'
-                    ? record.routingTag?.trim()
+                    ? effectiveRoutingTag?.trim()
                       ? t('gallery.tagRoleMappedHint', { tag })
                       : t('gallery.tagRoleMappedPendingHint', { tag })
                     : t('gallery.tagRoleUnmappedHint', { tag })

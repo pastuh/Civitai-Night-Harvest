@@ -44,7 +44,7 @@ import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { resolvePreviewsForModelWithFallback } from './preview-enrich'
 import * as inventory from './inventory'
 import { markNewestPeek, msUntilNewestPeekAllowed } from './crawl-state'
-import { getSettings, getTagRules, getWatchRules, shouldAutoQueue, shouldCrawlAutoDownload } from './settings-store'
+import { getSettings, getTagRules, getTagPolicyOptions, getWatchRules, shouldAutoQueue, shouldCrawlAutoDownload } from './settings-store'
 import { pickVersionStats } from '../shared/civitai-meta'
 
 export interface RuleQueueOptions {
@@ -417,6 +417,7 @@ function processModel(
   const settings = getSettings()
   const pausedTags = settings.hiddenTags ?? []
   const bannedTags = settings.bannedTags ?? []
+  const policyOpts = getTagPolicyOptions()
 
   refreshPendingPreviewsFromModel(model, ctx)
 
@@ -474,7 +475,7 @@ function processModel(
 
   const policyHit =
     !inventory.isTagSkipAllowed(model.id) &&
-    firstPolicyMatch(model.tags ?? [], pausedTags, bannedTags)
+    firstPolicyMatch(model.tags ?? [], pausedTags, bannedTags, policyOpts)
   // Pause/Ban on brand-new models: Early Access versions → EA tab (indicator only).
   // Non-EA → Missing tag-skip. Never hide Updates for an already-owned model.
   if (policyHit && !isOwnedModel) {
@@ -515,7 +516,7 @@ function processModel(
       const s = getSettings()
       if (
         !inventory.isTagSkipAllowed(model.id) &&
-        modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags)
+        modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags, getTagPolicyOptions())
       ) {
         return false
       }
@@ -588,7 +589,7 @@ function processModel(
           const s = getSettings()
           if (
             !inventory.isTagSkipAllowed(model.id) &&
-            modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags)
+            modelHasPolicyTag(civitaiTags, s.hiddenTags, s.bannedTags, getTagPolicyOptions())
           ) {
             return 'blocked tag'
           }
@@ -1053,6 +1054,7 @@ export function queueEligibleTestModels(
   const settings = getSettings()
   const pausedTags = settings.hiddenTags ?? []
   const bannedTags = settings.bannedTags ?? []
+  const policyOpts = getTagPolicyOptions()
   const tagRules = getTagRules()
   // Harvest always has requireTagMatch=false — skip full-library SELECT * for used tags.
   const usedTags = options.requireTagMatch
@@ -1142,7 +1144,7 @@ export function queueEligibleTestModels(
     }
     // Pause/Ban tags → Missing only for non-EA public models.
     const policyHit =
-      !tagSkipAllow.has(m.id) && firstPolicyMatch(m.tags ?? [], pausedTags, bannedTags)
+      !tagSkipAllow.has(m.id) && firstPolicyMatch(m.tags ?? [], pausedTags, bannedTags, policyOpts)
     if (policyHit) {
       inventory.recordTagSkipReview({
         modelId: m.id,

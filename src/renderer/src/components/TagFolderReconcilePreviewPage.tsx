@@ -1,16 +1,17 @@
-﻿import { useLayoutEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
-import type { InventoryRecord, TagFolderRule } from '../../../shared/types'
+import type { CivitaiDomain, InventoryRecord, TagFolderRule } from '../../../shared/types'
 import {
   findRuleForTag,
   type TagFolderReconcilePreviewItem
 } from '../../../shared/tag-routing'
-import { tagsEqual } from '../../../shared/tag-fuzzy'
-import { PreviewThumb } from './PreviewThumb'
 import { FastTagAssignModal } from './FastTagAssignModal'
+import { TagAutocompleteInput } from './TagAutocompleteInput'
+import { ConfirmModal } from './ConfirmModal'
+import { LibraryModelCard } from './LibraryModelCard'
+import type { ModelDetailTarget } from './ModelDetailPage'
 import { useT } from '../i18n/context'
-import { toPreviewSrc } from '../utils/preview-src'
 
 interface Props {
   items: TagFolderReconcilePreviewItem[]
@@ -22,14 +23,40 @@ interface Props {
   loraFolder: string
   checkpointFolder: string
   confirmTagFolderMoves?: boolean
+  defaultLinkDomain?: CivitaiDomain
+  /** When model details overlay is open above this page. */
+  detailOpen?: boolean
   onBack: () => void
   onConfirm: () => void
   onSwitchToTag: (versionId: number, tag: string, rules: TagFolderRule[]) => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onStatus?: (message: string) => void
+  onItemsChange?: (items: TagFolderReconcilePreviewItem[]) => void
+  onRefresh?: () => Promise<void>
+  onOpenModelDetail?: (target: ModelDetailTarget) => void
 }
 
 type OverlayBox = { top: number; left: number; width: number; height: number }
+
+function recordFromPreviewRow(row: TagFolderReconcilePreviewItem): InventoryRecord {
+  return {
+    modelId: row.modelId,
+    versionId: row.versionId,
+    slug: '',
+    modelName: row.modelName,
+    versionName: row.versionName,
+    author: '',
+    baseModel: row.baseModel,
+    routingTag: row.winnerTag,
+    outputFolder: row.fromFolder,
+    modelPath: '',
+    previewPath: row.previewPath,
+    swarmPath: '',
+    downloadedAt: '',
+    ignored: false,
+    civitaiTags: row.civitaiTags
+  }
+}
 
 export function TagFolderReconcilePreviewPage({
   items,
@@ -41,17 +68,27 @@ export function TagFolderReconcilePreviewPage({
   loraFolder,
   checkpointFolder,
   confirmTagFolderMoves = true,
+  defaultLinkDomain = 'com',
+  detailOpen = false,
   onBack,
   onConfirm,
   onSwitchToTag,
   onSaveTagRules,
-  onStatus
+  onStatus,
+  onItemsChange,
+  onRefresh,
+  onOpenModelDetail
 }: Props) {
   const t = useT()
   const [box, setBox] = useState<OverlayBox | null>(null)
   const [assignTarget, setAssignTarget] = useState<{ tag: string; versionId: number } | null>(
     null
   )
+  const [assignRowVersionId, setAssignRowVersionId] = useState<number | null>(null)
+  const [assignTagQuery, setAssignTagQuery] = useState('')
+  const [assignBusy, setAssignBusy] = useState(false)
+  const [banTarget, setBanTarget] = useState<TagFolderReconcilePreviewItem | null>(null)
+  const [banBusy, setBanBusy] = useState(false)
 
   useLayoutEffect(() => {
     const content = document.querySelector('.content')
@@ -73,6 +110,19 @@ export function TagFolderReconcilePreviewPage({
     }
   }, [])
 
+  const folderTagSuggestions = useMemo(() => {
+    const names = new Set<string>(tagSuggestions)
+    for (const rule of tagRules) {
+      for (const part of rule.tagName.split(/[,;]+/)) {
+        const n = part.trim()
+        if (n) names.add(n)
+      }
+      const sub = rule.subfolderName?.trim()
+      if (sub) names.add(sub)
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [tagRules, tagSuggestions])
+
   const groups = useMemo(() => {
     const map = new Map<string, TagFolderReconcilePreviewItem[]>()
     for (const item of items) {
@@ -86,6 +136,19 @@ export function TagFolderReconcilePreviewPage({
     )
   }, [items])
 
+  const removeItem = useCallback(
+    (versionId: number) => {
+      onItemsChange?.(items.filter((i) => i.versionId !== versionId))
+    },
+    [items, onItemsChange]
+  )
+
+  const inventoryByVersion = useMemo(() => {
+    const map = new Map<number, InventoryRecord>()
+    for (const r of inventory) map.set(r.versionId, r)
+    return map
+  }, [inventory])
+
   const onTagClick = (versionId: number, tag: string) => {
     if (moving || loading) return
     const rule = findRuleForTag(tag, tagRules)
@@ -97,11 +160,141 @@ export function TagFolderReconcilePreviewPage({
     setAssignTarget({ tag, versionId })
   }
 
+  const openDetailsForRecord = (record: InventoryRecord) => {
+    if (moving || !onOpenModelDetail) return
+    onOpenModelDetail({
+      kind: 'library',
+      record,
+      domain: record.civitaiDomain ?? defaultLinkDomain,
+      siblingRecords: inventory.filter(
+        (r) => r.modelId === record.modelId && r.versionId !== record.versionId && r.modelId > 0
+      )
+    })
+  }
+
+  const ensureTagRule = async (tagName: string): Promise<TagFolderRule[]> => {
+    if (findRuleForTag(tagName, tagRules)) return tagRules
+    const next = [...tagRules, { id: crypto.randomUUID(), tagName, folderPath: '' }]
+    await onSaveTagRules(next)
+    return next
+  }
+
+  const assignModelToTag = async (versionId: number, rawTag: string) => {
+    const tagName = rawTag.trim()
+    if (!tagName || assignBusy || moving) return
+    setAssignBusy(true)
+    try {
+      const rules = await ensureTagRule(tagName)
+      await window.api.assignTag([versionId], tagName)
+      onSwitchToTag(versionId, tagName, rules)
+      setAssignRowVersionId(null)
+      setAssignTagQuery('')
+      onStatus?.(t('gallery.movedTo', { count: 1, tag: tagName }))
+      await onRefresh?.()
+      // After assign+move, row is no longer misplaced for that tag path — drop it.
+      removeItem(versionId)
+    } catch (err) {
+      onStatus?.(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAssignBusy(false)
+    }
+  }
+
+  const confirmBan = async () => {
+    if (!banTarget || banBusy) return
+    const row = banTarget
+    setBanBusy(true)
+    try {
+      const rec = inventoryByVersion.get(row.versionId)
+      await window.api.banModel(row.modelId, row.modelName, {
+        versionId: row.versionId,
+        modelName: row.modelName,
+        baseModel: row.baseModel || rec?.baseModel,
+        author: rec?.author,
+        previewUrl: rec?.previewPath,
+        modelType: rec?.modelType,
+        tags: row.civitaiTags,
+        sourceDomain: rec?.civitaiDomain
+      })
+      setBanTarget(null)
+      removeItem(row.versionId)
+      onStatus?.(t('gallery.banned', { name: row.modelName }))
+      await onRefresh?.()
+    } catch (err) {
+      onStatus?.(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBanBusy(false)
+    }
+  }
+
+  const renderAssignBlock = (row: TagFolderReconcilePreviewItem): ReactNode => {
+    const assigning = assignRowVersionId === row.versionId
+    return (
+      <div className="tags-reconcile-card-prefix" onPointerDown={(e) => e.stopPropagation()}>
+        {assigning ? (
+          <div className="tags-reconcile-assign-row">
+            <TagAutocompleteInput
+              className="tags-reconcile-assign-input"
+              value={assignTagQuery}
+              onChange={setAssignTagQuery}
+              suggestions={folderTagSuggestions}
+              singleTag
+              autoFocus
+              matchMode="fuzzy"
+              placeholder={t('gallery.assignFolderPlaceholder')}
+              confirmLabel={t('gallery.assignFolderConfirm')}
+              clearable
+              clearLabel={t('gallery.clearSearch')}
+              disabled={moving || assignBusy}
+              onConfirm={() => void assignModelToTag(row.versionId, assignTagQuery)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && assignTagQuery.trim() && !e.defaultPrevented) {
+                  e.preventDefault()
+                  void assignModelToTag(row.versionId, assignTagQuery)
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setAssignRowVersionId(null)
+                  setAssignTagQuery('')
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn-sm tags-reconcile-assign-cancel"
+              disabled={assignBusy}
+              onClick={() => {
+                setAssignRowVersionId(null)
+                setAssignTagQuery('')
+              }}
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="btn-sm tags-reconcile-assign-btn"
+            disabled={moving || assignBusy}
+            title={t('gallery.assignFolderByTag')}
+            onClick={() => {
+              setAssignRowVersionId(row.versionId)
+              setAssignTagQuery('')
+            }}
+          >
+            {t('gallery.assignFolderByTagShort')}
+          </button>
+        )}
+      </div>
+    )
+  }
+
   const overlay = (
     <div
-      className="tags-reconcile-overlay"
+      className={`tags-reconcile-overlay${detailOpen ? ' tags-reconcile-overlay-under-detail' : ''}`}
       role="dialog"
-      aria-modal="true"
+      aria-modal={!detailOpen}
+      aria-hidden={detailOpen || undefined}
       style={
         box
           ? {
@@ -178,88 +371,52 @@ export function TagFolderReconcilePreviewPage({
                       {t('tagsTab.reconcileGroupCount', { count: rows.length })}
                     </span>
                   </header>
-                  <ul className="tags-reconcile-cards">
+                  <div className="gallery-grid tags-reconcile-grid">
                     {rows.map((row) => {
-                      const previewSrc = row.previewPath ? toPreviewSrc(row.previewPath) : ''
+                      const record =
+                        inventoryByVersion.get(row.versionId) ?? recordFromPreviewRow(row)
                       return (
-                        <li key={row.versionId} className="tags-reconcile-card">
-                          <div className="tags-reconcile-card-thumb">
-                            {previewSrc ? (
-                              <PreviewThumb
-                                urls={[previewSrc]}
-                                className="gallery-thumb"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="gallery-thumb placeholder preview-empty" />
-                            )}
-                          </div>
-                          <div className="tags-reconcile-card-body">
-                            <div className="tags-reconcile-card-title">
-                              <strong title={row.modelName}>{row.modelName}</strong>
-                              {row.versionName ? (
-                                <span className="muted"> · {row.versionName}</span>
-                              ) : null}
-                              {row.baseModel ? (
-                                <span className="tags-reconcile-base muted">{row.baseModel}</span>
-                              ) : null}
-                            </div>
-
-                            <div
-                              className="tags-reconcile-move"
-                              title={row.toFolder || undefined}
-                            >
-                              <span className="tags-reconcile-dest-chip tags-reconcile-dest-chip-inline">
-                                <strong className="tags-reconcile-to">{row.toFolderLeaf}</strong>
-                              </span>
-                              <span className="tags-reconcile-via muted">
-                                {t('tagsTab.reconcileViaTag', { tag: row.winnerTag })}
-                              </span>
-                            </div>
-
-                            {row.civitaiTags.length > 0 ? (
-                              <div
-                                className="tag-row library-card-tags tags-reconcile-tags"
-                                aria-label={t('tagsTab.reconcileTagsLabel')}
-                              >
-                                {row.civitaiTags.map((tagName) => {
-                                  const winning = tagsEqual(tagName, row.winnerTag)
-                                  const hasRule = Boolean(findRuleForTag(tagName, tagRules))
-                                  const roleClass = winning
-                                    ? 'tag-role-final'
-                                    : hasRule
-                                      ? 'tag-role-mapped'
-                                      : 'tag-role-unmapped'
-                                  return (
-                                    <button
-                                      key={tagName}
-                                      type="button"
-                                      className={`tag-chip ${roleClass}`}
-                                      disabled={moving}
-                                      title={
-                                        winning
-                                          ? t('tagsTab.reconcileWinnerTagHint', { tag: tagName })
-                                          : hasRule
-                                            ? t('tagsTab.reconcileSwitchTagHint', { tag: tagName })
-                                            : t('tagsTab.reconcileAssignTagHint', { tag: tagName })
-                                      }
-                                      onClick={() => onTagClick(row.versionId, tagName)}
-                                    >
-                                      {tagName}
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            ) : (
-                              <p className="muted tags-reconcile-no-tags">
-                                {t('tagsTab.reconcileNoTags')}
-                              </p>
-                            )}
-                          </div>
-                        </li>
+                        <LibraryModelCard
+                          key={row.versionId}
+                          record={record}
+                          selected={false}
+                          banned={false}
+                          highlight={false}
+                          sessionNew={false}
+                          hideBaseModelOnCards={false}
+                          defaultLinkDomain={defaultLinkDomain}
+                          tagRules={tagRules}
+                          loraFolder={loraFolder}
+                          checkpointFolder={checkpointFolder}
+                          banFunctionMode
+                          showAllTags
+                          hideSelectChrome
+                          routingTagOverride={row.winnerTag}
+                          bodyPrefix={renderAssignBlock(row)}
+                          onBanModel={(modelId, modelName, versionId) => {
+                            const match =
+                              items.find((i) => i.versionId === versionId) ??
+                              items.find((i) => i.modelId === modelId)
+                            if (match) setBanTarget(match)
+                            else {
+                              setBanTarget({
+                                ...row,
+                                modelId,
+                                modelName,
+                                versionId: versionId ?? row.versionId
+                              })
+                            }
+                          }}
+                          onToggleSelect={() => undefined}
+                          onOpenContextMenu={(e) => e.preventDefault()}
+                          onOpenDetails={openDetailsForRecord}
+                          onCivitaiTagClick={(tagName, rec) =>
+                            onTagClick(rec.versionId, tagName)
+                          }
+                        />
                       )
                     })}
-                  </ul>
+                  </div>
                 </section>
               ))}
             </div>
@@ -285,6 +442,27 @@ export function TagFolderReconcilePreviewPage({
           onRefresh={async () => undefined}
           onDone={(message) => {
             onStatus?.(message)
+          }}
+        />
+      ) : null}
+
+      {banTarget ? (
+        <ConfirmModal
+          message={t('modelDetail.banConfirm', {
+            name: banTarget.modelName,
+            count: String(
+              Math.max(
+                1,
+                inventory.filter((r) => r.modelId === banTarget.modelId).length
+              )
+            )
+          })}
+          confirmLabel={t('modelDetail.ban')}
+          cancelLabel={t('common.cancel')}
+          danger
+          onConfirm={() => void confirmBan()}
+          onCancel={() => {
+            if (!banBusy) setBanTarget(null)
           }}
         />
       ) : null}

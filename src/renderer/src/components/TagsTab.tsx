@@ -40,6 +40,10 @@ interface Props {
   onBannedTagsChange?: (tags: string[]) => Promise<void>
   /** Library tag counts in the table (Settings → Tag stats). Default off. */
   showTagStats?: boolean
+  defaultLinkDomain?: import('../../../shared/types').CivitaiDomain
+  /** Model details overlay open — keep Move misplaced under it. */
+  detailOpen?: boolean
+  onOpenModelDetail?: (target: import('./ModelDetailPage').ModelDetailTarget) => void
   onSave: (rules: TagFolderRule[]) => Promise<void>
   onFilterLibrary?: (tag: string) => void
   onRefresh?: () => Promise<void>
@@ -299,6 +303,9 @@ export function TagsTab({
   bannedTags = [],
   onBannedTagsChange,
   showTagStats = false,
+  defaultLinkDomain = 'com',
+  detailOpen = false,
+  onOpenModelDetail,
   onSave,
   onFilterLibrary,
   onRefresh,
@@ -1547,6 +1554,8 @@ const dirty = useMemo(() => {
           loraFolder={loraFolder}
           checkpointFolder={checkpointFolder}
           confirmTagFolderMoves={confirmTagFolderMoves}
+          defaultLinkDomain={defaultLinkDomain}
+          detailOpen={detailOpen}
           onBack={closeReconcilePreview}
           onConfirm={() => void confirmReconcileFromPreview()}
           onSwitchToTag={(versionId, tag, rules) => {
@@ -1571,6 +1580,9 @@ const dirty = useMemo(() => {
           }}
           onSaveTagRules={persistRules}
           onStatus={(message) => setStatusMessage(message, 5000)}
+          onItemsChange={setReconcilePreviewItems}
+          onRefresh={onRefresh}
+          onOpenModelDetail={onOpenModelDetail}
         />
       ) : null}
       <div className="tag-library-browser">

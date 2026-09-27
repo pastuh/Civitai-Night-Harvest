@@ -133,6 +133,8 @@ export const lt: Messages = {
       nightMode: 'Night mode',
       autoStartDownloads: 'Auto-start atsisiuntimai eilėje',
       autoDownloadNewVersions: 'Auto-download turimų modelių atnaujinimus',
+      allowHighPriorityTagBypass:
+        'Leisti siuntimą, jei modelis atitinka aukšto prioriteto tag folder (2+)',
       nightDownloadAll: 'Night mode: eilė visiems Browse atitikmenims (blokuojami tagai vis tiek praleidžiami)',
       scanInterval: 'Scan intervalas (min)',
       parallelDownloads: 'Lygiagūs atsisiuntimai',
@@ -515,6 +517,8 @@ export const lt: Messages = {
         'Išjungus (aktyvus Pause) vykdomi siuntimai sustabdomi; Harvest vis tiek gali pildyti eilę. Išjunkite Pause, kad pradėtų siųsti. Auto/Manual valdo ar Harvest deda modelius į eilę.',
       autoDownloadNewVersions:
         'ON: Harvest / Check library automatiškai eilėn deda naujesnes versijas (sutampantis owned base + Browse Rules baseModels). OFF: jos atsiranda Atnaujinimai — Download / Visada atnaujinti / Skip / Ban — arba Visada atnaujinti tik tam modeliui. Visiškai nauji Browse modeliai tvarkomi atskirai.',
+      allowHighPriorityTagBypass:
+        'Įjungus, pause/ban tagai (pvz. style) nebestabdo auto-download, jei modelis turi ir Tag Folders tagą su prioritetu 2+ (arba fiksuotu 0), pvz. face. Routing vis tiek renkasi aukštesnio prioriteto aplanką.',
       scanInterval: 'Fono API tikrinimo intervalas per enabled taisyklę. 0 = Off. Įjungiant Night nustato 60 min tik jei dabar Off.',
       parallelDownloads: 'Kiek modelių siunčiama vienu metu (1–6). 1 = vienas failas pilnu greičiu.',
       domain:
@@ -1442,7 +1446,8 @@ export const lt: Messages = {
     selectedCount: 'Pažymėta {count}',
     openOnCivitaiMenu: 'Atidaryti Civitai ↗',
     assignFolderByTag: 'Priskirti modelį tagui',
-    assignFolderPlaceholder: 'Tago pavadinimas (folder route)…',
+    assignFolderByTagShort: 'Priskirti tagą',
+    assignFolderPlaceholder: 'Tago pavadinimas…',
     assignFolderConfirm: 'Priskirti tagui',
     markSfw: 'Pažymėti kaip SFW',
     markNsfw: 'Pažymėti kaip NSFW',
@@ -1593,6 +1598,7 @@ export const lt: Messages = {
     reconcileSwitchedTag: 'Planuojamas folderis perjungtas į „{tag}“',
     reconcileGroupCount: '{count}',
     reconcileNoTags: 'Šiam modeliui nėra išsaugotų Civitai tagų',
+    reconcileDetailMissing: 'Bibliotekos įrašas nerastas — atnaujinkite ir bandykite dar kartą',
     reconcileDone:
       'Biblioteka surūšiuota: perkelta {moved}, praleista {skipped}, eilė {queueUpdated}',
     reconcileNone: 'Visi atitinkantys modeliai jau teisinguose tag aplankuose',

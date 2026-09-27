@@ -4,7 +4,8 @@ import {
   expandCivitaiTagNames,
   isPausedOnlyModelTag,
   isPermanentlyBannedModelTag,
-  modelHasPolicyTag
+  modelHasPolicyTag,
+  type TagPolicyOptions
 } from './tag-routing'
 
 export type { DeferredSource } from './types'
@@ -74,15 +75,16 @@ export function deferredBlockedByPolicyTags(
   item: Pick<DeferredDownload, 'modelId' | 'civitaiTags' | 'routingTag'>,
   pausedTags: readonly string[] | undefined,
   bannedTags: readonly string[] | undefined,
-  isTagSkipAllowed?: (modelId: number) => boolean
+  isTagSkipAllowed?: (modelId: number) => boolean,
+  policyOptions?: TagPolicyOptions
 ): boolean {
   if (isTagSkipAllowed?.(item.modelId)) return false
   const paused = pausedTags ?? []
   const banned = bannedTags ?? []
   if (!paused.length && !banned.length) return false
-  if (modelHasPolicyTag(item.civitaiTags ?? [], paused, banned)) return true
+  if (modelHasPolicyTag(item.civitaiTags ?? [], paused, banned, policyOptions)) return true
   const route = item.routingTag?.trim()
-  return Boolean(route && modelHasPolicyTag([route], paused, banned))
+  return Boolean(route && modelHasPolicyTag([route], paused, banned, policyOptions))
 }
 
 /**

@@ -131,6 +131,8 @@ export const en = {
       nightMode: 'Night mode',
       autoStartDownloads: 'Auto-start downloads when queued',
       autoDownloadNewVersions: 'Auto-download updates for owned models',
+      allowHighPriorityTagBypass:
+        'Allow download when a high-priority tag folder matches (priority 2+)',
       nightDownloadAll: 'Night mode: queue all Browse matches (still skips blocked tags)',
       scanInterval: 'Scan interval (min)',
       parallelDownloads: 'Parallel downloads',
@@ -510,6 +512,8 @@ export const en = {
         'When off (Pause active), in-progress downloads stop; Harvest may still fill the queue. Turn Pause off to start sending. Auto/Manual controls whether Harvest adds models to the queue.',
       autoDownloadNewVersions:
         'ON: Harvest / Check library queues newer versions of models you already own (matching owned base + Browse Rules baseModels). OFF: they appear on Updates for Download / Always update / Skip / Ban — or use Always update on a card (queues all current offers for that model + future ones). Turn off via Always on again or Library → Always update. Brand-new Browse models are always eligible separately.',
+      allowHighPriorityTagBypass:
+        'When on, pause/ban tags (e.g. style) do not block auto-download if the model also has a Tag Folders tag with priority 2 or higher (or fixed 0), e.g. face. Routing still prefers the higher-priority folder.',
       scanInterval: 'Background API check interval per enabled rule. 0 = Off. Enabling Night sets 60 min only if currently Off.',
       parallelDownloads: 'How many models download at once (1–6). Use 1 for one file at full speed.',
       domain:
@@ -1431,7 +1435,8 @@ export const en = {
     selectedCount: '{count} selected',
     openOnCivitaiMenu: 'Open on Civitai ↗',
     assignFolderByTag: 'Assign model to tag',
-    assignFolderPlaceholder: 'Tag name (folder route)…',
+    assignFolderByTagShort: 'Assign tag',
+    assignFolderPlaceholder: 'Tag name…',
     assignFolderConfirm: 'Assign to tag',
     markSfw: 'Mark as SFW',
     markNsfw: 'Mark as NSFW',
@@ -1579,6 +1584,7 @@ export const en = {
     reconcileSwitchedTag: 'Switched planned folder to “{tag}”',
     reconcileGroupCount: '{count}',
     reconcileNoTags: 'No Civitai tags saved for this model',
+    reconcileDetailMissing: 'Library record not found — refresh and try again',
     reconcileDone:
       'Library sorted: moved {moved}, skipped {skipped}, queue updated {queueUpdated}',
     reconcileNone: 'All matching library models are already in the correct tag folders',

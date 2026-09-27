@@ -2045,7 +2045,11 @@ export default function App() {
       deferred,
       bannedModelIds,
       hiddenTags: settings?.hiddenTags ?? [],
-      bannedTags: settings?.bannedTags ?? []
+      bannedTags: settings?.bannedTags ?? [],
+      tagPolicyOptions: {
+        highPriorityBypass: settings?.allowHighPriorityTagBypass === true,
+        tagRules
+      }
     })
   }, [
     liveCrawlBrowse?.sampleModels,
@@ -2056,6 +2060,8 @@ export default function App() {
     bannedModelIds,
     settings?.hiddenTags,
     settings?.bannedTags,
+    settings?.allowHighPriorityTagBypass,
+    tagRules,
     queueStructureKeyForBadge
   ])
 
@@ -2091,7 +2097,12 @@ export default function App() {
         if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
         if (sessionBanModelIds.includes(d.modelId)) return false
         if (sessionPauseModelIds.includes(d.modelId)) return false
-        if (deferredBlockedByPolicyTags(d, settings?.hiddenTags, settings?.bannedTags)) {
+        if (
+          deferredBlockedByPolicyTags(d, settings?.hiddenTags, settings?.bannedTags, undefined, {
+            highPriorityBypass: settings?.allowHighPriorityTagBypass === true,
+            tagRules
+          })
+        ) {
           return false
         }
         return d.versionId > 0
@@ -2103,7 +2114,9 @@ export default function App() {
       sessionBanModelIds,
       sessionPauseModelIds,
       settings?.hiddenTags,
-      settings?.bannedTags
+      settings?.bannedTags,
+      settings?.allowHighPriorityTagBypass,
+      tagRules
     ]
   )
 
@@ -2262,6 +2275,9 @@ export default function App() {
         await saveSettings({ bannedTags: tags })
       }}
       showTagStats={settings?.showTagStats ?? false}
+      defaultLinkDomain={settings?.domain === 'red' ? 'red' : 'com'}
+      detailOpen={Boolean(modelDetailTarget)}
+      onOpenModelDetail={openModelDetail}
       onSave={saveTagRules}
       onRefresh={refreshInventory}
       onMoveStatus={setBackgroundStatus}
@@ -2793,14 +2809,19 @@ export default function App() {
             />
           </div>
         ) : null}
-        {!modelDetailTarget && tab === 'tags' ? (
-          tagsCoveringLibrary || tagsCoveringMissing ? (
-            <div className="tab-cover-overlay" role="presentation">
-              {tagsTab}
-            </div>
-          ) : (
-            tagsTab
-          )
+        {tab === 'tags' ? (
+          <div
+            className={modelDetailTarget ? 'tab-panel-under-overlay' : undefined}
+            aria-hidden={Boolean(modelDetailTarget)}
+          >
+            {tagsCoveringLibrary || tagsCoveringMissing ? (
+              <div className="tab-cover-overlay" role="presentation">
+                {tagsTab}
+              </div>
+            ) : (
+              tagsTab
+            )}
+          </div>
         ) : null}
         {tab === 'pending' ? (
           <div
