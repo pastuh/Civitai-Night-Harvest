@@ -69,10 +69,12 @@ export type LibraryModelCardProps = {
   showAllTags?: boolean
   /** Prefer this routing tag for folder-role chip styling (e.g. reconcile winner). */
   routingTagOverride?: string | null
-  /** Hide checkbox and disable select / context-menu chrome. */
+  /** Hide checkbox and disable click-to-select (context menu still works). */
   hideSelectChrome?: boolean
   /** Content at the top of the card body (directly under the preview). */
   bodyPrefix?: ReactNode
+  /** Extra controls at the start of the tag row (e.g. subtle assign menu trigger). */
+  tagsExtra?: ReactNode
 }
 
 function LibraryModelCardInner({
@@ -109,7 +111,8 @@ function LibraryModelCardInner({
   showAllTags = false,
   routingTagOverride,
   hideSelectChrome = false,
-  bodyPrefix
+  bodyPrefix,
+  tagsExtra
 }: LibraryModelCardProps) {
   const t = useT()
   const localPreviewPath =
@@ -165,12 +168,12 @@ function LibraryModelCardInner({
 
   return (
     <div
-      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${temporary ? 'pending-card-temporary' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''} ${isCheckpoint ? 'library-checkpoint' : 'library-lora'}`}
+      className={`gallery-card library-card ${selected ? 'selected' : ''} ${banned ? 'banned' : ''} ${temporary ? 'pending-card-temporary' : ''} ${highlight ? 'highlight' : ''} ${sessionNew ? 'session-new' : ''} ${unrecognized ? 'library-unrecognized' : ''} ${isCheckpoint ? 'library-checkpoint' : 'library-lora'}${hideSelectChrome ? ' library-card-static' : ''}`}
       onClick={
         temporary || hideSelectChrome ? undefined : () => onToggleSelect(record.versionId)
       }
       onContextMenu={
-        temporary || hideSelectChrome
+        temporary
           ? undefined
           : (e) => onOpenContextMenu(e, record.modelId, record.modelName, record.versionId)
       }
@@ -218,7 +221,32 @@ function LibraryModelCardInner({
           {civitaiModeBadgeLabel(record.civitaiMode)}
         </span>
       )}
-      <div className="gallery-thumb-wrap" aria-hidden="true">
+      <div
+        className={`gallery-thumb-wrap${hideSelectChrome ? ' gallery-thumb-wrap-open-details' : ''}`}
+        aria-hidden={hideSelectChrome ? undefined : true}
+        role={hideSelectChrome ? 'button' : undefined}
+        tabIndex={hideSelectChrome ? 0 : undefined}
+        title={hideSelectChrome ? t('gallery.modelDetails') : undefined}
+        onClick={
+          hideSelectChrome
+            ? (e) => {
+                e.stopPropagation()
+                onOpenDetails(record)
+              }
+            : undefined
+        }
+        onKeyDown={
+          hideSelectChrome
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onOpenDetails(record)
+                }
+              }
+            : undefined
+        }
+      >
         {alwaysUpdate ? (
           <span className="library-always-update-badge" title={t('gallery.alwaysUpdateBadgeHint')}>
             {t('gallery.alwaysUpdateBadge')}
@@ -376,8 +404,9 @@ function LibraryModelCardInner({
             ) : null}
           </div>
         ) : null}
-        {(shownTags.length > 0 || showHiddenTagsPlaceholder) && (
+        {(shownTags.length > 0 || showHiddenTagsPlaceholder || tagsExtra) && (
           <div className="tag-row library-card-tags">
+            {tagsExtra}
             {shownTags.map((tag) => {
               const role = cardTagFolderRole(tag, {
                 routingTag: effectiveRoutingTag,

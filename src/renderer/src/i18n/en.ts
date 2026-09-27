@@ -54,9 +54,9 @@ export const en = {
   },
   header: {
     appTitle: 'Civitai Night Harvest',
-    nightOff: '🌙 Harvest',
-    nightTags: '🌙 Harvesting',
-    nightAll: '🌙 All',
+    nightOff: 'Harvest',
+    nightTags: 'Harvesting',
+    nightAll: 'All',
     downloadsOn: '⬇ Download',
     downloadsAuto: 'Auto',
     downloadsManual: 'Manual',
@@ -1568,13 +1568,16 @@ export const en = {
     reconcileHint:
       '{count} LoRAs already have a Civitai tag that matches a Tag Folders rule, but the file is still in another folder (often Unsorted) or has no routing tag yet. This does not run on app start — only when you click here, or after you rename a folder / change priority / mass-assign (file moves are deliberate). Checkpoints and manually locked Library placements are skipped.',
     reconcileHintCounting: 'Counting library models that still need to be moved into their tag folders…',
+    tableTruncatedHint:
+      'Showing a partial tag list for speed — pick a letter or search to browse the rest ({pool} in library).',
     reconcileConfirm:
       'Move {count} LoRAs into the folder of their winning Tag Folders tag? Checkpoints and manual/locked placements are skipped.',
     reconcilePreviewTitle: 'Move misplaced ({count})',
     reconcilePreviewLead:
       'Grouped by the tag folder each LoRA will move into. Click a tag to switch this model to that folder (or assign a folder if the tag has none yet). Back cancels — Move applies the plan.',
     reconcileConfirmMove: 'Move {count} models',
-    reconcileConfirmMoveShort: 'Move models',
+    reconcileConfirmMoveShort: 'Confirm',
+    reconcileConfirmGroupHint: 'Confirm and move all {count} models in this group into “{tag}”',
     reconcileViaTag: 'via {tag}',
     reconcileDestLabel: 'Folder',
     reconcileTagsLabel: 'Model tags',
@@ -1588,6 +1591,15 @@ export const en = {
     reconcileDone:
       'Library sorted: moved {moved}, skipped {skipped}, queue updated {queueUpdated}',
     reconcileNone: 'All matching library models are already in the correct tag folders',
+    reconcileNoneWithClashes:
+      'No misplaced models, and no high/fixed-priority tag clashes to review',
+    reconcileShowClashes: 'Show clashes',
+    reconcileShowClashesOn: 'Clashes On',
+    reconcileShowClashesOff: 'Clashes Off',
+    reconcileShowClashesHint:
+      'Also list models already in a folder whose top Tag Folders tags share the same elevated priority (2+ or fixed 0) — pick the final tag yourself',
+    reconcileClashBadge: 'Clash',
+    reconcileClashHint: 'equal high/fixed priority tags: {tags} — click a tag chip or Assign tag to choose',
     renameFolderHint: 'Click to change folder name',
     renameTagHint: 'Click to rename (display name — matching stays on the original Civitai tag)',
     confirmRenameTag: 'Apply tag name',

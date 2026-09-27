@@ -56,9 +56,9 @@ export const lt: Messages = {
   },
   header: {
     appTitle: 'Civitai Night Harvest',
-    nightOff: '🌙 Harvest',
-    nightTags: '🌙 Harvesting',
-    nightAll: '🌙 Visi',
+    nightOff: 'Harvest',
+    nightTags: 'Harvesting',
+    nightAll: 'Visi',
     downloadsOn: '⬇ Siųsti',
     downloadsAuto: 'Auto',
     downloadsManual: 'Manual',
@@ -1582,13 +1582,16 @@ export const lt: Messages = {
     reconcileHint:
       '{count} LoRA jau turi Civitai tagą, kuris atitinka Tag Folders taisyklę, bet failas vis dar kitame aplanke (dažnai Unsorted) arba be routing tago. Paleidžiama ne paleidus app — tik paspaudus čia, arba po aplanko pervadinimo / prioriteto / mass-assign (failų perkėlimas sąmoningas). Checkpoint ir rankiniai/užrakinti Library priskyrimai praleidžiami.',
     reconcileHintCounting: 'Skaičiuojami modeliai, kuriuos dar reikia perkelti į tag aplankus…',
+    tableTruncatedHint:
+      'Dėl greičio rodoma dalis tagų — raidė arba paieška atveria kitus (bibliotekoje {pool}).',
     reconcileConfirm:
       'Perkelti {count} LoRA į jų laiminčio Tag Folders tago aplanką? Checkpoint ir rankiniai/užrakinti praleidžiami.',
     reconcilePreviewTitle: 'Perkelti neteisingus ({count})',
     reconcilePreviewLead:
       'Sugrupuota pagal tag folderį, į kurį LoRA bus perkelta. Spauskite tagą — perjungti modelį į tą folderį (arba priskirti folderį, jei taisyklės dar nėra). Back atšaukia — Move vykdo planą.',
     reconcileConfirmMove: 'Perkelti {count} modelius',
-    reconcileConfirmMoveShort: 'Perkelti modelius',
+    reconcileConfirmMoveShort: 'Confirm',
+    reconcileConfirmGroupHint: 'Patvirtinti ir perkelti visus {count} modelius šioje grupėje į „{tag}“',
     reconcileViaTag: 'per {tag}',
     reconcileDestLabel: 'Aplankas',
     reconcileTagsLabel: 'Modelio tagai',
@@ -1602,6 +1605,15 @@ export const lt: Messages = {
     reconcileDone:
       'Biblioteka surūšiuota: perkelta {moved}, praleista {skipped}, eilė {queueUpdated}',
     reconcileNone: 'Visi atitinkantys modeliai jau teisinguose tag aplankuose',
+    reconcileNoneWithClashes:
+      'Nėra misplaced modelių ir nėra aukštų/fixed prioritetų clash’ų peržiūrai',
+    reconcileShowClashes: 'Rodyti clash’us',
+    reconcileShowClashesOn: 'Clashes On',
+    reconcileShowClashesOff: 'Clashes Off',
+    reconcileShowClashesHint:
+      'Papildomai rodyti modelius, kurie jau folder’yje, bet turi kelis Tag Folders tagus su tuo pačiu aukštu prioritetu (2+ arba fixed 0) — galutinį tagą pasirinkite patys',
+    reconcileClashBadge: 'Clash',
+    reconcileClashHint: 'lygiaverčiai aukšti/fixed tagai: {tags} — spauskite tag chip arba Assign tag',
     renameFolderHint: 'Spustelėkite, kad pakeistumėte aplanko pavadinimą',
     renameTagHint:
       'Spustelėkite, kad pervadintumėte (rodomas vardas — atitikimas lieka pagal originalų Civitai tagą)',

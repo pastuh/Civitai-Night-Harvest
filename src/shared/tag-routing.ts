@@ -481,11 +481,18 @@ export type TagFolderReconcilePreviewItem = {
   toFolder: string
   fromFolderLeaf: string
   toFolderLeaf: string
+  /** Equal top-priority Tag Folders matches — already placed, optional manual review. */
+  isClash?: boolean
+  /** Clash that is not misplaced — only shown when Show clashes is on. */
+  clashOnly?: boolean
+  clashTags?: string[]
 }
 
 /**
  * Same candidates as countLibraryTagFolderReconcile, with from→to folder preview rows.
  * Pass `limit` to cap rows; omit for the full list.
+ * When `includeClashes` is true, also include correctly placed LoRAs whose top
+ * folder-rule tags share the same priority (ties).
  */
 export async function listLibraryTagFolderReconcileAsync(
   inventory: {
@@ -504,12 +511,18 @@ export async function listLibraryTagFolderReconcileAsync(
   tagRules: TagFolderRule[],
   loraFolder: string,
   checkpointFolder: string,
-  opts?: { cancelled?: () => boolean; yieldEvery?: number; limit?: number }
+  opts?: {
+    cancelled?: () => boolean
+    yieldEvery?: number
+    limit?: number
+    includeClashes?: boolean
+  }
 ): Promise<TagFolderReconcilePreviewItem[]> {
   if (!tagRules.length) return []
   const index = buildTagRuleMatchIndex(tagRules)
   const yieldEvery = opts?.yieldEvery ?? 48
   const limit = opts?.limit
+  const includeClashes = Boolean(opts?.includeClashes)
   const out: TagFolderReconcilePreviewItem[] = []
   for (let i = 0; i < inventory.length; i++) {
     if (opts?.cancelled?.()) return out
@@ -518,15 +531,34 @@ export async function listLibraryTagFolderReconcileAsync(
       if (opts?.cancelled?.()) return out
     }
     const r = inventory[i]
-    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules, index)
-    if (!winner) continue
-    if (shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) continue
-    const rule = findRuleForTag(winner, tagRules, index)
+    const mt = (r.modelType || '').toUpperCase()
+    if (mt === 'CHECKPOINT') continue
     const inferred = inferModelTypeFromFolders(r.outputFolder, loraFolder, checkpointFolder)
+    if (inferred.toUpperCase() === 'CHECKPOINT') continue
+    if (r.routingLocked) continue
+
+    const tags = r.civitaiTags ?? []
+    const winner = pickBestMatchingFolderTag(tags, tagRules, index)
+    if (!winner) continue
+
+    const misplaced = !shouldSkipTagBulkMove(
+      r,
+      tagRules,
+      loraFolder,
+      checkpointFolder,
+      winner,
+      index
+    )
+    const clashTags = includeClashes ? listTopPriorityClashTags(tags, tagRules, index) : []
+    const isClash = clashTags.length > 1
+    if (!misplaced && !isClash) continue
+
+    const rule = findRuleForTag(winner, tagRules, index)
     const toFolder = rule
       ? resolveTagRuleFolderPath(rule, loraFolder, checkpointFolder, inferred, r.baseModel)
       : ''
     const fromFolder = r.outputFolder || ''
+    const clashOnly = Boolean(isClash && !misplaced)
     out.push({
       versionId: r.versionId,
       modelId: r.modelId ?? 0,
@@ -534,21 +566,74 @@ export async function listLibraryTagFolderReconcileAsync(
       versionName: r.versionName ?? '',
       baseModel: r.baseModel ?? '',
       winnerTag: winner,
-      civitaiTags: [...(r.civitaiTags ?? [])],
+      civitaiTags: [...tags],
       previewPath: r.previewPath ?? '',
       fromFolder,
       toFolder,
       fromFolderLeaf: folderLeaf(fromFolder),
-      toFolderLeaf: folderLeaf(toFolder)
+      toFolderLeaf: folderLeaf(toFolder),
+      isClash: isClash || undefined,
+      clashOnly: clashOnly || undefined,
+      clashTags: isClash ? clashTags : undefined
     })
     if (limit != null && out.length >= limit) break
   }
   out.sort((a, b) => {
+    // Clash-only rows after hard misplaced within the same winner group.
+    if (Boolean(a.clashOnly) !== Boolean(b.clashOnly)) return a.clashOnly ? 1 : -1
     const tagCmp = a.winnerTag.localeCompare(b.winnerTag, undefined, { sensitivity: 'base' })
     if (tagCmp !== 0) return tagCmp
     return a.modelName.localeCompare(b.modelName, undefined, { sensitivity: 'base' })
   })
   return out
+}
+
+/**
+ * How many correctly placed LoRAs have elevated equal-priority Tag Folders ties
+ * (Show clashes would add these). Checkpoints / locked placements skipped.
+ */
+export async function countElevatedFolderTagClashesAsync(
+  inventory: {
+    routingTag: string
+    outputFolder: string
+    baseModel?: string
+    civitaiTags?: string[]
+    routingLocked?: boolean
+    modelType?: string
+  }[],
+  tagRules: TagFolderRule[],
+  loraFolder: string,
+  checkpointFolder: string,
+  opts?: { cancelled?: () => boolean; yieldEvery?: number }
+): Promise<number> {
+  if (!tagRules.length) return 0
+  const index = buildTagRuleMatchIndex(tagRules)
+  const yieldEvery = opts?.yieldEvery ?? 48
+  let n = 0
+  for (let i = 0; i < inventory.length; i++) {
+    if (opts?.cancelled?.()) return n
+    if (i > 0 && i % yieldEvery === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      if (opts?.cancelled?.()) return n
+    }
+    const r = inventory[i]
+    const mt = (r.modelType || '').toUpperCase()
+    if (mt === 'CHECKPOINT') continue
+    const inferred = inferModelTypeFromFolders(r.outputFolder, loraFolder, checkpointFolder)
+    if (inferred.toUpperCase() === 'CHECKPOINT') continue
+    if (r.routingLocked) continue
+
+    const tags = r.civitaiTags ?? []
+    const clashTags = listTopPriorityClashTags(tags, tagRules, index)
+    if (clashTags.length <= 1) continue
+    const winner = pickBestMatchingFolderTag(tags, tagRules, index)
+    if (!winner) continue
+    // Only count review-only clashes (already in the winning folder).
+    if (shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) {
+      n++
+    }
+  }
+  return n
 }
 
 /** Recompute from→to paths after the user picks a different winning tag in the preview. */
@@ -777,15 +862,40 @@ export function pickBestMatchingFolderTag(
 /** True when several matches share the same top priority (ambiguous). */
 export function matchingFolderTagsNeedConfirmation(
   modelTags: string[],
-  tagRules: TagFolderRule[]
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
 ): boolean {
-  const matching = getMatchingFolderTags(modelTags, tagRules)
+  const index = ruleIndex ?? (tagRules.length ? buildTagRuleMatchIndex(tagRules) : undefined)
+  const matching = getMatchingFolderTags(modelTags, tagRules, index)
   if (matching.length <= 1) return false
   const ranks = matching.map((tag) =>
-    tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules)))
+    tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules, index)))
   )
   const top = Math.max(...ranks)
   return ranks.filter((r) => r === top).length > 1
+}
+
+/**
+ * Tags that share the highest *elevated* folder-rule priority on this model
+ * (fixed 0, or priority ≥ {@link TAG_POLICY_HIGH_PRIORITY_MIN}).
+ * Default priority ties (all at 1) are not clashes — first match wins silently.
+ */
+export function listTopPriorityClashTags(
+  modelTags: string[],
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
+): string[] {
+  const index = ruleIndex ?? (tagRules.length ? buildTagRuleMatchIndex(tagRules) : undefined)
+  const matching = getMatchingFolderTags(modelTags, tagRules, index)
+  if (matching.length <= 1) return []
+  const ranks = matching.map((tag) =>
+    tagPriorityRank(getRulePriority(findRuleForTag(tag, tagRules, index)))
+  )
+  const top = Math.max(...ranks)
+  // Ignore default / low priority ties — only fixed (0) or high (≥ 2).
+  if (top < tagPriorityRank(TAG_POLICY_HIGH_PRIORITY_MIN)) return []
+  const tied = matching.filter((_, i) => ranks[i] === top)
+  return tied.length > 1 ? tied : []
 }
 
 export function displayFolderForTag(

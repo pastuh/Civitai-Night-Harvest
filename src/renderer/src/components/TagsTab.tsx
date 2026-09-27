@@ -38,6 +38,9 @@ interface Props {
   /** Permanent ban-by-tag — skip auto-download (same as permanent ban list). */
   bannedTags?: string[]
   onBannedTagsChange?: (tags: string[]) => Promise<void>
+  /** Show Ban × on Move misplaced cards (same as Library Ban on). */
+  banFunctionMode?: boolean
+  onBanFunctionModeChange?: (enabled: boolean) => void
   /** Library tag counts in the table (Settings → Tag stats). Default off. */
   showTagStats?: boolean
   defaultLinkDomain?: import('../../../shared/types').CivitaiDomain
@@ -302,6 +305,8 @@ export function TagsTab({
   confirmTagFolderMoves = true,
   bannedTags = [],
   onBannedTagsChange,
+  banFunctionMode = false,
+  onBanFunctionModeChange,
   showTagStats = false,
   defaultLinkDomain = 'com',
   detailOpen = false,
@@ -693,9 +698,29 @@ export function TagsTab({
       rowMap.set(tagPinKey(tag), { tag, count: countForTag(tag) })
     }
 
+    // Always include configured Tag Folders rules so assigned rows are not lost to the pool cap.
+    if (!hasSearch && !letterFilter && !assignFocus) {
+      for (const rule of draft) {
+        for (const tag of parseTagRuleNames(rule.tagName)) {
+          if (folderFilterActive && !tagMatchesFolderFilter(tag)) continue
+          if (!folderFilterActive && isHiddenByHideAssigned(tag)) continue
+          const count = countForTag(tag)
+          if (hideSingles && count === 1 && !isPinnedAssignLabel(tag)) continue
+          rowMap.set(tagPinKey(tag), { tag, count })
+        }
+      }
+    }
+
     // With an active search, only scan the pool for matches (still capped for safety).
     // Assign focus: tiny scan — pinned row is already in the table.
-    const poolScanLimit = assignFocus ? 250 : hasSearch ? 4_000 : tableTagPool.length
+    // No letter/search: cap extra pool rows so opening Tag Folders does not mount thousands of <tr>.
+    const poolScanLimit = assignFocus
+      ? 250
+      : hasSearch
+        ? 4_000
+        : letterFilter
+          ? tableTagPool.length
+          : 400
     let scanned = 0
     for (const tag of tableTagPool) {
       if (scanned >= poolScanLimit) break
@@ -748,7 +773,8 @@ export function TagsTab({
     hideSingles,
     displayNameFor,
     pinnedAssignLabels,
-    manualTableTags
+    manualTableTags,
+    draft
   ])
 
   const tagPoolCount = useMemo(() => {
@@ -993,34 +1019,66 @@ export function TagsTab({
   const deferredDraft = useDeferredValue(draft)
   const [reconcilePendingCount, setReconcilePendingCount] = useState(0)
   const [reconcileCountReady, setReconcileCountReady] = useState(false)
+  const reconcileListCancelRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
+    // Preview already has its own full scan — don't fight it with a parallel recount.
+    if (reconcilePreviewOpen || backgroundMoving) return
+
     let cancelled = false
-    setReconcileCountReady(false)
+    let idleId: number | undefined
+    let timer = 0
+
     const run = async () => {
       const n = await countLibraryTagFolderReconcileAsync(
-        inventory,
+        deferredInventory,
         deferredDraft,
         loraFolder,
         checkpointFolder,
-        { cancelled: () => cancelled }
+        { cancelled: () => cancelled, yieldEvery: 32 }
       )
       if (cancelled) return
       setReconcilePendingCount(n)
       setReconcileCountReady(true)
     }
-    // Yield so Library → Tag folders can paint the search + pinned row first.
-    const timer = window.setTimeout(() => {
-      void run()
-    }, 0)
+
+    // Keep previous count visible while a debounced recount runs (avoids button flicker).
+    timer = window.setTimeout(() => {
+      const start = () => {
+        if (cancelled) return
+        void run()
+      }
+      const ric = window.requestIdleCallback
+      if (typeof ric === 'function') {
+        idleId = ric(start, { timeout: 1200 })
+      } else {
+        start()
+      }
+    }, 450)
+
     return () => {
       cancelled = true
       window.clearTimeout(timer)
+      if (idleId != null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId)
+      }
     }
-  }, [inventory, deferredDraft, loraFolder, checkpointFolder])
+  }, [
+    deferredInventory,
+    deferredDraft,
+    loraFolder,
+    checkpointFolder,
+    reconcilePreviewOpen,
+    backgroundMoving
+  ])
 
   const openReconcilePreview = async () => {
     if (backgroundMoving || reconcilePreviewOpen) return
+    reconcileListCancelRef.current?.()
+    let cancelled = false
+    reconcileListCancelRef.current = () => {
+      cancelled = true
+    }
     setReconcilePreviewOpen(true)
     setReconcilePreviewLoading(true)
     setReconcilePreviewItems([])
@@ -1030,11 +1088,13 @@ export function TagsTab({
     })
     try {
       const items = await listLibraryTagFolderReconcileAsync(
-        inventory,
+        deferredInventory,
         draft,
         loraFolder,
-        checkpointFolder
+        checkpointFolder,
+        { cancelled: () => cancelled, yieldEvery: 32 }
       )
+      if (cancelled) return
       setReconcilePreviewItems(items)
       setReconcilePendingCount(items.length)
       setReconcileCountReady(true)
@@ -1043,15 +1103,19 @@ export function TagsTab({
         setReconcilePreviewOpen(false)
       }
     } catch (err) {
+      if (cancelled) return
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
       setReconcilePreviewOpen(false)
     } finally {
-      setReconcilePreviewLoading(false)
+      if (!cancelled) setReconcilePreviewLoading(false)
+      if (reconcileListCancelRef.current) reconcileListCancelRef.current = null
     }
   }
 
   const closeReconcilePreview = () => {
     if (backgroundMoving) return
+    reconcileListCancelRef.current?.()
+    reconcileListCancelRef.current = null
     setReconcilePreviewOpen(false)
     setReconcilePreviewItems([])
     setReconcilePreviewLoading(false)
@@ -1092,13 +1156,16 @@ export function TagsTab({
     }
   }
 
-  const confirmReconcileFromPreview = async () => {
-    if (!reconcilePreviewItems.length || backgroundMoving) return
+  const confirmReconcileFromPreview = async (
+    previewItems: TagFolderReconcilePreviewItem[] = reconcilePreviewItems,
+    opts?: { keepOpen?: boolean }
+  ) => {
+    if (!previewItems.length || backgroundMoving) return
     setBackgroundMoving(true)
     setStatusMessage(t('tagsTab.transferring'))
     try {
       const byTag = new Map<string, number[]>()
-      for (const item of reconcilePreviewItems) {
+      for (const item of previewItems) {
         const tag = item.winnerTag.trim()
         if (!tag) continue
         const list = byTag.get(tag)
@@ -1112,6 +1179,8 @@ export function TagsTab({
         moved += result.length
         skipped += Math.max(0, versionIds.length - result.length)
       }
+      const doneIds = new Set(previewItems.map((i) => i.versionId))
+      const remaining = reconcilePreviewItems.filter((i) => !doneIds.has(i.versionId))
       setStatusMessage(
         t('tagsTab.reconcileDone', {
           moved,
@@ -1121,9 +1190,14 @@ export function TagsTab({
         8000
       )
       await onRefresh?.()
-      setReconcilePreviewOpen(false)
-      setReconcilePreviewItems([])
-      setReconcilePendingCount(0)
+      if (opts?.keepOpen && remaining.length > 0) {
+        setReconcilePreviewItems(remaining)
+        setReconcilePendingCount(remaining.length)
+      } else {
+        setReconcilePreviewOpen(false)
+        setReconcilePreviewItems([])
+        setReconcilePendingCount(remaining.length === 0 ? 0 : remaining.length)
+      }
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : String(err), 8000)
     } finally {
@@ -1541,6 +1615,25 @@ const dirty = useMemo(() => {
     setLetterFilter(null)
   }, [librarySearch, tableTagPool, pinAssignLabels])
 
+  /** Add only for names not already in the table pool (existing picks are just search). */
+  const canAddFromSearch = useMemo(() => {
+    const names = parseTagRuleNames(librarySearch)
+    if (!names.length) return false
+    return names.some((raw) => {
+      const trimmed = raw.trim()
+      if (!trimmed) return false
+      return !tableTagPool.some(
+        (existing) => tagsEqual(existing, trimmed) || tagAliasMatch(trimmed, existing)
+      )
+    })
+  }, [librarySearch, tableTagPool])
+
+  const massApplyReady =
+    massSelected.size > 0 &&
+    Boolean(massFolderName.trim()) &&
+    saveState !== 'saving' &&
+    !backgroundMoving
+
   return (
     <div className={`panel tags-tab${reconcilePreviewOpen ? ' tags-tab-has-reconcile' : ''}`}>
       {reconcilePreviewOpen ? (
@@ -1556,8 +1649,10 @@ const dirty = useMemo(() => {
           confirmTagFolderMoves={confirmTagFolderMoves}
           defaultLinkDomain={defaultLinkDomain}
           detailOpen={detailOpen}
+          banFunctionMode={banFunctionMode}
+          onBanFunctionModeChange={onBanFunctionModeChange}
           onBack={closeReconcilePreview}
-          onConfirm={() => void confirmReconcileFromPreview()}
+          onConfirm={(previewItems, opts) => void confirmReconcileFromPreview(previewItems, opts)}
           onSwitchToTag={(versionId, tag, rules) => {
             setReconcilePreviewItems((prev) => {
               const next = prev.map((item) => {
@@ -1609,9 +1704,9 @@ const dirty = useMemo(() => {
             matchMode="fuzzy"
             clearable
             clearLabel={t('tagsTab.clearSearch')}
-            onConfirm={addTagsFromSearch}
-            confirmText={t('tagsTab.addTag')}
-            confirmLabel={t('tagsTab.addTagHint')}
+            onConfirm={canAddFromSearch ? addTagsFromSearch : undefined}
+            confirmText={canAddFromSearch ? t('tagsTab.addTag') : undefined}
+            confirmLabel={canAddFromSearch ? t('tagsTab.addTagHint') : undefined}
           />
           <TagAutocompleteInput
             className="tag-library-folder-filter"
@@ -1693,13 +1788,10 @@ const dirty = useMemo(() => {
                 />
                 <button
                   type="button"
-                  className="primary tags-mass-apply-inline"
-                  disabled={
-                    !massSelected.size ||
-                    !massFolderName.trim() ||
-                    saveState === 'saving' ||
-                    !!backgroundMoving
-                  }
+                  className={`btn-sm tags-mass-apply-inline${
+                    massApplyReady ? ' primary' : ' tags-mass-apply-muted'
+                  }`}
+                  disabled={!massApplyReady}
                   onClick={() => void applyMassAssign()}
                 >
                   {backgroundMoving
@@ -2019,6 +2111,11 @@ const dirty = useMemo(() => {
               )}
             </tbody>
           </table>
+          {!librarySearch.trim() && !letterFilter && tagPoolCount > libraryTags.length ? (
+            <p className="muted tags-table-truncated-hint">
+              {t('tagsTab.tableTruncatedHint', { pool: tagPoolCount })}
+            </p>
+          ) : null}
         </div>
         <button
           type="button"

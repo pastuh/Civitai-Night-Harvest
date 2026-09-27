@@ -3779,6 +3779,12 @@ button.missing-tag-chip.is-clickable:hover {
   font-size: 12px;
 }
 
+.tags-table-truncated-hint {
+  margin: 8px 4px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* Tag name autocomplete */
 .tag-autocomplete {
   position: relative;
@@ -4450,6 +4456,16 @@ button.missing-tag-chip.is-clickable:hover {
   white-space: nowrap;
   font-size: 12px;
   padding: 6px 10px;
+}
+
+.tags-mass-apply-muted,
+.tags-mass-apply-muted:disabled {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  color: var(--muted);
+  opacity: 0.55;
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .tags-mass-hint {

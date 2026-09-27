@@ -1996,6 +1996,25 @@ body.is-app-busy * {
     background 0.15s ease;
 }
 
+/* Move misplaced / read-only cards — only the preview opens details. */
+.gallery-card.library-card-static {
+  cursor: default;
+}
+
+.gallery-card.library-card-static:hover {
+  background: var(--surface2);
+  border-top-color: var(--card-accent, var(--border));
+}
+
+.gallery-thumb-wrap.gallery-thumb-wrap-open-details {
+  cursor: pointer;
+}
+
+.gallery-thumb-wrap.gallery-thumb-wrap-open-details:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+}
+
 /* Ban × is injected into already-painted cards — content-visibility can keep stale paint. */
 .search-browse-layout.is-ban-mode .gallery-card {
   content-visibility: visible;
@@ -4363,20 +4382,39 @@ select.browse-content-filter {
 .tags-reconcile-groups {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
+}
+
+.tags-reconcile-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px 12px 12px;
 }
 
 .tags-reconcile-group-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  margin: 0 0 8px;
-  padding: 4px 0 6px;
+  gap: 8px 12px;
+  margin: 0 0 10px;
+  padding: 0 0 8px;
   border: none;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
+}
+
+.tags-reconcile-group-head-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.tags-reconcile-group-move {
+  flex: none;
 }
 
 .tags-reconcile-group-head h3 {
@@ -4436,6 +4474,11 @@ select.browse-content-filter {
   margin-top: 2px;
 }
 
+.tags-reconcile-grid .gallery-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 260px 360px;
+}
+
 .tags-reconcile-card-prefix {
   display: flex;
   flex-direction: column;
@@ -4443,83 +4486,111 @@ select.browse-content-filter {
   margin-bottom: 4px;
 }
 
-.tags-reconcile-assign-btn {
-  width: 100%;
+.tags-reconcile-clash-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, #c9a227 45%, var(--border));
+  background: color-mix(in srgb, #c9a227 18%, var(--surface2));
+  color: color-mix(in srgb, #c9a227 70%, var(--text));
   font-size: 10px;
-  line-height: 1.2;
-  padding: 4px 6px;
-  white-space: normal;
-  text-align: center;
-  min-height: 0;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
 }
 
-.tags-reconcile-assign-row {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
-  width: 100%;
+.moon-flip {
+  display: inline-block;
+  transform: scaleX(-1) rotate(-12deg);
+  transform-origin: center;
+}
+
+.header-harvest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+}
+
+.tags-reconcile-assign-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  min-height: 0;
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+  /* Same 🌙 glyph; grayscale + brightness so it follows theme (white on aroma/dark). */
+  filter: grayscale(1) brightness(1.85) contrast(1.05);
+}
+
+.tags-reconcile-assign-chip:hover:not(:disabled) {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.tags-reconcile-assign-chip.is-open {
+  opacity: 1;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--text) 32%, var(--border));
+}
+
+.theme-light .tags-reconcile-assign-chip,
+.theme-candy .tags-reconcile-assign-chip {
+  filter: grayscale(1) brightness(0.35) contrast(1.1);
+}
+
+.tags-reconcile-assign-menu {
+  min-width: 220px;
+  max-width: min(280px, 90vw);
+  padding: 8px 10px;
+}
+
+.tags-reconcile-assign-modal-layer {
+  z-index: 12000;
+}
+
+.tags-reconcile-assign-modal {
+  width: min(420px, 100%);
+  overflow: visible;
+}
+
+.tags-reconcile-assign-modal .tags-reconcile-assign-model {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.tags-reconcile-assign-modal .tag-autocomplete {
   position: relative;
   z-index: 2;
+  width: 100%;
 }
 
-.tags-reconcile-assign-row .tag-autocomplete,
-.tags-reconcile-assign-input.tag-autocomplete {
-  flex: none;
+.tags-reconcile-assign-modal .tag-autocomplete-list {
+  max-height: min(280px, 40vh);
+  z-index: 3;
+}
+
+.tags-reconcile-assign-menu .context-menu-subtitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.tags-reconcile-assign-menu .tag-autocomplete,
+.tags-reconcile-assign-menu .tags-reconcile-assign-input.tag-autocomplete {
   width: 100%;
   max-width: 100%;
-  min-width: 0;
-}
-
-.tags-reconcile-assign-row .tag-autocomplete-field {
-  min-height: 24px;
-  gap: 0;
-  padding: 0;
-}
-
-.tags-reconcile-assign-row .tag-autocomplete-field input {
-  font-size: 11px;
-  line-height: 1.2;
-  padding: 3px 22px 3px 6px;
-  min-width: 0;
-  min-height: 0;
-  height: 24px;
-  box-sizing: border-box;
-}
-
-.tags-reconcile-assign-row .tag-autocomplete-field.has-clear input,
-.tags-reconcile-assign-row .tag-autocomplete-field.has-confirm input,
-.tags-reconcile-assign-row .tag-autocomplete-field.has-clear.has-confirm input,
-.tags-reconcile-assign-row .tag-autocomplete-field.has-confirm-text.has-confirm input,
-.tags-reconcile-assign-row .tag-autocomplete-field.has-clear.has-confirm-text.has-confirm input {
-  padding-right: 40px;
-}
-
-.tags-reconcile-assign-row .tag-autocomplete-confirm,
-.tags-reconcile-assign-row .tag-autocomplete-clear {
-  width: 18px;
-  height: 18px;
-  min-width: 18px;
-  max-width: 18px;
-  padding: 0;
-  font-size: 10px;
-}
-
-.tags-reconcile-assign-row .tag-autocomplete-field.has-confirm .tag-autocomplete-clear {
-  right: 20px;
-}
-
-.tags-reconcile-assign-row .tag-autocomplete-list {
-  font-size: 11px;
-  max-height: 120px;
-}
-
-.tags-reconcile-assign-cancel {
-  font-size: 10px;
-  line-height: 1.2;
-  padding: 1px 5px;
-  min-height: 0;
-  width: fit-content;
 }
 
 .tags-reconcile-move {
@@ -5305,8 +5376,10 @@ select.browse-content-filter {
 }
 
 .context-menu button:not(.tag-autocomplete-clear):not(.tag-autocomplete-confirm):not(.context-menu-tag-chip):hover {
-  background: var(--surface2, color-mix(in srgb, var(--accent, #ffca24) 18%, transparent));
+  background: color-mix(in srgb, var(--accent, #ffca24) 32%, var(--surface2, transparent));
   color: var(--text);
+  outline: 1px solid color-mix(in srgb, var(--accent, #ffca24) 55%, transparent);
+  outline-offset: -1px;
 }
 
 .context-menu button:not(.tag-autocomplete-clear):not(.tag-autocomplete-confirm):not(.context-menu-tag-chip):active {

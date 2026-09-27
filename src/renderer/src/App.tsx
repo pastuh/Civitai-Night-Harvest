@@ -2274,6 +2274,8 @@ export default function App() {
       onBannedTagsChange={async (tags) => {
         await saveSettings({ bannedTags: tags })
       }}
+      banFunctionMode={settings?.banFunctionMode ?? false}
+      onBanFunctionModeChange={onBanFunctionModeChange}
       showTagStats={settings?.showTagStats ?? false}
       defaultLinkDomain={settings?.domain === 'red' ? 'red' : 'com'}
       detailOpen={Boolean(modelDetailTarget)}
@@ -2333,12 +2335,15 @@ export default function App() {
           </div>
           <button
             type="button"
-            className={`btn-sm ${settings.nightMode ? 'primary toggle-on' : 'btn-ghost'}`}
+            className={`btn-sm header-harvest-btn ${settings.nightMode ? 'primary toggle-on' : 'btn-ghost'}`}
             onClick={() => void toggleNightMode()}
             title={
               settings.nightMode ? m.header.tooltipNightTagsOn : m.header.tooltipNightOff
             }
           >
+            <span className="moon-flip" aria-hidden>
+              🌙
+            </span>{' '}
             {settings.nightMode ? m.header.nightTags : m.header.nightOff}
           </button>
           {showDownloadsToggle && (
@@ -2629,7 +2634,7 @@ export default function App() {
               onViewPrefsChange={
                 settings.preserveFilters ? onLibraryViewPrefsChange : undefined
               }
-              isActive={galleryOnTab || tagsCoveringLibrary}
+              isActive={galleryOnTab}
               resultsDisplayMode={settings.resultsDisplayMode ?? 'autoAdvance'}
               resultsPageSize={settings.resultsPageSize ?? 100}
               onOpenModelDetail={openModelDetail}
