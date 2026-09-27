@@ -1,4 +1,4 @@
-﻿import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 import type { CivitaiDomain, InventoryRecord, TagFolderRule } from '../../../shared/types'
@@ -6,6 +6,8 @@ import {
   countElevatedFolderTagClashesAsync,
   findRuleForTag,
   listLibraryTagFolderReconcileAsync,
+  bindModelTagsToFolderRule,
+  expandCivitaiTagNames,
   type TagFolderReconcilePreviewItem
 } from '../../../shared/tag-routing'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
@@ -97,9 +99,14 @@ export function TagFolderReconcilePreviewPage({
   const [assignTarget, setAssignTarget] = useState<{ tag: string; versionId: number } | null>(
     null
   )
+  /** Which group Confirm is in flight — other groups keep their idle label (not "Transferring…"). */
+  const [movingGroupTag, setMovingGroupTag] = useState<string | null>(null)
   const [assignPopup, setAssignPopup] = useState<{
     versionId: number
     modelName: string
+    modelTags: string[]
+    /** Prefill Assign dropdown with planned / green winner tag. */
+    initialTag?: string
   } | null>(null)
   const [assignBusy, setAssignBusy] = useState(false)
   const [cardContextMenu, setCardContextMenu] = useState<{
@@ -126,6 +133,10 @@ export function TagFolderReconcilePreviewPage({
     () => (showClashes ? items : items.filter((i) => !i.clashOnly)),
     [items, showClashes]
   )
+
+  useEffect(() => {
+    if (!moving) setMovingGroupTag(null)
+  }, [moving])
 
   const reloadPreview = useCallback(
     async (includeClashes: boolean) => {
@@ -285,14 +296,31 @@ export function TagFolderReconcilePreviewPage({
     })
   }
 
-  const ensureTagRule = async (tagName: string): Promise<TagFolderRule[]> => {
+  const ensureTagRule = async (
+    tagName: string,
+    linkedModelTags: string[] = []
+  ): Promise<TagFolderRule[]> => {
+    if (linkedModelTags.length > 0) {
+      const next = bindModelTagsToFolderRule(
+        tagRules,
+        tagName,
+        linkedModelTags,
+        () => crypto.randomUUID()
+      )
+      await onSaveTagRules(next)
+      return next
+    }
     if (findRuleForTag(tagName, tagRules)) return tagRules
     const next = [...tagRules, { id: crypto.randomUUID(), tagName, folderPath: '' }]
     await onSaveTagRules(next)
     return next
   }
 
-  const assignModelToTag = async (versionId: number, rawTag: string) => {
+  const assignModelToTag = async (
+    versionId: number,
+    rawTag: string,
+    linkedModelTags: string[] = []
+  ) => {
     const tagName = rawTag.trim()
     if (!tagName || assignBusy || moving) return
     const removed = items.find((i) => i.versionId === versionId) ?? null
@@ -301,8 +329,8 @@ export function TagFolderReconcilePreviewPage({
     // Drop the card immediately — avoid switch+re-sort flash before remove.
     removeItem(versionId)
     try {
-      await ensureTagRule(tagName)
-      await window.api.assignTag([versionId], tagName)
+      await ensureTagRule(tagName, linkedModelTags)
+      await window.api.assignTag([versionId], tagName, { lockRouting: true })
       onStatus?.(t('gallery.movedTo', { count: 1, tag: tagName }))
       // Background sync only — do not rewrite the preview list.
       void onRefresh?.()
@@ -356,7 +384,14 @@ export function TagFolderReconcilePreviewPage({
 
   const openAssignPopup = useCallback((versionId: number, modelName: string) => {
     setCardContextMenu(null)
-    setAssignPopup({ versionId, modelName })
+    const row = itemsRef.current.find((i) => i.versionId === versionId)
+    const winner = (row?.winnerTag || '').trim()
+    setAssignPopup({
+      versionId,
+      modelName,
+      modelTags: expandCivitaiTagNames(row?.civitaiTags),
+      initialTag: winner || undefined
+    })
   }, [])
 
   const openCardContextMenu = useCallback(
@@ -542,11 +577,14 @@ export function TagFolderReconcilePreviewPage({
                           tag,
                           count: rows.length
                         })}
-                        onClick={() => onConfirm(rows, { keepOpen: true })}
+                        onClick={() => {
+                          setMovingGroupTag(tag)
+                          onConfirm(rows, { keepOpen: true })
+                        }}
                       >
-                        {moving
+                        {moving && movingGroupTag === tag
                           ? t('tagsTab.transferring')
-                          : `${t('tagsTab.reconcileConfirmMoveShort')} (${rows.length})`}
+                          : t('tagsTab.reconcileConfirmMove', { count: rows.length })}
                       </button>
                     </div>
                   </header>
@@ -573,6 +611,8 @@ export function TagFolderReconcilePreviewPage({
                           routingTagOverride={row.winnerTag}
                           bodyPrefix={renderClashBadge(row)}
                           tagsExtra={renderAssignChip(row)}
+                          onQuickAssign={(rec) => openAssignPopup(rec.versionId, rec.modelName)}
+                          quickAssignOpen={assignPopup?.versionId === row.versionId}
                           onBanModel={
                             banFunctionMode
                               ? (modelId, modelName, versionId) => {
@@ -653,13 +693,19 @@ export function TagFolderReconcilePreviewPage({
   const assignModal =
     assignPopup != null ? (
       <AssignModelToTagModal
+        key={`${assignPopup.versionId}:${assignPopup.initialTag ?? ''}`}
         modelName={assignPopup.modelName}
+        modelTags={assignPopup.modelTags}
         suggestions={folderTagSuggestions}
+        initialQuery={assignPopup.initialTag}
+        initialScope="model"
         disabled={moving}
         busy={assignBusy}
         confirmBusyLabel={t('tagsTab.transferring')}
         onClose={closeAssignMenu}
-        onConfirm={(tag) => void assignModelToTag(assignPopup.versionId, tag)}
+        onConfirm={(tag, linkedModelTags) =>
+          void assignModelToTag(assignPopup.versionId, tag, linkedModelTags)
+        }
       />
     ) : null
 

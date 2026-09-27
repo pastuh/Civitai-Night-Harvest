@@ -2183,6 +2183,11 @@ export class DownloadQueue {
 
         // Emit done before prune so Session downloads can observe the completion.
         this.emitQueueState()
+        if (item.versionId > 0) {
+          sendToRenderer(this.getWindow, 'download:sessionComplete', {
+            versionIds: [item.versionId]
+          })
+        }
         this.items = this.items.filter((i) => i.id !== item.id)
         this.broadcast()
       } else if (result.status === 'deferred') {

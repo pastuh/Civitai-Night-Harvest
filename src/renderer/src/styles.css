@@ -132,7 +132,7 @@ label {
 .scroll-to-top {
   position: fixed;
   left: 2px;
-  bottom: 52px;
+  bottom: 36px;
   z-index: 9100;
   width: 28px;
   height: 28px;
@@ -156,7 +156,7 @@ label {
 }
 
 .app.has-global-status .scroll-to-top {
-  bottom: 56px;
+  bottom: 40px;
 }
 
 .scroll-to-top.is-visible {
@@ -563,21 +563,22 @@ button.tag-chip,
 }
 
 /* Folder-role marks on Civitai tags (subtle):
- * final  — 1px solid soft accent = primary folder route
- * mapped — 1px dashed soft accent = Tag folders rule exists (not active route)
- * unmapped — 1px dotted muted = no rule yet
+ * final  — quiet solid border = active folder destination (same tag chrome, not a bright CTA)
+ * mapped — dashed = Tag folders rule exists (not active route)
+ * unmapped — dotted muted = no rule yet
  */
 .gallery-card .tag-chip.tag-role-final,
 .tag-chip.tag-role-final {
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--muted) 50%, var(--border));
   color: inherit;
   background: transparent;
   opacity: 1;
+  cursor: default;
 }
 
 .gallery-card .tag-chip.tag-role-mapped,
 .tag-chip.tag-role-mapped {
-  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--border));
   color: inherit;
   background: transparent;
   opacity: 1;
@@ -619,7 +620,7 @@ button.tag-chip,
 
 .gallery-card .tag-chip.tag-role-final:hover,
 .tag-chip.tag-role-final:hover {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-color: color-mix(in srgb, var(--muted) 55%, var(--border));
   border-style: solid;
 }
 
@@ -3416,9 +3417,9 @@ body.is-app-busy * {
   flex: 0 0 auto;
   padding: 1px 5px;
   border-radius: 3px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  border: 1px solid color-mix(in srgb, #38bdf8 55%, var(--border));
+  background: color-mix(in srgb, #38bdf8 14%, transparent);
+  color: color-mix(in srgb, #7dd3fc 75%, var(--text));
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -4602,20 +4603,50 @@ select.browse-content-filter {
   border-color: color-mix(in srgb, var(--text) 32%, var(--border));
 }
 
+/* Tag Folders route (unlocked) — green */
+.library-assign-chip-route {
+  filter: none;
+  color: color-mix(in srgb, #86efac 75%, var(--text));
+  border-style: solid;
+  border-color: color-mix(in srgb, #2fa856 55%, var(--border));
+  background: transparent;
+  font-weight: inherit;
+}
+
+.library-assign-chip-route:hover:not(:disabled) {
+  color: color-mix(in srgb, #86efac 90%, var(--text));
+  border-color: color-mix(in srgb, #2fa856 75%, var(--border));
+  background: color-mix(in srgb, #2fa856 10%, transparent);
+}
+
+/* Folder lock (manual) — soft cyan next to green */
+.library-assign-chip-locked {
+  filter: none;
+  color: color-mix(in srgb, #7dd3fc 80%, var(--text));
+  border-style: solid;
+  border-color: color-mix(in srgb, #38bdf8 50%, var(--border));
+  background: transparent;
+  font-weight: inherit;
+}
+
+.library-assign-chip-locked:hover:not(:disabled) {
+  color: color-mix(in srgb, #bae6fd 85%, var(--text));
+  border-color: color-mix(in srgb, #38bdf8 70%, var(--border));
+  background: color-mix(in srgb, #38bdf8 10%, transparent);
+}
+
+/* Back-compat alias */
 .library-assign-chip-manual {
   filter: none;
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  font-weight: 600;
+  color: color-mix(in srgb, #7dd3fc 80%, var(--text));
+  border-style: solid;
+  border-color: color-mix(in srgb, #38bdf8 50%, var(--border));
+  background: transparent;
+  font-weight: inherit;
 }
 
-.library-assign-chip-manual:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.theme-light .library-assign-chip:not(.library-assign-chip-manual),
-.theme-candy .library-assign-chip:not(.library-assign-chip-manual) {
+.theme-light .library-assign-chip:not(.library-assign-chip-route):not(.library-assign-chip-locked):not(.library-assign-chip-manual),
+.theme-candy .library-assign-chip:not(.library-assign-chip-route):not(.library-assign-chip-locked):not(.library-assign-chip-manual) {
   filter: grayscale(1) brightness(0.35) contrast(1.1);
 }
 
@@ -4685,6 +4716,83 @@ select.browse-content-filter {
   margin-bottom: 12px;
 }
 
+.tags-reconcile-assign-modal .assign-scope-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tags-reconcile-assign-modal .assign-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.tags-reconcile-assign-modal .assign-scope-btn {
+  flex: 1 1 140px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tags-reconcile-assign-modal .assign-scope-btn-title {
+  color: inherit;
+}
+
+.tags-reconcile-assign-modal .assign-scope-btn-sub {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.tags-reconcile-assign-modal .assign-scope-btn.is-active.assign-scope-btn-local {
+  border-color: color-mix(in srgb, #38bdf8 55%, var(--border));
+  background: color-mix(in srgb, #38bdf8 14%, transparent);
+  color: color-mix(in srgb, #7dd3fc 80%, var(--text));
+}
+
+.tags-reconcile-assign-modal .assign-scope-btn.is-active.assign-scope-btn-global {
+  border-color: color-mix(in srgb, #2fa856 55%, var(--border));
+  background: color-mix(in srgb, #2fa856 12%, transparent);
+  color: color-mix(in srgb, #86efac 70%, var(--text));
+}
+
+.tags-reconcile-assign-modal .assign-scope-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tags-reconcile-assign-modal .assign-scope-hint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.tags-reconcile-assign-modal .assign-modal-dest-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .tags-reconcile-assign-modal .assign-modal-top-text {
   min-width: 0;
   flex: 1 1 160px;
@@ -4740,6 +4848,17 @@ select.browse-content-filter {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.tags-reconcile-assign-modal .assign-model-tag-chip.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tags-reconcile-assign-modal .assign-model-tags-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
 .tags-reconcile-assign-modal .assign-modal-search-row {
   display: flex;
   align-items: flex-start;
@@ -4759,6 +4878,25 @@ select.browse-content-filter {
   margin-top: 0;
   align-self: stretch;
   max-height: 38px;
+}
+
+.tags-reconcile-assign-modal .assign-modal-confirm-local {
+  border: 1px solid color-mix(in srgb, #38bdf8 40%, var(--border));
+  background: color-mix(in srgb, #38bdf8 8%, transparent);
+  color: color-mix(in srgb, #7dd3fc 70%, var(--text));
+  font-weight: 600;
+  opacity: 0.92;
+}
+
+.tags-reconcile-assign-modal .assign-modal-confirm-local:hover:not(:disabled) {
+  border-color: color-mix(in srgb, #38bdf8 55%, var(--border));
+  background: color-mix(in srgb, #38bdf8 14%, transparent);
+  color: color-mix(in srgb, #7dd3fc 85%, var(--text));
+  opacity: 1;
+}
+
+.tags-reconcile-assign-modal .assign-modal-confirm-local:disabled {
+  opacity: 0.45;
 }
 
 .tags-reconcile-assign-modal .tag-autocomplete {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { IncompleteModel, InventoryRecord } from '../../../shared/types'
 import { formatWaitDuration } from '../../../shared/utils'
 import {
@@ -24,6 +24,7 @@ import {
   videoPreviewAvailabilityFor,
   type ModelCardPreviewSource
 } from '../utils/model-card-preview'
+import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 
 type IncompleteHoldKind = 'queued' | 'banned'
 type IncompleteHold = { item: IncompleteModel; kind: IncompleteHoldKind }
@@ -97,6 +98,12 @@ export function IncompleteTab({
   const [banTarget, setBanTarget] = useState<IncompleteModel | null>(null)
   const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
   const [banConfirmSkipForSession, setBanConfirmSkipForSession] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    item: IncompleteModel
+  } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   /** Download/Ban holds — dimmed in place until leaving Incomplete. */
   const [temporaryByModelId, setTemporaryByModelId] = useState<Map<number, IncompleteHold>>(
@@ -386,6 +393,12 @@ export function IncompleteTab({
     [banConfirmSkipForSession, confirmBan]
   )
 
+  const openContextMenu = useCallback((e: MouseEvent, item: IncompleteModel) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, item })
+  }, [])
+
   if (!items.length && !hiddenModelIds.size && !temporaryByModelId.size) {
     return (
       <div className="panel status-tab-panel">
@@ -517,6 +530,11 @@ export function IncompleteTab({
                         <StatusModelCard
                           key={item.modelId}
                           className={temporary ? 'pending-card-temporary' : undefined}
+                          onContextMenu={
+                            hold?.kind === 'banned'
+                              ? undefined
+                              : (e) => openContextMenu(e, item)
+                          }
                           title={item.modelName}
                           badges={
                             ratingInfo ? (
@@ -795,6 +813,52 @@ export function IncompleteTab({
           ) : null}
         </div>
       </div>
+
+      {contextMenu && (
+        <ContextMenuPortal
+          open
+          x={contextMenu.x}
+          y={contextMenu.y}
+          menuRef={contextMenuRef}
+          onClose={() => setContextMenu(null)}
+        >
+          <div className="context-menu-title">{contextMenu.item.modelName}</div>
+          {contextMenu.item.pageUrl ? (
+            <button
+              {...contextMenuButtonProps(() => {
+                void window.api.openExternal(contextMenu.item.pageUrl)
+              }, () => setContextMenu(null))}
+            >
+              {t('gallery.openOnCivitai')}
+            </button>
+          ) : null}
+          {onOpenModelDetail ? (
+            <button
+              {...contextMenuButtonProps(() => {
+                onOpenModelDetail({
+                  kind: 'browse',
+                  modelId: contextMenu.item.modelId,
+                  versionId: contextMenu.item.resolvedVersionId ?? 0,
+                  name: contextMenu.item.modelName,
+                  previewUrl: contextMenu.item.previewUrl,
+                  domain: contextMenu.item.sourceDomain
+                })
+              }, () => setContextMenu(null))}
+            >
+              {t('gallery.modelDetails')}
+            </button>
+          ) : null}
+          <button
+            {...contextMenuButtonProps(() => {
+              requestBan(contextMenu.item)
+            }, () => setContextMenu(null))}
+            className="context-menu-danger"
+            disabled={busyId === contextMenu.item.modelId}
+          >
+            {t('gallery.excludeBan')}
+          </button>
+        </ContextMenuPortal>
+      )}
 
       {banTarget && (
         <ConfirmModal

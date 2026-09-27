@@ -41,7 +41,8 @@ import {
   isCustomTagFolderRule,
   normalizeHiddenTags,
   isUnsortedRoutingTag,
-  expandCivitaiTagNames
+  expandCivitaiTagNames,
+  bindModelTagsToFolderRule
 } from '../../../shared/tag-routing'
 import {
   buildTagClusters,
@@ -73,7 +74,6 @@ import {
   type LibraryViewPrefs
 } from '../view-prefs'
 import { compareOptionalCount } from '../list-sort'
-import { FastTagAssignModal } from './FastTagAssignModal'
 import { SkippedTagsPanel } from './SkippedTagsPanel'
 import { ConfirmModal } from './ConfirmModal'
 import { folderLabelForRecord, recordTagsFullyAssigned } from './gallery-card-utils'
@@ -309,7 +309,6 @@ function GalleryTabInner({
   const [ignoreExcludedTags, setIgnoreExcludedTags] = useState(initial.ignoreExcludedTags)
   const [hideFullyTagged, setHideFullyTagged] = useState(initial.hideFullyTagged === true)
   const [hideAllAssignedTags, setHideAllAssignedTags] = useState(initial.hideAllAssignedTags)
-  const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
   const [tagSearch, setTagSearch] = useState('')
   const deferredTagSearch = useDeferredValue(tagSearch)
   const [modelSearch, setModelSearch] = useState(initial.modelSearch)
@@ -335,6 +334,13 @@ function GalleryTabInner({
    * (same pattern as Updates/Pending). No full inventory refresh.
    */
   const [pendingHiddenVersionIds, setPendingHiddenVersionIds] = useState<Set<number>>(
+    () => new Set()
+  )
+  /**
+   * After moon / Fast-tag assign: keep the card in the current grid until leaving Library,
+   * even when Hide folder-assigned / Untagged / Hide tagged would drop it.
+   */
+  const [heldAssignedVersionIds, setHeldAssignedVersionIds] = useState<Set<number>>(
     () => new Set()
   )
   const wasLibraryActiveRef = useRef(isActive)
@@ -381,6 +387,10 @@ function GalleryTabInner({
   const [quickAssignTarget, setQuickAssignTarget] = useState<{
     versionId: number
     modelName: string
+    modelTags: string[]
+    initialTag?: string
+    /** model = only this card; rules = also bind selected Civitai tags (Fast tag). */
+    initialScope?: 'model' | 'rules'
   } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [highlightVersionId, setHighlightVersionId] = useState<number | null>(null)
@@ -397,10 +407,8 @@ function GalleryTabInner({
   /** Session filter was applied via Library badge (+N) — clear on next open without new downloads. */
   const sessionFilterFromBadgeRef = useRef(false)
 
-  // Auto-select session downloads only when the user opens the Library tab with
-  // an explicit preferSessionFilter (badge click). Do not use highlightVersionIds —
-  // those accumulate while browsing / under model-detail overlay and must not
-  // rewrite the user's filter when returning from details.
+  // Auto-select Session downloads only when opening Library via badge (preferSessionFilter).
+  // Do not switch filters while already on Library — sidebar entry alone is enough to review later.
   useEffect(() => {
     const justOpened = isActive && !libraryWasActiveRef.current
     libraryWasActiveRef.current = isActive
@@ -782,11 +790,16 @@ function GalleryTabInner({
     const wasActive = wasLibraryActiveRef.current
     wasLibraryActiveRef.current = isActive
     if (!wasActive || isActive) return
-    if (pendingHiddenVersionIds.size === 0) return
-    const ids = [...pendingHiddenVersionIds]
-    onInventoryVersionsRemoved?.(ids)
-    setPendingHiddenVersionIds(new Set())
-  }, [isActive, pendingHiddenVersionIds, onInventoryVersionsRemoved])
+    if (pendingHiddenVersionIds.size === 0 && heldAssignedVersionIds.size === 0) return
+    if (pendingHiddenVersionIds.size > 0) {
+      const ids = [...pendingHiddenVersionIds]
+      onInventoryVersionsRemoved?.(ids)
+      setPendingHiddenVersionIds(new Set())
+    }
+    if (heldAssignedVersionIds.size > 0) {
+      setHeldAssignedVersionIds(new Set())
+    }
+  }, [isActive, pendingHiddenVersionIds, heldAssignedVersionIds, onInventoryVersionsRemoved])
 
   // Ban/exclude re-renders must not yank the shared `.content` scroller (focus / status line).
   useLayoutEffect(() => {
@@ -798,15 +811,40 @@ function GalleryTabInner({
       if (el instanceof HTMLElement && top != null) el.scrollTop = top
     })
     return () => window.cancelAnimationFrame(a)
-  }, [pendingHiddenVersionIds, message, deleteConfirm, localDeleteConfirm, restoreContentScroll])
+  }, [
+    pendingHiddenVersionIds,
+    heldAssignedVersionIds,
+    message,
+    deleteConfirm,
+    localDeleteConfirm,
+    restoreContentScroll
+  ])
 
   const isBanned = (modelId: number) => hiddenModelIds.has(modelId)
+
+  const isHeldAssigned = useCallback(
+    (versionId: number) => heldAssignedVersionIds.has(versionId),
+    [heldAssignedVersionIds]
+  )
+
+  const temporaryVersionIds = useMemo(() => {
+    if (heldAssignedVersionIds.size === 0) return pendingHiddenVersionIds
+    if (pendingHiddenVersionIds.size === 0) return heldAssignedVersionIds
+    const merged = new Set(pendingHiddenVersionIds)
+    for (const id of heldAssignedVersionIds) merged.add(id)
+    return merged
+  }, [pendingHiddenVersionIds, heldAssignedVersionIds])
 
   const filteredInventory = useMemo(() => {
     let list = inventory
     switch (libraryFilter.type) {
       case 'untagged':
-        list = list.filter((r) => !r.routingTag?.trim() || isUnsortedRoutingTag(r.routingTag))
+        list = list.filter(
+          (r) =>
+            isHeldAssigned(r.versionId) ||
+            !r.routingTag?.trim() ||
+            isUnsortedRoutingTag(r.routingTag)
+        )
         break
       case 'unrecognized':
         list = list.filter((r) => isUnrecognizedInventoryRecord(r))
@@ -883,9 +921,12 @@ function GalleryTabInner({
         matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)
       )
     }
-    if (hideFolderAssigned && !deferredModelSearch.trim() && pinModelId == null) {
+    if (hideFolderAssigned && libraryFilter.type !== 'session' && !deferredModelSearch.trim() && pinModelId == null) {
       const excluded = normalizeHiddenTags(libraryExcludedTags)
       list = list.filter((r) => {
+        // Keep held assigns + this-session downloads visible for review.
+        if (isHeldAssigned(r.versionId)) return true
+        if (sessionSet.has(r.versionId)) return true
         const route = r.routingTag?.trim()
         if (!route) return true
         if (
@@ -897,8 +938,10 @@ function GalleryTabInner({
         return false
       })
     }
-    if (hideFullyTagged && !deferredModelSearch.trim() && pinModelId == null) {
+    if (hideFullyTagged && libraryFilter.type !== 'session' && !deferredModelSearch.trim() && pinModelId == null) {
       list = list.filter((r) => {
+        if (isHeldAssigned(r.versionId)) return true
+        if (sessionSet.has(r.versionId)) return true
         const folderLabel = folderLabelForRecord(r, tagRules, loraFolder, checkpointFolder)
         return !recordTagsFullyAssigned(r, tagRules, folderLabel)
       })
@@ -923,6 +966,7 @@ function GalleryTabInner({
     ignoreExcludedTags,
     libraryExcludedTags,
     sessionSet,
+    isHeldAssigned,
     autoUpdateModelIds,
     pinModelId,
     deferredModelSearch,
@@ -1203,10 +1247,11 @@ function GalleryTabInner({
     () => inventoryForMainCounts.filter((r) => isUnrecognizedInventoryRecord(r)).length,
     [inventoryForMainCounts]
   )
-  const sessionFilterCount = useMemo(
-    () => inventoryForMainCounts.filter((r) => sessionSet.has(r.versionId)).length,
-    [inventoryForMainCounts, sessionSet]
-  )
+  const sessionFilterCount = useMemo(() => {
+    // Show sidebar entry from tracked session ids even before inventory refresh lands.
+    const inInv = inventoryForMainCounts.filter((r) => sessionSet.has(r.versionId)).length
+    return Math.max(inInv, sessionSet.size)
+  }, [inventoryForMainCounts, sessionSet])
   const alwaysUpdateFilterCount = useMemo(
     () => inventoryForMainCounts.filter((r) => autoUpdateModelIds.has(r.modelId)).length,
     [inventoryForMainCounts, autoUpdateModelIds]
@@ -1504,7 +1549,12 @@ function GalleryTabInner({
     setMoving(true)
     setMessage('')
     try {
-      await window.api.assignTag(ids, tagName)
+      await window.api.assignTag(ids, tagName, { lockRouting: true })
+      setHeldAssignedVersionIds((prev) => {
+        const next = new Set(prev)
+        for (const id of ids) next.add(id)
+        return next
+      })
       setSelected(new Set())
       setMessage(t('gallery.movedTo', { count, tag: tagName }))
       await onRefresh()
@@ -1532,22 +1582,39 @@ function GalleryTabInner({
     return true
   }
 
-  const assignFolderByTag = (rawTag: string, versionId: number | undefined) => {
+  const assignFolderByTag = (
+    rawTag: string,
+    versionId: number | undefined,
+    linkedModelTags: string[] = []
+  ) => {
     const tagName = rawTag.trim()
     if (!tagName || versionId == null) return
     const ids =
       selected.has(versionId) && selected.size > 0 ? [...selected] : [versionId]
     setContextMenu(null)
     setQuickAssignTarget(null)
+    setHeldAssignedVersionIds((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) next.add(id)
+      return next
+    })
     setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
     // Background move — keep Library interactive while files transfer.
     void (async () => {
       try {
-        if (!(await ensureTagFolder(tagName, 'auto'))) {
+        if (linkedModelTags.length > 0) {
+          const nextRules = bindModelTagsToFolderRule(
+            tagRules,
+            tagName,
+            linkedModelTags,
+            newId
+          )
+          await onSaveTagRules(nextRules)
+        } else if (!(await ensureTagFolder(tagName, 'auto'))) {
           setMessage('')
           return
         }
-        await window.api.assignTag(ids, tagName)
+        await window.api.assignTag(ids, tagName, { lockRouting: true })
         setSelected(new Set())
         setMessage(t('gallery.movedTo', { count: ids.length, tag: tagName }))
         await onRefresh()
@@ -1559,7 +1626,15 @@ function GalleryTabInner({
 
   const openQuickAssign = useCallback((record: InventoryRecord) => {
     setContextMenu(null)
-    setQuickAssignTarget({ versionId: record.versionId, modelName: record.modelName })
+    const rt = (record.routingTag || '').trim()
+    const initialTag = rt && !isUnsortedRoutingTag(rt) ? rt : undefined
+    setQuickAssignTarget({
+      versionId: record.versionId,
+      modelName: record.modelName,
+      modelTags: expandCivitaiTagNames(record.civitaiTags),
+      initialTag,
+      initialScope: 'model'
+    })
   }, [])
 
   const closeQuickAssign = useCallback(() => {
@@ -1578,7 +1653,15 @@ function GalleryTabInner({
   const openTagInFolders = useCallback(
     (civitaiTag: string, record?: InventoryRecord) => {
       if (fastTagMode) {
-        setFastTagTarget(civitaiTag)
+        if (record) {
+          setQuickAssignTarget({
+            versionId: record.versionId,
+            modelName: record.modelName,
+            modelTags: expandCivitaiTagNames(record.civitaiTags),
+            initialTag: civitaiTag.trim() || undefined,
+            initialScope: 'rules'
+          })
+        }
         return
       }
       if (record && record.modelId > 0) {
@@ -1964,7 +2047,7 @@ function GalleryTabInner({
               units={gridUnits}
               selected={selected}
               hiddenModelIds={hiddenModelIds}
-              temporaryVersionIds={pendingHiddenVersionIds}
+              temporaryVersionIds={temporaryVersionIds}
               highlightVersionId={highlightVersionId}
               highlightModelId={highlightModelId}
               highlightSet={highlightSet}
@@ -2505,7 +2588,8 @@ function GalleryTabInner({
                   e.stopPropagation()
                   setQuickAssignTarget({
                     versionId: contextMenu.versionId!,
-                    modelName: contextMenu.modelName
+                    modelName: contextMenu.modelName,
+                    modelTags: expandCivitaiTagNames(menuRecord?.civitaiTags)
                   })
                   setContextMenu(null)
                 }}
@@ -2629,28 +2713,19 @@ function GalleryTabInner({
       )}
       {quickAssignTarget ? (
         <AssignModelToTagModal
+          key={`${quickAssignTarget.versionId}:${quickAssignTarget.initialTag ?? ''}:${quickAssignTarget.initialScope ?? 'model'}`}
           modelName={quickAssignTarget.modelName}
+          modelTags={quickAssignTarget.modelTags}
           suggestions={folderTagSuggestions}
+          initialQuery={quickAssignTarget.initialTag}
+          initialScope={quickAssignTarget.initialScope ?? 'model'}
           disabled={moving}
           onClose={closeQuickAssign}
-          onConfirm={(tag) => assignFolderByTag(tag, quickAssignTarget.versionId)}
+          onConfirm={(tag, linkedModelTags) =>
+            assignFolderByTag(tag, quickAssignTarget.versionId, linkedModelTags)
+          }
         />
       ) : null}
-      {fastTagTarget != null && (
-        <FastTagAssignModal
-          tag={fastTagTarget}
-          tagRules={tagRules}
-          inventory={inventory}
-          tagSuggestions={tagSuggestions}
-          confirmTagFolderMoves={confirmTagFolderMoves}
-          loraFolder={loraFolder}
-          checkpointFolder={checkpointFolder}
-          onClose={() => setFastTagTarget(null)}
-          onSaveTagRules={onSaveTagRules}
-          onRefresh={onRefresh}
-          onDone={(msg) => setMessage(msg)}
-        />
-      )}
       {deleteConfirm && (
         <ConfirmModal
           title={t('gallery.deleteFilesExclude')}

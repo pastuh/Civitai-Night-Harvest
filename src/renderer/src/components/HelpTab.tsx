@@ -320,6 +320,18 @@ export function HelpTab({ onOpenSettings }: Props) {
           </button>
         </p>
       )}
+
+      <section className="help-section help-disclaimer" aria-labelledby="help-disclaimer-title">
+        <h3 id="help-disclaimer-title">
+          <span className="help-section-icon" aria-hidden>
+            ⚖
+          </span>
+          {t('help.sections.disclaimer')}
+        </h3>
+        <p className="muted">
+          {t('help.disclaimerApi')} {t('help.disclaimerUser')} {t('help.disclaimerLiability')}
+        </p>
+      </section>
     </div>
   )
 }

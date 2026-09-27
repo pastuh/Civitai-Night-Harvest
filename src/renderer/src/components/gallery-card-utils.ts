@@ -118,6 +118,22 @@ export function shortCardFolderLabel(
   checkpointFolder: string,
   options?: { outputFolder?: string; showCustomSubfolders?: boolean }
 ): string | null {
+  const outputFolder = options?.outputFolder?.trim() || ''
+  const showCustomSubfolders = options?.showCustomSubfolders !== false
+
+  // Custom assignment path from disk (works even when routingTag is empty / stale).
+  if (outputFolder) {
+    const customRule = findCustomAssignmentForFolder(outputFolder, tagRules)
+    if (customRule) {
+      const label = customAssignmentLabelForRecord(
+        { outputFolder },
+        customRule,
+        showCustomSubfolders
+      )
+      if (label?.trim()) return label
+    }
+  }
+
   const rt = routingTag?.trim()
   if (!rt) return null
   // Default dump folder — not a real tag-folder assignment (do not style as green/assigned).
@@ -130,22 +146,6 @@ export function shortCardFolderLabel(
   if (baseLower && rt.toLowerCase() === baseLower) {
     const rule = findRuleForTag(rt, tagRules)
     if (!rule) return null
-  }
-
-  const outputFolder = options?.outputFolder?.trim() || ''
-  const showCustomSubfolders = options?.showCustomSubfolders !== false
-
-  // Prefer custom assignment path from output folder (covers empty routingTag after import).
-  if (outputFolder) {
-    const customRule = findCustomAssignmentForFolder(outputFolder, tagRules)
-    if (customRule) {
-      const label = customAssignmentLabelForRecord(
-        { outputFolder },
-        customRule,
-        showCustomSubfolders
-      )
-      return label || null
-    }
   }
 
   const rule = findRuleForTag(rt, tagRules)

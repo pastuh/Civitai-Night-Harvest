@@ -6,8 +6,8 @@ import { resolveUniqueSlug } from '../shared/utils'
 import { modelHasExactTag, tagsEqual } from '../shared/tag-fuzzy'
 import {
   buildTagRuleMatchIndex,
+  effectiveFolderRoutingTag,
   findRuleForTag,
-  pickBestMatchingFolderTag,
   resolveTagRuleFolderPath,
   shouldSkipTagBulkMove
 } from '../shared/tag-routing'
@@ -62,6 +62,8 @@ export async function moveRecordToTagFolder(
     settings.checkpointOutputFolder
   )
   const lockRouting = options.lockRouting === true
+  // Once manually locked, never clear via auto/reconcile assign (lockRouting: false).
+  const nextRoutingLocked = lockRouting || Boolean(record.routingLocked)
   const isCheckpoint = modelType.toUpperCase() === 'CHECKPOINT'
   // Checkpoints: only custom assignment paths (manual Assign). Normal tags → base-model folder.
   if (isCheckpoint && !(lockRouting && rule.customAssignment)) {
@@ -136,7 +138,7 @@ export async function moveRecordToTagFolder(
   }
 
   if (foldersEqual(record.outputFolder, targetFolder) && tagsEqual(record.routingTag, tagName)) {
-    if (record.routingLocked === lockRouting) {
+    if (record.routingLocked === nextRoutingLocked) {
       const patched = withCustomMeta(record)
       if (patched === record || (
         patched.baseModel === record.baseModel && patched.modelType === record.modelType
@@ -146,7 +148,7 @@ export async function moveRecordToTagFolder(
       inventory.addVersion(patched)
       return patched
     }
-    const lockedOnly = withCustomMeta({ ...record, routingLocked: lockRouting })
+    const lockedOnly = withCustomMeta({ ...record, routingLocked: nextRoutingLocked })
     inventory.addVersion(lockedOnly)
     return lockedOnly
   }
@@ -156,7 +158,7 @@ export async function moveRecordToTagFolder(
     const metaOnly = withCustomMeta({
       ...record,
       routingTag: tagName,
-      routingLocked: lockRouting
+      routingLocked: nextRoutingLocked
     })
     inventory.addVersion(metaOnly)
     return metaOnly
@@ -193,7 +195,7 @@ export async function moveRecordToTagFolder(
     ...record,
     slug,
     routingTag: tagName,
-    routingLocked: lockRouting,
+    routingLocked: nextRoutingLocked,
     outputFolder: targetFolder,
     modelPath: newModelPath,
     previewPath: newPreviewPath,
@@ -279,7 +281,7 @@ export async function reconcileLibraryTagFolders(
       continue
     }
 
-    const winner = pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules, ruleIndex)
+    const winner = effectiveFolderRoutingTag(record, tagRules, ruleIndex)
     if (!winner) continue
     if (shouldSkipTagBulkMove(record, tagRules, loraFolder, checkpointFolder, winner, ruleIndex)) {
       skipped++

@@ -370,8 +370,15 @@ export const en = {
       downloadStrip: 'Download strip',
       activity: 'Activity',
       settingsRef: 'Settings reference',
-      progressBar: 'Browse progress bar'
+      progressBar: 'Browse progress bar',
+      disclaimer: 'Notice'
     },
+    disclaimerApi:
+      'This application is an independent desktop client. It accesses Civitai content through Civitai’s public API and optional user-provided API credentials, in line with normal client request patterns. It is not affiliated with, endorsed by, or operated by Civitai.',
+    disclaimerUser:
+      'You decide which models to browse, queue, and download. Use of Civitai content remains subject to Civitai’s terms of service, applicable creator licenses, and the laws of your jurisdiction.',
+    disclaimerLiability:
+      'The author is not responsible for how you use this application, what you download, or any account, content, or legal consequences that may arise from your use of Civitai or this client.',
     nsfwBody:
       'Civitai API key required for most NSFW/restricted models. Paste it in Settings → Civitai API key.',
     testingBody:
@@ -1287,7 +1294,7 @@ export const en = {
     fastTagModeOff: 'Fast tag',
     fastTagModeOn: 'Fast tag on',
     fastTagModeTitle:
-      'When on, clicking a card tag opens a folder-assign popup instead of Tag folders',
+      'When on, click a card tag to assign that model to a folder (same popup as the moon chip)',
     fastTagTitlePrefix: 'Assign folder for tag:',
     fastTagHint:
       'Edit the name to set the folder under each base model. Models are still matched by the tag you clicked.',
@@ -1360,6 +1367,7 @@ export const en = {
       'Download missing preview.jpg / swarm thumbnails and fill missing NSFW ratings from Civitai',
     repairPreviewsNone: 'All library previews and ratings look OK — nothing to update.',
     openOnCivitai: 'Open on Civitai',
+    modelDetails: 'Model details',
     checkpointType: 'Checkpoint type',
     statDownloads: 'Downloads',
     statThumbsUp: 'Thumbs up',
@@ -1369,13 +1377,13 @@ export const en = {
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a dynamic folder',
     openTagFoldersAssigned: 'Assigned — open Tag folders to manage “{tag}”',
     tagRoleFinalHint:
-      'Primary folder — 1px solid accent border. “{tag}” is why this model is in its folder (click → Tag folders)',
+      'Final folder stop — “{tag}” is where this model is routed (same tag look, solid border)',
     tagRoleMappedHint:
-      'Assigned rule — 1px dashed accent border. “{tag}” has a folder rule, but another tag is the active route',
+      'Has a Tag folders rule — “{tag}” is not the active folder for this model',
     tagRoleMappedPendingHint:
-      'Assigned rule — 1px dashed accent border. “{tag}” has a folder rule, but this model was never moved',
+      'Has a Tag folders rule — “{tag}” is assigned, but this model was never moved',
     tagRoleUnmappedHint:
-      'Not assigned — 1px dotted gray border. “{tag}” has no Tag folders rule yet (click to assign)',
+      'No Tag folders rule yet for “{tag}” (click to assign)',
     tagBlockedOnCardHint: 'Blocked tag — “{tag}” is on the permanent ban-by-tag list',
     tagPausedOnCardHint: 'Paused tag — “{tag}” is on Browse exclude (temporary)',
     folderLabel: 'Folder: {folder}',
@@ -1386,7 +1394,7 @@ export const en = {
     expandSidebar: 'Expand filter sidebar',
     sidebarSearchPlaceholder: 'Search tags…',
     sidebarHint:
-      'Tag borders: solid accent = primary folder · dashed accent = rule exists · dotted gray = not assigned. Click → Tag folders.',
+      'Tag borders: solid = final folder stop · dashed = rule exists · dotted = not assigned. Green chip = you assigned this model by hand.',
     allModels: 'All models',
     filterLora: 'LoRA',
     filterCheckpoint: 'Checkpoint',
@@ -1435,11 +1443,28 @@ export const en = {
     noTagsYet: 'No Civitai tags in library yet — they are saved when you download models.',
     selectedCount: '{count} selected',
     openOnCivitaiMenu: 'Open on Civitai ↗',
-    assignFolderByTag: 'Assign model to tag',
+    assignFolderByTag: 'Assign to folder',
     assignFolderByTagShort: 'Assign tag',
-    assignFolderPlaceholder: 'Tag name…',
+    assignFolderTitleWithTag: 'Assign to “{tag}”',
+    assignFolderDestLabel: 'Destination folder tag',
+    assignFolderPlaceholder: 'Folder tag (e.g. face)…',
     assignFolderConfirm: 'Assign to tag',
+    assignFolderConfirmModel: 'Assign this model',
+    assignFolderConfirmRules: 'Save global rule',
+    assignScopeLabel: 'Apply to',
+    assignScopeModelOnly: 'This model only',
+    assignScopeModelOnlySub: 'Local · locked folder',
+    assignScopeWithRules: 'Tag Folders rule',
+    assignScopeWithRulesSub: 'Global · all matching models',
+    assignScopeModelOnlyHint:
+      'Only this card moves into the folder below and stays locked. Other models keep their own folders.',
+    assignScopeWithRulesHint:
+      'Creates/updates a Tag Folders rule for the tags you select — future downloads and Move misplaced use it for every matching model. This card is moved too.',
     assignRecentlyUsed: 'Recently used',
+    assignModelTags: 'Civitai tags to map globally',
+    assignModelTagSelect: 'Map “{tag}” into this folder rule (global)',
+    assignModelTagDeselect: 'Remove “{tag}” from the global folder rule',
+    assignModelTagsHint: '{count} tag(s) will update the global Tag Folders rule',
     markSfw: 'Mark as SFW',
     markNsfw: 'Mark as NSFW',
     unbanAllow: 'Unban — allow downloads',
@@ -1491,6 +1516,7 @@ export const en = {
     massAssign: 'Mass assign',
     massAssignOff: 'Mass Off',
     massAssignOn: 'Mass On',
+    massAssignOffNote: 'Turn on to assign one folder name to many tags at once',
     massAssignTitle: 'Toggle mass assign — stays on until turned off; check tags, set folder, Apply',
     massAssignHint: 'Mass mode on: search tags, check rows, enter folder name, then Apply.',
     massFolderPlaceholder: 'Folder name (e.g. style)',
@@ -1578,8 +1604,8 @@ export const en = {
     reconcilePreviewLead:
       'Grouped by the tag folder each LoRA will move into. Click a tag to switch this model to that folder (or assign a folder if the tag has none yet). Back cancels — Move applies the plan.',
     reconcileConfirmMove: 'Move {count} models',
-    reconcileConfirmMoveShort: 'Confirm',
-    reconcileConfirmGroupHint: 'Confirm and move all {count} models in this group into “{tag}”',
+    reconcileConfirmMoveShort: 'Move',
+    reconcileConfirmGroupHint: 'Move all {count} models in this group into “{tag}”',
     reconcileViaTag: 'via {tag}',
     reconcileDestLabel: 'Folder',
     reconcileTagsLabel: 'Model tags',

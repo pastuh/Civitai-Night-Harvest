@@ -14,7 +14,15 @@ import {
   cardTagFolderRoleClass
 } from './gallery-card-utils'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
-import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
+import { tagsEqual } from '../../../shared/tag-fuzzy'
+import {
+  isPermanentlyBannedModelTag,
+  isPausedOnlyModelTag,
+  expandCivitaiTagNames,
+  isUnsortedRoutingTag,
+  isManualFolderRouting,
+  findRuleForTag
+} from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
 import { VersionNameRow } from './VersionNameRow'
 import { resolveModelCardThumb, libraryCardPreviewSource, videoPreviewAvailabilityFor, type ModelCardPreviewOverride } from '../utils/model-card-preview'
@@ -75,7 +83,7 @@ export type LibraryModelCardProps = {
   bodyPrefix?: ReactNode
   /** Extra controls at the start of the tag row (e.g. subtle assign menu trigger). */
   tagsExtra?: ReactNode
-  /** Library quick-assign (🌙 when exactly one Civitai tag; manual route shows folder text instead). */
+  /** Library quick-assign (🌙 when one unassigned Civitai tag; assigned route uses cyan lead text). */
   onQuickAssign?: (record: InventoryRecord) => void
   /** Highlight the lead assign chip while its popup is open. */
   quickAssignOpen?: boolean
@@ -156,63 +164,85 @@ function LibraryModelCardInner({
       ? new Set(hideCardTags.map((x) => x.toLowerCase()))
       : null
   const allTags = expandCivitaiTagNames(record.civitaiTags)
-  const manualLeadLabel =
-    record.routingLocked && !temporary
-      ? (record.routingTag?.trim() || folderLabel || '').trim() || null
-      : null
+  const tagRoleOpts = {
+    routingTag: effectiveRoutingTag,
+    folderLabel,
+    tagRules
+  }
+  const singleTag = allTags.length === 1 ? allTags[0]! : null
+  const routingTagClean = (effectiveRoutingTag || '').trim()
+  const folderAssignmentLabel =
+    (folderLabel?.trim() ||
+      (routingTagClean && !isUnsortedRoutingTag(routingTagClean) ? routingTagClean : '') ||
+      '').trim() || null
+  const isManualAssignment = isManualFolderRouting(record, tagRules)
+  const hasTagFolderRoute =
+    Boolean(routingTagClean) &&
+    !isUnsortedRoutingTag(routingTagClean) &&
+    Boolean(findRuleForTag(routingTagClean, tagRules))
+  // Lead chip: green = Tag Folders route; cyan = folder lock (manual). No 🌙 when either shows.
+  const assignedLeadLabel = (() => {
+    if (!isManualAssignment && !hasTagFolderRoute) return null
+    return (folderAssignmentLabel || routingTagClean || singleTag || '').trim() || null
+  })()
   const showMoonLead =
-    Boolean(onQuickAssign) && !manualLeadLabel && !temporary && allTags.length === 1
+    Boolean(onQuickAssign) && !assignedLeadLabel && !temporary
   const visibleTags = allTags.filter((tag) => {
     if (hideTagSet?.has(tag.trim().toLowerCase())) return false
     if (hideAssignedTags) {
-      const role = cardTagFolderRole(tag, {
-        routingTag: effectiveRoutingTag,
-        folderLabel,
-        tagRules
-      })
+      const role = cardTagFolderRole(tag, tagRoleOpts)
       if (role !== 'unmapped') return false
     }
-    // Manual route is shown in the lead chip — skip the cyan "final" duplicate.
-    if (manualLeadLabel) {
-      const role = cardTagFolderRole(tag, {
-        routingTag: effectiveRoutingTag,
-        folderLabel,
-        tagRules
-      })
+    // Lead chip already shows the folder — skip duplicate final / same label.
+    if (assignedLeadLabel) {
+      const role = cardTagFolderRole(tag, tagRoleOpts)
       if (role === 'final') return false
+      if (tagsEqual(tag, assignedLeadLabel)) return false
     }
     return true
   })
-  const hiddenTagCount = allTags.length - visibleTags.length
+  // Only hint at tags the user chose to hide (All assigned) or overflow — not de-duped finals.
+  const hiddenByAssignedToggle = hideAssignedTags
+    ? allTags.filter((tag) => {
+        if (hideTagSet?.has(tag.trim().toLowerCase())) return false
+        return cardTagFolderRole(tag, tagRoleOpts) !== 'unmapped'
+      }).length
+    : 0
+  const overflowCount = !showAllTags && visibleTags.length > 6 ? visibleTags.length - 6 : 0
+  const hiddenTagCount = hiddenByAssignedToggle + overflowCount
   const showHiddenTagsPlaceholder = hiddenTagCount > 0
   const shownTags = showAllTags ? visibleTags : visibleTags.slice(0, 6)
 
+  const assignedLeadHint = assignedLeadLabel
+    ? isManualAssignment
+      ? t('gallery.manualFolderHint', { folder: assignedLeadLabel })
+      : t('gallery.folderAssignedTitle', { folder: assignedLeadLabel })
+    : t('gallery.assignFolderByTag')
+
+  const leadAssignChipClass = assignedLeadLabel
+    ? isManualAssignment
+      ? ' library-assign-chip-locked'
+      : ' library-assign-chip-route'
+    : ''
+
   const leadAssignChip =
-    manualLeadLabel || showMoonLead ? (
+    assignedLeadLabel || showMoonLead ? (
       <button
         type="button"
-        className={`tag-chip library-assign-chip${
-          manualLeadLabel ? ' library-assign-chip-manual' : ''
-        }${quickAssignOpen ? ' is-open' : ''}`}
+        className={`tag-chip library-assign-chip${leadAssignChipClass}${
+          quickAssignOpen ? ' is-open' : ''
+        }`}
         disabled={!onQuickAssign || temporary}
-        title={
-          manualLeadLabel
-            ? t('gallery.manualFolderHint', { folder: manualLeadLabel })
-            : t('gallery.assignFolderByTag')
-        }
-        aria-label={
-          manualLeadLabel
-            ? t('gallery.manualFolderHint', { folder: manualLeadLabel })
-            : t('gallery.assignFolderByTag')
-        }
+        title={assignedLeadHint}
+        aria-label={assignedLeadHint}
         aria-expanded={quickAssignOpen}
         onClick={(e) => {
           e.stopPropagation()
           onQuickAssign?.(record)
         }}
       >
-        {manualLeadLabel ? (
-          manualLeadLabel
+        {assignedLeadLabel ? (
+          assignedLeadLabel
         ) : (
           <span className="moon-flip" aria-hidden>
             🌙
@@ -220,6 +250,8 @@ function LibraryModelCardInner({
         )}
       </button>
     ) : null
+  // Extra 🌙 (e.g. Move misplaced) only when there is no lead chip yet.
+  const showTagsExtra = Boolean(tagsExtra) && !leadAssignChip
 
   return (
     <div
@@ -445,7 +477,7 @@ function LibraryModelCardInner({
           </div>
         )}
         {folderLine || record.routingLocked ? (
-          !manualLeadLabel ? (
+          !assignedLeadLabel ? (
             <div
               className={`gallery-folder-line ${folderLine ? 'is-assigned' : ''} ${record.routingLocked ? 'is-manual' : ''}`}
               title={
@@ -464,10 +496,10 @@ function LibraryModelCardInner({
         {(shownTags.length > 0 ||
           showHiddenTagsPlaceholder ||
           leadAssignChip ||
-          tagsExtra) && (
+          showTagsExtra) && (
           <div className="tag-row library-card-tags">
             {leadAssignChip}
-            {tagsExtra}
+            {showTagsExtra ? tagsExtra : null}
             {shownTags.map((tag) => {
               const role = cardTagFolderRole(tag, {
                 routingTag: effectiveRoutingTag,

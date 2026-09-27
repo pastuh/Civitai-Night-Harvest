@@ -534,9 +534,14 @@ export default function App() {
         typeof syncDiskOrOpts === 'boolean' ? { syncDisk: syncDiskOrOpts } : { ...syncDiskOrOpts }
       if (options.syncDisk) setSyncProgress(null)
       const inv = await window.api.getInventory(options)
-      startTransition(() => {
+      // While on Library, apply inventory immediately so Session downloads sidebar can list new rows.
+      if (tabRef.current === 'gallery') {
         setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
-      })
+      } else {
+        startTransition(() => {
+          setInventory((prev) => mergeInventoryPreserveIdentity(prev, inv.items))
+        })
+      }
       const q = await window.api.reconcileDownloadQueue()
       setDownloadQueueState({ items: q.items, paused: q.paused })
       if (options.syncDisk) {
@@ -845,6 +850,8 @@ export default function App() {
       for (const [id, meta] of Array.from(prevQueueMeta.entries())) {
         if (meta.status === 'downloading' && !q.items.some((i) => i.id === id)) {
           needsInventory = true
+          // Done→prune race: row vanished without a delivered "done" tick — still count as session download.
+          if (meta.versionId > 0) completedVersionIds.push(meta.versionId)
         }
       }
       prevQueueMeta.clear()
@@ -1190,6 +1197,12 @@ export default function App() {
           }
         }, 900)
       }),
+      typeof window.api.onDownloadSessionComplete === 'function'
+        ? window.api.onDownloadSessionComplete((payload) => {
+            const ids = payload?.versionIds ?? []
+            if (ids.length) noteSessionDownloads(ids)
+          })
+        : () => {},
       window.api.onTagAssignmentPrompt((prompt) => {
         setTagPromptQueue((prev) => {
           if (prev.some((p) => p.versionId === prompt.versionId)) return prev

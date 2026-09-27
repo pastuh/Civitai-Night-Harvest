@@ -364,7 +364,7 @@ export function TagsTab({
   const [letterFilter, setLetterFilter] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [massAssign, setMassAssign] = useState(true)
+  const [massAssign, setMassAssign] = useState(false)
   const [massSelected, setMassSelected] = useState<Set<string>>(() => new Set())
   const [massFolderName, setMassFolderName] = useState('')
   const [hideAssigned, setHideAssigned] = useState(false)
@@ -1722,25 +1722,19 @@ const dirty = useMemo(() => {
             clearable
             clearLabel={t('tagsTab.clearFolderFilter')}
           />
-          <button
-            type="button"
-            className="primary"
-            disabled={
-              Boolean(backgroundMoving) || !reconcileCountReady || reconcilePendingCount === 0
-            }
-            title={
-              reconcileCountReady
-                ? t('tagsTab.reconcileHint', { count: reconcilePendingCount })
-                : t('tagsTab.reconcileHintCounting')
-            }
-            onClick={() => void openReconcilePreview()}
-          >
-            {backgroundMoving
-              ? t('tagsTab.transferring')
-              : !reconcileCountReady
-                ? `${t('tagsTab.reconcileApplyShort')} (…)`
+          {backgroundMoving || (reconcileCountReady && reconcilePendingCount > 0) ? (
+            <button
+              type="button"
+              className="primary"
+              disabled={Boolean(backgroundMoving)}
+              title={t('tagsTab.reconcileHint', { count: reconcilePendingCount })}
+              onClick={() => void openReconcilePreview()}
+            >
+              {backgroundMoving
+                ? t('tagsTab.transferring')
                 : `${t('tagsTab.reconcileApplyShort')} (${reconcilePendingCount})`}
-          </button>
+            </button>
+          ) : null}
           <label className="tags-hide-assigned-toggle">
             <input
               type="checkbox"
@@ -1775,7 +1769,9 @@ const dirty = useMemo(() => {
             >
               {massAssign ? t('tagsTab.massAssignOn') : t('tagsTab.massAssignOff')}
             </button>
-            {massAssign && (
+            {!massAssign ? (
+              <span className="muted tags-mass-off-note">{t('tagsTab.massAssignOffNote')}</span>
+            ) : (
               <>
                 <TagAutocompleteInput
                   className="tags-mass-folder"

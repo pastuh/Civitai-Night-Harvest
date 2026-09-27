@@ -327,21 +327,55 @@
   color: #fff;
 }
 
-/* Aroma: soft pink assigned borders (accent mixed — not full neon). */
+/* Aroma: quiet final stop; mapped dashed keeps a readable accent dash. */
 .theme-aroma .gallery-card .tag-chip.tag-role-final,
 .theme-aroma .tag-chip.tag-role-final {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--muted));
+  border-color: color-mix(in srgb, #9aa3ba 50%, var(--border));
+  color: color-mix(in srgb, #d7dce8 70%, var(--text));
 }
 
 .theme-aroma .gallery-card .tag-chip.tag-role-mapped,
 .theme-aroma .tag-chip.tag-role-mapped {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--muted));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--muted));
 }
 
 .theme-aroma .gallery-card .tag-chip.tag-role-unmapped,
 .theme-aroma .tag-chip.tag-role-unmapped {
   border-color: color-mix(in srgb, #9aa3ba 55%, transparent);
   color: color-mix(in srgb, #9aa3ba 85%, var(--muted));
+}
+
+/* Aroma: Tag Folders route — green; folder lock — soft cyan */
+.theme-aroma .library-assign-chip-route {
+  color: #b8f0c8;
+  border-style: solid;
+  border-color: color-mix(in srgb, #2fa856 70%, #86efac);
+  background: transparent;
+  font-weight: inherit;
+}
+
+.theme-aroma .library-assign-chip-route:hover:not(:disabled) {
+  color: #d4f7de;
+  border-style: solid;
+  border-color: #86efac;
+  background: transparent;
+}
+
+.theme-aroma .library-assign-chip-locked,
+.theme-aroma .library-assign-chip-manual {
+  color: #a8e0f5;
+  border-style: solid;
+  border-color: color-mix(in srgb, #38bdf8 65%, #7dd3fc);
+  background: transparent;
+  font-weight: inherit;
+}
+
+.theme-aroma .library-assign-chip-locked:hover:not(:disabled),
+.theme-aroma .library-assign-chip-manual:hover:not(:disabled) {
+  color: #d0effa;
+  border-style: solid;
+  border-color: #7dd3fc;
+  background: transparent;
 }
 
 /* ── Layout density ── */
@@ -1416,6 +1450,23 @@ label.field-label {
 
 .help-footer {
   margin-top: var(--space-lg);
+}
+
+.help-disclaimer {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.help-disclaimer > h3 {
+  font-size: 0.95rem;
+  opacity: 0.9;
+}
+
+.help-disclaimer > p {
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
 }
 
 .help-callout {
@@ -4385,6 +4436,13 @@ button.missing-tag-chip.is-clickable:hover {
   align-items: center;
   gap: var(--space-sm);
   flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.tags-mass-off-note {
+  font-size: 12px;
+  line-height: 1.3;
+  max-width: 28rem;
 }
 
 .tags-mass-row .tags-mass-folder.tag-autocomplete {

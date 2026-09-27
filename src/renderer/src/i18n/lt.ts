@@ -373,8 +373,15 @@ export const lt: Messages = {
       downloadStrip: 'Siuntimo juosta',
       activity: 'Activity',
       settingsRef: 'Nustatymų žinynas',
-      progressBar: 'Browse progreso juosta'
+      progressBar: 'Browse progreso juosta',
+      disclaimer: 'Pastaba'
     },
+    disclaimerApi:
+      'Ši programa yra nepriklausomas darbalaukio klientas. Civitai turinį ji gauna per Civitai viešą API ir, jei reikia, per jūsų pateiktą API raktą, laikydamasi įprasto kliento užklausų ritmo. Programa nesusijusi su Civitai, nėra jų remiama ir nėra jų produktas.',
+    disclaimerUser:
+      'Jūs sprendžiate, kuriuos modelius naršyti, dėti į eilę ir atsisiųsti. Civitai turinio naudojimui taikomos Civitai paslaugų sąlygos, kūrėjų licencijos ir jūsų jurisdikcijos įstatymai.',
+    disclaimerLiability:
+      'Autorius neatsako už tai, kaip naudojate šią programą, ką atsisiunčiate, ar už paskyros, turinio ar teisines pasekmes, kylančias iš Civitai ar šio kliento naudojimo.',
     nsfwBody:
       'Daugumai NSFW/restricted modelių reikia Civitai API rakto. Įklijuokite Nustatymai → Civitai API key.',
     testingBody:
@@ -1297,7 +1304,7 @@ export const lt: Messages = {
     fastTagModeOff: 'Fast tag',
     fastTagModeOn: 'Fast tag įjungta',
     fastTagModeTitle:
-      'Įjungus, paspaudus tagą ant kortelės atsidaro aplanko priskyrimo popup (ne Tag folders)',
+      'Įjungus, paspaudus tagą ant kortelės atsidaro tas pats priskyrimo popup kaip prie mėnulio',
     fastTagTitlePrefix: 'Priskirti aplanką tagui:',
     fastTagHint:
       'Pakeiskite vardą — taip nustatote aplanką po kiekvienu base modeliu. Modeliai vis tiek atrenkami pagal paspaustą tagą.',
@@ -1371,6 +1378,7 @@ export const lt: Messages = {
       'Atsisiųsti trūkstamus preview.jpg / swarm miniatiūras ir užpildyti trūkstamus NSFW reitingus iš Civitai',
     repairPreviewsNone: 'Visi bibliotekos preview ir reitingai tvarkingi — nieko atnaujinti nereikia.',
     openOnCivitai: 'Atidaryti Civitai',
+    modelDetails: 'Modelio informacija',
     checkpointType: 'Checkpoint tipas',
     statDownloads: 'Atsisiuntimai',
     statThumbsUp: 'Thumbs up',
@@ -1380,13 +1388,13 @@ export const lt: Messages = {
     openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti dinaminiam aplankui',
     openTagFoldersAssigned: 'Priskirta — atidaryti Tag folders valdyti „{tag}"',
     tagRoleFinalHint:
-      'Pagrindinis aplankas — 1px solid accent remelis. „{tag}" nukreipė šį modelį (spauskite → Tag folders)',
+      'Galutinė folder stotelė — „{tag}“ čia nukreiptas modelis (toks pat tago formatas, solid remelis)',
     tagRoleMappedHint:
-      'Priskirta taisyklė — 1px dashed accent remelis. „{tag}" turi folder taisyklę, bet aktyvus kitas tagas',
+      'Yra Tag folders taisyklė — „{tag}“ nėra aktyvus šio modelio folderis',
     tagRoleMappedPendingHint:
-      'Priskirta taisyklė — 1px dashed accent remelis. „{tag}" turi folder taisyklę, bet modelis dar neperkeltas',
+      'Yra Tag folders taisyklė — „{tag}“ priskirtas, bet šis modelis dar neperkeltas',
     tagRoleUnmappedHint:
-      'Nepriskirta — 1px dotted pilkas remelis. „{tag}" dar neturi Tag folders taisyklės (spauskite priskirti)',
+      'Dar nėra Tag folders taisyklės „{tag}“ (spauskite priskirti)',
     tagBlockedOnCardHint: 'Blokuotas tagas — „{tag}" yra permanent ban-by-tag sąraše',
     tagPausedOnCardHint: 'Paused tagas — „{tag}" yra Browse exclude (laikinas)',
     folderLabel: 'Aplankas: {folder}',
@@ -1397,7 +1405,7 @@ export const lt: Messages = {
     expandSidebar: 'Išskleisti filtrų juostą',
     sidebarSearchPlaceholder: 'Ieškoti tagų…',
     sidebarHint:
-      'Tag remeliai: solid accent = pagrindinis folder · dashed accent = taisyklė yra · dotted pilka = nepriskirta. Spauskite → Tag folders.',
+      'Tag remeliai: solid = galutinė folder stotelė · dashed = yra taisyklė · dotted = nepriskirta. Žalias chipas = šį modelį priskyrei ranka.',
     allModels: 'Visi modeliai',
     filterLora: 'LoRA',
     filterCheckpoint: 'Checkpoint',
@@ -1446,11 +1454,28 @@ export const lt: Messages = {
     noTagsYet: 'Civitai tagų bibliotekoje dar nėra — jie išsaugomi atsisiunčiant modelius.',
     selectedCount: 'Pažymėta {count}',
     openOnCivitaiMenu: 'Atidaryti Civitai ↗',
-    assignFolderByTag: 'Priskirti modelį tagui',
+    assignFolderByTag: 'Priskirti į aplanką',
     assignFolderByTagShort: 'Priskirti tagą',
-    assignFolderPlaceholder: 'Tago pavadinimas…',
+    assignFolderTitleWithTag: 'Priskirti į „{tag}“',
+    assignFolderDestLabel: 'Aplanko tagas (destination)',
+    assignFolderPlaceholder: 'Aplanko tagas (pvz. face)…',
     assignFolderConfirm: 'Priskirti tagui',
+    assignFolderConfirmModel: 'Priskirti šį modelį',
+    assignFolderConfirmRules: 'Išsaugoti globalią taisyklę',
+    assignScopeLabel: 'Kam taikyti',
+    assignScopeModelOnly: 'Tik šis modelis',
+    assignScopeModelOnlySub: 'Lokalus · užrakintas aplankas',
+    assignScopeWithRules: 'Tag Folders taisyklė',
+    assignScopeWithRulesSub: 'Globalu · visi atitinkantys',
+    assignScopeModelOnlyHint:
+      'Į aplanką žemiau perkeliamas tik šis modelis ir užrakinamas. Kiti modeliai lieka kaip buvo.',
+    assignScopeWithRulesHint:
+      'Sukuria/atnaujina Tag Folders taisyklę pažymėtiems tagams — veiks visiems modeliams su tais tagais (atsisiuntimai, Move misplaced). Šis modelis irgi perkeliamas.',
     assignRecentlyUsed: 'Neseniai naudoti',
+    assignModelTags: 'Civitai tagai globaliai taisyklei',
+    assignModelTagSelect: 'Įtraukti „{tag}“ į globalią folder taisyklę',
+    assignModelTagDeselect: 'Pašalinti „{tag}“ iš globalios folder taisyklės',
+    assignModelTagsHint: '{count} tagas(-ai) atnaujins globalią Tag Folders taisyklę',
     markSfw: 'Pažymėti kaip SFW',
     markNsfw: 'Pažymėti kaip NSFW',
     unbanAllow: 'Unban — leisti atsisiuntimus',
@@ -1503,6 +1528,7 @@ export const lt: Messages = {
     massAssign: 'Masinis priskyrimas',
     massAssignOff: 'Mass Off',
     massAssignOn: 'Mass On',
+    massAssignOffNote: 'Įjunkite, kad vieną aplanko vardą priskirtumėte daugeliui tagų iš karto',
     massAssignTitle:
       'Masinis priskyrimas — lieka įjungtas kol išjungsite; pažymėkite tagus, aplanką, Taikyti',
     massAssignHint:
@@ -1592,8 +1618,8 @@ export const lt: Messages = {
     reconcilePreviewLead:
       'Sugrupuota pagal tag folderį, į kurį LoRA bus perkelta. Spauskite tagą — perjungti modelį į tą folderį (arba priskirti folderį, jei taisyklės dar nėra). Back atšaukia — Move vykdo planą.',
     reconcileConfirmMove: 'Perkelti {count} modelius',
-    reconcileConfirmMoveShort: 'Confirm',
-    reconcileConfirmGroupHint: 'Patvirtinti ir perkelti visus {count} modelius šioje grupėje į „{tag}“',
+    reconcileConfirmMoveShort: 'Perkelti',
+    reconcileConfirmGroupHint: 'Perkelti visus {count} modelius šioje grupėje į „{tag}“',
     reconcileViaTag: 'per {tag}',
     reconcileDestLabel: 'Aplankas',
     reconcileTagsLabel: 'Modelio tagai',

@@ -45,6 +45,58 @@ export function ruleCoversTag(rule: TagFolderRule, tag: string): boolean {
   return parseTagRuleNames(rule.tagName).some((n) => tagAliasMatch(n, needle))
 }
 
+/**
+ * Bind model Civitai tags onto a folder-route rule: destination tag + selected model tags
+ * become one comma-joined rule (aliases). Strips those names from any other rules.
+ */
+export function bindModelTagsToFolderRule(
+  rules: TagFolderRule[],
+  folderTag: string,
+  modelTags: string[],
+  makeId: () => string
+): TagFolderRule[] {
+  const dest = folderTag.trim()
+  if (!dest) return rules
+
+  const bindList: string[] = []
+  for (const raw of [dest, ...expandCivitaiTagNames(modelTags)]) {
+    const name = raw.trim()
+    if (!name) continue
+    if (!bindList.some((x) => tagsEqual(x, name))) bindList.push(name)
+  }
+  if (!bindList.length) return rules
+
+  const prior = findRuleForTag(dest, rules)
+  const next: TagFolderRule[] = []
+  for (const rule of rules) {
+    const names = parseTagRuleNames(rule.tagName).filter(
+      (n) => !bindList.some((b) => tagsEqual(b, n))
+    )
+    if (!names.length) continue
+    next.push(
+      names.length === parseTagRuleNames(rule.tagName).length
+        ? rule
+        : { ...rule, tagName: names.join(', ') }
+    )
+  }
+
+  if (prior) {
+    const kept = next.find((r) => r.id === prior.id)
+    if (kept) {
+      const merged: string[] = []
+      for (const name of [...bindList, ...parseTagRuleNames(kept.tagName)]) {
+        if (!merged.some((x) => tagsEqual(x, name))) merged.push(name)
+      }
+      return next.map((r) =>
+        r.id === prior.id ? { ...r, tagName: merged.join(', ') } : r
+      )
+    }
+    return [...next, { ...prior, tagName: bindList.join(', ') }]
+  }
+
+  return [...next, { id: makeId(), tagName: bindList.join(', '), folderPath: '' }]
+}
+
 function normalizeFolderPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
@@ -369,6 +421,52 @@ function foldersEqual(a: string, b: string): boolean {
   return normalizeFolderPath(a) === normalizeFolderPath(b)
 }
 
+/**
+ * True when this library row was hand-routed to a Tag Folders label that is not
+ * one of the model's Civitai tags (moon → folder name), or routingLocked.
+ */
+export function isManualFolderRouting(
+  record: {
+    routingTag?: string | null
+    civitaiTags?: string[]
+    routingLocked?: boolean
+  },
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
+): boolean {
+  if (record.routingLocked) return true
+  const rt = record.routingTag?.trim() ?? ''
+  if (!rt || isUnsortedRoutingTag(rt)) return false
+  if (!findRuleForTag(rt, tagRules, ruleIndex)) return false
+  return !modelHasExactTag(expandCivitaiTagNames(record.civitaiTags), rt)
+}
+
+/**
+ * Folder route for this library row: an existing Tag Folders assignment on the
+ * model wins first (earlier moon / assign). Otherwise the highest-priority
+ * matching Civitai tag. Move misplaced must not override that first assignment
+ * just because another tag later got a folder rule.
+ */
+export function effectiveFolderRoutingTag(
+  record: {
+    routingTag?: string | null
+    civitaiTags?: string[]
+    routingLocked?: boolean
+  },
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
+): string | null {
+  const rt = record.routingTag?.trim() ?? ''
+  if (rt && !isUnsortedRoutingTag(rt) && findRuleForTag(rt, tagRules, ruleIndex)) {
+    return rt
+  }
+  return pickBestMatchingFolderTag(
+    expandCivitaiTagNames(record.civitaiTags),
+    tagRules,
+    ruleIndex
+  )
+}
+
 /** Skip bulk tag-folder moves for manually placed or already-correct models. */
 export function shouldSkipTagBulkMove(
   record: {
@@ -394,23 +492,19 @@ export function shouldSkipTagBulkMove(
   if (record.routingLocked) return true
 
   const winner =
-    precomputedWinner !== undefined
+    precomputedWinner !== undefined && precomputedWinner !== null
       ? precomputedWinner
-      : pickBestMatchingFolderTag(record.civitaiTags ?? [], tagRules, ruleIndex)
+      : effectiveFolderRoutingTag(record, tagRules, ruleIndex)
   if (!winner) return false
-
-  const rt = record.routingTag.trim()
-  if (!rt || !tagsEqual(rt, winner)) return false
 
   const rule = findRuleForTag(winner, tagRules, ruleIndex)
   if (!rule) return false
 
-  const modelType = inferred
   const expected = resolveTagRuleFolderPath(
     rule,
     loraFolder,
     checkpointFolder,
-    modelType,
+    inferred,
     record.baseModel
   )
   if (expected && foldersEqual(record.outputFolder, expected)) return true
@@ -459,7 +553,7 @@ export function countLibraryTagFolderReconcile(
   const index = buildTagRuleMatchIndex(tagRules)
   let n = 0
   for (const r of inventory) {
-    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules, index)
+    const winner = effectiveFolderRoutingTag(r, tagRules, index)
     if (!winner) continue
     if (!shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) {
       n++
@@ -537,8 +631,8 @@ export async function listLibraryTagFolderReconcileAsync(
     if (inferred.toUpperCase() === 'CHECKPOINT') continue
     if (r.routingLocked) continue
 
-    const tags = r.civitaiTags ?? []
-    const winner = pickBestMatchingFolderTag(tags, tagRules, index)
+    const tags = expandCivitaiTagNames(r.civitaiTags)
+    const winner = effectiveFolderRoutingTag(r, tagRules, index)
     if (!winner) continue
 
     const misplaced = !shouldSkipTagBulkMove(
@@ -549,7 +643,18 @@ export async function listLibraryTagFolderReconcileAsync(
       winner,
       index
     )
-    const clashTags = includeClashes ? listTopPriorityClashTags(tags, tagRules, index) : []
+    // Clash review: include the model's assigned route tag even when it is not a Civitai tag.
+    const clashPool = [...tags]
+    const rt = r.routingTag?.trim() ?? ''
+    if (
+      rt &&
+      !isUnsortedRoutingTag(rt) &&
+      findRuleForTag(rt, tagRules, index) &&
+      !modelHasExactTag(clashPool, rt)
+    ) {
+      clashPool.push(rt)
+    }
+    const clashTags = includeClashes ? listTopPriorityClashTags(clashPool, tagRules, index) : []
     const isClash = clashTags.length > 1
     if (!misplaced && !isClash) continue
 
@@ -623,10 +728,20 @@ export async function countElevatedFolderTagClashesAsync(
     if (inferred.toUpperCase() === 'CHECKPOINT') continue
     if (r.routingLocked) continue
 
-    const tags = r.civitaiTags ?? []
-    const clashTags = listTopPriorityClashTags(tags, tagRules, index)
+    const tags = expandCivitaiTagNames(r.civitaiTags)
+    const clashPool = [...tags]
+    const rt = r.routingTag?.trim() ?? ''
+    if (
+      rt &&
+      !isUnsortedRoutingTag(rt) &&
+      findRuleForTag(rt, tagRules, index) &&
+      !modelHasExactTag(clashPool, rt)
+    ) {
+      clashPool.push(rt)
+    }
+    const clashTags = listTopPriorityClashTags(clashPool, tagRules, index)
     if (clashTags.length <= 1) continue
-    const winner = pickBestMatchingFolderTag(tags, tagRules, index)
+    const winner = effectiveFolderRoutingTag(r, tagRules, index)
     if (!winner) continue
     // Only count review-only clashes (already in the winning folder).
     if (shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) {
@@ -706,7 +821,7 @@ export async function countLibraryTagFolderReconcileAsync(
       if (opts?.cancelled?.()) return n
     }
     const r = inventory[i]
-    const winner = pickBestMatchingFolderTag(r.civitaiTags ?? [], tagRules, index)
+    const winner = effectiveFolderRoutingTag(r, tagRules, index)
     if (!winner) continue
     if (!shouldSkipTagBulkMove(r, tagRules, loraFolder, checkpointFolder, winner, index)) {
       n++
