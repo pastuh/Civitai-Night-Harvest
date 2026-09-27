@@ -27,6 +27,7 @@ import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
 import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
+import { FloatingMarkSeenToggle } from './FloatingMarkSeenToggle'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
@@ -614,6 +615,24 @@ export const PendingTab = memo(function PendingTab({
     },
     [flushPendingSeen]
   )
+
+  const clearPendingSeenMark = useCallback(async (versionId: number) => {
+    if (versionId <= 0) return
+    pendingSeenQueueRef.current.delete(versionId)
+    const next = { ...pendingSeenRef.current }
+    delete next[versionId]
+    pendingSeenRef.current = next
+    setPendingSeenByVersionId(next)
+    if (typeof window.api.clearPendingSeen !== 'function') return
+    try {
+      const snap = await window.api.clearPendingSeen(versionId)
+      const byId = snap?.byVersionId ?? {}
+      pendingSeenRef.current = byId
+      setPendingSeenByVersionId(byId)
+    } catch {
+      /* keep optimistic clear */
+    }
+  }, [])
 
   const armSeenOnEnter = useCallback((versionId: number, e: ReactPointerEvent<HTMLElement>) => {
     if (!markSeenModeRef.current) return
@@ -1481,7 +1500,7 @@ export const PendingTab = memo(function PendingTab({
                               </>
                             ) : inQueue ? (
                               <>
-                                <button type="button" className="primary" disabled>
+                                <button type="button" className="status-queue-btn" disabled>
                                   {isDownloading
                                     ? t('pending.downloadingNow')
                                     : queuePaused
@@ -1501,7 +1520,7 @@ export const PendingTab = memo(function PendingTab({
                               <>
                                 <button
                                   type="button"
-                                  className="primary"
+                                  className="status-queue-btn"
                                   disabled={busy}
                                   title={t('pending.queueHint')}
                                   onClick={() => void approve(item)}
@@ -1713,7 +1732,19 @@ export const PendingTab = memo(function PendingTab({
               </button>
             ) : (
               <>
-                {!pendingSeenByVersionId[contextMenu.versionId] ? (
+                {pendingSeenByVersionId[contextMenu.versionId] ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    {...contextMenuButtonProps}
+                    onClick={() => {
+                      void clearPendingSeenMark(contextMenu.versionId)
+                      setContextMenu(null)
+                    }}
+                  >
+                    {t('pending.unmarkSeen')}
+                  </button>
+                ) : (
                   <button
                     type="button"
                     role="menuitem"
@@ -1725,7 +1756,7 @@ export const PendingTab = memo(function PendingTab({
                   >
                     {t('pending.markSeen')}
                   </button>
-                ) : null}
+                )}
                 <button
                   type="button"
                   role="menuitem"
@@ -1793,6 +1824,12 @@ export const PendingTab = memo(function PendingTab({
           </div>
         </ContextMenuPortal>
       )}
+      <FloatingMarkSeenToggle
+        active={markSeenMode}
+        label={t('pending.markSeenModeOn')}
+        title={t('pending.markSeenModeTitle')}
+        onTurnOff={() => setMarkSeenMode(false)}
+      />
     </div>
   )
 })

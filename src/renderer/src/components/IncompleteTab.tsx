@@ -49,6 +49,8 @@ interface Props {
       tags?: string[]
     }
   ) => void
+  banFunctionMode?: boolean
+  onBanFunctionModeChange?: (enabled: boolean) => void
   onOpenModelDetail?: (target: ModelDetailTarget) => void
   browseVideoPreviews?: boolean
   /** Owned by App — survives leaving Incomplete. */
@@ -79,6 +81,8 @@ export function IncompleteTab({
   onItemsReplace,
   isActive = false,
   onBrowseModelBanned,
+  banFunctionMode = false,
+  onBanFunctionModeChange,
   onOpenModelDetail,
   browseVideoPreviews = false,
   recheckBusy = false,
@@ -91,6 +95,8 @@ export function IncompleteTab({
   const [pastedUrl, setPastedUrl] = useState('')
   const [cardError, setCardError] = useState<Record<number, string>>({})
   const [banTarget, setBanTarget] = useState<IncompleteModel | null>(null)
+  const [banMode, setBanMode] = useState(Boolean(banFunctionMode))
+  const [banConfirmSkipForSession, setBanConfirmSkipForSession] = useState(false)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   /** Download/Ban holds — dimmed in place until leaving Incomplete. */
   const [temporaryByModelId, setTemporaryByModelId] = useState<Map<number, IncompleteHold>>(
@@ -115,6 +121,16 @@ export function IncompleteTab({
     }
     return map
   }, [inventory])
+
+  useEffect(() => {
+    setBanMode(Boolean(banFunctionMode))
+  }, [banFunctionMode])
+
+  const toggleBanMode = useCallback(() => {
+    const next = !banMode
+    setBanMode(next)
+    onBanFunctionModeChange?.(next)
+  }, [banMode, onBanFunctionModeChange])
 
   useEffect(() => {
     const justOpened = isActive && !wasActiveRef.current
@@ -309,52 +325,66 @@ export function IncompleteTab({
     }
   }
 
-  const confirmBan = useCallback(async () => {
-    const item = banTarget
-    setBanTarget(null)
-    if (!item || busyId === item.modelId) return
-    setBusyId(item.modelId)
-    if (pasteModelId === item.modelId) clearPaste()
-    holdUntilLeave(item, 'banned')
-    setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
-    onBrowseModelBanned?.(item.modelId, {
-      name: item.modelName,
-      versionId: item.resolvedVersionId,
-      type: item.modelType,
-      baseModel: item.baseModel,
-      creator: item.author,
-      previewUrl: item.previewUrl,
-      pageUrl: item.pageUrl,
-      tags: item.tags
-    })
-    try {
-      await window.api.banModel(item.modelId, item.modelName, {
-        modelName: item.modelName,
+  const confirmBan = useCallback(
+    async (item: IncompleteModel) => {
+      setBanTarget(null)
+      if (busyId === item.modelId) return
+      setBusyId(item.modelId)
+      if (pasteModelId === item.modelId) clearPaste()
+      holdUntilLeave(item, 'banned')
+      setHiddenModelIds((prev) => new Set(prev).add(item.modelId))
+      onBrowseModelBanned?.(item.modelId, {
+        name: item.modelName,
         versionId: item.resolvedVersionId,
+        type: item.modelType,
+        baseModel: item.baseModel,
+        creator: item.author,
         previewUrl: item.previewUrl,
         pageUrl: item.pageUrl,
-        sourceDomain: item.sourceDomain,
-        author: item.author,
-        baseModel: item.baseModel,
-        modelType: item.modelType,
         tags: item.tags
       })
-      await onRefresh()
-    } catch {
-      setTemporaryByModelId((prev) => {
-        const next = new Map(prev)
-        next.delete(item.modelId)
-        return next
-      })
-      setHiddenModelIds((prev) => {
-        const next = new Set(prev)
-        next.delete(item.modelId)
-        return next
-      })
-    } finally {
-      setBusyId(null)
-    }
-  }, [banTarget, busyId, pasteModelId, onRefresh, onBrowseModelBanned, holdUntilLeave])
+      try {
+        await window.api.banModel(item.modelId, item.modelName, {
+          modelName: item.modelName,
+          versionId: item.resolvedVersionId,
+          previewUrl: item.previewUrl,
+          pageUrl: item.pageUrl,
+          sourceDomain: item.sourceDomain,
+          author: item.author,
+          baseModel: item.baseModel,
+          modelType: item.modelType,
+          tags: item.tags
+        })
+        await onRefresh()
+      } catch {
+        setTemporaryByModelId((prev) => {
+          const next = new Map(prev)
+          next.delete(item.modelId)
+          return next
+        })
+        setHiddenModelIds((prev) => {
+          const next = new Set(prev)
+          next.delete(item.modelId)
+          return next
+        })
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [busyId, pasteModelId, onRefresh, onBrowseModelBanned, holdUntilLeave]
+  )
+
+  /** Skip the confirm modal after "Don't ask again (this session)" was ticked. */
+  const requestBan = useCallback(
+    (item: IncompleteModel) => {
+      if (banConfirmSkipForSession) {
+        void confirmBan(item)
+      } else {
+        setBanTarget(item)
+      }
+    },
+    [banConfirmSkipForSession, confirmBan]
+  )
 
   if (!items.length && !hiddenModelIds.size && !temporaryByModelId.size) {
     return (
@@ -390,6 +420,19 @@ export function IncompleteTab({
               >
                 {recheckBusy ? t('incompleteTab.recheckBusy') : t('incompleteTab.recheck')}
               </button>
+              {onBanFunctionModeChange ? (
+                <div className="browse-mode-toggles">
+                  <button
+                    type="button"
+                    className={`btn-sm browse-ban-toggle ${banMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                    onClick={toggleBanMode}
+                    title={t('browse.banModeTitle')}
+                    aria-pressed={banMode}
+                  >
+                    {banMode ? t('browse.banModeOn') : t('browse.banModeOff')}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="browse-results-controls-box">
@@ -539,25 +582,27 @@ export function IncompleteTab({
                             versionId > 0 ? () => markPreviewBroken(versionId) : undefined
                           }
                           titleActions={
-                            hold?.kind === 'banned' || !onOpenModelDetail ? null : (
+                            hold?.kind === 'banned' ? null : (
                               <>
-                                <button
-                                  type="button"
-                                  className="gallery-detail-btn"
-                                  title={t('gallery.modelDetails')}
-                                  onClick={() =>
-                                    onOpenModelDetail({
-                                      kind: 'browse',
-                                      modelId: item.modelId,
-                                      versionId: item.resolvedVersionId ?? 0,
-                                      name: item.modelName,
-                                      previewUrl: item.previewUrl,
-                                      domain: item.sourceDomain
-                                    })
-                                  }
-                                >
-                                  ℹ
-                                </button>
+                                {onOpenModelDetail ? (
+                                  <button
+                                    type="button"
+                                    className="gallery-detail-btn"
+                                    title={t('gallery.modelDetails')}
+                                    onClick={() =>
+                                      onOpenModelDetail({
+                                        kind: 'browse',
+                                        modelId: item.modelId,
+                                        versionId: item.resolvedVersionId ?? 0,
+                                        name: item.modelName,
+                                        previewUrl: item.previewUrl,
+                                        domain: item.sourceDomain
+                                      })
+                                    }
+                                  >
+                                    ℹ
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   className="gallery-web-btn-inline"
@@ -566,12 +611,23 @@ export function IncompleteTab({
                                 >
                                   ↗
                                 </button>
+                                {banMode && !queuedHold ? (
+                                  <button
+                                    type="button"
+                                    className="gallery-ban-inline-btn electron-no-drag"
+                                    disabled={busyId === item.modelId}
+                                    title={t('incompleteTab.banHint')}
+                                    onClick={() => requestBan(item)}
+                                  >
+                                    ×
+                                  </button>
+                                ) : null}
                               </>
                             )
                           }
                           actions={
                             hold?.kind === 'banned' ? null : queuedHold ? (
-                              <button type="button" className="primary" disabled>
+                              <button type="button" className="status-queue-btn" disabled>
                                 {t('incompleteTab.queued')}
                               </button>
                             ) : (
@@ -589,7 +645,7 @@ export function IncompleteTab({
                                     <div className="row incomplete-url-actions">
                                       <button
                                         type="button"
-                                        className="primary"
+                                        className="status-queue-btn"
                                         disabled={!pastedUrl.trim() || busyId === item.modelId}
                                         onClick={() => void runDownload(item, pastedUrl.trim())}
                                       >
@@ -604,7 +660,7 @@ export function IncompleteTab({
                                   <>
                                     <button
                                       type="button"
-                                      className="primary"
+                                      className="status-queue-btn"
                                       disabled={busyId === item.modelId}
                                       onClick={() => void runDownload(item)}
                                     >
@@ -625,15 +681,6 @@ export function IncompleteTab({
                                         {t('incompleteTab.pasteUrl')}
                                       </button>
                                     ) : null}
-                                    <button
-                                      type="button"
-                                      className="danger"
-                                      disabled={busyId === item.modelId}
-                                      onClick={() => setBanTarget(item)}
-                                      title={t('incompleteTab.banHint')}
-                                    >
-                                      {t('incompleteTab.ban')}
-                                    </button>
                                   </>
                                 )}
                               </>
@@ -755,7 +802,9 @@ export function IncompleteTab({
           message={t('incompleteTab.banConfirm', { name: banTarget.modelName })}
           confirmLabel={t('incompleteTab.ban')}
           danger
-          onConfirm={() => void confirmBan()}
+          dontAskAgainLabel={t('incompleteTab.banConfirmDontAsk')}
+          onDontAskAgainChange={(checked) => setBanConfirmSkipForSession(checked)}
+          onConfirm={() => void confirmBan(banTarget)}
           onCancel={() => setBanTarget(null)}
         />
       )}

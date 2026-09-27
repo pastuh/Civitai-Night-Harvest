@@ -3054,6 +3054,7 @@ export function clearAllMissingBanSeen(): void {
 }
 
 export function clearMissingBanSeenDay(seenDay: string): void {
+  if (typeof seenDay !== 'string') return
   const day = seenDay.trim().slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return
   getDb().prepare('DELETE FROM missing_ban_seen WHERE seen_day = ?').run(day)

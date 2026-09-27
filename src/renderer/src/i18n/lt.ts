@@ -951,6 +951,7 @@ export const lt: Messages = {
     hideConfirmedHint:
       'Kai Settings → Show temporary išjungta: slepia Done ir jau į eilę įdėtas. Su Show temporary — jos lieka pritemdytos vietoje, kol išeisite iš Updates.',
     markSeen: 'Mark seen',
+    unmarkSeen: 'Unmark seen',
     markSeenModeOff: 'Mark seen Off',
     markSeenModeOn: 'Mark seen On',
     markSeenModeTitle:
@@ -1683,6 +1684,8 @@ export const lt: Messages = {
     hideSeen: 'Slėpti seen',
     hideSeenHint:
       'Slepia Banned/Paused-by-tag korteles, pažymėtas seen (žalias titulas). Įprastų Wait/Buzz Early access kortelių neslepia.',
+    markSeen: 'Mark seen',
+    unmarkSeen: 'Unmark seen',
     markSeenModeOn: 'Mark seen įj.',
     markSeenModeOff: 'Mark seen išj.',
     markSeenModeTitle:
@@ -1711,8 +1714,8 @@ export const lt: Messages = {
     recheckDone: 'Patikrinta {checked} · {resolved} dabar turi versiją/preview',
     recheckStopped:
       'Sustabdyta po {checked} (resolved {resolved}): {reason}. Spauskite Tikrinti API vėliau dar kartą.',
-    download: 'Siųsti → eilė',
-    downloadWithUrl: 'Naudoti nuorodą → eilė',
+    download: 'Siųsti',
+    downloadWithUrl: 'Naudoti nuorodą',
     queued: 'Eilėje',
     pasteUrl: 'Įklijuoti URL…',
     pasteUrlHint:
@@ -1722,6 +1725,7 @@ export const lt: Messages = {
     banHint: 'Visam laikui išjungti šį modelį — nebegrįš į Incomplete ir nebus auto-siunčiamas',
     banConfirm:
       'Ban „{name}“? Pašalinamas iš Incomplete, Browse auto-siuntimo ir būsimo harvest. Vėliau galima unban Nustatymuose.',
+    banConfirmDontAsk: 'Daugiau neklausti (šią sesiją)',
     emptyAfterBan: 'Užblokuoti įrašai pašalinti.',
     waiting: 'Sekama {duration}',
     versionName: ' · {name}',
@@ -1758,6 +1762,8 @@ export const lt: Messages = {
     hideSeen: 'Slėpti seen',
     hideSeenHint:
       'Slepia Banned/Paused korteles, pažymėtas seen (žalias titulas). Missing (404) neslepia.',
+    markSeen: 'Mark seen',
+    unmarkSeen: 'Unmark seen',
     markSeenModeOn: 'Mark seen įj.',
     markSeenModeOff: 'Mark seen išj.',
     markSeenModeTitle:

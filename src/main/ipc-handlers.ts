@@ -1563,14 +1563,23 @@ export function initIpc(): void {
     }
   })
 
-  ipcMain.handle('exclusions:clearBanSeen', (_e, payload?: { day?: string }) => {
-    if (payload?.day) inventory.clearMissingBanSeenDay(payload.day)
-    else inventory.clearAllMissingBanSeen()
-    return {
-      byModelId: inventory.getMissingBanSeenMap(),
-      countByDay: inventory.getMissingBanSeenCountByDay()
+  ipcMain.handle(
+    'exclusions:clearBanSeen',
+    (_e, payload?: { day?: string; modelId?: number }) => {
+      const modelId = Number(payload?.modelId)
+      if (Number.isFinite(modelId) && modelId > 0) {
+        inventory.clearMissingBanSeen(modelId)
+      } else if (typeof payload?.day === 'string' && payload.day.trim()) {
+        inventory.clearMissingBanSeenDay(payload.day)
+      } else {
+        inventory.clearAllMissingBanSeen()
+      }
+      return {
+        byModelId: inventory.getMissingBanSeenMap(),
+        countByDay: inventory.getMissingBanSeenCountByDay()
+      }
     }
-  })
+  )
 
   ipcMain.handle('exclusions:pruneBanSeen', (_e, payload?: { keepModelIds?: number[] }) => {
     const keep = Array.isArray(payload?.keepModelIds) ? payload.keepModelIds : []

@@ -28,6 +28,7 @@ import { ModelCardInfo } from './ModelCardInfo'
 import { ResultsPager } from './ResultsPager'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import type { ModelDetailTarget } from './ModelDetailPage'
+import { FloatingMarkSeenToggle } from './FloatingMarkSeenToggle'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 import { useModelCardPreviewOverrides, modelCardPreviewTrackKey } from '../hooks/useModelCardPreviewOverrides'
 import { usePreviewViewportPriority } from '../hooks/usePreviewViewportPriority'
@@ -895,13 +896,35 @@ export const MissingTab = memo(function MissingTab({
   }, [workingItems, showForgotten, ownedPrimaryByModel])
 
   const baseModelOptions = useMemo(() => {
+    // Match default All-view hide toggles: do not advertise base models that only
+    // exist on hidden ban/pause/404/excluded cards (e.g. Wan Video after you left
+    // excluded versions under Hide banned).
     return aggregateBaseModelOptions(
       workingItems
-        .filter((m) => !(m.kind === 'forgotten' && !showForgotten))
-        .map((m) => m.baseModel)
-        .filter(Boolean) as string[]
+        .filter((m) => {
+          if (m.kind === 'forgotten' && !showForgotten) return false
+          if (
+            hideBanned &&
+            (m.kind === 'bannedManual' ||
+              m.kind === 'bannedByTag' ||
+              m.kind === 'excludedVersion')
+          ) {
+            return false
+          }
+          if (hidePaused && m.kind === 'pausedByTag') return false
+          if (hideMissing && m.kind === 'missing') return false
+          return Boolean(m.baseModel?.trim())
+        })
+        .map((m) => m.baseModel as string)
     )
-  }, [workingItems, showForgotten])
+  }, [workingItems, showForgotten, hideBanned, hidePaused, hideMissing])
+
+  useEffect(() => {
+    if (!baseModelFilter) return
+    if (!baseModelOptions.some((o) => baseModelsMatch(o.name, baseModelFilter))) {
+      setBaseModelFilter(null)
+    }
+  }, [baseModelFilter, baseModelOptions])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -1207,6 +1230,25 @@ export const MissingTab = memo(function MissingTab({
     },
     [flushPendingSeen, isActive, markSeenMode]
   )
+
+  const clearBanSeenMark = useCallback(async (modelId: number) => {
+    if (modelId <= 0) return
+    pendingSeenRef.current.delete(modelId)
+    const next = { ...banSeenByModelIdRef.current }
+    delete next[modelId]
+    banSeenByModelIdRef.current = next
+    setBanSeenByModelId(next)
+    if (typeof window.api.clearMissingBanSeen !== 'function') return
+    try {
+      const snap = await window.api.clearMissingBanSeen({ modelId })
+      const byId = snap.byModelId ?? {}
+      banSeenByModelIdRef.current = byId
+      setBanSeenByModelId(byId)
+      setBanSeenCountByDay(snap.countByDay ?? {})
+    } catch {
+      /* keep optimistic clear */
+    }
+  }, [])
 
   const armBanSeenOnEnter = useCallback(
     (modelId: number, e: ReactPointerEvent<HTMLElement>) => {
@@ -2364,15 +2406,24 @@ export const MissingTab = memo(function MissingTab({
               {t('missingTab.openCivitai')}
             </button>
           )}
-          {canMarkExclusionSeen(contextMenu.item.kind) && (
-            <button
-              {...contextMenuButtonProps(() => {
-                queueBanSeen(contextMenu.item.modelId, { force: true })
-              }, () => setContextMenu(null))}
-            >
-              {t('missingTab.markSeenModeOn')}
-            </button>
-          )}
+          {canMarkExclusionSeen(contextMenu.item.kind) &&
+            (banSeenByModelId[contextMenu.item.modelId] ? (
+              <button
+                {...contextMenuButtonProps(() => {
+                  void clearBanSeenMark(contextMenu.item.modelId)
+                }, () => setContextMenu(null))}
+              >
+                {t('missingTab.unmarkSeen')}
+              </button>
+            ) : (
+              <button
+                {...contextMenuButtonProps(() => {
+                  queueBanSeen(contextMenu.item.modelId, { force: true })
+                }, () => setContextMenu(null))}
+              >
+                {t('missingTab.markSeen')}
+              </button>
+            ))}
           {contextMenu.item.kind !== 'forgotten' &&
             contextMenu.item.kind !== 'excludedVersion' && (
             <button
@@ -2431,6 +2482,12 @@ export const MissingTab = memo(function MissingTab({
           )}
         </ContextMenuPortal>
       )}
+      <FloatingMarkSeenToggle
+        active={markSeenMode}
+        label={t('missingTab.markSeenModeOn')}
+        title={t('missingTab.markSeenModeTitle')}
+        onTurnOff={() => setMarkSeenMode(false)}
+      />
     </div>
   )
 })

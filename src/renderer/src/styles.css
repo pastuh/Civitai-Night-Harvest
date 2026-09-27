@@ -61,6 +61,27 @@ button.primary:hover:not(:disabled) {
   color: var(--accent-contrast, #020d18);
 }
 
+/* Soft queue/download CTA on status cards — readable without solid accent fill */
+button.status-queue-btn {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  color: var(--text);
+  font-weight: 600;
+}
+
+button.status-queue-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface2));
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  color: var(--text);
+}
+
+button.status-queue-btn:disabled {
+  opacity: 0.72;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+  color: var(--muted);
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -153,6 +174,47 @@ label {
 .scroll-to-top-arrow {
   display: block;
   font-weight: 700;
+}
+
+/* Floating Mark seen Off — top of grid column (centered over cards, not sidebar) */
+.mark-seen-fab {
+  position: fixed;
+  top: 92px;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  z-index: 9100;
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-width: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--error) 35%, transparent),
+    0 4px 18px color-mix(in srgb, var(--bg) 40%, transparent),
+    0 0 24px color-mix(in srgb, var(--error) 28%, transparent);
+  transition: opacity 0.12s ease;
+  -webkit-app-region: no-drag;
+}
+
+.app.has-global-status .mark-seen-fab {
+  bottom: auto;
+}
+
+.mark-seen-fab.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mark-seen-fab.is-visible:hover {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--error) 55%, transparent),
+    0 6px 22px color-mix(in srgb, var(--bg) 35%, transparent),
+    0 0 28px color-mix(in srgb, var(--error) 40%, transparent);
 }
 
 .header {

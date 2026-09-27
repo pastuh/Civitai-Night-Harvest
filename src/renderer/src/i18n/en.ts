@@ -942,6 +942,7 @@ export const en = {
     hideConfirmedHint:
       'When Settings → Show temporary is off: hide Done cards and versions already queued. With Show temporary on, those stay dimmed in place until you leave Updates.',
     markSeen: 'Mark seen',
+    unmarkSeen: 'Unmark seen',
     markSeenModeOff: 'Mark seen Off',
     markSeenModeOn: 'Mark seen On',
     markSeenModeTitle:
@@ -1667,6 +1668,8 @@ export const en = {
     hideSeen: 'Hide seen',
     hideSeenHint:
       'Hide Banned/Paused-by-tag cards marked seen (green title). Does not hide normal Wait/Buzz Early access cards.',
+    markSeen: 'Mark seen',
+    unmarkSeen: 'Unmark seen',
     markSeenModeOn: 'Mark seen on',
     markSeenModeOff: 'Mark seen off',
     markSeenModeTitle:
@@ -1695,8 +1698,8 @@ export const en = {
     recheckDone: 'Checked {checked} · {resolved} now have version/preview',
     recheckStopped:
       'Stopped early after {checked} (resolved {resolved}): {reason}. Click Recheck API again in a minute.',
-    download: 'Download → queue',
-    downloadWithUrl: 'Use link → queue',
+    download: 'Download',
+    downloadWithUrl: 'Use link',
     queued: 'Queued',
     pasteUrl: 'Paste URL…',
     pasteUrlHint:
@@ -1706,6 +1709,7 @@ export const en = {
     banHint: 'Exclude this model permanently — it will not return to Incomplete or auto-download',
     banConfirm:
       'Ban “{name}”? Excludes it from Incomplete, Browse auto-download, and future harvest. You can unban later in Settings.',
+    banConfirmDontAsk: "Don't ask me again (this session)",
     emptyAfterBan: 'Banned entries removed.',
     waiting: 'Tracked {duration}',
     versionName: ' · {name}',
@@ -1742,6 +1746,8 @@ export const en = {
     hideSeen: 'Hide seen',
     hideSeenHint:
       'Hide Banned/Paused cards you marked seen (green title). Does not hide Missing (404).',
+    markSeen: 'Mark seen',
+    unmarkSeen: 'Unmark seen',
     markSeenModeOn: 'Mark seen on',
     markSeenModeOff: 'Mark seen off',
     markSeenModeTitle:

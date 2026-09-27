@@ -393,11 +393,15 @@ const api = {
     countByDay: Record<string, number>
   }> => ipcRenderer.invoke('exclusions:markBanSeen', { modelIds, seenDay }),
   clearMissingBanSeen: (
-    day?: string
+    opts?: string | { day?: string; modelId?: number }
   ): Promise<{
     byModelId: Record<number, string>
     countByDay: Record<string, number>
-  }> => ipcRenderer.invoke('exclusions:clearBanSeen', day ? { day } : {}),
+  }> => {
+    const payload =
+      typeof opts === 'string' ? { day: opts } : opts && typeof opts === 'object' ? opts : {}
+    return ipcRenderer.invoke('exclusions:clearBanSeen', payload)
+  },
   pruneMissingBanSeen: (
     keepModelIds: number[]
   ): Promise<{

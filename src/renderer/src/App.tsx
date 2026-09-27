@@ -2930,6 +2930,8 @@ export default function App() {
               onBrowseModelBanned={(modelId, stub) => {
                 markBrowseModelBan(modelId, true, stub)
               }}
+              banFunctionMode={settings.banFunctionMode ?? false}
+              onBanFunctionModeChange={onBanFunctionModeChange}
               onOpenModelDetail={openModelDetail}
               isActive={incompleteOnTab && !modelDetailTarget}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}

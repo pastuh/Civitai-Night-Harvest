@@ -21,6 +21,7 @@ import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
 import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
+import { FloatingMarkSeenToggle } from './FloatingMarkSeenToggle'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
@@ -703,10 +704,34 @@ export function DeferredTab({
 
   const baseModelCounts = useMemo(() => {
     const pool = modelTypeFilter ? itemsForMainCounts : scopedDeferred
+    // Same as Missing: Hide banned / Hide paused cards don't advertise base models.
     return aggregateBaseModelOptions(
-      pool.map((d) => deferredBaseModelLabel(d, browseCards, inventoryByVersion))
+      pool
+        .filter((d) => {
+          const c = classifyPolicy(d)
+          if (hideBanned && (c.sessionBanned || c.bannedByTag)) return false
+          if (hidePaused && c.pausedByTag) return false
+          return true
+        })
+        .map((d) => deferredBaseModelLabel(d, browseCards, inventoryByVersion))
     ).map((o) => [o.name, o.count] as [string, number])
-  }, [scopedDeferred, itemsForMainCounts, modelTypeFilter, browseCards, inventoryByVersion])
+  }, [
+    scopedDeferred,
+    itemsForMainCounts,
+    modelTypeFilter,
+    browseCards,
+    inventoryByVersion,
+    classifyPolicy,
+    hideBanned,
+    hidePaused
+  ])
+
+  useEffect(() => {
+    if (sideFilter.type !== 'baseModel') return
+    if (!baseModelCounts.some(([name]) => baseModelsMatch(name, sideFilter.name))) {
+      setSideFilter({ type: 'all' })
+    }
+  }, [sideFilter, baseModelCounts])
 
   const filteredBaseModelCounts = useMemo(() => {
     const q = sidebarSearch.trim().toLowerCase()
@@ -1018,6 +1043,24 @@ export function DeferredTab({
     },
     [flushPendingSeen, isActive, markSeenMode]
   )
+
+  const clearBanSeenMark = useCallback(async (modelId: number) => {
+    if (modelId <= 0) return
+    pendingSeenRef.current.delete(modelId)
+    const next = { ...banSeenByModelIdRef.current }
+    delete next[modelId]
+    banSeenByModelIdRef.current = next
+    setBanSeenByModelId(next)
+    if (typeof window.api.clearMissingBanSeen !== 'function') return
+    try {
+      const snap = await window.api.clearMissingBanSeen({ modelId })
+      const byId = snap.byModelId ?? {}
+      banSeenByModelIdRef.current = byId
+      setBanSeenByModelId(byId)
+    } catch {
+      /* keep optimistic clear */
+    }
+  }, [])
 
   const armBanSeenOnEnter = useCallback(
     (modelId: number, e: ReactPointerEvent<HTMLElement>) => {
@@ -2118,15 +2161,23 @@ export function DeferredTab({
           <div className="context-menu-divider" />
           {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
             canMarkDeferredSeen(contextMenu.item) &&
-            !banSeenByModelId[contextMenu.item.modelId] && (
+            (banSeenByModelId[contextMenu.item.modelId] ? (
+              <button
+                {...contextMenuButtonProps(() => {
+                  void clearBanSeenMark(contextMenu.item.modelId)
+                }, () => setContextMenu(null))}
+              >
+                {t('deferredTab.unmarkSeen')}
+              </button>
+            ) : (
               <button
                 {...contextMenuButtonProps(() => {
                   queueBanSeen(contextMenu.item.modelId, { force: true })
                 }, () => setContextMenu(null))}
               >
-                {t('deferredTab.markSeenModeOn')}
+                {t('deferredTab.markSeen')}
               </button>
-            )}
+            ))}
           {!temporaryAllowedByModelId.has(contextMenu.item.modelId) &&
             (sessionBannedByModelId.has(contextMenu.item.modelId) ||
               sessionBanSet.has(contextMenu.item.modelId)) && (
@@ -2196,6 +2247,12 @@ export function DeferredTab({
           }}
         />
       )}
+      <FloatingMarkSeenToggle
+        active={markSeenMode}
+        label={t('deferredTab.markSeenModeOn')}
+        title={t('deferredTab.markSeenModeTitle')}
+        onTurnOff={() => setMarkSeenMode(false)}
+      />
     </div>
   )
 }
