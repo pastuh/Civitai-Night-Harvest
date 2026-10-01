@@ -243,7 +243,7 @@ export const en = {
       slugSyncSkipped: 'skipped {skipped} (name collision or file missing)',
       slugSyncRepaired: 'repaired {repaired} paths',
       diskSyncHint:
-        'Scans LoRA and Checkpoint folders (and tag folders) for model files, imports .swarm.json models and unrecognized customs, hashes customs locally for duplicate detection (SHA256 never sent to Civitai), removes stale DB entries, fixes old invented LoRA strength hints in .swarm.json, flags tiny/truncated .safetensors, then updates the download queue. Not run automatically on app start — press this button when you want it.',
+        'Scans LoRA and Checkpoint folders (and Tag Folders paths that are not Custom assignments) for model files, imports .swarm.json models and unrecognized customs, hashes customs locally for duplicate detection (SHA256 never sent to Civitai), removes stale DB entries, fixes old invented LoRA strength hints in .swarm.json, flags tiny/truncated .safetensors, then updates the download queue. Custom assignment folders are skipped — they are final personal locations. Not run automatically on app start — press this button when you want it.',
       diskSyncDone: 'Disk sync finished — see Library tab for the summary.',
       activityLogHint:
         'Controls what is saved to the activity log and SQLite database. Less logging reduces disk writes and UI updates during long crawls.',

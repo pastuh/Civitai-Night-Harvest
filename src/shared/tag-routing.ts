@@ -490,6 +490,8 @@ export function shouldSkipTagBulkMove(
   if (inferred.toUpperCase() === 'CHECKPOINT') return true
 
   if (record.routingLocked) return true
+  // Custom assignment folders are final personal locations — never Move misplaced.
+  if (isCustomAssignmentInventoryRecord(record, tagRules)) return true
 
   const winner =
     precomputedWinner !== undefined && precomputedWinner !== null
@@ -630,6 +632,7 @@ export async function listLibraryTagFolderReconcileAsync(
     const inferred = inferModelTypeFromFolders(r.outputFolder, loraFolder, checkpointFolder)
     if (inferred.toUpperCase() === 'CHECKPOINT') continue
     if (r.routingLocked) continue
+    if (isCustomAssignmentInventoryRecord(r, tagRules)) continue
 
     const tags = expandCivitaiTagNames(r.civitaiTags)
     const winner = effectiveFolderRoutingTag(r, tagRules, index)
@@ -727,6 +730,7 @@ export async function countElevatedFolderTagClashesAsync(
     const inferred = inferModelTypeFromFolders(r.outputFolder, loraFolder, checkpointFolder)
     if (inferred.toUpperCase() === 'CHECKPOINT') continue
     if (r.routingLocked) continue
+    if (isCustomAssignmentInventoryRecord(r, tagRules)) continue
 
     const tags = expandCivitaiTagNames(r.civitaiTags)
     const clashPool = [...tags]

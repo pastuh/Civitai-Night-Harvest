@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { basename, join } from 'path'
 import type { CivitaiDomain, InventoryRecord, LibrarySyncProgress, TagFolderRule } from '../shared/types'
-import { collectLibraryScanRoots, parseSwarmDescriptionModelId, parseSwarmDescriptionVersionId } from '../shared/utils'
+import { collectLibraryScanRoots, collectCustomAssignmentScanExcludes, isPathUnderCustomAssignmentScanExclude, parseSwarmDescriptionModelId, parseSwarmDescriptionVersionId } from '../shared/utils'
 import {
   nextFreeSyntheticVersionId,
   syntheticVersionIdFromPath
@@ -107,9 +107,13 @@ async function walkModelFiles(
   folder: string,
   depth: number,
   out: Array<{ slug: string; modelPath: string; ext: string; folder: string }>,
-  onWalkProgress?: (found: number) => void
+  onWalkProgress?: (found: number) => void,
+  skipFolders?: string[]
 ): Promise<void> {
   if (depth > MAX_SCAN_DEPTH) return
+  if (skipFolders?.length && isPathUnderCustomAssignmentScanExclude(folder, skipFolders)) {
+    return
+  }
   for (const entry of listModelFilesInFolder(folder)) {
     out.push({ ...entry, folder })
   }
@@ -126,7 +130,11 @@ async function walkModelFiles(
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     if (entry.name.startsWith('.')) continue
-    await walkModelFiles(join(folder, entry.name), depth + 1, out, onWalkProgress)
+    const child = join(folder, entry.name)
+    if (skipFolders?.length && isPathUnderCustomAssignmentScanExclude(child, skipFolders)) {
+      continue
+    }
+    await walkModelFiles(child, depth + 1, out, onWalkProgress, skipFolders)
     visited++
     if (visited % 4 === 0) await yieldToEventLoop()
   }
@@ -245,7 +253,7 @@ function buildLocalRecordFromDisk(params: {
   )
 }
 
-/** Scan LoRA / checkpoint folders (and tag folders) for on-disk files and register missing versions in inventory. */
+/** Scan LoRA / checkpoint folders (and non-custom tag folders) for on-disk files. */
 export async function importModelsFromDisk(
   loraFolder: string,
   checkpointFolder: string,
@@ -264,6 +272,7 @@ export async function importModelsFromDisk(
   }
 
   const roots = collectScanRoots(loraFolder, checkpointFolder, tagRules)
+  const skipFolders = collectCustomAssignmentScanExcludes(tagRules)
   if (!roots.length) return result
   const candidates: Array<{ slug: string; modelPath: string; ext: string; folder: string }> = []
   const seenPaths = new Set<string>()
@@ -293,7 +302,7 @@ export async function importModelsFromDisk(
         modelName: basename(root),
         action: `Found ${found} model file(s)…`
       })
-    })
+    }, skipFolders)
     await yieldToEventLoop()
   }
 

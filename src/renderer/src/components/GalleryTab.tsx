@@ -320,8 +320,8 @@ function GalleryTabInner({
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [sectionOpen, setSectionOpen] = useState({
-    baseModels: false,
-    folders: true,
+    baseModels: true,
+    folders: false,
     tagGroups: true
   })
   const [moving, setMoving] = useState(false)

@@ -245,7 +245,7 @@ export const lt: Messages = {
       slugSyncSkipped: 'praleista {skipped} (konfliktas ar failas nerastas)',
       slugSyncRepaired: 'atstatyta {repaired} kelių',
       diskSyncHint:
-        'Skenuoja LoRA ir Checkpoint aplankus (ir tag aplankus): importuoja modelius su .swarm.json ir neatpažintus custom, skaičiuoja hash lokaliai dublikatams (SHA256 niekada nesiunčiamas į Civitai), pašalina pasenusius įrašus, pataiso senuose .swarm.json išgalvotus LoRA strength hint’us, pažymi per mažus / nukirstus .safetensors, atnaujina eilę. Paleidžiant app automatiškai nebegroja — spauskite šį mygtuką, kai reikia.',
+        'Skenuoja LoRA ir Checkpoint aplankus (ir Tag Folders kelius, kurie nėra Custom assignment): importuoja modelius su .swarm.json ir neatpažintus custom, skaičiuoja hash lokaliai dublikatams (SHA256 niekada nesiunčiamas į Civitai), pašalina pasenusius įrašus, pataiso senuose .swarm.json išgalvotus LoRA strength hint’us, pažymi per mažus / nukirstus .safetensors, atnaujina eilę. Custom assignment aplankai praleidžiami — tai galutinės asmeninės vietos. Paleidžiant app automatiškai nebegroja — spauskite šį mygtuką, kai reikia.',
       diskSyncDone: 'Disko sync baigtas — santrauka Library skirtuke.',
       activityLogHint:
         'Valdo, kas rašoma į veiklos logą ir SQLite. Mažiau logų = mažiau disko rašymo ir UI atnaujinimų ilgų crawl metu.',

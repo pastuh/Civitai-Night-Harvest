@@ -61,7 +61,7 @@ export function hasAllOutputFolders(loraFolder: string, checkpointFolder: string
 export function collectLibraryScanRoots(
   loraFolder: string,
   checkpointFolder: string,
-  tagRules: { folderPath: string }[]
+  tagRules: { folderPath: string; customAssignment?: boolean }[]
 ): string[] {
   const roots = new Set<string>()
   const lora = loraFolder.trim()
@@ -69,10 +69,45 @@ export function collectLibraryScanRoots(
   if (lora) roots.add(lora)
   if (checkpoint) roots.add(checkpoint)
   for (const rule of tagRules) {
+    // Custom assignment paths are final personal locations — never import-scan them.
+    if (rule.customAssignment) continue
     const path = rule.folderPath?.trim()
     if (path) roots.add(path)
   }
   return [...roots]
+}
+
+/** Normalized folder paths for custom assignments (exclude from disk walk). */
+export function collectCustomAssignmentScanExcludes(
+  tagRules: { folderPath?: string; customAssignment?: boolean }[]
+): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const rule of tagRules) {
+    if (!rule.customAssignment) continue
+    const path = rule.folderPath?.trim()
+    if (!path) continue
+    const key = path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(path)
+  }
+  return out
+}
+
+/** True when `folder` is a custom-assignment root or a path under one. */
+export function isPathUnderCustomAssignmentScanExclude(
+  folder: string,
+  excludes: string[]
+): boolean {
+  const n = folder.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  if (!n) return false
+  for (const raw of excludes) {
+    const ex = raw.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    if (!ex) continue
+    if (n === ex || n.startsWith(`${ex}/`)) return true
+  }
+  return false
 }
 
 export function formatBytes(bytes: number): string {

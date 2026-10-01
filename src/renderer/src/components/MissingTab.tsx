@@ -383,6 +383,7 @@ export const MissingTab = memo(function MissingTab({
   const [sortAscending, setSortAscending] = useState(false)
   const [search, setSearch] = useState(initial.search)
   const [sidebarExpanded, setSidebarExpanded] = useState(initial.sidebarExpanded !== false)
+  const [sectionOpen, setSectionOpen] = useState({ policyTags: false })
   const [baseModelFilter, setBaseModelFilter] = useState<string | null>(
     initial.baseModelFilter ?? null
   )
@@ -2445,43 +2446,63 @@ export const MissingTab = memo(function MissingTab({
               </>
             )}
 
-            <h4 className="sidebar-section-title">{t('missingTab.policyTagsSection')}</h4>
-            <p className="muted sidebar-hint sidebar-hint-compact">
-              {t('missingTab.policyTagsHint')}
-            </p>
-            <input
-              type="search"
-              className="sidebar-tag-search"
-              value={tagSearch}
-              onChange={(e) => setTagSearch(e.target.value)}
-              placeholder={t('missingTab.blockedTagsSearch')}
-              aria-label={t('missingTab.blockedTagsSearch')}
-            />
-            {filteredBlockedTags.map(({ name, count }) => (
+            <div className="sidebar-collapsible">
               <button
-                key={name}
                 type="button"
-                className={`sidebar-tag ${
-                  sideFilterActive({ type: 'blockedTag', tag: name }) ? 'active' : ''
-                }`}
-                title={t('missingTab.blockedTagFilter', { tag: name })}
-                onClick={() => {
-                  if (sideFilterActive({ type: 'blockedTag', tag: name })) {
-                    clearSideFilter()
-                  } else {
-                    applySideFilter({ type: 'blockedTag', tag: name })
-                  }
-                }}
+                className="sidebar-section-toggle"
+                aria-expanded={sectionOpen.policyTags}
+                onClick={() =>
+                  setSectionOpen((s) => ({ ...s, policyTags: !s.policyTags }))
+                }
               >
-                <span className="tag-name">{name}</span>
-                <span className="muted tag-count-inline">{count}</span>
+                <span className="sidebar-section-chevron" aria-hidden>
+                  {sectionOpen.policyTags ? '▼' : '▶'}
+                </span>
+                <span className="sidebar-section-toggle-label">
+                  {t('missingTab.policyTagsSection')}
+                </span>
               </button>
-            ))}
-            {!filteredBlockedTags.length ? (
-              <p className="muted sidebar-hint sidebar-hint-compact">
-                {t('missingTab.blockedTagsEmpty')}
-              </p>
-            ) : null}
+              {sectionOpen.policyTags ? (
+                <>
+                  <p className="muted sidebar-hint sidebar-hint-compact">
+                    {t('missingTab.policyTagsHint')}
+                  </p>
+                  <input
+                    type="search"
+                    className="sidebar-tag-search"
+                    value={tagSearch}
+                    onChange={(e) => setTagSearch(e.target.value)}
+                    placeholder={t('missingTab.blockedTagsSearch')}
+                    aria-label={t('missingTab.blockedTagsSearch')}
+                  />
+                  {filteredBlockedTags.map(({ name, count }) => (
+                    <button
+                      key={name}
+                      type="button"
+                      className={`sidebar-tag ${
+                        sideFilterActive({ type: 'blockedTag', tag: name }) ? 'active' : ''
+                      }`}
+                      title={t('missingTab.blockedTagFilter', { tag: name })}
+                      onClick={() => {
+                        if (sideFilterActive({ type: 'blockedTag', tag: name })) {
+                          clearSideFilter()
+                        } else {
+                          applySideFilter({ type: 'blockedTag', tag: name })
+                        }
+                      }}
+                    >
+                      <span className="tag-name">{name}</span>
+                      <span className="muted tag-count-inline">{count}</span>
+                    </button>
+                  ))}
+                  {!filteredBlockedTags.length ? (
+                    <p className="muted sidebar-hint sidebar-hint-compact">
+                      {t('missingTab.blockedTagsEmpty')}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
           </div>
         </aside>
         ) : null}
