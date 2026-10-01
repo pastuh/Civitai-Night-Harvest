@@ -1621,10 +1621,29 @@ export function initIpc(): void {
 
   ipcMain.handle(
     'inventory:deleteVersion',
-    async (_e, payload: { versionId: number; ban?: boolean }) => {
+    async (_e, payload: { versionId: number; ban?: boolean; modelId?: number }) => {
       const record = await deleteVersionFromLibrary(payload.versionId, { awaitFiles: false })
       // ban:true = exclude THIS version only (forget), not ban/delete the whole model.
       const shouldExclude = payload.ban !== false
+
+      // Already detached (e.g. UI retry after first exclude) — do not throw.
+      if (!record) {
+        if (shouldExclude) {
+          downloadQueue.cancel(payload.versionId)
+          scheduler.dismissPending(payload.versionId)
+          if (payload.modelId && payload.modelId > 0) {
+            scheduler.markVersionRemovedFromBrowseGallery(payload.modelId, payload.versionId)
+          }
+        }
+        return {
+          modelId: payload.modelId ?? 0,
+          versionId: payload.versionId,
+          banned: false,
+          versionExcluded: shouldExclude,
+          alreadyGone: true
+        }
+      }
+
       if (shouldExclude) {
         inventory.forgetPendingVersion({
           versionId: record.versionId,
@@ -1947,6 +1966,8 @@ export function initIpc(): void {
                 seen.add(key)
                 queueUpdated += downloadQueue.reassignRoutingByCivitaiTag(name, name)
               }
+              // Priority edits can change winners for models that still carry a stale routingTag.
+              queueUpdated += downloadQueue.reassignAllRoutingByPriority()
               last = { ...result, queueUpdated }
               sendToRenderer(() => mainWindow, 'tagFolders:reconcileProgress', {
                 phase: 'done',

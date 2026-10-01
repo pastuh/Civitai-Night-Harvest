@@ -11,7 +11,8 @@ import {
   folderLineIfNotDuplicatingTag,
   inventoryMetaExtra,
   cardTagFolderRole,
-  cardTagFolderRoleClass
+  cardTagFolderRoleClass,
+  sortTagsByFolderRole
 } from './gallery-card-utils'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
@@ -25,6 +26,7 @@ import {
 } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
 import { VersionNameRow } from './VersionNameRow'
+import { MoreTagsChip } from './MoreTagsChip'
 import { resolveModelCardThumb, libraryCardPreviewSource, videoPreviewAvailabilityFor, type ModelCardPreviewOverride } from '../utils/model-card-preview'
 
 export type LibraryModelCardProps = {
@@ -187,31 +189,35 @@ function LibraryModelCardInner({
   })()
   const showMoonLead =
     Boolean(onQuickAssign) && !assignedLeadLabel && !temporary
-  const visibleTags = allTags.filter((tag) => {
-    if (hideTagSet?.has(tag.trim().toLowerCase())) return false
-    if (hideAssignedTags) {
-      const role = cardTagFolderRole(tag, tagRoleOpts)
-      if (role !== 'unmapped') return false
-    }
-    // Lead chip already shows the folder — skip duplicate final / same label.
-    if (assignedLeadLabel) {
-      const role = cardTagFolderRole(tag, tagRoleOpts)
-      if (role === 'final') return false
-      if (tagsEqual(tag, assignedLeadLabel)) return false
-    }
-    return true
-  })
+  const visibleTags = sortTagsByFolderRole(
+    allTags.filter((tag) => {
+      if (hideTagSet?.has(tag.trim().toLowerCase())) return false
+      if (hideAssignedTags) {
+        const role = cardTagFolderRole(tag, tagRoleOpts)
+        if (role !== 'unmapped') return false
+      }
+      // Lead chip already shows the folder — skip duplicate final / same label.
+      if (assignedLeadLabel) {
+        const role = cardTagFolderRole(tag, tagRoleOpts)
+        if (role === 'final') return false
+        if (tagsEqual(tag, assignedLeadLabel)) return false
+      }
+      return true
+    }),
+    tagRoleOpts
+  )
   // Only hint at tags the user chose to hide (All assigned) or overflow — not de-duped finals.
-  const hiddenByAssignedToggle = hideAssignedTags
+  const hiddenAssignedTags = hideAssignedTags
     ? allTags.filter((tag) => {
         if (hideTagSet?.has(tag.trim().toLowerCase())) return false
         return cardTagFolderRole(tag, tagRoleOpts) !== 'unmapped'
-      }).length
-    : 0
-  const overflowCount = !showAllTags && visibleTags.length > 6 ? visibleTags.length - 6 : 0
-  const hiddenTagCount = hiddenByAssignedToggle + overflowCount
-  const showHiddenTagsPlaceholder = hiddenTagCount > 0
+      })
+    : []
   const shownTags = showAllTags ? visibleTags : visibleTags.slice(0, 6)
+  const overflowTags = showAllTags ? [] : visibleTags.slice(6)
+  const remainingTags = [...hiddenAssignedTags, ...overflowTags]
+  const hiddenTagCount = remainingTags.length
+  const showHiddenTagsPlaceholder = hiddenTagCount > 0
 
   const assignedLeadHint = assignedLeadLabel
     ? isManualAssignment
@@ -511,7 +517,9 @@ function LibraryModelCardInner({
               const roleTitle =
                 role === 'final'
                   ? t('gallery.tagRoleFinalHint', { tag })
-                  : role === 'mapped'
+                  : role === 'finalAlias'
+                    ? t('gallery.tagRoleFinalAliasHint', { tag })
+                    : role === 'mapped'
                     ? effectiveRoutingTag?.trim()
                       ? t('gallery.tagRoleMappedHint', { tag })
                       : t('gallery.tagRoleMappedPendingHint', { tag })
@@ -539,15 +547,15 @@ function LibraryModelCardInner({
               )
             })}
             {showHiddenTagsPlaceholder ? (
-              <span
-                className="library-hidden-tags-placeholder"
-                title={t('gallery.hiddenAssignedTagsHint', { count: hiddenTagCount })}
-                aria-label={t('gallery.hiddenAssignedTagsHint', { count: hiddenTagCount })}
-              >
-                <span className="library-hidden-tags-dash" aria-hidden />
-                <span className="library-hidden-tags-dash" aria-hidden />
-                <span className="library-hidden-tags-dash" aria-hidden />
-              </span>
+              <MoreTagsChip
+                tags={remainingTags}
+                routingTag={effectiveRoutingTag}
+                folderLabel={folderLabel}
+                tagRules={tagRules}
+                bannedTags={blockedTags}
+                pausedTags={pausedTags}
+                onTagClick={(tag) => onCivitaiTagClick(tag, record)}
+              />
             ) : null}
           </div>
         )}

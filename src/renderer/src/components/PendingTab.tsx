@@ -13,7 +13,8 @@ import type {
   DownloadQueueItem,
   InventoryRecord,
   LibraryVersionScanProgress,
-  PendingVersion
+  PendingVersion,
+  TagFolderRule
 } from '../../../shared/types'
 import {
   RATING_FILTER_OPTIONS,
@@ -22,12 +23,23 @@ import {
 } from '../../../shared/rating-filter'
 import { describeNsfwRatingForCard } from '../../../shared/nsfw-rating'
 import { getModelPageUrl } from '../../../shared/utils'
+import {
+  expandCivitaiTagNames,
+  isPermanentlyBannedModelTag,
+  isPausedOnlyModelTag,
+  bindModelTagsToFolderRule,
+  findRuleForTag,
+  parseTagRuleNames,
+  liveFolderRoutingTag,
+  isUnsortedRoutingTag
+} from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
 import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
 import { FloatingMarkSeenToggle } from './FloatingMarkSeenToggle'
+import { AssignModelToTagModal } from './AssignModelToTagModal'
 import { ContextMenuPortal, contextMenuButtonProps } from '../utils/context-menu'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
@@ -53,6 +65,13 @@ import {
 } from '../../../shared/base-model-label'
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { ResultsPager } from './ResultsPager'
+import { MoreTagsChip } from './MoreTagsChip'
+import {
+  cardTagFolderRole,
+  cardTagFolderRoleClass,
+  shortCardFolderLabel,
+  sortTagsByFolderRole
+} from './gallery-card-utils'
 
 function localDayKey(d = new Date()): string {
   const y = d.getFullYear()
@@ -100,6 +119,22 @@ interface Props {
   showTemporaryUpdates?: boolean
   /** Tab badge — if > 0 open Unseen, else All models. */
   badgeCount?: number
+  /** Tag Folders rules — same chip role borders as Library. */
+  tagRules?: TagFolderRule[]
+  loraFolder?: string
+  checkpointFolder?: string
+  /** Permanent ban-by-tag list (purple chip mark). */
+  bannedTags?: string[]
+  /** Browse exclude / pause tags (amber chip mark). */
+  pausedTags?: string[]
+  fastTagMode?: boolean
+  tagSuggestions?: string[]
+  onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
+  onOpenTagFolders?: (tag: string) => void
+}
+
+function newId(): string {
+  return crypto.randomUUID()
 }
 
 function resolveModelType(
@@ -127,6 +162,13 @@ function resolveModelType(
   if (folder.includes('/lora')) return 'LoRA'
   // Most Updates offers are for owned LoRAs when type metadata is missing.
   return 'LoRA'
+}
+
+function resolvePendingBaseModel(
+  item: PendingVersion,
+  owned?: InventoryRecord
+): string {
+  return (item.baseModel || owned?.baseModel || '').trim() || '—'
 }
 
 function resolveNsfw(
@@ -174,7 +216,16 @@ export const PendingTab = memo(function PendingTab({
   isActive = true,
   browseVideoPreviews = false,
   showTemporaryUpdates = true,
-  badgeCount
+  badgeCount,
+  tagRules = [],
+  loraFolder = '',
+  checkpointFolder = '',
+  bannedTags = [],
+  pausedTags = [],
+  fastTagMode = false,
+  tagSuggestions = [],
+  onSaveTagRules,
+  onOpenTagFolders
 }: Props) {
   const t = useT()
   const { items: queueItems, paused: queuePaused } = useDownloadQueue()
@@ -230,6 +281,9 @@ export const PendingTab = memo(function PendingTab({
     initial.modelTypeFilter ?? null
   )
   const [sidebarExpanded, setSidebarExpanded] = useState(initial.sidebarExpanded)
+  const [sidebarSearch, setSidebarSearch] = useState('')
+  const deferredSidebarSearch = useDeferredValue(sidebarSearch)
+  const [sectionOpen, setSectionOpen] = useState({ baseModels: true })
   const [pendingSeenByVersionId, setPendingSeenByVersionId] = useState<Record<number, string>>({})
   const pendingSeenRef = useRef(pendingSeenByVersionId)
   pendingSeenRef.current = pendingSeenByVersionId
@@ -366,6 +420,94 @@ export const PendingTab = memo(function PendingTab({
       row
     })
   }, [])
+
+  const [quickAssignTarget, setQuickAssignTarget] = useState<{
+    item: PendingVersion
+    owned?: InventoryRecord
+    initialTag?: string
+  } | null>(null)
+  const [assignBusy, setAssignBusy] = useState(false)
+  const [assignMessage, setAssignMessage] = useState('')
+
+  const folderTagSuggestions = useMemo(() => {
+    const names = new Set<string>()
+    for (const rule of tagRules) {
+      for (const n of parseTagRuleNames(rule.tagName)) {
+        const tName = n.trim()
+        if (tName) names.add(tName)
+      }
+      const sub = rule.subfolderName?.trim()
+      if (sub) names.add(sub)
+    }
+    for (const tag of tagSuggestions) {
+      if (tag.trim()) names.add(tag.trim())
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [tagRules, tagSuggestions])
+
+  const openTagInFolders = useCallback(
+    (civitaiTag: string, item?: PendingVersion, owned?: InventoryRecord) => {
+      const trimmed = civitaiTag.trim()
+      if (!trimmed) return
+      if (fastTagMode) {
+        if (item) {
+          setQuickAssignTarget({
+            item,
+            owned,
+            initialTag: trimmed
+          })
+        }
+        return
+      }
+      onOpenTagFolders?.(trimmed)
+    },
+    [fastTagMode, onOpenTagFolders]
+  )
+
+  const closeQuickAssign = useCallback(() => {
+    setQuickAssignTarget(null)
+  }, [])
+
+  const assignFolderForPending = useCallback(
+    (folderTag: string, linkedModelTags: string[]) => {
+      if (!onSaveTagRules || !quickAssignTarget) return
+      const tagName = folderTag.trim()
+      if (!tagName) return
+      const { item, owned } = quickAssignTarget
+      setAssignBusy(true)
+      setAssignMessage('')
+      void (async () => {
+        try {
+          let nextRules = tagRules
+          if (linkedModelTags.length > 0) {
+            nextRules = bindModelTagsToFolderRule(
+              tagRules,
+              tagName,
+              linkedModelTags,
+              newId
+            )
+          } else if (!findRuleForTag(tagName, tagRules)) {
+            nextRules = [...tagRules, { id: newId(), tagName, folderPath: '' }]
+          }
+          if (nextRules !== tagRules) {
+            await onSaveTagRules(nextRules)
+          }
+          const ownedIds = (ownedByModel.get(item.modelId) ?? []).map((r) => r.versionId)
+          if (ownedIds.length > 0) {
+            await window.api.assignTag(ownedIds, tagName, { lockRouting: true })
+            await onLibraryRefresh?.()
+          }
+          setAssignMessage(t('modelDetail.assignModelToTagDone', { tag: tagName }))
+          setQuickAssignTarget(null)
+        } catch (err) {
+          setAssignMessage(err instanceof Error ? err.message : String(err))
+        } finally {
+          setAssignBusy(false)
+        }
+      })()
+    },
+    [onSaveTagRules, onLibraryRefresh, quickAssignTarget, tagRules, ownedByModel, t]
+  )
 
   useEffect(() => {
     const stale = pending.filter(
@@ -770,9 +912,17 @@ export const PendingTab = memo(function PendingTab({
           if (q?.status === 'queued' || q?.status === 'downloading') return false
           return true
         })
-        .map((row) => (row.item.baseModel || '').trim() || '—')
+        .map((row) =>
+          resolvePendingBaseModel(row.item, ownedPrimaryByModel.get(row.item.modelId))
+        )
     ).map((o) => [o.name, o.count] as [string, number])
   }, [baseRows, modelTypeFilter, ownedPrimaryByModel, queueByVersionId])
+
+  const filteredBaseModelCounts = useMemo(() => {
+    const q = deferredSidebarSearch.trim().toLowerCase()
+    if (!q) return baseModelCounts
+    return baseModelCounts.filter(([name]) => name.toLowerCase().includes(q))
+  }, [baseModelCounts, deferredSidebarSearch])
 
   const rowsForMainCounts = useMemo(() => {
     const source = !modelTypeFilter
@@ -884,8 +1034,9 @@ export const PendingTab = memo(function PendingTab({
       if (modelTypeFilter && mt.toUpperCase() !== modelTypeFilter.toUpperCase()) {
         return false
       }
-      if (sideFilter.type === 'baseModel' && !baseModelsMatch(item.baseModel || '—', sideFilter.name)) {
-        return false
+      if (sideFilter.type === 'baseModel') {
+        const bm = resolvePendingBaseModel(item, owned)
+        if (!baseModelsMatch(bm, sideFilter.name)) return false
       }
 
       if (q) {
@@ -1212,6 +1363,7 @@ export const PendingTab = memo(function PendingTab({
   return (
     <div className="panel status-tab-panel pending-tab missing-tab-panel">
       {toolbar}
+      {assignMessage ? <p className="muted status-inline-msg">{assignMessage}</p> : null}
       <div className="gallery-layout missing-gallery-layout">
         <div className="gallery-body-row">
           <div className="gallery-main">
@@ -1230,9 +1382,56 @@ export const PendingTab = memo(function PendingTab({
                       const temporary = Boolean(row.temporary)
                       const busy = busyVersionIds.has(item.versionId)
                       const owned = ownedPrimaryByModel.get(item.modelId)
-                      const tags = item.civitaiTags?.length
+                      const rawTags = item.civitaiTags?.length
                         ? item.civitaiTags
                         : owned?.civitaiTags
+                      const cardTags = expandCivitaiTagNames(rawTags)
+                      // Owned library route stays sticky (same as Library). Unowned offers use live priority.
+                      const effectiveRoutingTag = (() => {
+                        const ownedRt = owned?.routingTag?.trim() || ''
+                        if (
+                          ownedRt &&
+                          !isUnsortedRoutingTag(ownedRt) &&
+                          findRuleForTag(ownedRt, tagRules)
+                        ) {
+                          return ownedRt
+                        }
+                        return (
+                          liveFolderRoutingTag(cardTags, tagRules)?.trim() ||
+                          ownedRt ||
+                          ''
+                        )
+                      })()
+                      const folderLabel = shortCardFolderLabel(
+                        effectiveRoutingTag || null,
+                        owned?.baseModel || item.baseModel,
+                        tagRules,
+                        loraFolder,
+                        checkpointFolder,
+                        { outputFolder: owned?.outputFolder ?? item.existingFolder }
+                      )
+                      const assignedLeadLabel =
+                        (folderLabel || effectiveRoutingTag || '').trim() || null
+                      const tagRoleOpts = {
+                        routingTag: effectiveRoutingTag,
+                        folderLabel,
+                        tagRules
+                      }
+                      const visibleTags = sortTagsByFolderRole(
+                        assignedLeadLabel
+                          ? cardTags.filter((tag) => {
+                              const role = cardTagFolderRole(tag, tagRoleOpts)
+                              if (role === 'final') return false
+                              return (
+                                tag.trim().toLowerCase() !== assignedLeadLabel.toLowerCase()
+                              )
+                            })
+                          : cardTags,
+                        tagRoleOpts
+                      )
+                      const shownTags = visibleTags.slice(0, 6)
+                      const overflowTags = visibleTags.slice(6)
+                      const extraTagCount = overflowTags.length
                       const forgotten = Boolean(item.forgotten)
                       const skipped = Boolean(item.skipped) && !forgotten
                       const isSeen = Boolean(pendingSeenByVersionId[item.versionId])
@@ -1368,13 +1567,96 @@ export const PendingTab = memo(function PendingTab({
                               }
                             >
                               <div className="status-card-detail muted">{versionsLabel(item)}</div>
-                              {tags && tags.length > 0 ? (
-                                <div className="tag-row library-card-tags" title={tags.join(', ')}>
-                                  {tags.slice(0, 6).map((tag) => (
-                                    <span key={tag} className="tag-chip">
-                                      {tag}
-                                    </span>
-                                  ))}
+                              {assignedLeadLabel || shownTags.length > 0 || extraTagCount > 0 ? (
+                                <div className="tag-row library-card-tags">
+                                  {assignedLeadLabel ? (
+                                    <button
+                                      type="button"
+                                      className={`tag-chip library-assign-chip ${
+                                        owned?.routingLocked
+                                          ? 'library-assign-chip-locked'
+                                          : 'library-assign-chip-route'
+                                      }`}
+                                      title={
+                                        owned?.routingLocked
+                                          ? t('gallery.manualFolderHint', {
+                                              folder: assignedLeadLabel
+                                            })
+                                          : t('gallery.folderAssignedTitle', {
+                                              folder: assignedLeadLabel
+                                            })
+                                      }
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openTagInFolders(
+                                          effectiveRoutingTag || assignedLeadLabel,
+                                          item,
+                                          owned
+                                        )
+                                      }}
+                                    >
+                                      {assignedLeadLabel}
+                                    </button>
+                                  ) : null}
+                                  {shownTags.map((tag) => {
+                                    const role = cardTagFolderRole(tag, tagRoleOpts)
+                                    const banned = isPermanentlyBannedModelTag(tag, bannedTags)
+                                    const paused = isPausedOnlyModelTag(
+                                      tag,
+                                      pausedTags,
+                                      bannedTags
+                                    )
+                                    const roleTitle =
+                                      role === 'final'
+                                        ? t('gallery.tagRoleFinalHint', { tag })
+                                        : role === 'finalAlias'
+                                          ? t('gallery.tagRoleFinalAliasHint', { tag })
+                                          : role === 'mapped'
+                                          ? effectiveRoutingTag
+                                            ? t('gallery.tagRoleMappedHint', { tag })
+                                            : t('gallery.tagRoleMappedPendingHint', { tag })
+                                          : t('gallery.tagRoleUnmappedHint', { tag })
+                                    const policyTitle = banned
+                                      ? t('gallery.tagBlockedOnCardHint', { tag })
+                                      : paused
+                                        ? t('gallery.tagPausedOnCardHint', { tag })
+                                        : null
+                                    return (
+                                      <button
+                                        key={tag}
+                                        type="button"
+                                        className={`tag-chip ${cardTagFolderRoleClass(role)}${
+                                          banned
+                                            ? ' is-blocked-tag'
+                                            : paused
+                                              ? ' is-paused-tag'
+                                              : ''
+                                        }`}
+                                        title={
+                                          policyTitle
+                                            ? `${policyTitle} · ${roleTitle}`
+                                            : roleTitle
+                                        }
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          openTagInFolders(tag, item, owned)
+                                        }}
+                                      >
+                                        {tag}
+                                      </button>
+                                    )
+                                  })}
+                                  {extraTagCount > 0 ? (
+                                    <MoreTagsChip
+                                      tags={overflowTags}
+                                      routingTag={effectiveRoutingTag}
+                                      folderLabel={folderLabel}
+                                      tagRules={tagRules}
+                                      bannedTags={bannedTags}
+                                      pausedTags={pausedTags}
+                                      onTagClick={(tag) => openTagInFolders(tag, item, owned)}
+                                    />
+                                  ) : null}
                                 </div>
                               ) : null}
                             </ModelCardInfo>
@@ -1602,6 +1884,14 @@ export const PendingTab = memo(function PendingTab({
               </div>
 
               <div className="tag-sidebar-scroll">
+                <input
+                  type="search"
+                  className="sidebar-search"
+                  value={sidebarSearch}
+                  onChange={(e) => setSidebarSearch(e.target.value)}
+                  placeholder={t('gallery.sidebarSearchPlaceholder')}
+                  aria-label={t('gallery.sidebarSearchPlaceholder')}
+                />
                 <button
                   type="button"
                   className={`sidebar-tag ${
@@ -1654,21 +1944,40 @@ export const PendingTab = memo(function PendingTab({
                   </>
                 ) : null}
 
-                {baseModelCounts.length ? (
-                  <>
-                    <h4 className="sidebar-section-title">{t('gallery.baseModels')}</h4>
-                    {baseModelCounts.slice(0, 40).map(([name, count]) => (
-                      <button
-                        key={name}
-                        type="button"
-                        className={`sidebar-tag ${sideFilterActive({ type: 'baseModel', name }) ? 'active' : ''}`}
-                        onClick={() => applySideFilter({ type: 'baseModel', name: baseModelLabel(name) })}
-                      >
-                        <span className="tag-name">{name}</span>
-                        <span className="muted tag-count-inline">{count}</span>
-                      </button>
-                    ))}
-                  </>
+                {filteredBaseModelCounts.length ? (
+                  <div className="sidebar-collapsible">
+                    <button
+                      type="button"
+                      className="sidebar-section-toggle"
+                      aria-expanded={sectionOpen.baseModels}
+                      onClick={() =>
+                        setSectionOpen((s) => ({ ...s, baseModels: !s.baseModels }))
+                      }
+                    >
+                      <span className="sidebar-section-chevron" aria-hidden>
+                        {sectionOpen.baseModels ? '▼' : '▶'}
+                      </span>
+                      <span className="sidebar-section-toggle-label">
+                        {t('gallery.baseModels')}
+                      </span>
+                    </button>
+                    {sectionOpen.baseModels &&
+                      filteredBaseModelCounts.slice(0, 48).map(([name, count]) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className={`sidebar-tag ${
+                            sideFilterActive({ type: 'baseModel', name }) ? 'active' : ''
+                          }`}
+                          onClick={() =>
+                            applySideFilter({ type: 'baseModel', name: baseModelLabel(name) })
+                          }
+                        >
+                          <span className="tag-name">{name}</span>
+                          <span className="muted tag-count-inline">{count}</span>
+                        </button>
+                      ))}
+                  </div>
                 ) : null}
               </div>
             </aside>
@@ -1824,6 +2133,26 @@ export const PendingTab = memo(function PendingTab({
           </div>
         </ContextMenuPortal>
       )}
+      {quickAssignTarget && onSaveTagRules ? (
+        <AssignModelToTagModal
+          key={`${quickAssignTarget.item.versionId}:${quickAssignTarget.initialTag ?? ''}`}
+          modelName={quickAssignTarget.item.modelName}
+          modelTags={expandCivitaiTagNames(
+            quickAssignTarget.item.civitaiTags?.length
+              ? quickAssignTarget.item.civitaiTags
+              : quickAssignTarget.owned?.civitaiTags
+          )}
+          suggestions={folderTagSuggestions}
+          initialQuery={quickAssignTarget.initialTag}
+          initialScope="rules"
+          disabled={assignBusy}
+          busy={assignBusy}
+          onClose={closeQuickAssign}
+          onConfirm={(tag, linkedModelTags) =>
+            assignFolderForPending(tag, linkedModelTags)
+          }
+        />
+      ) : null}
       <FloatingMarkSeenToggle
         active={markSeenMode}
         label={t('pending.markSeenModeOn')}

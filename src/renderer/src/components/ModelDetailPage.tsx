@@ -5,7 +5,8 @@ import type {
   CivitaiModelDetail,
   CivitaiModelDetailVersion,
   InventoryRecord,
-  TagFolderRule
+  TagFolderRule,
+  WatchRuleTestModel
 } from '../../../shared/types'
 import { MAX_MISSING_CONFIRM_HITS } from '../../../shared/types'
 import {
@@ -76,6 +77,8 @@ interface Props {
   ownedRecords?: InventoryRecord[]
   onBannedChange?: (modelId: number, banned: boolean) => void
   onInventoryRefresh?: () => void | Promise<void>
+  /** Push refreshed likes/downloads into the live Browse grid after API detail load. */
+  onSeedBrowseModels?: (models: WatchRuleTestModel[]) => void
   onQueueRefresh?: () => void | Promise<void>
   /** Fast tag assign (same as Library). */
   inventory?: InventoryRecord[]
@@ -213,6 +216,7 @@ export function ModelDetailPage({
   ownedRecords = [],
   onBannedChange,
   onInventoryRefresh,
+  onSeedBrowseModels,
   onQueueRefresh,
   inventory = [],
   tagRules = [],
@@ -483,6 +487,30 @@ export function ModelDetailPage({
         if (cancelled) return
         setDetail(d)
         setError(null)
+        if (!localOnly) {
+          // Persist already done in main; refresh Library + seed Browse live grid counts.
+          void onInventoryRefresh?.()
+          if (d.versions?.length) {
+            onSeedBrowseModels?.(
+              d.versions.map((v) => ({
+                id: d.modelId,
+                versionId: v.id,
+                name: d.name,
+                versionName: v.name,
+                type: d.type,
+                baseModel: v.baseModel || d.baseModel || '',
+                tags: d.tags ?? [],
+                pageUrl: d.pageUrl ?? '',
+                creator: d.creator,
+                inInventory: false,
+                isBanned: false,
+                downloadCount: v.downloadCount,
+                thumbsUpCount: v.thumbsUpCount,
+                publishedAt: v.publishedAt
+              }))
+            )
+          }
+        }
       })
       .catch((err) => {
         if (cancelled) return
@@ -501,7 +529,7 @@ export function ModelDetailPage({
     return () => {
       cancelled = true
     }
-  }, [modelId, fetchVersionId, domain, swarmPath, reloadToken, allowRemote, targetIdentity])
+  }, [modelId, fetchVersionId, domain, swarmPath, reloadToken, allowRemote, targetIdentity, onInventoryRefresh, onSeedBrowseModels])
 
   useEffect(() => {
     if (!loading || !allowRemote) {
@@ -1750,7 +1778,9 @@ export function ModelDetailPage({
                       const roleTitle =
                         role === 'final'
                           ? t('gallery.tagRoleFinalHint', { tag })
-                          : role === 'mapped'
+                          : role === 'finalAlias'
+                            ? t('gallery.tagRoleFinalAliasHint', { tag })
+                            : role === 'mapped'
                             ? routingForTags?.trim()
                               ? t('gallery.tagRoleMappedHint', { tag })
                               : t('gallery.tagRoleMappedPendingHint', { tag })

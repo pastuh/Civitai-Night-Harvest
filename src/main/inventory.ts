@@ -3477,6 +3477,29 @@ export function patchBrowseCardCachePreview(
   ])
 }
 
+/** Patch likes/downloads on an existing browse cache card (Model Details API refresh). */
+export function patchBrowseCardCacheStats(
+  versionId: number,
+  modelId: number,
+  stats: { downloadCount?: number; thumbsUpCount?: number }
+): void {
+  if (versionId <= 0) return
+  if (stats.downloadCount == null && stats.thumbsUpCount == null) return
+  const hit = getBrowseCardCache([versionId]).get(versionId)
+  if (!hit) return
+  upsertBrowseCardCache([
+    {
+      versionId,
+      modelId: hit.id || modelId,
+      card: {
+        ...hit,
+        ...(stats.downloadCount != null ? { downloadCount: stats.downloadCount } : {}),
+        ...(stats.thumbsUpCount != null ? { thumbsUpCount: stats.thumbsUpCount } : {})
+      }
+    }
+  ])
+}
+
 function patchBrowseCardCacheVideo(
   versionId: number,
   modelId: number,

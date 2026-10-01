@@ -46,7 +46,7 @@ button {
   padding: 8px 14px;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled):not(.tag-chip) {
   border-color: var(--accent);
 }
 
@@ -562,18 +562,27 @@ button.tag-chip,
   color: var(--accent);
 }
 
-/* Folder-role marks on Civitai tags (subtle):
- * final  — quiet solid border = active folder destination (same tag chrome, not a bright CTA)
- * mapped — dashed = Tag folders rule exists (not active route)
- * unmapped — dotted muted = no rule yet
+/* Folder-role marks on Civitai tags:
+ * final       — solid green = active folder destination (same chrome as library-assign-chip-route)
+ * final-alias — dashed green = other names on the same Tag Folders rule as the active route
+ * mapped      — dashed accent = Tag folders rule exists (not active route)
+ * unmapped    — dotted muted = no rule yet
  */
 .gallery-card .tag-chip.tag-role-final,
 .tag-chip.tag-role-final {
-  border: 1px solid color-mix(in srgb, var(--muted) 50%, var(--border));
+  border: 1px solid color-mix(in srgb, #2fa856 55%, var(--border));
   color: inherit;
   background: transparent;
   opacity: 1;
   cursor: default;
+}
+
+.gallery-card .tag-chip.tag-role-final-alias,
+.tag-chip.tag-role-final-alias {
+  border: 1px dashed color-mix(in srgb, #2fa856 55%, var(--border));
+  color: #fff;
+  background: transparent;
+  opacity: 1;
 }
 
 .gallery-card .tag-chip.tag-role-mapped,
@@ -592,36 +601,69 @@ button.tag-chip,
   opacity: 0.92;
 }
 
-/* Blocked / permanent ban-by-tag — purple */
+/* Blocked / permanent ban-by-tag — purple fill only; keep role borders */
 .gallery-card .tag-chip.is-blocked-tag,
 .gallery-card .tag-chip.is-blocked-tag.tag-role-final,
+.gallery-card .tag-chip.is-blocked-tag.tag-role-final-alias,
 .gallery-card .tag-chip.is-blocked-tag.tag-role-mapped,
 .gallery-card .tag-chip.is-blocked-tag.tag-role-unmapped,
 .tag-chip.is-blocked-tag {
   background: color-mix(in srgb, #a855f7 18%, transparent);
-  outline: 1px solid color-mix(in srgb, #a855f7 40%, transparent);
-  border-color: transparent;
   color: inherit;
   opacity: 1;
 }
 
-/* Browse exclude / pause — amber */
+/* Browse exclude / pause — amber fill only; keep role borders */
 .gallery-card .tag-chip.is-paused-tag,
 .gallery-card .tag-chip.is-paused-tag.tag-role-final,
+.gallery-card .tag-chip.is-paused-tag.tag-role-final-alias,
 .gallery-card .tag-chip.is-paused-tag.tag-role-mapped,
 .gallery-card .tag-chip.is-paused-tag.tag-role-unmapped,
 .tag-chip.is-paused-tag {
   background: color-mix(in srgb, #d97706 16%, transparent);
-  outline: 1px solid color-mix(in srgb, #d97706 38%, transparent);
-  border-color: transparent;
   color: inherit;
   opacity: 1;
 }
 
+/* Re-assert role borders after policy fill (higher specificity than fill-only rules). */
+.gallery-card .tag-chip.is-blocked-tag.tag-role-final,
+.gallery-card .tag-chip.is-paused-tag.tag-role-final,
+.tag-chip.is-blocked-tag.tag-role-final,
+.tag-chip.is-paused-tag.tag-role-final {
+  border: 1px solid color-mix(in srgb, #2fa856 55%, var(--border));
+}
+
+.gallery-card .tag-chip.is-blocked-tag.tag-role-final-alias,
+.gallery-card .tag-chip.is-paused-tag.tag-role-final-alias,
+.tag-chip.is-blocked-tag.tag-role-final-alias,
+.tag-chip.is-paused-tag.tag-role-final-alias {
+  border: 1px dashed color-mix(in srgb, #2fa856 55%, var(--border));
+}
+
+.gallery-card .tag-chip.is-blocked-tag.tag-role-mapped,
+.gallery-card .tag-chip.is-paused-tag.tag-role-mapped,
+.tag-chip.is-blocked-tag.tag-role-mapped,
+.tag-chip.is-paused-tag.tag-role-mapped {
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--border));
+}
+
+.gallery-card .tag-chip.is-blocked-tag.tag-role-unmapped,
+.gallery-card .tag-chip.is-paused-tag.tag-role-unmapped,
+.tag-chip.is-blocked-tag.tag-role-unmapped,
+.tag-chip.is-paused-tag.tag-role-unmapped {
+  border: 1px dotted color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
 .gallery-card .tag-chip.tag-role-final:hover,
 .tag-chip.tag-role-final:hover {
-  border-color: color-mix(in srgb, var(--muted) 55%, var(--border));
+  border-color: color-mix(in srgb, #2fa856 75%, var(--border));
   border-style: solid;
+}
+
+.gallery-card .tag-chip.tag-role-final-alias:hover,
+.tag-chip.tag-role-final-alias:hover {
+  border-color: color-mix(in srgb, #2fa856 75%, var(--border));
+  border-style: dashed;
 }
 
 .gallery-card .tag-chip.tag-role-mapped:hover,
@@ -1034,6 +1076,38 @@ th {
   height: 0;
   border-top: 2px dashed color-mix(in srgb, var(--muted) 75%, var(--border));
   border-radius: 1px;
+}
+
+.more-tags-chip {
+  cursor: help;
+}
+
+.more-tags-popover {
+  padding: 8px 10px;
+  border-radius: var(--radius, 8px);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+  box-shadow:
+    0 10px 28px color-mix(in srgb, #000 45%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent);
+  pointer-events: auto;
+}
+
+.more-tags-popover-row {
+  margin: 0;
+  max-width: 100%;
+  gap: 4px;
+}
+
+.more-tags-popover .tag-chip {
+  margin: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  cursor: default;
+}
+
+.more-tags-popover button.tag-chip {
+  cursor: pointer;
 }
 
 .gallery-card-body > .tag-chip {
@@ -4603,10 +4677,11 @@ select.browse-content-filter {
   border-color: color-mix(in srgb, var(--text) 32%, var(--border));
 }
 
-/* Tag Folders route (unlocked) — green */
+/* Tag Folders route (unlocked) — green border, white text */
 .library-assign-chip-route {
   filter: none;
-  color: color-mix(in srgb, #86efac 75%, var(--text));
+  opacity: 1;
+  color: #fff;
   border-style: solid;
   border-color: color-mix(in srgb, #2fa856 55%, var(--border));
   background: transparent;
@@ -4614,15 +4689,16 @@ select.browse-content-filter {
 }
 
 .library-assign-chip-route:hover:not(:disabled) {
-  color: color-mix(in srgb, #86efac 90%, var(--text));
+  color: #fff;
   border-color: color-mix(in srgb, #2fa856 75%, var(--border));
   background: color-mix(in srgb, #2fa856 10%, transparent);
 }
 
-/* Folder lock (manual) — soft cyan next to green */
+/* Folder lock (manual) — cyan border, white text */
 .library-assign-chip-locked {
   filter: none;
-  color: color-mix(in srgb, #7dd3fc 80%, var(--text));
+  opacity: 1;
+  color: #fff;
   border-style: solid;
   border-color: color-mix(in srgb, #38bdf8 50%, var(--border));
   background: transparent;
@@ -4630,7 +4706,7 @@ select.browse-content-filter {
 }
 
 .library-assign-chip-locked:hover:not(:disabled) {
-  color: color-mix(in srgb, #bae6fd 85%, var(--text));
+  color: #fff;
   border-color: color-mix(in srgb, #38bdf8 70%, var(--border));
   background: color-mix(in srgb, #38bdf8 10%, transparent);
 }
@@ -4638,7 +4714,8 @@ select.browse-content-filter {
 /* Back-compat alias */
 .library-assign-chip-manual {
   filter: none;
-  color: color-mix(in srgb, #7dd3fc 80%, var(--text));
+  opacity: 1;
+  color: #fff;
   border-style: solid;
   border-color: color-mix(in srgb, #38bdf8 50%, var(--border));
   background: transparent;

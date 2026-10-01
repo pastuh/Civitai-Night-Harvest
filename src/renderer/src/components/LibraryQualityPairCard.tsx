@@ -11,7 +11,8 @@ import {
   folderLineIfNotDuplicatingTag,
   inventoryMetaExtra,
   cardTagFolderRole,
-  cardTagFolderRoleClass
+  cardTagFolderRoleClass,
+  sortTagsByFolderRole
 } from './gallery-card-utils'
 import { isUnrecognizedInventoryRecord } from '../../../shared/local-inventory'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
@@ -26,6 +27,7 @@ import {
 import { displayVersionNameForPair } from '../../../shared/quality-tier-pair'
 import { VersionNameRow } from './VersionNameRow'
 import { SplitPairThumbnail } from './SplitPairThumbnail'
+import { MoreTagsChip } from './MoreTagsChip'
 import {
   libraryCardPreviewSource,
   resolveModelCardThumb,
@@ -176,6 +178,8 @@ function LibraryQualityPairCardInner({
     return true
   })
   const shownTags = visibleTags.slice(0, 6)
+  const overflowTags = visibleTags.slice(6)
+  const extraTagCount = overflowTags.length
   const tagRoleOpts = {
     routingTag: record.routingTag,
     folderLabel,
@@ -197,13 +201,16 @@ function LibraryQualityPairCardInner({
     return (folderAssignmentLabel || routingTagClean || singleTag || '').trim() || null
   })()
   const showMoonLead = Boolean(onQuickAssign) && !assignedLeadLabel && !temporary
-  const tagsForRow = assignedLeadLabel
-    ? shownTags.filter((tag) => {
-        if (cardTagFolderRole(tag, tagRoleOpts) === 'final') return false
-        if (tagsEqual(tag, assignedLeadLabel)) return false
-        return true
-      })
-    : shownTags
+  const tagsForRow = sortTagsByFolderRole(
+    assignedLeadLabel
+      ? shownTags.filter((tag) => {
+          if (cardTagFolderRole(tag, tagRoleOpts) === 'final') return false
+          if (tagsEqual(tag, assignedLeadLabel)) return false
+          return true
+        })
+      : shownTags,
+    tagRoleOpts
+  )
 
   const assignedLeadHint = assignedLeadLabel
     ? isManualAssignment
@@ -425,7 +432,7 @@ function LibraryQualityPairCardInner({
             </div>
           ) : null
         ) : null}
-        {(tagsForRow.length > 0 || leadAssignChip) && (
+        {(tagsForRow.length > 0 || leadAssignChip || extraTagCount > 0) && (
           <div className="tag-row library-card-tags">
             {leadAssignChip}
             {tagsForRow.map((tag) => {
@@ -452,6 +459,17 @@ function LibraryQualityPairCardInner({
                 </button>
               )
             })}
+            {extraTagCount > 0 ? (
+              <MoreTagsChip
+                tags={overflowTags}
+                routingTag={record.routingTag}
+                folderLabel={folderLabel}
+                tagRules={tagRules}
+                bannedTags={blockedTags}
+                pausedTags={pausedTags}
+                onTagClick={(tag) => onCivitaiTagClick(tag, record)}
+              />
+            ) : null}
           </div>
         )}
       </div>

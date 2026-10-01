@@ -327,35 +327,67 @@
   color: #fff;
 }
 
-/* Aroma: quiet final stop; mapped dashed keeps a readable accent dash. */
+/* Aroma: final = green assign chrome; final-alias = dashed green; mapped dashed accent; unmapped dotted muted. */
 .theme-aroma .gallery-card .tag-chip.tag-role-final,
-.theme-aroma .tag-chip.tag-role-final {
-  border-color: color-mix(in srgb, #9aa3ba 50%, var(--border));
-  color: color-mix(in srgb, #d7dce8 70%, var(--text));
+.theme-aroma .tag-chip.tag-role-final,
+.theme-aroma .gallery-card .tag-chip.is-blocked-tag.tag-role-final,
+.theme-aroma .gallery-card .tag-chip.is-paused-tag.tag-role-final,
+.theme-aroma .tag-chip.is-blocked-tag.tag-role-final,
+.theme-aroma .tag-chip.is-paused-tag.tag-role-final {
+  border-color: color-mix(in srgb, #2fa856 70%, #86efac);
+  color: color-mix(in srgb, #b8f0c8 70%, var(--text));
+}
+
+.theme-aroma .gallery-card .tag-chip.tag-role-final-alias,
+.theme-aroma .tag-chip.tag-role-final-alias,
+.theme-aroma .gallery-card .tag-chip.is-blocked-tag.tag-role-final-alias,
+.theme-aroma .gallery-card .tag-chip.is-paused-tag.tag-role-final-alias,
+.theme-aroma .tag-chip.is-blocked-tag.tag-role-final-alias,
+.theme-aroma .tag-chip.is-paused-tag.tag-role-final-alias {
+  border-color: color-mix(in srgb, #2fa856 70%, #86efac);
+  color: #fff;
 }
 
 .theme-aroma .gallery-card .tag-chip.tag-role-mapped,
-.theme-aroma .tag-chip.tag-role-mapped {
+.theme-aroma .tag-chip.tag-role-mapped,
+.theme-aroma .gallery-card .tag-chip.is-blocked-tag.tag-role-mapped,
+.theme-aroma .gallery-card .tag-chip.is-paused-tag.tag-role-mapped,
+.theme-aroma .tag-chip.is-blocked-tag.tag-role-mapped,
+.theme-aroma .tag-chip.is-paused-tag.tag-role-mapped {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--muted));
 }
 
 .theme-aroma .gallery-card .tag-chip.tag-role-unmapped,
-.theme-aroma .tag-chip.tag-role-unmapped {
+.theme-aroma .tag-chip.tag-role-unmapped,
+.theme-aroma .gallery-card .tag-chip.is-blocked-tag.tag-role-unmapped,
+.theme-aroma .gallery-card .tag-chip.is-paused-tag.tag-role-unmapped,
+.theme-aroma .tag-chip.is-blocked-tag.tag-role-unmapped,
+.theme-aroma .tag-chip.is-paused-tag.tag-role-unmapped {
   border-color: color-mix(in srgb, #9aa3ba 55%, transparent);
   color: color-mix(in srgb, #9aa3ba 85%, var(--muted));
 }
 
+/* Aroma: assigned folder path text — green (match library-assign-chip-route; --success is cyan here) */
+.theme-aroma .gallery-folder-line.is-assigned {
+  color: #b8f0c8;
+}
+
+.theme-aroma .gallery-folder-line.is-manual {
+  color: #a8e0f5;
+}
+
 /* Aroma: Tag Folders route — green; folder lock — soft cyan */
 .theme-aroma .library-assign-chip-route {
-  color: #b8f0c8;
+  color: #fff;
   border-style: solid;
   border-color: color-mix(in srgb, #2fa856 70%, #86efac);
   background: transparent;
   font-weight: inherit;
+  opacity: 1;
 }
 
 .theme-aroma .library-assign-chip-route:hover:not(:disabled) {
-  color: #d4f7de;
+  color: #fff;
   border-style: solid;
   border-color: #86efac;
   background: transparent;
@@ -363,16 +395,17 @@
 
 .theme-aroma .library-assign-chip-locked,
 .theme-aroma .library-assign-chip-manual {
-  color: #a8e0f5;
+  color: #fff;
   border-style: solid;
   border-color: color-mix(in srgb, #38bdf8 65%, #7dd3fc);
   background: transparent;
   font-weight: inherit;
+  opacity: 1;
 }
 
 .theme-aroma .library-assign-chip-locked:hover:not(:disabled),
 .theme-aroma .library-assign-chip-manual:hover:not(:disabled) {
-  color: #d0effa;
+  color: #fff;
   border-style: solid;
   border-color: #7dd3fc;
   background: transparent;

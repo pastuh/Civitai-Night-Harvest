@@ -974,6 +974,23 @@ export function pickBestMatchingFolderTag(
   return best
 }
 
+/**
+ * Live Tag Folders winner for models not yet placed on disk (Early Access, Browse enqueue, …).
+ * Always follows current priorities — unlike library rows, which keep an existing assignment
+ * ({@link effectiveFolderRoutingTag}) until moon / Move misplaced.
+ */
+export function liveFolderRoutingTag(
+  civitaiTags: string[] | undefined,
+  tagRules: TagFolderRule[],
+  ruleIndex?: TagRuleMatchIndex
+): string | null {
+  return pickBestMatchingFolderTag(
+    expandCivitaiTagNames(civitaiTags),
+    tagRules,
+    ruleIndex
+  )
+}
+
 /** True when several matches share the same top priority (ambiguous). */
 export function matchingFolderTagsNeedConfirmation(
   modelTags: string[],

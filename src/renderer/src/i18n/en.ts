@@ -1291,6 +1291,7 @@ export const en = {
     hideAllAssignedTagsTitle:
       'Temporarily hide tags that already have a folder assignment (green/mapped) on cards',
     hiddenAssignedTagsHint: '{count} assigned tag(s) hidden — turn off “All assigned” to show',
+    moreTagsCount: '+{count} more tags',
     fastTagModeOff: 'Fast tag',
     fastTagModeOn: 'Fast tag on',
     fastTagModeTitle:
@@ -1377,7 +1378,9 @@ export const en = {
     openTagFoldersHint: 'Open Tag folders — find “{tag}” and assign a dynamic folder',
     openTagFoldersAssigned: 'Assigned — open Tag folders to manage “{tag}”',
     tagRoleFinalHint:
-      'Final folder stop — “{tag}” is where this model is routed (same tag look, solid border)',
+      'Final folder stop — “{tag}” is where this model is routed (solid green border)',
+    tagRoleFinalAliasHint:
+      'Same Tag folders rule as the active route — “{tag}” is an alias (dashed green border)',
     tagRoleMappedHint:
       'Has a Tag folders rule — “{tag}” is not the active folder for this model',
     tagRoleMappedPendingHint:
@@ -1394,7 +1397,7 @@ export const en = {
     expandSidebar: 'Expand filter sidebar',
     sidebarSearchPlaceholder: 'Search tags…',
     sidebarHint:
-      'Tag borders: solid = final folder stop · dashed = rule exists · dotted = not assigned. Green chip = you assigned this model by hand.',
+      'Tag borders: solid green = final folder stop · dashed = rule exists · dotted = not assigned. Green chip = you assigned this model by hand.',
     allModels: 'All models',
     filterLora: 'LoRA',
     filterCheckpoint: 'Checkpoint',
@@ -1501,6 +1504,8 @@ export const en = {
     backToLibrary: 'Back to Library',
     backToBrowse: 'Back to Browse',
     backToMissing: 'Back to Missing',
+    backToAwaiting: 'Back to Early access',
+    backToPending: 'Back to Updates',
     lead:
       'Check tags to route downloads and move unsorted library models into {LoRA}/{base model}/{folder}. Use “Move misplaced” to sort models that already match a rule but are still in the wrong folder. Models placed manually in Library are skipped.',
     searchPlaceholder: 'Search or add tags…',

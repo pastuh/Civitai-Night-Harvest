@@ -4,7 +4,8 @@ import type {
   ExclusionKind,
   ExclusionReviewItem,
   InventoryRecord,
-  MissingModelStatus
+  MissingModelStatus,
+  TagFolderRule
 } from '../../../shared/types'
 import {
   normalizeResultsDisplayMode,
@@ -49,6 +50,18 @@ import {
   baseModelLabel,
   baseModelsMatch
 } from '../../../shared/base-model-label'
+import {
+  expandCivitaiTagNames,
+  isPermanentlyBannedModelTag,
+  isPausedOnlyModelTag
+} from '../../../shared/tag-routing'
+import {
+  cardTagFolderRole,
+  cardTagFolderRoleClass,
+  shortCardFolderLabel,
+  sortTagsByFolderRole
+} from './gallery-card-utils'
+import { MoreTagsChip } from './MoreTagsChip'
 
 type KindFilter = 'all' | ExclusionKind
 type SortMode = MissingSort
@@ -71,6 +84,10 @@ interface Props {
   hiddenTags?: string[]
   /** Permanent ban-by-tag */
   bannedTags?: string[]
+  /** Tag Folders rules — same chip role borders as Library. */
+  tagRules?: TagFolderRule[]
+  loraFolder?: string
+  checkpointFolder?: string
   /** App session start (ms) — for session sidebar filters. */
   sessionStartedAt?: number
   /** Model IDs banned / tag-skipped during this app session (authoritative). */
@@ -213,6 +230,9 @@ export const MissingTab = memo(function MissingTab({
   inventory = [],
   hiddenTags = [],
   bannedTags = [],
+  tagRules = [],
+  loraFolder = '',
+  checkpointFolder = '',
   sessionStartedAt,
   sessionBanModelIds = [],
   resultsDisplayMode: resultsDisplayModeProp = 'autoAdvance',
@@ -1765,6 +1785,35 @@ export const MissingTab = memo(function MissingTab({
               .filter(Boolean)
               .join(' ')
             const owned = ownedPrimaryByModel.get(item.modelId)
+            const folderLabel = shortCardFolderLabel(
+              owned?.routingTag,
+              owned?.baseModel || item.baseModel,
+              tagRules,
+              loraFolder,
+              checkpointFolder,
+              { outputFolder: owned?.outputFolder }
+            )
+            const assignedLeadLabel = (folderLabel || owned?.routingTag || '').trim() || null
+            const isManualLead = Boolean(owned?.routingLocked)
+            const tagRoleOpts = {
+              routingTag: owned?.routingTag,
+              folderLabel,
+              tagRules
+            }
+            const cardTags = expandCivitaiTagNames(item.tags)
+            const visibleTags = sortTagsByFolderRole(
+              assignedLeadLabel
+                ? cardTags.filter((tag) => {
+                    const role = cardTagFolderRole(tag, tagRoleOpts)
+                    if (role === 'final') return false
+                    return tag.trim().toLowerCase() !== assignedLeadLabel.toLowerCase()
+                  })
+                : cardTags,
+              tagRoleOpts
+            )
+            const shownTags = visibleTags.slice(0, 8)
+            const overflowTags = visibleTags.slice(8)
+            const extraTagCount = overflowTags.length
             const versionId = item.versionId ?? owned?.versionId ?? 0
             const previewTrackKey = modelCardPreviewTrackKey({
               modelId: item.modelId,
@@ -1954,26 +2003,68 @@ export const MissingTab = memo(function MissingTab({
                       </>
                     ) : (
                       <>
-                        {(item.tags?.length ?? 0) > 0 ? (
-                          <div
-                            className="tag-row library-card-tags"
-                            title={item.tags!.join(', ')}
-                          >
-                            {item.tags!.slice(0, 8).map((tag) => {
-                              const matched =
-                                item.matchedModelTag &&
-                                tag.toLowerCase() === item.matchedModelTag.toLowerCase()
-                              const policyClass = matched
-                                ? item.kind === 'pausedByTag'
-                                  ? ' is-paused-tag'
-                                  : ' is-blocked-tag'
-                                : ''
+                        {assignedLeadLabel || shownTags.length > 0 || extraTagCount > 0 ? (
+                          <div className="tag-row library-card-tags">
+                            {assignedLeadLabel ? (
+                              <button
+                                type="button"
+                                className={`tag-chip library-assign-chip ${
+                                  isManualLead
+                                    ? 'library-assign-chip-locked'
+                                    : 'library-assign-chip-route'
+                                }`}
+                                title={
+                                  isManualLead
+                                    ? t('gallery.manualFolderHint', {
+                                        folder: assignedLeadLabel
+                                      })
+                                    : t('gallery.folderAssignedTitle', {
+                                        folder: assignedLeadLabel
+                                      })
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  filterByTag(owned?.routingTag || assignedLeadLabel)
+                                }}
+                              >
+                                {assignedLeadLabel}
+                              </button>
+                            ) : null}
+                            {shownTags.map((tag) => {
+                              const role = cardTagFolderRole(tag, tagRoleOpts)
+                              const banned = isPermanentlyBannedModelTag(tag, bannedTags)
+                              const paused = isPausedOnlyModelTag(tag, hiddenTags, bannedTags)
+                              const roleTitle =
+                                role === 'final'
+                                  ? t('gallery.tagRoleFinalHint', { tag })
+                                  : role === 'finalAlias'
+                                    ? t('gallery.tagRoleFinalAliasHint', { tag })
+                                    : role === 'mapped'
+                                    ? owned?.routingTag?.trim()
+                                      ? t('gallery.tagRoleMappedHint', { tag })
+                                      : t('gallery.tagRoleMappedPendingHint', { tag })
+                                    : t('gallery.tagRoleUnmappedHint', { tag })
+                              const policyTitle = banned
+                                ? t('gallery.tagBlockedOnCardHint', { tag })
+                                : paused
+                                  ? t('gallery.tagPausedOnCardHint', { tag })
+                                  : null
                               return (
                                 <button
                                   key={tag}
                                   type="button"
-                                  className={`tag-chip${policyClass}`}
-                                  title={t('missingTab.blockedTagFilter', { tag })}
+                                  className={`tag-chip ${cardTagFolderRoleClass(role)}${
+                                    banned
+                                      ? ' is-blocked-tag'
+                                      : paused
+                                        ? ' is-paused-tag'
+                                        : ''
+                                  }`}
+                                  title={
+                                    policyTitle
+                                      ? `${policyTitle} · ${roleTitle}`
+                                      : roleTitle
+                                  }
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     filterByTag(tag)
@@ -1983,8 +2074,16 @@ export const MissingTab = memo(function MissingTab({
                                 </button>
                               )
                             })}
-                            {item.tags!.length > 8 ? (
-                              <span className="tag-chip muted">+{item.tags!.length - 8}</span>
+                            {extraTagCount > 0 ? (
+                              <MoreTagsChip
+                                tags={overflowTags}
+                                routingTag={owned?.routingTag}
+                                folderLabel={folderLabel}
+                                tagRules={tagRules}
+                                bannedTags={bannedTags}
+                                pausedTags={hiddenTags}
+                                onTagClick={(tag) => filterByTag(tag)}
+                              />
                             ) : null}
                           </div>
                         ) : null}

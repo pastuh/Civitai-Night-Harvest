@@ -15,11 +15,12 @@ import {
 export { isTagAssignedToRecord }
 
 /** How a Civitai tag relates to Tag Folders on a card. */
-export type CardTagFolderRole = 'final' | 'mapped' | 'unmapped'
+export type CardTagFolderRole = 'final' | 'finalAlias' | 'mapped' | 'unmapped'
 
 /**
  * final — this tag is the active folder route (routingTag / manual or auto assignment).
- * mapped — tag has a Tag Folders rule, but another tag is the active route.
+ * finalAlias — same Tag Folders rule as the active route (e.g. "butt" aliased into "ass").
+ * mapped — tag has a Tag Folders rule, but another folder is the active route.
  * unmapped — no folder rule for this tag yet.
  */
 export function cardTagFolderRole(
@@ -34,14 +35,49 @@ export function cardTagFolderRole(
   if (rt && (tagsEqual(rt, tag) || isTagAssignedToRecord(rt, tag))) return 'final'
   if (isPrimaryFolderTag(options.folderLabel, tag)) return 'final'
   if (folderLabelEndsWithTag(options.folderLabel, tag)) return 'final'
-  if (findRuleForTag(tag, options.tagRules)) return 'mapped'
+  const tagRule = findRuleForTag(tag, options.tagRules)
+  if (tagRule && rt) {
+    const routeRule = findRuleForTag(rt, options.tagRules)
+    if (routeRule && routeRule.id === tagRule.id) return 'finalAlias'
+  }
+  if (tagRule) return 'mapped'
   return 'unmapped'
 }
 
 export function cardTagFolderRoleClass(role: CardTagFolderRole): string {
   if (role === 'final') return 'tag-role-final'
+  if (role === 'finalAlias') return 'tag-role-final-alias'
   if (role === 'mapped') return 'tag-role-mapped'
   return 'tag-role-unmapped'
+}
+
+function folderRoleSortRank(role: CardTagFolderRole): number {
+  if (role === 'final') return 0
+  if (role === 'finalAlias') return 1
+  if (role === 'mapped') return 2
+  return 3
+}
+
+/** final → finalAlias → mapped → unmapped (stable within the same role). */
+export function sortTagsByFolderRole(
+  tags: string[],
+  options: {
+    routingTag?: string | null
+    folderLabel?: string | null
+    tagRules: TagFolderRule[]
+  }
+): string[] {
+  return tags
+    .map((tag, index) => ({
+      tag,
+      index,
+      role: cardTagFolderRole(tag, options)
+    }))
+    .sort((a, b) => {
+      const byRole = folderRoleSortRank(a.role) - folderRoleSortRank(b.role)
+      return byRole !== 0 ? byRole : a.index - b.index
+    })
+    .map((row) => row.tag)
 }
 
 /** True when the model has tags and every tag already has a Tag Folders rule (mapped/final). */

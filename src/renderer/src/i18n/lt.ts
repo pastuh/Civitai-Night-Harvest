@@ -1301,6 +1301,7 @@ export const lt: Messages = {
     hideAllAssignedTagsTitle:
       'Laikinai slėpti tagus, kurie jau turi aplanko priskyrimą (žali / mapped) ant kortelių',
     hiddenAssignedTagsHint: '{count} priskirti tagai paslėpti — išjunkite „All assigned“, kad pamatytumėte',
+    moreTagsCount: '+{count} daugiau tagų',
     fastTagModeOff: 'Fast tag',
     fastTagModeOn: 'Fast tag įjungta',
     fastTagModeTitle:
@@ -1388,7 +1389,9 @@ export const lt: Messages = {
     openTagFoldersHint: 'Atidaryti Tag folders — rasti „{tag}" ir priskirti dinaminiam aplankui',
     openTagFoldersAssigned: 'Priskirta — atidaryti Tag folders valdyti „{tag}"',
     tagRoleFinalHint:
-      'Galutinė folder stotelė — „{tag}“ čia nukreiptas modelis (toks pat tago formatas, solid remelis)',
+      'Galutinė folder stotelė — „{tag}“ čia nukreiptas modelis (žalias solid remelis)',
+    tagRoleFinalAliasHint:
+      'Ta pati Tag folders taisyklė kaip aktyvus route — „{tag}“ yra alias (žalias dashed remelis)',
     tagRoleMappedHint:
       'Yra Tag folders taisyklė — „{tag}“ nėra aktyvus šio modelio folderis',
     tagRoleMappedPendingHint:
@@ -1405,7 +1408,7 @@ export const lt: Messages = {
     expandSidebar: 'Išskleisti filtrų juostą',
     sidebarSearchPlaceholder: 'Ieškoti tagų…',
     sidebarHint:
-      'Tag remeliai: solid = galutinė folder stotelė · dashed = yra taisyklė · dotted = nepriskirta. Žalias chipas = šį modelį priskyrei ranka.',
+      'Tag remeliai: solid žalias = galutinė folder stotelė · dashed = yra taisyklė · dotted = nepriskirta. Žalias chipas = šį modelį priskyrei ranka.',
     allModels: 'Visi modeliai',
     filterLora: 'LoRA',
     filterCheckpoint: 'Checkpoint',
@@ -1512,6 +1515,8 @@ export const lt: Messages = {
     backToLibrary: 'Atgal į Library',
     backToBrowse: 'Atgal į Browse',
     backToMissing: 'Atgal į Missing',
+    backToAwaiting: 'Atgal į Early access',
+    backToPending: 'Atgal į Updates',
     lead:
       'Pažymėkite tagus — maršrutizuoja atsisiuntimus ir perkelia nesurūšiuotus bibliotekos modelius į {LoRA}/{base modelis}/{aplankas}. „Perkelti neteisingus“ surūšiuoja modelius, kurie jau atitinka taisyklę, bet dar yra neteisingame aplanke. Rankiniu būdu Bibliotekoje padėti modeliai praleidžiami.',
     searchPlaceholder: 'Ieškoti ar pridėti tagų…',

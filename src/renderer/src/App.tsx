@@ -136,6 +136,7 @@ type TagFoldersReturnTo =
   | { kind: 'gallery'; modelId: number; versionId: number; modelName: string }
   | { kind: 'missing' }
   | { kind: 'awaiting' }
+  | { kind: 'pending' }
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('watch')
@@ -1712,6 +1713,10 @@ export default function App() {
       setTab('awaiting')
       return
     }
+    if (ret.kind === 'pending') {
+      setTab('pending')
+      return
+    }
     // Library stayed laid out under Tag folders overlay — restore tab only (no search/pin).
     setTab('gallery')
   }, [tagFoldersReturnTo, inventory])
@@ -2754,6 +2759,7 @@ export default function App() {
               onOpenTagFolders={openTagFolders}
               onBannedChange={(modelId, banned) => markBrowseModelBan(modelId, banned)}
               onInventoryRefresh={refreshInventory}
+              onSeedBrowseModels={seedBrowseModels}
               onQueueRefresh={refreshQueueOnly}
               onShowInFolder={(path) => void window.api.showInFolder(path)}
               inventory={inventory}
@@ -2878,6 +2884,15 @@ export default function App() {
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
               showTemporaryUpdates={settings.showTemporaryUpdates !== false}
               badgeCount={pendingBadgeCount}
+              tagRules={tagRules}
+              loraFolder={settings.loraOutputFolder}
+              checkpointFolder={settings.checkpointOutputFolder}
+              bannedTags={settings.bannedTags ?? EMPTY_STRING_LIST}
+              pausedTags={settings.hiddenTags ?? EMPTY_STRING_LIST}
+              fastTagMode={settings.fastTagMode ?? false}
+              tagSuggestions={tagSuggestions}
+              onSaveTagRules={saveTagRules}
+              onOpenTagFolders={(tag) => openTagFolders(tag, { kind: 'pending' })}
             />
           </div>
         ) : null}
@@ -2975,6 +2990,9 @@ export default function App() {
               inventory={inventory}
               hiddenTags={settings?.hiddenTags ?? EMPTY_STRING_LIST}
               bannedTags={settings?.bannedTags ?? EMPTY_STRING_LIST}
+              tagRules={tagRules}
+              loraFolder={settings?.loraOutputFolder}
+              checkpointFolder={settings?.checkpointOutputFolder}
               sessionStartedAt={APP_SESSION_STARTED_AT}
               sessionBanModelIds={sessionBanModelIds}
               resultsDisplayMode={settings?.resultsDisplayMode ?? 'autoAdvance'}
@@ -3043,7 +3061,11 @@ export default function App() {
                 ? translate(locale, 'tagsTab.backToLibrary')
                 : tagFoldersReturnTo?.kind === 'missing'
                   ? translate(locale, 'tagsTab.backToMissing')
-                  : undefined
+                  : tagFoldersReturnTo?.kind === 'awaiting'
+                    ? translate(locale, 'tagsTab.backToAwaiting')
+                    : tagFoldersReturnTo?.kind === 'pending'
+                      ? translate(locale, 'tagsTab.backToPending')
+                      : undefined
         }
         extraMessage={
           storageOffline

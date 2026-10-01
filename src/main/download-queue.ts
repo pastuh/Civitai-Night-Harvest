@@ -1216,6 +1216,88 @@ export class DownloadQueue {
     return updated
   }
 
+  /**
+   * Recompute deferred (+ queued/downloading) folder routes from current Tag Folders priorities.
+   * Call after priority / rule edits so Early Access cards match live winners (not stale routingTag).
+   */
+  reassignAllRoutingByPriority(): number {
+    const settings = getSettings()
+    const tagRules = getTagRules()
+    let updated = 0
+
+    const apply = (
+      modelType: string,
+      tags: string[] | undefined,
+      baseModel?: string
+    ): { winner: string; outputFolder: string } | null => {
+      const winner = pickBestMatchingFolderTag(tags ?? [], tagRules)
+      if (!winner) return null
+      return {
+        winner,
+        outputFolder: resolveModelOutputFolder({
+          loraFolder: settings.loraOutputFolder,
+          checkpointFolder: settings.checkpointOutputFolder,
+          modelType,
+          routingTag: winner,
+          baseModel,
+          tagRules
+        })
+      }
+    }
+
+    for (const item of this.items) {
+      if (
+        item.status !== 'queued' &&
+        item.status !== 'downloading' &&
+        item.status !== 'deferred'
+      ) {
+        continue
+      }
+      const tags =
+        item.civitaiTags?.length
+          ? item.civitaiTags
+          : inventory.getDeferredDownload(item.versionId)?.civitaiTags
+      if (!tags?.length) continue
+      if (!item.civitaiTags?.length) item.civitaiTags = tags
+      const next = apply(item.modelType, tags, item.baseModel)
+      if (!next) continue
+      if (item.routingTag === next.winner && item.outputFolder === next.outputFolder) continue
+      item.routingTag = next.winner
+      item.outputFolder = next.outputFolder
+      updated++
+    }
+
+    for (const d of inventory.getAllDeferredDownloads()) {
+      if (!d.civitaiTags?.length) continue
+      const next = apply(d.modelType, d.civitaiTags)
+      if (!next) continue
+      if (d.routingTag === next.winner && d.outputFolder === next.outputFolder) continue
+      inventory.upsertDeferredDownload({
+        modelId: d.modelId,
+        versionId: d.versionId,
+        modelName: d.modelName,
+        versionName: d.versionName,
+        modelType: d.modelType,
+        routingTag: next.winner,
+        previewUrl: d.previewUrl,
+        outputFolder: next.outputFolder,
+        reason: d.reason,
+        failureKind: d.failureKind,
+        lastAttemptAt: d.lastAttemptAt,
+        earlyAccessEndsAt: d.earlyAccessEndsAt,
+        civitaiTags: d.civitaiTags,
+        bumpAttempt: false
+      })
+      updated++
+    }
+
+    if (updated > 0) {
+      this.broadcast()
+      this.emitDeferred()
+    }
+    return updated
+  }
+
   updateRoutingForVersion(versionId: number, routingTag: string): boolean {
     const settings = getSettings()
     const tagRules = getTagRules()

@@ -355,6 +355,24 @@ function offlineDetailFromSwarm(
   return buildLocalModelDetail(modelId, versionId, domain, path, hint)
 }
 
+function persistModelDetailCardStats(detail: CivitaiModelDetail): void {
+  let touchedOwned = false
+  for (const v of detail.versions) {
+    if (v.downloadCount == null && v.thumbsUpCount == null) continue
+    const stats = {
+      downloadCount: v.downloadCount,
+      thumbsUpCount: v.thumbsUpCount
+    }
+    if (inventory.hasVersion(v.id)) {
+      inventory.patchVersionFileMeta(v.id, stats)
+      touchedOwned = true
+    }
+    inventory.updatePendingCardStats(v.id, stats)
+    inventory.patchBrowseCardCacheStats(v.id, detail.modelId, stats)
+  }
+  if (touchedOwned) inventory.invalidateInventorySnapshotCache()
+}
+
 export async function fetchCivitaiModelDetail(
   pool: CivitaiClientPool,
   modelId: number,
@@ -393,7 +411,9 @@ export async function fetchCivitaiModelDetail(
         continue
       }
       clearMissingModel(getWindow ?? null, loaded.model.id)
-      return buildDetailFromModel(pool, loaded.model, loaded.versionId, d, swarmPath)
+      const detail = buildDetailFromModel(pool, loaded.model, loaded.versionId, d, swarmPath)
+      persistModelDetailCardStats(detail)
+      return detail
     } catch (err) {
       lastError = err
       // Transient / auth errors: still try the other host before giving up.

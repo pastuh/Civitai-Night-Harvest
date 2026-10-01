@@ -491,9 +491,12 @@ function GalleryTabInner({
 
   const baseModelOptions = useMemo(() => {
     return aggregateBaseModelOptions(
-      inventoryForMainCounts.map((r) => r.baseModel).filter(Boolean)
+      inventoryForMainCounts
+        .filter((r) => !pendingHiddenVersionIds.has(r.versionId))
+        .map((r) => r.baseModel)
+        .filter(Boolean)
     )
-  }, [inventoryForMainCounts])
+  }, [inventoryForMainCounts, pendingHiddenVersionIds])
 
   const filterByBaseModel = useCallback((name: string) => {
     setLibraryFilter({ type: 'baseModel', name: baseModelLabel(name) })
@@ -827,13 +830,7 @@ function GalleryTabInner({
     [heldAssignedVersionIds]
   )
 
-  const temporaryVersionIds = useMemo(() => {
-    if (heldAssignedVersionIds.size === 0) return pendingHiddenVersionIds
-    if (pendingHiddenVersionIds.size === 0) return heldAssignedVersionIds
-    const merged = new Set(pendingHiddenVersionIds)
-    for (const id of heldAssignedVersionIds) merged.add(id)
-    return merged
-  }, [pendingHiddenVersionIds, heldAssignedVersionIds])
+  const temporaryVersionIds = pendingHiddenVersionIds
 
   const filteredInventory = useMemo(() => {
     let list = inventory
@@ -1373,8 +1370,9 @@ function GalleryTabInner({
     setDeleteConfirm(null)
 
     try {
+      const removedIds: number[] = []
       for (const id of versionIds) {
-        // Dim immediately — stay in-grid until leaving Library (no full refresh).
+        // Dim immediately — stay in-grid until removed from App inventory below.
         setPendingHiddenVersionIds((prev) => {
           const next = new Set(prev)
           next.add(id)
@@ -1388,7 +1386,9 @@ function GalleryTabInner({
         onBannedChange?.(modelId, true, { name: modelName, versionId: id })
         try {
           // awaitFiles:false on main — DB detach returns quickly; disk unlink is background.
-          await window.api.deleteInventoryVersion(id, { ban: true })
+          // Idempotent when already gone (retry after first exclude).
+          await window.api.deleteInventoryVersion(id, { ban: true, modelId })
+          removedIds.push(id)
         } catch (err) {
           setPendingHiddenVersionIds((prev) => {
             if (!prev.has(id)) return prev
@@ -1399,6 +1399,8 @@ function GalleryTabInner({
           throw err
         }
       }
+      // Drop from App inventory now so sidebar base-model counts / filters update immediately.
+      if (removedIds.length) onInventoryVersionsRemoved?.(removedIds)
       // Done badge on the card is enough — status text was shifting layout / scroll.
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
@@ -1786,6 +1788,8 @@ function GalleryTabInner({
   }
 
   const menuBanned = contextMenu ? isBanned(contextMenu.modelId) : false
+  const menuTemporary =
+    contextMenu?.versionId != null && temporaryVersionIds.has(contextMenu.versionId)
   const menuRecord = contextMenu?.versionId != null
     ? inventory.find((r) => r.versionId === contextMenu.versionId)
     : null
@@ -2688,14 +2692,20 @@ function GalleryTabInner({
               >
                 {t('gallery.deleteLocal')}
               </button>
-            ) : menuBanned ? (
-              <button
-                {...contextMenuButtonProps(() =>
-                  void unbanModel(contextMenu.modelId, contextMenu.modelName)
-                )}
-              >
-                {t('gallery.unbanAllow')}
-              </button>
+            ) : menuBanned || menuTemporary ? (
+              menuBanned ? (
+                <button
+                  {...contextMenuButtonProps(() =>
+                    void unbanModel(contextMenu.modelId, contextMenu.modelName)
+                  )}
+                >
+                  {t('gallery.unbanAllow')}
+                </button>
+              ) : (
+                <button type="button" role="menuitem" disabled title={t('gallery.temporaryBadge')}>
+                  {t('gallery.temporaryBadge')}
+                </button>
+              )
             ) : (
               <button
                 {...contextMenuButtonProps(() =>

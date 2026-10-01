@@ -16,14 +16,15 @@ import {
 } from '../../../shared/download-errors'
 import { canWaitForDeferredUnlock } from '../../../shared/early-access'
 import { formatCountdownTo, formatWaitDuration, isDisplayablePreviewUrl } from '../../../shared/utils'
-import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
+import { isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames, bindModelTagsToFolderRule, findRuleForTag, parseTagRuleNames, liveFolderRoutingTag, isUnsortedRoutingTag } from '../../../shared/tag-routing'
 import { useT } from '../i18n/context'
 import { StatusModelCard } from './StatusModelCard'
 import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
 import { FloatingMarkSeenToggle } from './FloatingMarkSeenToggle'
-import { FastTagAssignModal } from './FastTagAssignModal'
+import { AssignModelToTagModal } from './AssignModelToTagModal'
 import { SidebarDownloadCalendar } from './SidebarDownloadCalendar'
+import { MoreTagsChip } from './MoreTagsChip'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { resolveModelCardThumb, deferredCardPreviewSource, inventoryByVersionMap, videoPreviewAvailabilityFor } from '../utils/model-card-preview'
 import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
@@ -43,14 +44,18 @@ import {
 import {
   cardTagFolderRole,
   cardTagFolderRoleClass,
-  folderLineIfNotDuplicatingTag,
-  shortCardFolderLabel
+  shortCardFolderLabel,
+  sortTagsByFolderRole
 } from './gallery-card-utils'
 import {
   DEFERRED_SORT_OPTIONS,
   normalizeDeferredSort,
   type DeferredSort
 } from '../view-prefs'
+
+function newId(): string {
+  return crypto.randomUUID()
+}
 
 type SideFilter =
   | { type: 'all' }
@@ -348,7 +353,11 @@ export function DeferredTab({
   const [deferredSort, setDeferredSort] = useState<DeferredSort>('unlock')
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>('all')
   const [search, setSearch] = useState('')
-  const [fastTagTarget, setFastTagTarget] = useState<string | null>(null)
+  const [quickAssignTarget, setQuickAssignTarget] = useState<{
+    item: DeferredDownload
+    initialTag?: string
+  } | null>(null)
+  const [assignBusy, setAssignBusy] = useState(false)
   const [tagMessage, setTagMessage] = useState('')
   /** Kept after Ban so Session bans sidebar can still find them this session. */
   const [sessionBannedByModelId, setSessionBannedByModelId] = useState<
@@ -1120,16 +1129,77 @@ export function DeferredTab({
   }, [])
 
   const openTagInFolders = useCallback(
-    (civitaiTag: string) => {
+    (civitaiTag: string, item?: DeferredDownload) => {
       const trimmed = civitaiTag.trim()
       if (!trimmed) return
       if (fastTagMode) {
-        setFastTagTarget(trimmed)
+        if (item) {
+          setQuickAssignTarget({
+            item,
+            initialTag: trimmed
+          })
+        }
         return
       }
       onOpenTagFolders?.(trimmed)
     },
     [fastTagMode, onOpenTagFolders]
+  )
+
+  const folderTagSuggestions = useMemo(() => {
+    const names = new Set<string>()
+    for (const rule of tagRules) {
+      for (const n of parseTagRuleNames(rule.tagName)) {
+        const tName = n.trim()
+        if (tName) names.add(tName)
+      }
+      const sub = rule.subfolderName?.trim()
+      if (sub) names.add(sub)
+    }
+    for (const tag of tagSuggestions) {
+      if (tag.trim()) names.add(tag.trim())
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [tagRules, tagSuggestions])
+
+  const closeQuickAssign = useCallback(() => {
+    setQuickAssignTarget(null)
+  }, [])
+
+  const assignFolderForDeferred = useCallback(
+    (folderTag: string, linkedModelTags: string[]) => {
+      if (!onSaveTagRules || !quickAssignTarget) return
+      const tagName = folderTag.trim()
+      if (!tagName) return
+      setAssignBusy(true)
+      setTagMessage('')
+      void (async () => {
+        try {
+          let nextRules = tagRules
+          if (linkedModelTags.length > 0) {
+            nextRules = bindModelTagsToFolderRule(
+              tagRules,
+              tagName,
+              linkedModelTags,
+              newId
+            )
+          } else if (!findRuleForTag(tagName, tagRules)) {
+            nextRules = [...tagRules, { id: newId(), tagName, folderPath: '' }]
+          }
+          if (nextRules !== tagRules) {
+            await onSaveTagRules(nextRules)
+          }
+          setTagMessage(t('modelDetail.assignModelToTagDone', { tag: tagName }))
+          setQuickAssignTarget(null)
+          await onRefresh()
+        } catch (err) {
+          setTagMessage(err instanceof Error ? err.message : String(err))
+        } finally {
+          setAssignBusy(false)
+        }
+      })()
+    },
+    [onSaveTagRules, onRefresh, quickAssignTarget, tagRules, t]
   )
 
   const confirmBan = useCallback(async (item: DeferredDownload) => {
@@ -1514,20 +1584,53 @@ export function DeferredTab({
                         markSeenMode &&
                         canMarkDeferredSeen(item) &&
                         !banSeenByModelId[item.modelId]
+                      const cardTags = expandCivitaiTagNames(item.civitaiTags)
+                      const owned = inventoryByVersion.get(item.versionId)
+                      // Manual lock wins; otherwise live priority (ignore stale deferred.routingTag).
+                      const effectiveRoutingTag = (() => {
+                        if (owned?.routingLocked) {
+                          const locked = owned.routingTag?.trim() || ''
+                          if (locked) return locked
+                        }
+                        const live = liveFolderRoutingTag(cardTags, tagRules)?.trim()
+                        if (live) return live
+                        const stored = item.routingTag?.trim() || ''
+                        if (stored && !isUnsortedRoutingTag(stored) && findRuleForTag(stored, tagRules)) {
+                          return stored
+                        }
+                        return ''
+                      })()
+                      const isManualLead = Boolean(owned?.routingLocked && owned.routingTag?.trim())
                       const folderLabel = shortCardFolderLabel(
-                        item.routingTag,
-                        null,
+                        effectiveRoutingTag || null,
+                        owned?.baseModel || null,
                         tagRules,
                         loraFolder,
-                        checkpointFolder
+                        checkpointFolder,
+                        isManualLead ? { outputFolder: owned?.outputFolder } : undefined
                       )
-                      const folderLine = folderLineIfNotDuplicatingTag(
+                      const assignedLeadLabel =
+                        (folderLabel || effectiveRoutingTag || '').trim() || null
+                      const tagRoleOpts = {
+                        routingTag: effectiveRoutingTag,
                         folderLabel,
-                        item.civitaiTags
+                        tagRules
+                      }
+                      const visibleTags = sortTagsByFolderRole(
+                        assignedLeadLabel
+                          ? cardTags.filter((tag) => {
+                              const role = cardTagFolderRole(tag, tagRoleOpts)
+                              if (role === 'final') return false
+                              return (
+                                tag.trim().toLowerCase() !== assignedLeadLabel.toLowerCase()
+                              )
+                            })
+                          : cardTags,
+                        tagRoleOpts
                       )
-                      const cardTags = expandCivitaiTagNames(item.civitaiTags)
-                      const shownTags = cardTags.slice(0, 6)
-                      const extraTagCount = cardTags.length - shownTags.length
+                      const shownTags = visibleTags.slice(0, 6)
+                      const overflowTags = visibleTags.slice(6)
+                      const extraTagCount = overflowTags.length
                       const previewSource = deferredCardPreviewSource(
                         item,
                         inventoryByVersion,
@@ -1543,7 +1646,6 @@ export function DeferredTab({
                         previewOverrides[item.versionId]
                       )
                       const browseCard = browseCards[item.versionId]
-                      const owned = inventoryByVersion.get(item.versionId)
                       const nsfwFields = resolveDeferredNsfw(item, browseCards, inventoryByVersion)
                       const ratingInfo = describeNsfwRatingForCard(
                         nsfwFields.nsfw,
@@ -1630,30 +1732,60 @@ export function DeferredTab({
                             >
                               <div className="muted status-card-detail">
                                 v{item.versionId}
-                                {item.routingTag ? ` · ${item.routingTag}` : ''}
                               </div>
-                              {folderLine ? (
-                                <div className="gallery-folder-line is-assigned" title={folderLine}>
-                                  <span className="gallery-folder-path">{folderLine}</span>
-                                </div>
-                              ) : null}
-                              {shownTags.length > 0 ? (
-                                <div
-                                  className="tag-row library-card-tags"
-                                  title={cardTags.join(', ')}
-                                >
+                              {assignedLeadLabel || shownTags.length > 0 || extraTagCount > 0 ? (
+                                <div className="tag-row library-card-tags">
+                                  {assignedLeadLabel ? (
+                                    <button
+                                      type="button"
+                                      className={`tag-chip library-assign-chip ${
+                                        isManualLead
+                                          ? 'library-assign-chip-locked'
+                                          : 'library-assign-chip-route'
+                                      }`}
+                                      title={
+                                        isManualLead
+                                          ? t('gallery.manualFolderHint', {
+                                              folder: assignedLeadLabel
+                                            })
+                                          : t('gallery.folderAssignedTitle', {
+                                              folder: assignedLeadLabel
+                                            })
+                                      }
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openTagInFolders(
+                                          effectiveRoutingTag || assignedLeadLabel,
+                                          item
+                                        )
+                                      }}
+                                    >
+                                      {assignedLeadLabel}
+                                    </button>
+                                  ) : null}
                                   {shownTags.map((tag) => {
-                                    const role = cardTagFolderRole(tag, {
-                                      routingTag: item.routingTag,
-                                      folderLabel,
-                                      tagRules
-                                    })
+                                    const role = cardTagFolderRole(tag, tagRoleOpts)
                                     const banned = isPermanentlyBannedModelTag(tag, bannedTags)
                                     const paused = isPausedOnlyModelTag(
                                       tag,
                                       hiddenTags,
                                       bannedTags
                                     )
+                                    const roleTitle =
+                                      role === 'final'
+                                        ? t('gallery.tagRoleFinalHint', { tag })
+                                        : role === 'finalAlias'
+                                          ? t('gallery.tagRoleFinalAliasHint', { tag })
+                                          : role === 'mapped'
+                                          ? effectiveRoutingTag
+                                            ? t('gallery.tagRoleMappedHint', { tag })
+                                            : t('gallery.tagRoleMappedPendingHint', { tag })
+                                          : t('gallery.tagRoleUnmappedHint', { tag })
+                                    const policyTitle = banned
+                                      ? t('gallery.tagBlockedOnCardHint', { tag })
+                                      : paused
+                                        ? t('gallery.tagPausedOnCardHint', { tag })
+                                        : null
                                     return (
                                       <button
                                         key={tag}
@@ -1665,10 +1797,14 @@ export function DeferredTab({
                                               ? ' is-paused-tag'
                                               : ''
                                         }`}
-                                        title={t('deferredTab.openTagFoldersHint', { tag })}
+                                        title={
+                                          policyTitle
+                                            ? `${policyTitle} · ${roleTitle}`
+                                            : roleTitle
+                                        }
                                         onClick={(e) => {
                                           e.stopPropagation()
-                                          openTagInFolders(tag)
+                                          openTagInFolders(tag, item)
                                         }}
                                       >
                                         {tag}
@@ -1676,7 +1812,15 @@ export function DeferredTab({
                                     )
                                   })}
                                   {extraTagCount > 0 ? (
-                                    <span className="tag-chip muted">+{extraTagCount}</span>
+                                    <MoreTagsChip
+                                      tags={overflowTags}
+                                      routingTag={effectiveRoutingTag}
+                                      folderLabel={folderLabel}
+                                      tagRules={tagRules}
+                                      bannedTags={bannedTags}
+                                      pausedTags={hiddenTags}
+                                      onTagClick={(tag) => openTagInFolders(tag, item)}
+                                    />
                                   ) : null}
                                 </div>
                               ) : null}
@@ -2229,24 +2373,22 @@ export function DeferredTab({
         />
       )}
 
-      {fastTagTarget && onSaveTagRules && (
-        <FastTagAssignModal
-          tag={fastTagTarget}
-          tagRules={tagRules}
-          inventory={inventory}
-          tagSuggestions={tagSuggestions}
-          confirmTagFolderMoves={confirmTagFolderMoves}
-          loraFolder={loraFolder}
-          checkpointFolder={checkpointFolder}
-          onClose={() => setFastTagTarget(null)}
-          onSaveTagRules={onSaveTagRules}
-          onRefresh={onRefresh}
-          onDone={(message) => {
-            setTagMessage(message)
-            setFastTagTarget(null)
-          }}
+      {quickAssignTarget && onSaveTagRules ? (
+        <AssignModelToTagModal
+          key={`${quickAssignTarget.item.versionId}:${quickAssignTarget.initialTag ?? ''}`}
+          modelName={quickAssignTarget.item.modelName}
+          modelTags={expandCivitaiTagNames(quickAssignTarget.item.civitaiTags)}
+          suggestions={folderTagSuggestions}
+          initialQuery={quickAssignTarget.initialTag}
+          initialScope="rules"
+          disabled={assignBusy}
+          busy={assignBusy}
+          onClose={closeQuickAssign}
+          onConfirm={(tag, linkedModelTags) =>
+            assignFolderForDeferred(tag, linkedModelTags)
+          }
         />
-      )}
+      ) : null}
       <FloatingMarkSeenToggle
         active={markSeenMode}
         label={t('deferredTab.markSeenModeOn')}

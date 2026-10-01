@@ -154,9 +154,19 @@ const api = {
 
   deleteInventoryVersion: (
     versionId: number,
-    options?: { ban?: boolean }
-  ): Promise<{ modelId: number; versionId: number; banned: boolean }> =>
-    ipcRenderer.invoke('inventory:deleteVersion', { versionId, ban: options?.ban }),
+    options?: { ban?: boolean; modelId?: number }
+  ): Promise<{
+    modelId: number
+    versionId: number
+    banned: boolean
+    versionExcluded?: boolean
+    alreadyGone?: boolean
+  }> =>
+    ipcRenderer.invoke('inventory:deleteVersion', {
+      versionId,
+      ban: options?.ban,
+      modelId: options?.modelId
+    }),
 
   patchVersionNsfw: (
     versionId: number,

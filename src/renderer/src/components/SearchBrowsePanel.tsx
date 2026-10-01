@@ -67,7 +67,8 @@ import { videoPreviewAvailabilityFor, videoPreviewOverrideFromDbMeta, type Model
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { contextMenuButtonProps, ContextMenuPortal } from '../utils/context-menu'
 import { useT } from '../i18n/context'
-import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole, cardTagFolderRoleClass } from './gallery-card-utils'
+import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole, cardTagFolderRoleClass, sortTagsByFolderRole } from './gallery-card-utils'
+import { MoreTagsChip } from './MoreTagsChip'
 import { TagAutocompleteInput } from './TagAutocompleteInput'
 import { useResultsWindow } from '../hooks/useResultsWindow'
 import { useDownloadQueue, useQueuedMembership } from '../hooks/useDownloadQueue'
@@ -4076,7 +4077,27 @@ const ModelCard = memo(function ModelCard({
     loraFolder,
     checkpointFolder
   )
-  const folderLine = folderLineIfNotDuplicatingTag(folderLabel, cardTags)
+  const isManualLead = Boolean(lockedRoutingTag?.trim())
+  const assignedLeadLabel = (folderLabel || resolvedRoute || '').trim() || null
+  const tagRoleOpts = {
+    routingTag: resolvedRoute || routingTag,
+    folderLabel,
+    tagRules
+  }
+  const visibleTags = sortTagsByFolderRole(
+    assignedLeadLabel
+      ? cardTags.filter((tag) => {
+          const role = cardTagFolderRole(tag, tagRoleOpts)
+          if (role === 'final') return false
+          return tag.trim().toLowerCase() !== assignedLeadLabel.toLowerCase()
+        })
+      : cardTags,
+    tagRoleOpts
+  )
+  const shownTags = visibleTags.slice(0, 6)
+  const overflowTags = visibleTags.slice(6)
+  const folderLine =
+    assignedLeadLabel ? null : folderLineIfNotDuplicatingTag(folderLabel, cardTags)
   const baseModelDisplay = model.baseModel?.trim() ? baseModelLabel(model.baseModel) : ''
   const checkpointType = checkpointTypeLabel(model.baseModelType)
 
@@ -4425,19 +4446,37 @@ const ModelCard = memo(function ModelCard({
             {folderLine}
           </div>
         ) : null}
+        {(assignedLeadLabel || shownTags.length > 0 || overflowTags.length > 0) && (
         <div className="tag-row library-card-tags">
-          {cardTags.slice(0, 6).map((tag) => {
-            const role = cardTagFolderRole(tag, {
-              routingTag: resolvedRoute || routingTag,
-              folderLabel,
-              tagRules
-            })
+          {assignedLeadLabel ? (
+            <button
+              type="button"
+              className={`tag-chip library-assign-chip ${
+                isManualLead ? 'library-assign-chip-locked' : 'library-assign-chip-route'
+              }`}
+              title={
+                isManualLead
+                  ? t('gallery.manualFolderHint', { folder: assignedLeadLabel })
+                  : t('gallery.folderAssignedTitle', { folder: assignedLeadLabel })
+              }
+              onClick={(e) => {
+                e.stopPropagation()
+                onTagClick(resolvedRoute || assignedLeadLabel)
+              }}
+            >
+              {assignedLeadLabel}
+            </button>
+          ) : null}
+          {shownTags.map((tag) => {
+            const role = cardTagFolderRole(tag, tagRoleOpts)
             const banned = isPermanentlyBannedModelTag(tag, blockedTags)
             const paused = isPausedOnlyModelTag(tag, pausedTags, blockedTags)
             const roleTitle =
               role === 'final'
                 ? t('gallery.tagRoleFinalHint', { tag })
-                : role === 'mapped'
+                : role === 'finalAlias'
+                  ? t('gallery.tagRoleFinalAliasHint', { tag })
+                  : role === 'mapped'
                   ? t('gallery.tagRoleMappedHint', { tag })
                   : t('browse.tagRoleUnmappedHint', { tag })
             const policyTitle = banned
@@ -4462,7 +4501,19 @@ const ModelCard = memo(function ModelCard({
               </button>
             )
           })}
+          {overflowTags.length > 0 ? (
+            <MoreTagsChip
+              tags={overflowTags}
+              routingTag={resolvedRoute || routingTag}
+              folderLabel={folderLabel}
+              tagRules={tagRules}
+              bannedTags={blockedTags}
+              pausedTags={pausedTags}
+              onTagClick={onTagClick}
+            />
+          ) : null}
         </div>
+        )}
       </div>
     </div>
   )

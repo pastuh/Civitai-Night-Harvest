@@ -66,14 +66,16 @@ export function detachModelFromLibrary(modelId: number): InventoryRecord[] {
   return records
 }
 
+/**
+ * Detach one version from the library DB.
+ * Returns null when already gone (idempotent — safe to call again after a UI retry).
+ */
 export async function deleteVersionFromLibrary(
   versionId: number,
   options?: { awaitFiles?: boolean }
-): Promise<InventoryRecord> {
+): Promise<InventoryRecord | null> {
   const record = inventory.getVersion(versionId)
-  if (!record) {
-    throw new Error('Model not found in library')
-  }
+  if (!record) return null
   inventory.removeVersion(versionId)
   if (options?.awaitFiles === false) {
     scheduleDeleteVersionFiles([record])
