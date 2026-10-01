@@ -1862,6 +1862,10 @@ export const lt: Messages = {
     unbanQueued: 'Modelis allowlist’e ir eilėje (manual — pause/ban ignoruojami)',
     allowTagSkipHint:
       'Leisti šį modelį visam laikui — į eilę. Pause/ban tagai lieka kitiems',
+    fastTagModeTitle:
+      'Įjungus, spauskite kortelės tagą — priskirsite folderį ir leisite modelį (download į tą folderį)',
+    fastTagAllowBusy: 'Leidžiama ir priskiriama…',
+    fastTagAllowDone: 'Leista ir priskirta prie „{tag}“',
     sortLabel: 'Rikiuoti',
     sortRecent: 'Naujausi',
     sortHits: 'Hit skaičius',

@@ -836,6 +836,11 @@ export class DownloadQueue {
             i.status === 'deferred' ||
             i.status === 'failed')
       )
+      // Manual Allow / Fast-tag assign: keep the folder the user chose (do not leave Unsorted).
+      const wantRouting = (request.routingTag ?? meta.routingTag)?.trim()
+      if (existing && meta.manual === true && wantRouting) {
+        this.updateRoutingForVersion(request.versionId, wantRouting)
+      }
       // Manual Download on a failed row must re-queue — returning the id alone did nothing.
       if (existing && meta.manual === true && existing.status === 'failed') {
         this.retryFailed(existing.id)
@@ -854,6 +859,7 @@ export class DownloadQueue {
         this.requeueDeferredVersion(request.versionId, { force: true })
         const after = this.items.find((i) => i.versionId === request.versionId)
         if (after) after.manual = true
+        if (after && wantRouting) this.updateRoutingForVersion(request.versionId, wantRouting)
         this.broadcast()
         if (after?.status === 'queued' && !this.paused) void this.pump()
         return after?.id ?? existing.id

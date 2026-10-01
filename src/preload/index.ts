@@ -334,8 +334,21 @@ const api = {
     stub?: BanModelStub
   ): Promise<{ modelId: number; deletedVersions: number }> =>
     ipcRenderer.invoke('model:forget', { modelId, modelName, ...stub }),
-  unbanModel: (modelId: number): Promise<{ modelId: number; queued?: boolean }> =>
-    ipcRenderer.invoke('model:unban', modelId),
+  unbanModel: (
+    modelId: number,
+    opts?: {
+      routingTag?: string
+      versionId?: number
+      modelName?: string
+      modelType?: string
+      baseModel?: string
+      author?: string
+      previewUrl?: string
+      tags?: string[]
+      sourceDomain?: 'com' | 'red'
+    }
+  ): Promise<{ modelId: number; queued?: boolean }> =>
+    ipcRenderer.invoke('model:unban', modelId, opts),
   excludeVersion: (payload: {
     modelId: number
     versionId: number
@@ -383,6 +396,7 @@ const api = {
       previewUrl?: string
       tags?: string[]
       sourceDomain?: 'com' | 'red'
+      routingTag?: string
     }
   ): Promise<{ modelId: number; queued: boolean }> =>
     ipcRenderer.invoke('exclusions:allowTagSkip', modelId, stub),

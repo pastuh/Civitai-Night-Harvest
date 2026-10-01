@@ -1846,6 +1846,10 @@ export const en = {
     unbanQueued: 'Model allowlisted and queued (manual — pause/ban tags ignored)',
     allowTagSkipHint:
       'Allow this model forever — queue download. Pause/ban tags stay on for other models',
+    fastTagModeTitle:
+      'When on, click a card tag to assign a folder and Allow the model (queues download into that folder)',
+    fastTagAllowBusy: 'Allowing & assigning…',
+    fastTagAllowDone: 'Allowed and assigned to “{tag}”',
     sortLabel: 'Sort',
     sortRecent: 'Recent',
     sortHits: 'Hit count',

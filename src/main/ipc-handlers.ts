@@ -549,6 +549,8 @@ export function initIpc(): void {
       previewUrl?: string
       tags?: string[]
       sourceDomain?: CivitaiDomain
+      /** Fast-tag Allow from Missing — land in this folder when queued. */
+      routingTag?: string
     }
   ): { queued: boolean } {
     if (!modelId || modelId <= 0) return { queued: false }
@@ -565,11 +567,13 @@ export function initIpc(): void {
     const versionId = stubVersionId || browse?.versionId
     if (!versionId || versionId <= 0) return { queued: false }
     if (inventory.hasVersion(versionId)) return { queued: false }
+    const routingTag = stub?.routingTag?.trim() || undefined
     const id = downloadQueue.enqueue(
       {
         modelId,
         versionId,
-        sourceDomain: stub?.sourceDomain ?? browse?.sourceDomain
+        sourceDomain: stub?.sourceDomain ?? browse?.sourceDomain,
+        routingTag
       },
       {
         modelName: stub?.modelName || browse?.name,
@@ -578,10 +582,15 @@ export function initIpc(): void {
         author: stub?.author || browse?.creator,
         previewUrl: stub?.previewUrl || browse?.previewUrl,
         civitaiTags: stub?.tags?.length ? stub.tags : browse?.tags,
+        routingTag,
         manual: true
       }
     )
     if (!id) return { queued: false }
+    // Ensure folder sticks even when enqueue hit an existing Unsorted / deferred row.
+    if (routingTag) {
+      downloadQueue.updateRoutingForVersion(versionId, routingTag)
+    }
     const after = downloadQueue.getItems().find((i) => i.versionId === versionId)
     const queued = after?.status === 'queued' || after?.status === 'downloading'
     if (queued && !downloadQueue.getState().paused) downloadQueue.start()
@@ -1255,7 +1264,23 @@ export function initIpc(): void {
     }
   )
 
-  ipcMain.handle('model:unban', (_e, modelId: number) => {
+  ipcMain.handle(
+    'model:unban',
+    (
+      _e,
+      modelId: number,
+      opts?: {
+        routingTag?: string
+        versionId?: number
+        modelName?: string
+        modelType?: string
+        baseModel?: string
+        author?: string
+        previewUrl?: string
+        tags?: string[]
+        sourceDomain?: CivitaiDomain
+      }
+    ) => {
     // Snapshot stub before delete — used for manual queue (bypass blocked tags).
     const banned = inventory.getBannedModels().find((b) => b.modelId === modelId)
     const tagSkip = inventory.getTagSkipReview(modelId)
@@ -1264,14 +1289,19 @@ export function initIpc(): void {
     inventory.clearBrowseCardCacheForModel(modelId)
     scheduler.markModelUnbannedInBrowseGallery(modelId)
     const result = tryManualQueueExclusionModel(modelId, {
-      versionId: banned?.versionId ?? tagSkip?.versionId,
-      modelName: banned?.modelName ?? tagSkip?.modelName,
-      modelType: banned?.modelType ?? tagSkip?.modelType,
-      baseModel: banned?.baseModel ?? tagSkip?.baseModel,
-      author: banned?.author ?? tagSkip?.author,
-      previewUrl: banned?.previewUrl ?? tagSkip?.previewUrl,
-      tags: banned?.tags?.length ? banned.tags : tagSkip?.tags,
-      sourceDomain: banned?.sourceDomain ?? tagSkip?.sourceDomain
+      versionId: opts?.versionId || banned?.versionId || tagSkip?.versionId,
+      modelName: opts?.modelName || banned?.modelName || tagSkip?.modelName,
+      modelType: opts?.modelType || banned?.modelType || tagSkip?.modelType,
+      baseModel: opts?.baseModel || banned?.baseModel || tagSkip?.baseModel,
+      author: opts?.author || banned?.author || tagSkip?.author,
+      previewUrl: opts?.previewUrl || banned?.previewUrl || tagSkip?.previewUrl,
+      tags: opts?.tags?.length
+        ? opts.tags
+        : banned?.tags?.length
+          ? banned.tags
+          : tagSkip?.tags,
+      sourceDomain: opts?.sourceDomain ?? banned?.sourceDomain ?? tagSkip?.sourceDomain,
+      routingTag: opts?.routingTag
     })
     scheduler.log(
       'info',
@@ -1499,6 +1529,7 @@ export function initIpc(): void {
         previewUrl?: string
         tags?: string[]
         sourceDomain?: CivitaiDomain
+        routingTag?: string
       }
     ) => {
     const tagSkip = inventory.getTagSkipReview(modelId)
@@ -1512,7 +1543,8 @@ export function initIpc(): void {
       author: stub?.author ?? tagSkip?.author,
       previewUrl: stub?.previewUrl ?? tagSkip?.previewUrl,
       tags: stub?.tags?.length ? stub.tags : tagSkip?.tags,
-      sourceDomain: stub?.sourceDomain ?? tagSkip?.sourceDomain
+      sourceDomain: stub?.sourceDomain ?? tagSkip?.sourceDomain,
+      routingTag: stub?.routingTag
     })
     if (result.queued) {
       scheduler.log(

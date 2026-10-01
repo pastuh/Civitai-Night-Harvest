@@ -53,6 +53,8 @@ export type ModelDetailTarget =
       deferRemote?: boolean
       /** Opened from Early access tab — do not auto-promote deferred rows on detail load. */
       fromAwaitingAccess?: boolean
+      /** Folder assigned from Missing Fast tag before the file is in Library. */
+      preferredRoutingTag?: string
     }
   | {
       kind: 'library'
@@ -891,21 +893,41 @@ export function ModelDetailPage({
     [title, versionLabel, baseModelLabel, modelDescriptionText, activeVersionDescription]
   )
 
-  const routingForTags =
-    libraryRecord?.routingTag?.trim() ||
-    ownedRecordForActive?.routingTag?.trim() ||
-    ''
+  const routingForTags = useMemo(() => {
+    const fromLibrary =
+      libraryRecord?.routingTag?.trim() ||
+      ownedRecordForActive?.routingTag?.trim() ||
+      ''
+    if (fromLibrary && !isUnsortedRoutingTag(fromLibrary)) return fromLibrary
+    const preferred =
+      target.kind === 'browse' ? target.preferredRoutingTag?.trim() || '' : ''
+    if (preferred && !isUnsortedRoutingTag(preferred)) return preferred
+    const q = queue.items.find(
+      (i) =>
+        i.versionId === activeVersionId &&
+        (i.status === 'queued' || i.status === 'downloading' || i.status === 'deferred')
+    )
+    const fromQueue = q?.routingTag?.trim() || ''
+    if (fromQueue && !isUnsortedRoutingTag(fromQueue)) return fromQueue
+    return fromLibrary
+  }, [
+    libraryRecord?.routingTag,
+    ownedRecordForActive?.routingTag,
+    target,
+    queue.items,
+    activeVersionId
+  ])
   const folderLabelForTags = useMemo(() => {
-    const rec = libraryRecord ?? ownedRecordForActive
-    if (!rec) return null
+    if (!routingForTags && !(libraryRecord ?? ownedRecordForActive)) return null
     return shortCardFolderLabel(
-      rec.routingTag,
-      rec.baseModel || baseModelLabel,
+      routingForTags || (libraryRecord ?? ownedRecordForActive)?.routingTag,
+      (libraryRecord ?? ownedRecordForActive)?.baseModel || baseModelLabel,
       tagRules,
       loraFolder,
       checkpointFolder
     )
   }, [
+    routingForTags,
     libraryRecord,
     ownedRecordForActive,
     baseModelLabel,
@@ -913,6 +935,10 @@ export function ModelDetailPage({
     loraFolder,
     checkpointFolder
   ])
+  const folderRouteIsManual = Boolean(
+    (libraryRecord ?? ownedRecordForActive)?.routingLocked ||
+      (target.kind === 'browse' && target.preferredRoutingTag?.trim())
+  )
 
   /** Civitai API tags + Library-saved tags (API list is often incomplete vs card chips). */
   const displayTags = useMemo(() => {
@@ -1821,12 +1847,11 @@ export function ModelDetailPage({
                     })}
                   </div>
                   ) : null}
-                  {(folderLabelForTags ||
-                    (libraryRecord ?? ownedRecordForActive)?.routingLocked) && (
+                  {(folderLabelForTags || folderRouteIsManual) && (
                     <div
-                      className={`gallery-folder-line model-detail-folder-line ${folderLabelForTags ? 'is-assigned' : ''} ${(libraryRecord ?? ownedRecordForActive)?.routingLocked ? 'is-manual' : ''}`}
+                      className={`gallery-folder-line model-detail-folder-line ${folderLabelForTags ? 'is-assigned' : ''} ${folderRouteIsManual ? 'is-manual' : ''}`}
                       title={
-                        (libraryRecord ?? ownedRecordForActive)?.routingLocked
+                        folderRouteIsManual
                           ? t('gallery.manualFolderHint', {
                               folder: folderLabelForTags || routingForTags || '—'
                             })
@@ -1839,7 +1864,7 @@ export function ModelDetailPage({
                       ) : (
                         <span className="muted">{t('gallery.defaultFolder')}</span>
                       )}
-                      {(libraryRecord ?? ownedRecordForActive)?.routingLocked ? (
+                      {folderRouteIsManual ? (
                         <span className="gallery-manual-folder-badge">{t('gallery.manualFolder')}</span>
                       ) : null}
                     </div>

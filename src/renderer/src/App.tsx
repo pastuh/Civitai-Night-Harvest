@@ -3006,6 +3006,10 @@ export default function App() {
               onJumpSideFilterConsumed={() => setMissingJumpSideFilter(null)}
               isActive={missingInteractive}
               browseVideoPreviews={settings.browseVideoPreviews ?? false}
+              fastTagMode={settings.fastTagMode ?? false}
+              onFastTagModeChange={onFastTagModeChange}
+              tagSuggestions={tagSuggestions}
+              onSaveTagRules={saveTagRules}
             />
           </div>
         ) : null}

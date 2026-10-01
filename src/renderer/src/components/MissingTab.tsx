@@ -15,6 +15,7 @@ import {
 } from '../../../shared/results-display'
 import { useT } from '../i18n/context'
 import { useResultsWindow } from '../hooks/useResultsWindow'
+import { useDownloadQueue } from '../hooks/useDownloadQueue'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
 import {
   DEFAULT_MISSING_VIEW_PREFS,
@@ -53,7 +54,11 @@ import {
 import {
   expandCivitaiTagNames,
   isPermanentlyBannedModelTag,
-  isPausedOnlyModelTag
+  isPausedOnlyModelTag,
+  bindModelTagsToFolderRule,
+  findRuleForTag,
+  parseTagRuleNames,
+  isUnsortedRoutingTag
 } from '../../../shared/tag-routing'
 import {
   cardTagFolderRole,
@@ -62,6 +67,7 @@ import {
   sortTagsByFolderRole
 } from './gallery-card-utils'
 import { MoreTagsChip } from './MoreTagsChip'
+import { AssignModelToTagModal } from './AssignModelToTagModal'
 
 type KindFilter = 'all' | ExclusionKind
 type SortMode = MissingSort
@@ -105,6 +111,23 @@ interface Props {
   jumpSideFilter?: { type: 'sessionBans' } | { type: 'sessionPause' } | null
   onJumpSideFilterConsumed?: () => void
   browseVideoPreviews?: boolean
+  fastTagMode?: boolean
+  onFastTagModeChange?: (enabled: boolean) => void
+  tagSuggestions?: string[]
+  onSaveTagRules?: (rules: TagFolderRule[]) => Promise<void>
+}
+
+function newId(): string {
+  return crypto.randomUUID()
+}
+
+function canFastTagAllow(kind: ExclusionKind): boolean {
+  return (
+    kind === 'bannedManual' ||
+    kind === 'bannedByTag' ||
+    kind === 'pausedByTag' ||
+    kind === 'excludedVersion'
+  )
 }
 
 function exclusionItemKey(item: ExclusionReviewItem): string {
@@ -245,7 +268,11 @@ export const MissingTab = memo(function MissingTab({
   onOpenTagFolders,
   jumpSideFilter = null,
   onJumpSideFilterConsumed,
-  browseVideoPreviews = false
+  browseVideoPreviews = false,
+  fastTagMode = false,
+  onFastTagModeChange,
+  tagSuggestions = [],
+  onSaveTagRules
 }: Props) {
   const t = useT()
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
@@ -260,6 +287,28 @@ export const MissingTab = memo(function MissingTab({
   )
   /** Just-acknowledged Missing cards — dimmed in place until leaving the tab. */
   const [sessionDimmedKeys, setSessionDimmedKeys] = useState(() => new Set<string>())
+  /** Folder assigned via Fast tag / context menu — show until leaving Missing (no inventory yet). */
+  const [sessionAssignedRoutingByKey, setSessionAssignedRoutingByKey] = useState(
+    () => new Map<string, string>()
+  )
+  const [quickAssignTarget, setQuickAssignTarget] = useState<{
+    item: ExclusionReviewItem
+    initialTag?: string
+  } | null>(null)
+  const [assignBusy, setAssignBusy] = useState(false)
+  const { items: queueItems } = useDownloadQueue()
+  const queueRoutingByVersionId = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const q of queueItems) {
+      const tag = q.routingTag?.trim()
+      if (!q.versionId || !tag || isUnsortedRoutingTag(tag)) continue
+      if (q.status !== 'queued' && q.status !== 'downloading' && q.status !== 'deferred') {
+        continue
+      }
+      map.set(q.versionId, tag)
+    }
+    return map
+  }, [queueItems])
   const sessionOrderRef = useRef<string[]>([])
   const mainScrollRef = useRef<HTMLDivElement>(null)
   const savedScrollTopRef = useRef<number | null>(null)
@@ -478,6 +527,7 @@ export const MissingTab = memo(function MissingTab({
       setTemporaryAllowedByKey(new Map())
       setOptimisticRemovedKeys(new Set())
       setSessionDimmedKeys(new Set())
+      setSessionAssignedRoutingByKey(new Map())
       sessionOrderRef.current = []
       missingViewOrderRef.current = []
       missingOrderFilterKeyRef.current = ''
@@ -950,6 +1000,20 @@ export const MissingTab = memo(function MissingTab({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     let list = workingItems.filter((m) => {
+      const itemKey = exclusionItemKey(m)
+      const heldAllowed = temporaryAllowedByKey.has(itemKey)
+
+      // Allowed/Unban hold: stay visible (dimmed) until leaving Missing — never yank via Hide toggles.
+      if (heldAllowed) {
+        if (!matchesModelTypeFilter(m)) return false
+        if (baseModelFilter && !baseModelsMatch(m.baseModel || '', baseModelFilter)) {
+          return false
+        }
+        if (!matchesRatingFilter(resolveMissingNsfw(m), ratingFilter)) return false
+        if (q) return exclusionItemMatchesSearch(m, q)
+        return true
+      }
+
       // Sidebar exclusive modes win over Hide banned / kind toolbar.
       if (sideFilter.type === 'unseen') {
         if (!canMarkExclusionSeen(m.kind)) return false
@@ -1399,9 +1463,8 @@ export const MissingTab = memo(function MissingTab({
         items.find((m) => m.modelId === modelId)
       setBusyId(modelId)
       setMessage(null)
-      if (item) {
-        startTransition(() => holdAllowedUntilLeave(item))
-      }
+      // Sync hold before API — startTransition caused a remove→reappear flicker.
+      if (item) holdAllowedUntilLeave(item)
       try {
         const result = await window.api.unbanModel(modelId)
         if (result && typeof result === 'object' && 'queued' in result && result.queued) {
@@ -1429,7 +1492,7 @@ export const MissingTab = memo(function MissingTab({
       if (!versionId || versionId <= 0 || item.modelId <= 0) return
       setBusyId(item.modelId)
       setMessage(null)
-      startTransition(() => holdAllowedUntilLeave(item))
+      holdAllowedUntilLeave(item)
       try {
         if (typeof window.api.allowVersion === 'function') {
           await window.api.allowVersion({ modelId: item.modelId, versionId })
@@ -1458,9 +1521,7 @@ export const MissingTab = memo(function MissingTab({
         items.find((m) => m.modelId === modelId && isTagSkipKind(m.kind))
       setBusyId(modelId)
       setMessage(null)
-      if (item) {
-        startTransition(() => holdAllowedUntilLeave(item))
-      }
+      if (item) holdAllowedUntilLeave(item)
       try {
         const result = await window.api.allowTagSkip(modelId)
         if (result.queued) setMessage(t('missingTab.unbanQueued'))
@@ -1507,19 +1568,182 @@ export const MissingTab = memo(function MissingTab({
     [rememberScrollAndHide, undoOptimisticHide, t]
   )
 
-  const filterByTag = useCallback((tag: string) => {
-    const trimmed = tag.trim()
-    if (!trimmed) return
-    if (onOpenTagFolders) {
-      onOpenTagFolders(trimmed)
-      return
+  const folderTagSuggestions = useMemo(() => {
+    const names = new Set<string>()
+    for (const rule of tagRules) {
+      for (const n of parseTagRuleNames(rule.tagName)) {
+        const tName = n.trim()
+        if (tName) names.add(tName)
+      }
+      const sub = rule.subfolderName?.trim()
+      if (sub) names.add(sub)
     }
-    applySideFilter({ type: 'blockedTag', tag: trimmed })
-  }, [applySideFilter, onOpenTagFolders])
+    for (const tag of tagSuggestions) {
+      if (tag.trim()) names.add(tag.trim())
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [tagRules, tagSuggestions])
+
+  const openTagInFolders = useCallback(
+    (civitaiTag: string, item?: ExclusionReviewItem) => {
+      const trimmed = civitaiTag.trim()
+      if (!trimmed) return
+      if (fastTagMode && item && canFastTagAllow(item.kind) && onSaveTagRules) {
+        setQuickAssignTarget({ item, initialTag: trimmed })
+        return
+      }
+      if (onOpenTagFolders) {
+        onOpenTagFolders(trimmed)
+        return
+      }
+      applySideFilter({ type: 'blockedTag', tag: trimmed })
+    },
+    [fastTagMode, onOpenTagFolders, onSaveTagRules, applySideFilter]
+  )
+
+  const closeQuickAssign = useCallback(() => {
+    setQuickAssignTarget(null)
+  }, [])
+
+  const allowItemWithRouting = useCallback(
+    async (item: ExclusionReviewItem, routingTag: string) => {
+      const tag = routingTag.trim()
+      const stub = {
+        versionId: item.versionId,
+        modelName: item.modelName,
+        modelType: item.modelType,
+        baseModel: item.baseModel,
+        author: item.author,
+        previewUrl: item.previewUrl,
+        tags: item.tags,
+        sourceDomain: item.sourceDomain,
+        routingTag: tag || undefined
+      }
+      let result: { queued?: boolean } | undefined
+      if (item.kind === 'bannedManual') {
+        result = await window.api.unbanModel(item.modelId, stub)
+      } else if (isTagSkipKind(item.kind)) {
+        result = await window.api.allowTagSkip(item.modelId, stub)
+      } else if (item.kind === 'excludedVersion') {
+        const versionId = item.versionId
+        if (!versionId || versionId <= 0) return
+        if (typeof window.api.allowVersion === 'function') {
+          await window.api.allowVersion({ modelId: item.modelId, versionId })
+        } else {
+          await window.api.unforgetPendingVersion(versionId)
+        }
+        if (tag) {
+          await window.api.enqueueDownload(
+            {
+              modelId: item.modelId,
+              versionId,
+              routingTag: tag,
+              sourceDomain: item.sourceDomain
+            },
+            {
+              modelName: item.modelName,
+              modelType: item.modelType,
+              author: item.author,
+              previewUrl: item.previewUrl,
+              civitaiTags: item.tags,
+              routingTag: tag,
+              manual: true
+            }
+          )
+          result = { queued: true }
+        }
+      }
+      // Belt-and-suspenders: pin folder on the queue row (covers Unsorted race / existing rows).
+      const versionId = item.versionId
+      if (tag && versionId && versionId > 0) {
+        await window.api.setDownloadRouting(versionId, tag)
+      }
+      return result
+    },
+    []
+  )
+
+  const assignFolderForMissing = useCallback(
+    (folderTag: string, linkedModelTags: string[]) => {
+      if (!onSaveTagRules || !quickAssignTarget) return
+      const tagName = folderTag.trim()
+      if (!tagName) return
+      const { item } = quickAssignTarget
+      setAssignBusy(true)
+      setMessage(null)
+      holdAllowedUntilLeave(item)
+      void (async () => {
+        try {
+          let nextRules = tagRules
+          if (linkedModelTags.length > 0) {
+            nextRules = bindModelTagsToFolderRule(
+              tagRules,
+              tagName,
+              linkedModelTags,
+              newId
+            )
+          } else if (!findRuleForTag(tagName, tagRules)) {
+            nextRules = [...tagRules, { id: newId(), tagName, folderPath: '' }]
+          }
+          if (nextRules !== tagRules) {
+            await onSaveTagRules(nextRules)
+          }
+          const ownedIds = inventory
+            .filter((r) => r.modelId === item.modelId && r.modelId > 0)
+            .map((r) => r.versionId)
+          if (ownedIds.length > 0) {
+            await window.api.assignTag(ownedIds, tagName, { lockRouting: true })
+          }
+          if (canFastTagAllow(item.kind)) {
+            const result = await allowItemWithRouting(item, tagName)
+            if (
+              result &&
+              typeof result === 'object' &&
+              'queued' in result &&
+              result.queued
+            ) {
+              setMessage(t('missingTab.unbanQueued'))
+            } else {
+              setMessage(t('missingTab.fastTagAllowDone', { tag: tagName }))
+            }
+          } else {
+            setMessage(t('modelDetail.assignModelToTagDone', { tag: tagName }))
+          }
+          setSessionAssignedRoutingByKey((prev) => {
+            const next = new Map(prev)
+            next.set(exclusionItemKey(item), tagName)
+            return next
+          })
+          setQuickAssignTarget(null)
+        } catch (err) {
+          setTemporaryAllowedByKey((prev) => {
+            const next = new Map(prev)
+            next.delete(exclusionItemKey(item))
+            return next
+          })
+          setMessage(err instanceof Error ? err.message : String(err))
+        } finally {
+          setAssignBusy(false)
+        }
+      })()
+    },
+    [
+      onSaveTagRules,
+      quickAssignTarget,
+      tagRules,
+      inventory,
+      holdAllowedUntilLeave,
+      allowItemWithRouting,
+      t
+    ]
+  )
 
   const openDetails = useCallback(
     (item: ExclusionReviewItem) => {
       const owned = inventory.filter((r) => r.modelId === item.modelId && r.modelId > 0)
+      const sessionRouting =
+        sessionAssignedRoutingByKey.get(exclusionItemKey(item))?.trim() ||
+        (item.versionId ? queueRoutingByVersionId.get(item.versionId) : undefined)
       if (owned.length > 0) {
         const preferred =
           (item.versionId
@@ -1527,7 +1751,9 @@ export const MissingTab = memo(function MissingTab({
             : undefined) ?? owned[0]!
         onOpenModelDetail?.({
           kind: 'library',
-          record: preferred,
+          record: sessionRouting
+            ? { ...preferred, routingTag: sessionRouting, routingLocked: true }
+            : preferred,
           siblingRecords: owned,
           domain: item.sourceDomain
         })
@@ -1539,10 +1765,11 @@ export const MissingTab = memo(function MissingTab({
         versionId: item.versionId ?? 0,
         name: item.modelName,
         previewUrl: item.previewUrl,
-        domain: item.sourceDomain
+        domain: item.sourceDomain,
+        preferredRoutingTag: sessionRouting
       })
     },
-    [inventory, onOpenModelDetail]
+    [inventory, onOpenModelDetail, sessionAssignedRoutingByKey, queueRoutingByVersionId]
   )
 
   const kindLabel = (kind: ExclusionKind): string => {
@@ -1638,6 +1865,17 @@ export const MissingTab = memo(function MissingTab({
               >
                 {forgetFunctionMode ? t('missingTab.forgetModeOn') : t('missingTab.forgetModeOff')}
               </button>
+              {onFastTagModeChange ? (
+                <button
+                  type="button"
+                  className={`btn-sm browse-ban-toggle ${fastTagMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
+                  onClick={() => onFastTagModeChange(!fastTagMode)}
+                  title={t('missingTab.fastTagModeTitle')}
+                  aria-pressed={fastTagMode}
+                >
+                  {fastTagMode ? t('gallery.fastTagModeOn') : t('gallery.fastTagModeOff')}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1786,18 +2024,28 @@ export const MissingTab = memo(function MissingTab({
               .filter(Boolean)
               .join(' ')
             const owned = ownedPrimaryByModel.get(item.modelId)
+            const sessionRouting = sessionAssignedRoutingByKey.get(itemKey)?.trim()
+            const queueRouting =
+              item.versionId && item.versionId > 0
+                ? queueRoutingByVersionId.get(item.versionId)
+                : undefined
+            const effectiveRouting =
+              sessionRouting ||
+              owned?.routingTag?.trim() ||
+              queueRouting ||
+              ''
             const folderLabel = shortCardFolderLabel(
-              owned?.routingTag,
+              effectiveRouting || undefined,
               owned?.baseModel || item.baseModel,
               tagRules,
               loraFolder,
               checkpointFolder,
               { outputFolder: owned?.outputFolder }
             )
-            const assignedLeadLabel = (folderLabel || owned?.routingTag || '').trim() || null
-            const isManualLead = Boolean(owned?.routingLocked)
+            const assignedLeadLabel = (folderLabel || effectiveRouting || '').trim() || null
+            const isManualLead = Boolean(owned?.routingLocked || sessionRouting)
             const tagRoleOpts = {
-              routingTag: owned?.routingTag,
+              routingTag: effectiveRouting || undefined,
               folderLabel,
               tagRules
             }
@@ -2023,10 +2271,13 @@ export const MissingTab = memo(function MissingTab({
                                         folder: assignedLeadLabel
                                       })
                                 }
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  filterByTag(owned?.routingTag || assignedLeadLabel)
-                                }}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    openTagInFolders(
+                                      owned?.routingTag || assignedLeadLabel,
+                                      item
+                                    )
+                                  }}
                               >
                                 {assignedLeadLabel}
                               </button>
@@ -2068,7 +2319,7 @@ export const MissingTab = memo(function MissingTab({
                                   }
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    filterByTag(tag)
+                                    openTagInFolders(tag, item)
                                   }}
                                 >
                                   {tag}
@@ -2083,7 +2334,7 @@ export const MissingTab = memo(function MissingTab({
                                 tagRules={tagRules}
                                 bannedTags={bannedTags}
                                 pausedTags={hiddenTags}
-                                onTagClick={(tag) => filterByTag(tag)}
+                                onTagClick={(tag) => openTagInFolders(tag, item)}
                               />
                             ) : null}
                           </div>
@@ -2526,6 +2777,17 @@ export const MissingTab = memo(function MissingTab({
               {t('missingTab.openCivitai')}
             </button>
           )}
+          {onSaveTagRules &&
+            canFastTagAllow(contextMenu.item.kind) &&
+            !temporaryAllowedByKey.has(exclusionItemKey(contextMenu.item)) && (
+              <button
+                {...contextMenuButtonProps(() => {
+                  setQuickAssignTarget({ item: contextMenu.item })
+                }, () => setContextMenu(null))}
+              >
+                {t('gallery.assignFolderByTag')}
+              </button>
+            )}
           {canMarkExclusionSeen(contextMenu.item.kind) &&
             (banSeenByModelId[contextMenu.item.modelId] ? (
               <button
@@ -2602,6 +2864,23 @@ export const MissingTab = memo(function MissingTab({
           )}
         </ContextMenuPortal>
       )}
+      {quickAssignTarget && onSaveTagRules ? (
+        <AssignModelToTagModal
+          key={`${exclusionItemKey(quickAssignTarget.item)}:${quickAssignTarget.initialTag ?? ''}:${quickAssignTarget.initialTag ? 'rules' : 'model'}`}
+          modelName={quickAssignTarget.item.modelName}
+          modelTags={expandCivitaiTagNames(quickAssignTarget.item.tags)}
+          suggestions={folderTagSuggestions}
+          initialQuery={quickAssignTarget.initialTag}
+          initialScope={quickAssignTarget.initialTag ? 'rules' : 'model'}
+          disabled={assignBusy}
+          busy={assignBusy}
+          confirmBusyLabel={t('missingTab.fastTagAllowBusy')}
+          onClose={closeQuickAssign}
+          onConfirm={(tag, linkedModelTags) =>
+            assignFolderForMissing(tag, linkedModelTags)
+          }
+        />
+      ) : null}
       <FloatingMarkSeenToggle
         active={markSeenMode}
         label={t('missingTab.markSeenModeOn')}
