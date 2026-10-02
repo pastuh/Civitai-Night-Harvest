@@ -202,6 +202,8 @@ export default function App() {
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null)
   const [sessionDownloadIds, setSessionDownloadIds] = useState<number[]>([])
+  /** versionId → when noted — grace before pruning orphans (inventory refresh lag). */
+  const sessionDownloadNotedAtRef = useRef<Map<number, number>>(new Map())
   const [sessionBanModelIds, setSessionBanModelIds] = useState<number[]>([])
   const [sessionPauseModelIds, setSessionPauseModelIds] = useState<number[]>([])
   const [libraryHighlightIds, setLibraryHighlightIds] = useState<number[]>([])
@@ -350,6 +352,8 @@ export default function App() {
       unique.push(id)
     }
     if (!unique.length) return
+    const now = Date.now()
+    for (const id of unique) sessionDownloadNotedAtRef.current.set(id, now)
     setSessionDownloadIds((prev) => {
       const next = [...prev]
       let changed = false
@@ -372,6 +376,26 @@ export default function App() {
     })
     setLibraryBadgeTick((n) => n + 1)
   }, [])
+
+  // Drop session-download IDs that never landed in inventory (cancel/ban false positives).
+  useEffect(() => {
+    if (!sessionDownloadIds.length) return
+    const invIds = new Set(inventory.map((r) => r.versionId))
+    const now = Date.now()
+    const GRACE_MS = 12_000
+    setSessionDownloadIds((prev) => {
+      const next = prev.filter((id) => {
+        if (invIds.has(id)) return true
+        const notedAt = sessionDownloadNotedAtRef.current.get(id) ?? 0
+        return now - notedAt < GRACE_MS
+      })
+      if (next.length === prev.length) return prev
+      for (const id of prev) {
+        if (!next.includes(id)) sessionDownloadNotedAtRef.current.delete(id)
+      }
+      return next
+    })
+  }, [inventory, sessionDownloadIds.length])
 
   // Any queue structure change (Auto / Updates / details / Manual) grows Yield for this session.
   useEffect(() => {
@@ -856,8 +880,8 @@ export default function App() {
       for (const [id, meta] of Array.from(prevQueueMeta.entries())) {
         if (meta.status === 'downloading' && !q.items.some((i) => i.id === id)) {
           needsInventory = true
-          // Done→prune race: row vanished without a delivered "done" tick — still count as session download.
-          if (meta.versionId > 0) completedVersionIds.push(meta.versionId)
+          // Do NOT count as session download here — cancel/ban/fail can also remove a
+          // downloading row. Real completions arrive via download:sessionComplete.
         }
       }
       prevQueueMeta.clear()

@@ -43,8 +43,17 @@ export async function finalizeBrowseCards(cards: WatchRuleTestModel[]): Promise<
   return merged
 }
 
-export function upsertBrowseCards(cards: WatchRuleTestModel[]): void {
-  if (!cards.length) return
+/** Returns how many false Missing stubs were cleared because Browse saw the model live. */
+export function upsertBrowseCards(cards: WatchRuleTestModel[]): number {
+  if (!cards.length) return 0
+  // Live Browse hit means the model listing exists — drop false Missing stubs.
+  let cleared = 0
+  for (const c of cards) {
+    if (c.id > 0 && inventory.getMissingModel(c.id)) {
+      inventory.removeMissingModel(c.id)
+      cleared++
+    }
+  }
   inventory.upsertBrowseCardCache(
     cards.map((c) => ({
       versionId: c.versionId,
@@ -53,6 +62,7 @@ export function upsertBrowseCards(cards: WatchRuleTestModel[]): void {
       sourceUpdated: c.publishedAt ?? undefined
     }))
   )
+  return cleared
 }
 
 /**
@@ -60,15 +70,16 @@ export function upsertBrowseCards(cards: WatchRuleTestModel[]): void {
  * Library (owned disk files + sidecar preview/json) is separate — callers must not pass
  * owned versions here for routine harvest refresh.
  */
-export function upsertBrowseCardsForRule(ruleId: string, cards: WatchRuleTestModel[]): void {
-  if (!ruleId || !cards.length) return
+export function upsertBrowseCardsForRule(ruleId: string, cards: WatchRuleTestModel[]): number {
+  if (!ruleId || !cards.length) return 0
   const fresh = cards.filter((c) => c.versionId > 0 && !inventory.hasVersion(c.versionId))
-  if (!fresh.length) return
-  upsertBrowseCards(fresh)
+  if (!fresh.length) return 0
+  const cleared = upsertBrowseCards(fresh)
   inventory.appendBrowseRuleGalleryMembers(
     ruleId,
     fresh.map((c) => c.versionId)
   )
+  return cleared
 }
 
 export function mergeCachedBrowseCards(cards: WatchRuleTestModel[]): WatchRuleTestModel[] {

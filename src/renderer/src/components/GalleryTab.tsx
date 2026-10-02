@@ -1245,9 +1245,9 @@ function GalleryTabInner({
     [inventoryForMainCounts]
   )
   const sessionFilterCount = useMemo(() => {
-    // Show sidebar entry from tracked session ids even before inventory refresh lands.
-    const inInv = inventoryForMainCounts.filter((r) => sessionSet.has(r.versionId)).length
-    return Math.max(inInv, sessionSet.size)
+    // Match the grid: only versions that are actually in Library inventory.
+    // (sessionDownloadIds may briefly hold orphans from cancel/ban — do not inflate the badge.)
+    return inventoryForMainCounts.filter((r) => sessionSet.has(r.versionId)).length
   }, [inventoryForMainCounts, sessionSet])
   const alwaysUpdateFilterCount = useMemo(
     () => inventoryForMainCounts.filter((r) => autoUpdateModelIds.has(r.modelId)).length,

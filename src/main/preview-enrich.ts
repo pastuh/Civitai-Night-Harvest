@@ -65,13 +65,17 @@ function applyPreferredToResolved(entry: ResolvedPreview): ResolvedPreview {
   }
 }
 
-/** NSFW / R+ models — previews live on civitai.red; .com API omits or blocks them. */
+/** NSFW / R+ models — previews often live on civitai.red; still fall back to .com. */
 function previewDomainsToTry(
   pool: CivitaiClientPool,
   preferred: CivitaiDomain | undefined,
   hints: DownloadDomainHints
 ): CivitaiDomain[] {
-  if (isMatureDownloadContent(hints)) return ['red']
+  // Mature catalog: prefer .red (images often omitted on .com), then .com for
+  // models that still publish covers on the main host (common false-empty case).
+  if (isMatureDownloadContent(hints)) {
+    return preferred === 'com' ? ['com', 'red'] : ['red', 'com']
+  }
 
   const setting = pool.getSetting()
   if (setting === 'com') {

@@ -53,6 +53,46 @@ export function noteMissingModel404(
   return row
 }
 
+export type NotFoundDisposition = {
+  trackAsMissing: boolean
+  failureKind: 'not_found' | 'interrupted'
+  reason: string
+}
+
+/**
+ * Download / probe 404s often hit freshly published versions while the parent model
+ * is still live on Civitai. Only move to Missing when the model listing itself is gone;
+ * otherwise keep a retryable deferred row (interrupted).
+ */
+export async function disposeNotFoundFailure(
+  pool: CivitaiClientPool,
+  getWindow: (() => BrowserWindow | null) | null,
+  hint: MissingHitHint
+): Promise<NotFoundDisposition> {
+  const preferred = hint.sourceDomain ?? 'com'
+  const domains: CivitaiDomain[] = [preferred, preferred === 'com' ? 'red' : 'com']
+  const retry: NotFoundDisposition = {
+    trackAsMissing: false,
+    failureKind: 'interrupted',
+    reason: 'Version not ready for download yet — will retry shortly'
+  }
+
+  for (const domain of domains) {
+    try {
+      if (await modelExistsOnDomain(pool, domain, hint.modelId, hint.versionId)) {
+        return retry
+      }
+    } catch {
+      // Rate limit / transient — do not false-positive into Missing.
+      return retry
+    }
+  }
+
+  const reason = hint.error?.trim() || 'Not found on Civitai'
+  noteMissingModel404(getWindow, { ...hint, error: reason })
+  return { trackAsMissing: true, failureKind: 'not_found', reason }
+}
+
 export function clearMissingModel(
   getWindow: (() => BrowserWindow | null) | null,
   modelId: number

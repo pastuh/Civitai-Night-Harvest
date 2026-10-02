@@ -63,6 +63,15 @@ export function classifyDownloadFailure(rawMessage: string): ClassifiedDownloadF
     }
   }
 
+  // Fresh publish / empty files[] while parent model listing is live — retry, do not Missing.
+  if (/not ready for download/i.test(rawMessage)) {
+    return {
+      defer: true,
+      kind: 'interrupted',
+      reason: 'Version not ready for download yet — will retry shortly'
+    }
+  }
+
   // Domain probe miss (no HTTP status in message) — track under Missing, not as strip-stuck failed.
   if (/not found on Civitai/i.test(rawMessage)) {
     return {

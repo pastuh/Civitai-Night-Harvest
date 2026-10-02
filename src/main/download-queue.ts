@@ -45,7 +45,7 @@ function countAutoPipelineItems(items: DownloadQueueItem[]): number {
   ).length
 }
 import * as inventory from './inventory'
-import { clearMissingModel, noteMissingModel404 } from './missing-models'
+import { clearMissingModel, disposeNotFoundFailure } from './missing-models'
 import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getTagRules, getTagPolicyOptions, getWatchRules, shouldCrawlAutoDownload } from './settings-store'
 import { sendToRenderer } from './window-notify'
@@ -1714,6 +1714,12 @@ export class DownloadQueue {
    */
   private reclassifyStuckFailures(): number {
     let count = 0
+    const notFoundHints: Array<{
+      item: DownloadQueueItem
+      reason: string
+      fromEarlyAccess: boolean
+      priorDeferred: DeferredDownload | null
+    }> = []
     for (const item of this.items) {
       if (item.status !== 'failed') continue
       const raw = item.reason ?? ''
@@ -1749,23 +1755,71 @@ export class DownloadQueue {
           : priorDeferred?.deferredSource ?? this.deferredSourceForItem(item)
       })
       if (classified.kind === 'not_found') {
-        noteMissingModel404(this.getWindow, {
-          modelId: item.modelId,
-          versionId: item.versionId,
-          modelName: item.modelName,
-          modelType: item.modelType,
-          author: item.author,
-          baseModel: item.baseModel,
-          previewUrl: item.previewUrl,
-          sourceDomain: item.sourceDomain,
-          error: classified.reason,
-          fromEarlyAccess
-        })
+        notFoundHints.push({ item, reason: classified.reason, fromEarlyAccess, priorDeferred })
       }
       count++
     }
+    if (notFoundHints.length) {
+      void Promise.all(
+        notFoundHints.map((h) =>
+          this.applyNotFoundDisposition(h.item, {
+            reason: h.reason,
+            fromEarlyAccess: h.fromEarlyAccess,
+            priorDeferred: h.priorDeferred
+          })
+        )
+      ).then(() => this.emitDeferred())
+    }
     if (count > 0) this.emitDeferred()
     return count
+  }
+
+  /** Confirm model is gone before Missing; otherwise keep retryable deferred. */
+  private async applyNotFoundDisposition(
+    item: DownloadQueueItem,
+    opts: {
+      reason: string
+      fromEarlyAccess?: boolean
+      priorDeferred?: DeferredDownload | null
+      earlyAccessEndsAt?: string
+    }
+  ): Promise<void> {
+    const disposition = await disposeNotFoundFailure(
+      this.downloadService.getClientPool(),
+      this.getWindow,
+      {
+        modelId: item.modelId,
+        versionId: item.versionId,
+        modelName: item.modelName,
+        modelType: item.modelType,
+        author: item.author,
+        baseModel: item.baseModel,
+        previewUrl: item.previewUrl,
+        sourceDomain: item.sourceDomain,
+        error: opts.reason,
+        fromEarlyAccess: opts.fromEarlyAccess
+      }
+    )
+    item.reason = disposition.reason
+    item.failureKind = disposition.failureKind
+    inventory.upsertDeferredDownload({
+      modelId: item.modelId,
+      versionId: item.versionId,
+      modelName: item.modelName,
+      modelType: item.modelType,
+      routingTag: item.routingTag,
+      previewUrl: item.previewUrl,
+      outputFolder: item.outputFolder,
+      reason: disposition.reason,
+      failureKind: disposition.failureKind,
+      lastAttemptAt: item.completedAt ?? new Date().toISOString(),
+      earlyAccessEndsAt: opts.earlyAccessEndsAt,
+      civitaiTags: item.civitaiTags ?? opts.priorDeferred?.civitaiTags,
+      baseModel: item.baseModel ?? opts.priorDeferred?.baseModel,
+      deferredSource: item.manual
+        ? 'manual'
+        : opts.priorDeferred?.deferredSource ?? this.deferredSourceForItem(item)
+    })
   }
 
   /** Remove queue rows for versions already in library — avoids stuck "downloading" UI. */
@@ -2308,21 +2362,16 @@ export class DownloadQueue {
         })
         this.emitDeferred()
         if (result.failureKind === 'not_found') {
-          noteMissingModel404(this.getWindow, {
-            modelId: item.modelId,
-            versionId: item.versionId,
-            modelName: item.modelName,
-            modelType: item.modelType,
-            author: item.author,
-            baseModel: item.baseModel,
-            previewUrl: item.previewUrl,
-            sourceDomain: item.sourceDomain,
-            error: result.reason,
-            fromEarlyAccess
+          await this.applyNotFoundDisposition(item, {
+            reason: result.reason ?? 'Not found on Civitai',
+            fromEarlyAccess,
+            priorDeferred,
+            earlyAccessEndsAt: result.earlyAccessEndsAt
           })
+          this.emitDeferred()
         }
-        logItem('warn', `${itemLabel()}: ${result.reason ?? 'Awaiting access'} — kept in queue for retry`)
-        if (result.failureKind === 'interrupted') this.scheduleQuickRetry()
+        logItem('warn', `${itemLabel()}: ${item.reason ?? 'Awaiting access'} — kept in queue for retry`)
+        if (item.failureKind === 'interrupted') this.scheduleQuickRetry()
       } else if (result.status === 'skipped') {
         const reason = result.reason ?? 'Skipped'
         if (result.civitaiTags?.length) item.civitaiTags = result.civitaiTags
@@ -2379,20 +2428,15 @@ export class DownloadQueue {
           })
           this.emitDeferred()
           if (refined.kind === 'not_found' || classified.kind === 'not_found') {
-            noteMissingModel404(this.getWindow, {
-              modelId: item.modelId,
-              versionId: item.versionId,
-              modelName: item.modelName,
-              modelType: item.modelType,
-              author: item.author,
-              baseModel: item.baseModel,
-              previewUrl: item.previewUrl,
-              sourceDomain: item.sourceDomain,
-              error: refined.reason,
-              fromEarlyAccess
+            await this.applyNotFoundDisposition(item, {
+              reason: refined.reason,
+              fromEarlyAccess,
+              priorDeferred,
+              earlyAccessEndsAt: refined.earlyAccessEndsAt
             })
+            this.emitDeferred()
           }
-          logItem('warn', `${itemLabel()}: ${refined.reason} — kept in queue for retry`)
+          logItem('warn', `${itemLabel()}: ${item.reason ?? refined.reason} — kept in queue for retry`)
           this.scheduleQuickRetry()
         } else if (isRetryableDownloadError(rawReason)) {
           this.markDeferredForRetry(item, humanizeDownloadError(rawReason))
@@ -2478,20 +2522,15 @@ export class DownloadQueue {
           })
           this.emitDeferred()
           if (refined.kind === 'not_found' || classified.kind === 'not_found') {
-            noteMissingModel404(this.getWindow, {
-              modelId: item.modelId,
-              versionId: item.versionId,
-              modelName: item.modelName,
-              modelType: item.modelType,
-              author: item.author,
-              baseModel: item.baseModel,
-              previewUrl: item.previewUrl,
-              sourceDomain: item.sourceDomain,
-              error: refined.reason,
-              fromEarlyAccess
+            await this.applyNotFoundDisposition(item, {
+              reason: refined.reason,
+              fromEarlyAccess,
+              priorDeferred,
+              earlyAccessEndsAt: refined.earlyAccessEndsAt
             })
+            this.emitDeferred()
           }
-          logItem('warn', `${itemLabel()}: ${refined.reason} — kept in queue for retry`)
+          logItem('warn', `${itemLabel()}: ${item.reason ?? refined.reason} — kept in queue for retry`)
           this.scheduleQuickRetry()
         } else if (isRetryableDownloadError(rawMessage)) {
           this.markDeferredForRetry(item, message)

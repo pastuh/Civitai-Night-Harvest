@@ -443,7 +443,8 @@ export function DeferredTab({
   const onRefreshRef = useRef(onRefresh)
   onRefreshRef.current = onRefresh
 
-  // 404 / not-found deferred rows are owned by the Missing tab (noteMissingModel404 writes
+  // 404 / not-found deferred rows are owned by the Missing tab when the model listing
+  // is confirmed gone; live models stay as interrupted deferred for retry.
   // them on classify). Showing them here duplicates the card and clutters Awaiting access.
   const visibleDeferred = useMemo(
     () => deferred.filter((d) => d.failureKind !== 'not_found'),

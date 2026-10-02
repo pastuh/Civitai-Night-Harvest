@@ -182,6 +182,20 @@ export async function resolveDownloadDomainForVersion(
   }
 
   if (!probes.length) {
+    // Version probe miss (404 or empty files[]) is common right after publish while
+    // Civitai finishes scanning — the parent model listing is often already live.
+    // Do not treat that as a deleted model (Missing); surface a retryable "not ready".
+    for (const domain of domains) {
+      try {
+        await pool.forDomain(domain).getModel(opts.modelId, { pace: 'interactive' })
+        throw new Error(
+          `Model version ${opts.versionId} is not ready for download yet (no files on ${domains.join(', ')})`
+        )
+      } catch (err) {
+        if (err instanceof Error && /not ready for download/i.test(err.message)) throw err
+        if (!isNotFoundError(err)) throw err
+      }
+    }
     throw new Error(`Model version ${opts.versionId} not found on Civitai (${domains.join(', ')})`)
   }
 

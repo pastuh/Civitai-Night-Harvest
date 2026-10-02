@@ -598,11 +598,25 @@ export function normalizePreviewDisplayUrl(url: string): string | undefined {
 export function normalizePreviewDisplayUrls(urls: string[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
-  for (const raw of urls) {
-    const url = normalizePreviewDisplayUrl(raw)
-    if (!url || seen.has(url)) continue
+  const push = (url: string | undefined) => {
+    if (!url || seen.has(url)) return
     seen.add(url)
     out.push(url)
+  }
+  for (const raw of urls) {
+    const trimmed = raw?.trim()
+    if (!trimmed) continue
+    const display = normalizePreviewDisplayUrl(trimmed)
+    push(display)
+    // Keep the alternate CDN transform as a fallback — width=450 sometimes 500s
+    // while original=true (or vice versa) still works.
+    if (display && display.includes('/width=')) {
+      push(display.replace(/\/width=\d+[^/]*\//i, '/original=true/'))
+    } else if (display && display.includes('/original=true/')) {
+      push(display.replace('/original=true/', '/width=450/'))
+    } else if (trimmed !== display) {
+      push(trimmed)
+    }
   }
   return out
 }

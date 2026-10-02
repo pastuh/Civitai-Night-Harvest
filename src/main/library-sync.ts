@@ -174,7 +174,16 @@ export async function repairMissingPreviews(
       continue
     }
 
-    const previewMissing = !record.previewPath || !existsSync(record.previewPath)
+    const previewMissing =
+      !record.previewPath ||
+      !existsSync(record.previewPath) ||
+      (() => {
+        try {
+          return statSync(record.previewPath).size < 128
+        } catch {
+          return true
+        }
+      })()
     // Only check swarm thumbnail when the preview file is also missing — a valid preview.jpg
     // is the canonical image source, so re-downloading just for the swarm thumb wastes API.
     let swarmThumbMissing = false
@@ -229,7 +238,7 @@ export async function repairMissingPreviews(
         record.civitaiDomain,
         undefined,
         'all',
-        { nsfw: record.isNsfw },
+        { nsfw: record.isNsfw, nsfwLevel: record.nsfwLevel },
         true
       )
       if (!resolved.previewUrls.length) {

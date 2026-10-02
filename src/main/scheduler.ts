@@ -2595,7 +2595,8 @@ export class ScanScheduler {
     if (browseNewCards.length > 0 || browseMembers.length > 0) {
       try {
         if (browseNewCards.length > 0) {
-          upsertBrowseCardsForRule(rule.id, browseNewCards)
+          const clearedMissing = upsertBrowseCardsForRule(rule.id, browseNewCards)
+          if (clearedMissing > 0) emitMissingList(this.window)
         }
         // Already-cached (not owned) still join this rule's gallery index — no card JSON rewrite.
         const memberOnly = browseMembers.filter((m) => alreadyCached.has(m.versionId))

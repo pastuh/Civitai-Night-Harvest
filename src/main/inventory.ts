@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { existsSync, statSync } from 'fs'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import type {
@@ -565,6 +566,19 @@ function parseCivitaiTags(raw: unknown): string[] {
   }
 }
 
+function sanitizePreviewPath(path: string | null | undefined): string {
+  const p = (path ?? '').trim()
+  if (!p) return ''
+  try {
+    if (!existsSync(p)) return ''
+    // 1×1 JPEG placeholders are <128 bytes — treat as missing so UI/API can refill.
+    if (statSync(p).size < 128) return ''
+    return p
+  } catch {
+    return ''
+  }
+}
+
 function rowToRecord(row: Record<string, unknown>): InventoryRecord {
   const fileSize = row.file_size_bytes as number | null | undefined
   const isNsfwRaw = row.is_nsfw as number | null | undefined
@@ -581,7 +595,7 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     routingLocked: Boolean(row.routing_locked),
     outputFolder: row.output_folder as string,
     modelPath: row.model_path as string,
-    previewPath: row.preview_path as string,
+    previewPath: sanitizePreviewPath(row.preview_path as string),
     swarmPath: row.swarm_path as string,
     downloadedAt: row.downloaded_at as string,
     ignored: Boolean(row.ignored),

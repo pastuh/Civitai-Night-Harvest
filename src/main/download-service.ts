@@ -88,15 +88,24 @@ async function resolvePreviewFile(
   if (onDisk) return { preview: onDisk }
 
   if (candidateUrls.length) {
-    const fetched = await fetchFirstWorkingPreview(candidateUrls.slice(0, 4))
+    const fetched = await fetchFirstWorkingPreview(candidateUrls.slice(0, 6))
     if (fetched) {
       writeFileSync(previewPath, fetched.buffer)
       return { preview: fetched }
     }
   }
 
-  const placeholder = getPlaceholderPreview()
-  writeFileSync(previewPath, placeholder.buffer)
+  // Do NOT write the 1×1 placeholder as preview.jpg — that blocks library-sync repair
+  // (file "exists") and leaves a dead local thumb that the UI cannot recover from.
+  if (existsSync(previewPath)) {
+    try {
+      const st = statSync(previewPath)
+      if (st.size < 128) unlinkSync(previewPath)
+    } catch {
+      /* ignore */
+    }
+  }
+
   return {
     preview: null,
     warning: 'Downloaded without preview image'
@@ -175,6 +184,10 @@ export class DownloadService {
 
   constructor(pool: CivitaiClientPool) {
     this.pool = pool
+  }
+
+  getClientPool(): CivitaiClientPool {
+    return this.pool
   }
 
   refineDeferredFailure(versionId: number, classified: ClassifiedDownloadFailure) {
@@ -762,7 +775,8 @@ export class DownloadService {
         routingTag: routingTag ?? '',
         outputFolder,
         modelPath,
-        previewPath,
+        // Empty when preview fetch failed — library-sync / card resolve can fill later.
+        previewPath: existsSync(previewPath) && (statSync(previewPath).size >= 128) ? previewPath : '',
         swarmPath,
         downloadedAt: new Date().toISOString(),
         ignored: false,
