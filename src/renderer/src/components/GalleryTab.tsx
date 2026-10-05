@@ -971,6 +971,65 @@ function GalleryTabInner({
     checkpointFolder
   ])
 
+  const headerToggleAvailability = useMemo(() => {
+    const hideApplies =
+      libraryFilter.type !== 'session' && !deferredModelSearch.trim() && pinModelId == null
+    const excluded = normalizeHiddenTags(libraryExcludedTags)
+    let folderAssigned = 0
+    let fullyTagged = 0
+    for (const r of inventory) {
+      if (hiddenModelIds.has(r.modelId)) continue
+      if (pinModelId != null && r.modelId !== pinModelId) continue
+      if (!matchesModelSearch(r)) continue
+      if (nsfwFilter !== 'all' && !matchesRatingFilter({ nsfw: r.isNsfw, nsfwLevel: r.nsfwLevel }, nsfwFilter)) {
+        continue
+      }
+      if (isHeldAssigned(r.versionId) || sessionSet.has(r.versionId)) continue
+      const route = r.routingTag?.trim()
+      if (route) {
+        if (!(ignoreExcludedTags && excluded.some((ex) => fuzzyTagMatch(ex, route)))) {
+          folderAssigned++
+        }
+      }
+      const folderLabel = folderLabelForRecord(r, tagRules, loraFolder, checkpointFolder)
+      if (recordTagsFullyAssigned(r, tagRules, folderLabel)) fullyTagged++
+    }
+    return {
+      hideFolderAssigned: hideApplies && folderAssigned > 0,
+      hideFullyTagged: hideApplies && fullyTagged > 0,
+      ignoreExcluded: excluded.length > 0 || ignoreExcludedTags
+    }
+  }, [
+    inventory,
+    libraryFilter.type,
+    deferredModelSearch,
+    pinModelId,
+    hiddenModelIds,
+    matchesModelSearch,
+    nsfwFilter,
+    isHeldAssigned,
+    sessionSet,
+    libraryExcludedTags,
+    ignoreExcludedTags,
+    tagRules,
+    loraFolder,
+    checkpointFolder
+  ])
+
+  useEffect(() => {
+    if (!headerToggleAvailability.hideFolderAssigned && hideFolderAssigned) {
+      setHideFolderAssigned(false)
+    }
+    if (!headerToggleAvailability.hideFullyTagged && hideFullyTagged) {
+      setHideFullyTagged(false)
+    }
+  }, [
+    headerToggleAvailability.hideFolderAssigned,
+    headerToggleAvailability.hideFullyTagged,
+    hideFolderAssigned,
+    hideFullyTagged
+  ])
+
   const sortedInventory = useMemo(() => {
     const list = [...filteredInventory]
     const dateFilterActive =
@@ -1812,29 +1871,50 @@ function GalleryTabInner({
             />
             <div className="browse-results-filters-box">
               <div className="browse-results-filters-row">
-                <label className="checkbox-field" title={t('gallery.hideFolderAssignedTitle')}>
+                <label
+                  className={`checkbox-field${!headerToggleAvailability.hideFolderAssigned ? ' is-unavailable' : ''}`}
+                  title={
+                    !headerToggleAvailability.hideFolderAssigned
+                      ? t('common.filterToggleEmpty')
+                      : t('gallery.hideFolderAssignedTitle')
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={hideFolderAssigned}
+                    disabled={!headerToggleAvailability.hideFolderAssigned}
                     onChange={(e) => setHideFolderAssigned(e.target.checked)}
                   />
                   {t('gallery.hideFolderAssigned')}
                 </label>
-                <label className="checkbox-field" title={t('gallery.hideFullyTaggedTitle')}>
+                <label
+                  className={`checkbox-field${!headerToggleAvailability.hideFullyTagged ? ' is-unavailable' : ''}`}
+                  title={
+                    !headerToggleAvailability.hideFullyTagged
+                      ? t('common.filterToggleEmpty')
+                      : t('gallery.hideFullyTaggedTitle')
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={hideFullyTagged}
+                    disabled={!headerToggleAvailability.hideFullyTagged}
                     onChange={(e) => setHideFullyTagged(e.target.checked)}
                   />
                   {t('gallery.hideFullyTagged')}
                 </label>
                 <label
-                  className="checkbox-field"
-                  title={t('gallery.ignoreExcludedTitle')}
+                  className={`checkbox-field${!headerToggleAvailability.ignoreExcluded ? ' is-unavailable' : ''}`}
+                  title={
+                    !headerToggleAvailability.ignoreExcluded
+                      ? t('common.filterToggleEmpty')
+                      : t('gallery.ignoreExcludedTitle')
+                  }
                 >
                   <input
                     type="checkbox"
                     checked={ignoreExcludedTags}
+                    disabled={!headerToggleAvailability.ignoreExcluded}
                     onChange={(e) => setIgnoreExcludedTags(e.target.checked)}
                   />
                   {t('gallery.ignoreExcluded')}

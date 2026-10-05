@@ -159,7 +159,7 @@ interface Props {
   onOpenModelDetail?: (target: ModelDetailTarget) => void
   onOpenTagFolders?: (tag: string) => void
   /** Jump to Missing → Session bans / Session pause. */
-  onOpenMissingSession?: (kind: 'sessionBans' | 'sessionPause') => void
+  onOpenMissingSession?: () => void
   onSaveTagRules: (rules: TagFolderRule[]) => Promise<void>
   onRefreshInventory?: () => Promise<void>
   onSaveSettings: (partial: AppSettingsSave) => Promise<void>
@@ -922,7 +922,7 @@ export function WatchRulesTab({
           hiddenTags={settings.hiddenTags ?? []}
           tagSuggestions={tagSuggestions}
           onLabelClick={
-            onOpenMissingSession ? () => onOpenMissingSession('sessionPause') : undefined
+            onOpenMissingSession ? () => onOpenMissingSession() : undefined
           }
           labels={{
             compactHint: t('browse.pausedTagsJumpHint')
@@ -944,7 +944,7 @@ export function WatchRulesTab({
           hiddenTags={settings.bannedTags ?? []}
           tagSuggestions={tagSuggestions}
           onLabelClick={
-            onOpenMissingSession ? () => onOpenMissingSession('sessionBans') : undefined
+            onOpenMissingSession ? () => onOpenMissingSession() : undefined
           }
           labels={{
             compactLabel: t('browse.bannedTagsLabel'),

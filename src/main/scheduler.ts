@@ -24,7 +24,7 @@ import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
 import { mergeCachedBrowseCards, upsertBrowseCardsForRule } from './browse-cache'
 import { setCrawlPaceStatusHook, setCrawlHttpStatusHook } from '../shared/civitai-pace'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
-import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, enrichPendingVersionPreviews, offerNewVersionsForOwnedModel, type RulePageQueueResult } from './rule-queue'
+import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, enrichPendingVersionPreviews, offerNewVersionsForOwnedModel, offerPendingFromBrowseCard, type RulePageQueueResult } from './rule-queue'
 import { DownloadQueue, AUTO_QUEUE_PIPELINE_CAP } from './download-queue'
 import * as inventory from './inventory'
 import { deleteModelFromLibrary } from './model-delete'
@@ -1192,7 +1192,10 @@ export class ScanScheduler {
     const yieldMain = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
     this.pendingVersions = inventory.getAllPendingVersions()
     await yieldMain()
-    this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
+    this.pendingVersions = pruneIrrelevantPendingVersions(
+      this.pendingVersions,
+      this.ruleQueueLog('crawl')
+    )
     await yieldMain()
     // Boot UI already showed a short activity window; keep hydrate lighter.
     this.activity = inventory.getActivityLog(500)
@@ -1451,7 +1454,10 @@ export class ScanScheduler {
     // buildInventorySnapshot / SELECT * the whole library and freeze Windows title bar).
     if (this.pendingVersions.length > 0) {
       const before = this.pendingVersions.length
-      this.pendingVersions = pruneIrrelevantPendingVersions(this.pendingVersions)
+      this.pendingVersions = pruneIrrelevantPendingVersions(
+        this.pendingVersions,
+        this.ruleQueueLog('crawl')
+      )
       inventory.pruneSkippedPendingVersions()
       if (this.pendingVersions.length !== before) {
         this.emitPendingVersions()
@@ -1467,6 +1473,93 @@ export class ScanScheduler {
     const active = this.pendingVersions.map((p) => ({ ...p, skipped: false as const }))
     const skipped = inventory.getAllSkippedPendingVersions()
     return [...active, ...skipped]
+  }
+
+  /**
+   * Immediate Browse → Updates sync. Browse already holds full cards for owned-model
+   * newer versions (badge "Update"), so create pending rows without waiting for the
+   * Library scan (45 min per-model cooldown) or gallery crawl position.
+   */
+  syncBrowseUpdates(models: WatchRuleTestModel[]): number {
+    if (!models.length) return 0
+    let offered = 0
+    let alreadyPending = 0
+    const skipped = { owned: 0, skipped: 0, banned: 0, noOwned: 0, deferred: 0, earlyAccess: 0 }
+    const offeredIds: number[] = []
+    for (const m of models.slice(0, 200)) {
+      if (!m || m.id <= 0 || !(m.versionId > 0)) continue
+      try {
+        if (inventory.hasVersion(m.versionId)) {
+          skipped.owned++
+          continue
+        }
+        if (inventory.isPendingVersionSkipped(m.versionId)) {
+          skipped.skipped++
+          continue
+        }
+        if (inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) {
+          skipped.banned++
+          continue
+        }
+        if (!inventory.getVersionsForModel(m.id).length) {
+          skipped.noOwned++
+          continue
+        }
+        if (inventory.getDeferredDownload(m.versionId)) {
+          skipped.deferred++
+          continue
+        }
+        if (
+          offerPendingFromBrowseCard(m, {
+            downloadQueue: this.downloadQueue,
+            log: this.ruleQueueLog('crawl')
+          })
+        ) {
+          offered++
+          offeredIds.push(m.versionId)
+        } else if (m.isEarlyAccess) {
+          skipped.earlyAccess++
+        } else {
+          alreadyPending++
+        }
+      } catch {
+        /* keep syncing the rest */
+      }
+    }
+    // Always reconcile in-memory rows with DB (covers rows added by crawl paths too).
+    const fresh = pruneIrrelevantPendingVersions(
+      inventory.getAllPendingVersions(),
+      this.ruleQueueLog('crawl')
+    )
+    const before = new Set(this.pendingVersions.map((p) => p.versionId))
+    const after = new Set(fresh.map((p) => p.versionId))
+    let changed = before.size !== after.size
+    if (!changed) {
+      for (const id of after) {
+        if (!before.has(id)) {
+          changed = true
+          break
+        }
+      }
+    }
+    if (changed) {
+      this.pendingVersions = fresh
+      this.emitPendingVersions()
+    }
+    // Immediately-pruned offers (base filter etc.) — surface the reason in Activity.
+    const pruned = offeredIds.filter((id) => !after.has(id))
+    const skipParts = Object.entries(skipped)
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `${k}:${n}`)
+    this.log(
+      pruned.length ? 'warn' : 'info',
+      `Browse sync: received ${models.length}, offered ${offered}, already pending ${alreadyPending}` +
+        (skipParts.length ? `, skipped {${skipParts.join(', ')}}` : '') +
+        (pruned.length ? ` — ${pruned.length} pruned immediately (base filter?): ${pruned.join(', ')}` : ''),
+      undefined,
+      { source: 'crawl' }
+    )
+    return offered
   }
 
   private emitPendingVersions(): void {
@@ -3686,8 +3779,8 @@ export class ScanScheduler {
     if (!item) return
     inventory.skipPendingVersion({ ...item, forgotten: false, skipped: true })
     this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
-    // Drop any in-flight / queued download for this version only.
-    this.downloadQueue.cancel(versionId)
+    // Drop any in-flight / queued / deferred / failed download for this version only.
+    this.downloadQueue.purgeVersion(versionId)
     this.emitPendingVersions()
     this.log(
       'info',
@@ -3706,6 +3799,7 @@ export class ScanScheduler {
     if (!item) return
     inventory.forgetPendingVersion({ ...item, forgotten: true, skipped: false })
     this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
+    this.downloadQueue.purgeVersion(versionId)
     this.emitPendingVersions()
     this.log(
       'info',

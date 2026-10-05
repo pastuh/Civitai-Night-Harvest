@@ -966,6 +966,38 @@ export const PendingTab = memo(function PendingTab({
       ).length,
     [rowsForMainCounts, pendingSeenByVersionId, isConfirmedOffer]
   )
+  const seenCount = useMemo(
+    () =>
+      rowsForMainCounts.filter(
+        (r) =>
+          !r.item.skipped &&
+          !r.item.forgotten &&
+          Boolean(pendingSeenByVersionId[r.item.versionId])
+      ).length,
+    [rowsForMainCounts, pendingSeenByVersionId]
+  )
+  const confirmedCount = useMemo(
+    () => rowsForMainCounts.filter((r) => isConfirmedOffer(r.item.versionId)).length,
+    [rowsForMainCounts, isConfirmedOffer]
+  )
+  const headerToggleAvailability = useMemo(
+    () => ({
+      showSkipped: skippedCount > 0 || showSkipped,
+      hideSeen: seenCount > 0,
+      hideConfirmed: confirmedCount > 0,
+      showForgotten: forgottenCount > 0 || showForgotten
+    }),
+    [skippedCount, showSkipped, seenCount, confirmedCount, forgottenCount, showForgotten]
+  )
+  useEffect(() => {
+    if (!headerToggleAvailability.hideSeen && hideSeen) setHideSeen(false)
+    if (!headerToggleAvailability.hideConfirmed && hideConfirmed) setHideConfirmed(false)
+  }, [
+    headerToggleAvailability.hideSeen,
+    headerToggleAvailability.hideConfirmed,
+    hideSeen,
+    hideConfirmed
+  ])
   const allCount = rowsForMainCounts.length
 
   const filtered = useMemo(() => {
@@ -1213,37 +1245,66 @@ export const PendingTab = memo(function PendingTab({
         />
         <div className="browse-results-filters-box">
           <div className="browse-results-filters-row">
-            <label className="checkbox-field" title={t('pending.showSkippedTitle')}>
+            <label
+              className={`checkbox-field${!headerToggleAvailability.showSkipped ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.showSkipped
+                  ? t('common.filterToggleEmpty')
+                  : t('pending.showSkippedTitle')
+              }
+            >
               <input
                 type="checkbox"
                 checked={showSkipped}
+                disabled={!headerToggleAvailability.showSkipped}
                 onChange={(e) => setShowSkipped(e.target.checked)}
               />
               {t('pending.showSkipped')}
             </label>
-            <label className="checkbox-field missing-hide-seen" title={t('pending.hideSeenHint')}>
+            <label
+              className={`checkbox-field missing-hide-seen${!headerToggleAvailability.hideSeen ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hideSeen
+                  ? t('common.filterToggleEmpty')
+                  : t('pending.hideSeenHint')
+              }
+            >
               <input
                 type="checkbox"
                 checked={hideSeen}
+                disabled={!headerToggleAvailability.hideSeen}
                 onChange={(e) => setHideSeen(e.target.checked)}
               />
               {t('pending.hideSeen')}
             </label>
-            <label className="checkbox-field" title={t('pending.hideConfirmedHint')}>
+            <label
+              className={`checkbox-field${!headerToggleAvailability.hideConfirmed ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hideConfirmed
+                  ? t('common.filterToggleEmpty')
+                  : t('pending.hideConfirmedHint')
+              }
+            >
               <input
                 type="checkbox"
                 checked={hideConfirmed}
+                disabled={!headerToggleAvailability.hideConfirmed}
                 onChange={(e) => setHideConfirmed(e.target.checked)}
               />
               {t('pending.hideConfirmed')}
             </label>
             <label
-              className="checkbox-field missing-show-forgotten"
-              title={t('pending.showForgottenHint')}
+              className={`checkbox-field missing-show-forgotten${!headerToggleAvailability.showForgotten ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.showForgotten
+                  ? t('common.filterToggleEmpty')
+                  : t('pending.showForgottenHint')
+              }
             >
               <input
                 type="checkbox"
                 checked={showForgotten}
+                disabled={!headerToggleAvailability.showForgotten}
                 onChange={(e) => {
                   const on = e.target.checked
                   setShowForgotten(on)

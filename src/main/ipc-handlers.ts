@@ -146,6 +146,7 @@ const IPC_CHANNELS = [
   'scan:status',
   'activity:get',
   'pending:get',
+  'pending:syncBrowse',
   'pending:approve',
   'pending:enableAutoUpdate',
   'pending:ignore',
@@ -1361,9 +1362,10 @@ export function initIpc(): void {
         downloadCount: owned?.downloadCount,
         thumbsUpCount: owned?.thumbsUpCount
       })
-      downloadQueue.cancel(versionId)
+      downloadQueue.purgeVersion(versionId)
       scheduler.dismissPending(versionId)
       scheduler.markVersionBannedInBrowseGallery(modelId, versionId, true)
+      emitMissingList(() => mainWindow)
       scheduler.log(
         'info',
         `Excluded version: ${payload.modelName || modelId} → ${payload.versionName || versionId}`,
@@ -1661,7 +1663,7 @@ export function initIpc(): void {
       // Already detached (e.g. UI retry after first exclude) — do not throw.
       if (!record) {
         if (shouldExclude) {
-          downloadQueue.cancel(payload.versionId)
+          downloadQueue.purgeVersion(payload.versionId)
           scheduler.dismissPending(payload.versionId)
           if (payload.modelId && payload.modelId > 0) {
             scheduler.markVersionRemovedFromBrowseGallery(payload.modelId, payload.versionId)
@@ -1694,7 +1696,7 @@ export function initIpc(): void {
           thumbsUpCount: record.thumbsUpCount
         })
         inventory.clearBrowseCardCacheForModel(record.modelId)
-        downloadQueue.cancel(record.versionId)
+        downloadQueue.purgeVersion(record.versionId)
         scheduler.dismissPending(record.versionId)
         scheduler.markVersionRemovedFromBrowseGallery(record.modelId, record.versionId)
         scheduler.log(
@@ -2195,6 +2197,43 @@ export function initIpc(): void {
   ipcMain.handle('scan:scheduleInfo', () => scheduler.getScheduleInfo())
   ipcMain.handle('activity:get', () => scheduler.getActivity())
   ipcMain.handle('pending:get', () => scheduler.getPendingVersions())
+
+  ipcMain.handle('pending:syncBrowse', (_e, models: unknown) => {
+    if (!Array.isArray(models)) return { offered: 0 }
+    const clean = models
+      .filter(
+        (m): m is Record<string, unknown> =>
+          !!m && typeof m === 'object' && Number((m as Record<string, unknown>).id) > 0
+      )
+      .slice(0, 200)
+      .map((m) => ({
+        id: Number(m.id),
+        versionId: Number(m.versionId),
+        name: String(m.name ?? ''),
+        versionName: typeof m.versionName === 'string' ? m.versionName : undefined,
+        type: typeof m.type === 'string' ? m.type : undefined,
+        baseModel: typeof m.baseModel === 'string' ? m.baseModel : '',
+        creator: typeof m.creator === 'string' ? m.creator : undefined,
+        previewUrl: typeof m.previewUrl === 'string' ? m.previewUrl : undefined,
+        tags: Array.isArray(m.tags)
+          ? (m.tags as unknown[]).filter((t): t is string => typeof t === 'string')
+          : undefined,
+        nsfw: typeof m.nsfw === 'boolean' ? (m.nsfw as boolean) : undefined,
+        nsfwLevel: typeof m.nsfwLevel === 'number' ? (m.nsfwLevel as number) : undefined,
+        isEarlyAccess: m.isEarlyAccess === true,
+        earlyAccessEndsAt: typeof m.earlyAccessEndsAt === 'string' ? m.earlyAccessEndsAt : undefined,
+        downloadCount: typeof m.downloadCount === 'number' ? (m.downloadCount as number) : undefined,
+        thumbsUpCount:
+          typeof m.thumbsUpCount === 'number' ? (m.thumbsUpCount as number) : undefined,
+        modelDescription:
+          typeof m.modelDescription === 'string' ? (m.modelDescription as string) : undefined,
+        versionDescription:
+          typeof m.versionDescription === 'string' ? (m.versionDescription as string) : undefined,
+        inInventory: false,
+        isBanned: false
+      }))
+    return { offered: scheduler.syncBrowseUpdates(clean) }
+  })
 
   ipcMain.handle('browse:getGallery', () => scheduler.getBrowseGallerySnapshot())
 

@@ -669,6 +669,14 @@ export function hasVersion(versionId: number): boolean {
   return Boolean(row)
 }
 
+export function hasPendingVersion(versionId: number): boolean {
+  if (versionId <= 0) return false
+  const row = getDb()
+    .prepare('SELECT 1 FROM pending_versions WHERE version_id = ?')
+    .get(versionId)
+  return Boolean(row)
+}
+
 export function getVersion(versionId: number): InventoryRecord | null {
   const row = getDb().prepare('SELECT * FROM versions WHERE version_id = ?').get(versionId)
   return row ? rowToRecord(row as Record<string, unknown>) : null
@@ -2130,6 +2138,11 @@ export function isPendingVersionSkipped(versionId: number): boolean {
     .prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ?')
     .get(versionId)
   return Boolean(row)
+}
+
+/** Browse Ban / Updates Skip|Forget — block harvest, deferred promote, and auto-retry. */
+export function isVersionAutoDownloadBlocked(versionId: number): boolean {
+  return isPendingVersionSkipped(versionId)
 }
 
 /** Browse Ban / version exclude — forgotten=1 in skipped_pending_versions. */

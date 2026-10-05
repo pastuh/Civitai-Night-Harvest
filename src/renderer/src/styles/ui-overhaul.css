@@ -2544,6 +2544,21 @@ label.field-label {
   white-space: nowrap;
 }
 
+.checkbox-field.is-filter-relevant input[type='checkbox'] {
+  accent-color: var(--warning, #c47d1a);
+  outline: 1.5px solid var(--warning, #c47d1a);
+  outline-offset: 1px;
+}
+
+.checkbox-field.is-unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.checkbox-field.is-unavailable input[type='checkbox'] {
+  cursor: not-allowed;
+}
+
 .missing-tab-panel {
   flex: 0 0 auto;
   min-height: 0;

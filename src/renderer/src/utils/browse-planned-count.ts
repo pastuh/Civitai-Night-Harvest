@@ -17,6 +17,8 @@ export interface BrowsePlannedCountInput {
   pending: PendingVersion[]
   deferred: DeferredDownload[]
   bannedModelIds: Set<number>
+  /** Browse Ban / Updates Forget — per-version exclude (not whole-model ban). */
+  excludedVersionIds?: Set<number>
   hiddenTags: string[]
   bannedTags?: string[]
   tagPolicyOptions?: TagPolicyOptions
@@ -33,6 +35,7 @@ export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): S
   const pendingVersionIds = new Set(activePending.map((p) => p.versionId).filter((id) => id > 0))
   const pendingModelIds = new Set(activePending.map((p) => p.modelId).filter((id) => id > 0))
   const deferredIds = new Set(input.deferred.map((d) => d.versionId))
+  const excludedVersionIds = input.excludedVersionIds ?? new Set<number>()
   const ids = new Set<number>()
 
   for (const item of input.queueItems) {
@@ -41,6 +44,7 @@ export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): S
     }
     if (item.versionId <= 0) continue
     if (ownedVersionIds.has(item.versionId)) continue
+    if (excludedVersionIds.has(item.versionId)) continue
     if (input.bannedModelIds.has(item.modelId)) continue
     const isUpdatesPending =
       pendingVersionIds.has(item.versionId) || pendingModelIds.has(item.modelId)
@@ -57,6 +61,7 @@ export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): S
     if (m.versionId <= 0 || ids.has(m.versionId)) continue
     if (m.inInventory || ownedVersionIds.has(m.versionId)) continue
     if (m.isBanned || input.bannedModelIds.has(m.id)) continue
+    if (excludedVersionIds.has(m.versionId)) continue
     if (m.isEarlyAccess || deferredIds.has(m.versionId)) continue
     if (modelHasPolicyTag(m.tags ?? [], input.hiddenTags, input.bannedTags, input.tagPolicyOptions)) continue
     if (ownedModelIds.has(m.id) || pendingModelIds.has(m.id) || pendingVersionIds.has(m.versionId)) {

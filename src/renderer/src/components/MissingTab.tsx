@@ -75,10 +75,8 @@ type SortMode = MissingSort
 /** Status / date / tag modes — mutually exclusive with each other (not with model type). */
 type SideFilter =
   | { type: 'all' }
-  | { type: 'unseen' }
-  | { type: 'seen' }
-  | { type: 'sessionBans' }
-  | { type: 'sessionPause' }
+  | { type: 'banPauseReview' }
+  | { type: 'sessionBanPause' }
   | { type: 'byDate'; day: string }
   | { type: 'byDateRange'; from: string; to: string }
   | { type: 'blockedTag'; tag: string }
@@ -108,7 +106,7 @@ interface Props {
   /** Open Tag Folders for a Civitai tag (same behavior as Browse / Library). */
   onOpenTagFolders?: (tag: string) => void
   /** Apply this Missing sidebar filter once when provided (e.g. from Browse Paused/Banned). */
-  jumpSideFilter?: { type: 'sessionBans' } | { type: 'sessionPause' } | null
+  jumpSideFilter?: { type: 'sessionBanPause' } | null
   onJumpSideFilterConsumed?: () => void
   browseVideoPreviews?: boolean
   fastTagMode?: boolean
@@ -406,22 +404,27 @@ export const MissingTab = memo(function MissingTab({
   )
 
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
-  const [hideBanned, setHideBanned] = useState(initial.hideBanned)
-  const [hidePaused, setHidePaused] = useState(initial.hidePaused)
-  const [hideSeen, setHideSeen] = useState(initial.hideSeen ?? false)
+  // Session landing shows ban+pause rows; Hide seen keeps the inbox to unseen.
+  const [hideBanned, setHideBanned] = useState(false)
+  const [hidePaused, setHidePaused] = useState(false)
+  const [hideSeen, setHideSeen] = useState(true)
   const [markSeenMode, setMarkSeenMode] = useState(initial.markSeenMode ?? false)
   const [showForgotten, setShowForgotten] = useState(initial.showForgotten)
   const [hideMissing, setHideMissing] = useState(initial.hideMissing ?? true)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>(initial.ratingFilter ?? 'all')
-  const [sideFilter, setSideFilter] = useState<SideFilter>(() => ({ type: 'all' }))
+  /** Land on this session's ban/pause inbox — All starts empty under Hide-* defaults. */
+  const [sideFilter, setSideFilter] = useState<SideFilter>(() => ({ type: 'sessionBanPause' }))
 
   useEffect(() => {
     if (!jumpSideFilter) return
     setSideFilter(jumpSideFilter)
     setKindFilter('all')
-    if (jumpSideFilter.type === 'sessionBans') setHideBanned(false)
-    if (jumpSideFilter.type === 'sessionPause') setHidePaused(false)
+    if (jumpSideFilter.type === 'sessionBanPause') {
+      setHideBanned(false)
+      setHidePaused(false)
+      setHideSeen(true)
+    }
     onJumpSideFilterConsumed?.()
   }, [jumpSideFilter, onJumpSideFilterConsumed])
   /** Stacks with kind + side filters (LoRA ∩ Session pause, etc.). */
@@ -456,8 +459,8 @@ export const MissingTab = memo(function MissingTab({
   const armedSeenPosRef = useRef({ x: 0, y: 0 })
   const itemsRef = useRef(workingItems)
   itemsRef.current = workingItems
-  /** Model IDs that were unseen when the user entered the 'unseen' sidebar filter —
-   *  so they stay visible after being marked seen (until hideSeen is checked). */
+  /** Model IDs that were unseen when the user entered ban/pause review —
+   *  kept for Mark-seen UX notes; Hide seen alone decides visibility now. */
   const unseenSnapshotRef = useRef<Set<number>>(new Set())
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; item: ExclusionReviewItem
@@ -535,17 +538,21 @@ export const MissingTab = memo(function MissingTab({
     }
     if (!justOpened) return
     void onRefreshRef.current()
-    // Default: All + Hide banned/paused prefs — user picks sidebar filters.
-    setSideFilter({ type: 'all' })
-    setModelTypeFilter(null)
-    setHideBanned(initial.hideBanned)
-    setHidePaused(initial.hidePaused)
-    setHideSeen(initial.hideSeen ?? false)
-    setMarkSeenMode(initial.markSeenMode ?? false)
-    setHideMissing(initial.hideMissing ?? true)
-    setRatingFilter(initial.ratingFilter ?? 'all')
-    setKindFilter('all')
-    setDateAnchor(null)
+    // Jump-open — jump effect already applied the filter; don't overwrite it.
+    const openedViaJump = Boolean(jumpSideFilter)
+    if (!openedViaJump) {
+      // Default: this session's ban/pause (not empty All under Hide-* toggles).
+      setSideFilter({ type: 'sessionBanPause' })
+      setModelTypeFilter(null)
+      setHideBanned(false)
+      setHidePaused(false)
+      setHideSeen(true)
+      setMarkSeenMode(initial.markSeenMode ?? false)
+      setHideMissing(initial.hideMissing ?? true)
+      setRatingFilter(initial.ratingFilter ?? 'all')
+      setKindFilter('all')
+      setDateAnchor(null)
+    }
     armedSeenIdRef.current = null
     // One-time wipe of the accidental auto-mark run (seen must be user-scrolled).
     const wipeKey = 'csd:missing-ban-seen-wipe-v1'
@@ -571,7 +578,7 @@ export const MissingTab = memo(function MissingTab({
     } catch {
       loadSeen()
     }
-  }, [isActive])
+  }, [isActive, jumpSideFilter])
 
   // Keep Seen marks aligned with cards still on Missing (ban/pause/exclude only).
   // Only when the tab opens — not after every Allow (that re-rendered the whole grid).
@@ -642,6 +649,14 @@ export const MissingTab = memo(function MissingTab({
     [modelTypeFilter, ownedPrimaryByModel]
   )
 
+  const exclusionBaseModel = useCallback(
+    (m: ExclusionReviewItem) =>
+      m.baseModel?.trim() ||
+      ownedPrimaryByModel.get(m.modelId)?.baseModel?.trim() ||
+      '',
+    [ownedPrimaryByModel]
+  )
+
   /** Main sidebar counts follow model type; Model types section keeps global totals. */
   const itemsForMainCounts = useMemo(
     () => (modelTypeFilter ? workingItems.filter(matchesModelTypeFilter) : workingItems),
@@ -703,6 +718,8 @@ export const MissingTab = memo(function MissingTab({
     () => itemsForMainCounts.filter((m) => isSessionPause(m)).length,
     [itemsForMainCounts, isSessionPause]
   )
+
+  const sessionBanPauseCount = sessionBanCount + sessionPauseCount
 
   const hiddenByDefaultCount = useMemo(() => {
     let n = 0
@@ -837,7 +854,7 @@ export const MissingTab = memo(function MissingTab({
     if (next.type !== 'byDate' && next.type !== 'byDateRange') {
       setDateAnchor(null)
     }
-    if (next.type === 'unseen') {
+    if (next.type === 'banPauseReview') {
       const snapshot = new Set<number>()
       for (const m of itemsRef.current) {
         if (canMarkExclusionSeen(m.kind) && !banSeenByModelIdRef.current[m.modelId]) {
@@ -845,12 +862,15 @@ export const MissingTab = memo(function MissingTab({
         }
       }
       unseenSnapshotRef.current = snapshot
-    }
-    if (next.type === 'seen') {
-      // Seen filter must show marked cards — Hide seen / Hide banned would empty it.
-      setHideSeen(false)
+      // Inbox: Hide seen on; show all ban+pause kinds until user toggles Hide banned/paused.
+      setHideSeen(true)
       setHideBanned(false)
       setHidePaused(false)
+    }
+    if (next.type === 'sessionBanPause') {
+      setHideBanned(false)
+      setHidePaused(false)
+      setHideSeen(true)
     }
   }, [])
 
@@ -930,10 +950,8 @@ export const MissingTab = memo(function MissingTab({
       if (f.type !== sideFilter.type) return false
       if (
         f.type === 'all' ||
-        f.type === 'unseen' ||
-        f.type === 'seen' ||
-        f.type === 'sessionBans' ||
-        f.type === 'sessionPause'
+        f.type === 'banPauseReview' ||
+        f.type === 'sessionBanPause'
       ) {
         return true
       }
@@ -967,28 +985,75 @@ export const MissingTab = memo(function MissingTab({
   }, [workingItems, showForgotten, ownedPrimaryByModel])
 
   const baseModelOptions = useMemo(() => {
-    // Match default All-view hide toggles: do not advertise base models that only
-    // exist on hidden ban/pause/404/excluded cards (e.g. Wan Video after you left
-    // excluded versions under Hide banned).
-    return aggregateBaseModelOptions(
-      workingItems
-        .filter((m) => {
-          if (m.kind === 'forgotten' && !showForgotten) return false
-          if (
-            hideBanned &&
-            (m.kind === 'bannedManual' ||
-              m.kind === 'bannedByTag' ||
-              m.kind === 'excludedVersion')
-          ) {
-            return false
-          }
-          if (hidePaused && m.kind === 'pausedByTag') return false
-          if (hideMissing && m.kind === 'missing') return false
-          return Boolean(m.baseModel?.trim())
-        })
-        .map((m) => m.baseModel as string)
-    )
-  }, [workingItems, showForgotten, hideBanned, hidePaused, hideMissing])
+    // On All: respect Hide banned/paused/missing so we don't advertise bases only on hidden cards.
+    // On Ban/pause review / Session / kind picks: list bases from those cards (Hide toggles
+    // don't empty this section while you review bans).
+    const reviewMode =
+      sideFilter.type === 'banPauseReview' ||
+      sideFilter.type === 'sessionBanPause' ||
+      sideFilter.type === 'byDate' ||
+      sideFilter.type === 'byDateRange' ||
+      sideFilter.type === 'blockedTag' ||
+      kindFilter === 'bannedManual' ||
+      kindFilter === 'bannedByTag' ||
+      kindFilter === 'excludedVersion' ||
+      kindFilter === 'pausedByTag'
+
+    const labels: string[] = []
+    for (const m of workingItems) {
+      if (m.kind === 'forgotten' && !showForgotten && kindFilter !== 'forgotten') continue
+
+      if (sideFilter.type === 'banPauseReview') {
+        if (!canMarkExclusionSeen(m.kind)) continue
+        if (hideSeen && banSeenByModelId[m.modelId]) continue
+        if (hideBanned && isManualOrTagBanKind(m.kind)) continue
+        if (hidePaused && m.kind === 'pausedByTag') continue
+      } else if (sideFilter.type === 'sessionBanPause') {
+        if (!isSessionBan(m) && !isSessionPause(m)) continue
+        if (hideSeen && banSeenByModelId[m.modelId]) continue
+        if (hideBanned && isSessionBan(m)) continue
+        if (hidePaused && isSessionPause(m)) continue
+      } else if (sideFilter.type === 'byDate' || sideFilter.type === 'byDateRange') {
+        if (!isBannedKind(m.kind)) continue
+      } else if (sideFilter.type === 'blockedTag') {
+        if (!isTagSkipKind(m.kind)) continue
+      } else if (kindFilter !== 'all') {
+        if (m.kind === 'forgotten') {
+          if (kindFilter !== 'forgotten') continue
+        } else if (m.kind !== kindFilter) {
+          continue
+        }
+      } else if (!reviewMode) {
+        if (
+          hideBanned &&
+          (m.kind === 'bannedManual' ||
+            m.kind === 'bannedByTag' ||
+            m.kind === 'excludedVersion')
+        ) {
+          continue
+        }
+        if (hidePaused && m.kind === 'pausedByTag') continue
+        if (hideMissing && m.kind === 'missing') continue
+      }
+
+      const bm = exclusionBaseModel(m)
+      if (bm) labels.push(bm)
+    }
+    return aggregateBaseModelOptions(labels)
+  }, [
+    workingItems,
+    showForgotten,
+    hideBanned,
+    hidePaused,
+    hideMissing,
+    hideSeen,
+    kindFilter,
+    sideFilter,
+    isSessionBan,
+    isSessionPause,
+    exclusionBaseModel,
+    banSeenByModelId
+  ])
 
   useEffect(() => {
     if (!baseModelFilter) return
@@ -1006,7 +1071,7 @@ export const MissingTab = memo(function MissingTab({
       // Allowed/Unban hold: stay visible (dimmed) until leaving Missing — never yank via Hide toggles.
       if (heldAllowed) {
         if (!matchesModelTypeFilter(m)) return false
-        if (baseModelFilter && !baseModelsMatch(m.baseModel || '', baseModelFilter)) {
+        if (baseModelFilter && !baseModelsMatch(exclusionBaseModel(m), baseModelFilter)) {
           return false
         }
         if (!matchesRatingFilter(resolveMissingNsfw(m), ratingFilter)) return false
@@ -1015,20 +1080,18 @@ export const MissingTab = memo(function MissingTab({
       }
 
       // Sidebar exclusive modes win over Hide banned / kind toolbar.
-      if (sideFilter.type === 'unseen') {
+      if (sideFilter.type === 'banPauseReview') {
+        // Ban/pause/exclude review — never 404 Missing.
         if (!canMarkExclusionSeen(m.kind)) return false
-        if (banSeenByModelId[m.modelId]) {
-          if (hideSeen) return false
-          if (!unseenSnapshotRef.current.has(m.modelId)) return false
-        }
-      } else if (sideFilter.type === 'seen') {
-        // Ban/pause/exclude marked seen only — never 404 Missing.
-        if (!canMarkExclusionSeen(m.kind)) return false
-        if (!banSeenByModelId[m.modelId]) return false
-      } else if (sideFilter.type === 'sessionBans') {
-        if (!isSessionBan(m)) return false
-      } else if (sideFilter.type === 'sessionPause') {
-        if (!isSessionPause(m)) return false
+        // Hide seen ON = inbox (unseen only). OFF = include already-seen cards.
+        if (hideSeen && banSeenByModelId[m.modelId]) return false
+        if (hideBanned && isManualOrTagBanKind(m.kind)) return false
+        if (hidePaused && m.kind === 'pausedByTag') return false
+      } else if (sideFilter.type === 'sessionBanPause') {
+        if (!isSessionBan(m) && !isSessionPause(m)) return false
+        if (hideSeen && banSeenByModelId[m.modelId]) return false
+        if (hideBanned && isSessionBan(m)) return false
+        if (hidePaused && isSessionPause(m)) return false
       } else if (sideFilter.type === 'byDate') {
         if (!isBannedKind(m.kind)) return false
         if (itemDayKey(m.at) !== sideFilter.day) return false
@@ -1056,7 +1119,7 @@ export const MissingTab = memo(function MissingTab({
       // Model type stacks with any kind / status / date / tag filter.
       if (!matchesModelTypeFilter(m)) return false
 
-      if (baseModelFilter && !baseModelsMatch(m.baseModel || '', baseModelFilter)) {
+      if (baseModelFilter && !baseModelsMatch(exclusionBaseModel(m), baseModelFilter)) {
         return false
       }
 
@@ -1090,7 +1153,8 @@ export const MissingTab = memo(function MissingTab({
 
         if (
           hideSeen &&
-          sideFilter.type !== 'seen' &&
+          sideFilter.type !== 'banPauseReview' &&
+          sideFilter.type !== 'sessionBanPause' &&
           canMarkExclusionSeen(m.kind) &&
           banSeenByModelId[m.modelId]
         ) {
@@ -1194,6 +1258,7 @@ export const MissingTab = memo(function MissingTab({
     modelTypeFilter,
     baseModelFilter,
     matchesModelTypeFilter,
+    exclusionBaseModel,
     resolveMissingNsfw,
     ratingFilter,
     isSessionBan,
@@ -1744,11 +1809,39 @@ export const MissingTab = memo(function MissingTab({
       const sessionRouting =
         sessionAssignedRoutingByKey.get(exclusionItemKey(item))?.trim() ||
         (item.versionId ? queueRoutingByVersionId.get(item.versionId) : undefined)
+      // Prefer the exact version from this Missing row when it is still in the library.
+      const matchingOwned =
+        item.versionId && item.versionId > 0
+          ? owned.find((r) => r.versionId === item.versionId)
+          : undefined
+      if (matchingOwned) {
+        onOpenModelDetail?.({
+          kind: 'library',
+          record: sessionRouting
+            ? { ...matchingOwned, routingTag: sessionRouting, routingLocked: true }
+            : matchingOwned,
+          siblingRecords: owned,
+          domain: item.sourceDomain
+        })
+        return
+      }
+      // Banned / excluded version is gone from disk (or never owned) — open THAT version via
+      // browse detail. Do not fall back to a sibling owned version (wrong Version ID).
+      if (item.versionId && item.versionId > 0) {
+        onOpenModelDetail?.({
+          kind: 'browse',
+          modelId: item.modelId,
+          versionId: item.versionId,
+          name: item.modelName,
+          previewUrl: item.previewUrl,
+          domain: item.sourceDomain,
+          preferredRoutingTag: sessionRouting
+        })
+        return
+      }
+      // No version on the exclusion stub — library sibling is the best local fallback.
       if (owned.length > 0) {
-        const preferred =
-          (item.versionId
-            ? owned.find((r) => r.versionId === item.versionId)
-            : undefined) ?? owned[0]!
+        const preferred = owned[0]!
         onOpenModelDetail?.({
           kind: 'library',
           record: sessionRouting
@@ -1762,7 +1855,7 @@ export const MissingTab = memo(function MissingTab({
       onOpenModelDetail?.({
         kind: 'browse',
         modelId: item.modelId,
-        versionId: item.versionId ?? 0,
+        versionId: 0,
         name: item.modelName,
         previewUrl: item.previewUrl,
         domain: item.sourceDomain,
@@ -1781,6 +1874,93 @@ export const MissingTab = memo(function MissingTab({
     return t('missingTab.kindMissing')
   }
 
+  const hideSeenRelevant =
+    sideFilter.type === 'banPauseReview' || sideFilter.type === 'sessionBanPause'
+  const hideBannedRelevant =
+    sideFilter.type === 'banPauseReview' || sideFilter.type === 'sessionBanPause'
+  const hidePausedRelevant =
+    sideFilter.type === 'banPauseReview' || sideFilter.type === 'sessionBanPause'
+
+  /**
+   * Counts for header toggles in the current sidebar mode — ignore Hide-* themselves
+   * so empty categories show as disabled checkboxes (no guessing).
+   */
+  const headerToggleAvailability = useMemo(() => {
+    const plainAll =
+      sideFilter.type === 'all' && kindFilter === 'all' && !modelTypeFilter && !baseModelFilter
+    const hideBanPauseApplies =
+      sideFilter.type === 'banPauseReview' ||
+      sideFilter.type === 'sessionBanPause' ||
+      plainAll
+    const hideMissingApplies = plainAll
+    const hideSeenApplies =
+      sideFilter.type === 'banPauseReview' ||
+      sideFilter.type === 'sessionBanPause' ||
+      plainAll
+
+    let banned = 0
+    let paused = 0
+    let missing = 0
+    let forgotten = 0
+    let seen = 0
+
+    for (const m of itemsForMainCounts) {
+      if (m.kind === 'forgotten') forgotten++
+      if (m.kind === 'missing') missing++
+
+      let inReviewScope = false
+      if (sideFilter.type === 'banPauseReview') {
+        inReviewScope = canMarkExclusionSeen(m.kind)
+      } else if (sideFilter.type === 'sessionBanPause') {
+        inReviewScope = isSessionBan(m) || isSessionPause(m)
+      } else if (sideFilter.type === 'all' && kindFilter === 'all') {
+        inReviewScope = canMarkExclusionSeen(m.kind)
+      } else if (sideFilter.type === 'all' && kindFilter !== 'all') {
+        inReviewScope = m.kind === kindFilter && canMarkExclusionSeen(m.kind)
+      }
+
+      if (!inReviewScope) continue
+      if (isManualOrTagBanKind(m.kind)) banned++
+      if (m.kind === 'pausedByTag') paused++
+      if (canMarkExclusionSeen(m.kind) && banSeenByModelId[m.modelId]) seen++
+    }
+
+    return {
+      hideBanned: hideBanPauseApplies && banned > 0,
+      hidePaused: hideBanPauseApplies && paused > 0,
+      hideMissing: hideMissingApplies && missing > 0,
+      hideSeen: hideSeenApplies && seen > 0,
+      showForgotten: forgotten > 0 || showForgotten
+    }
+  }, [
+    itemsForMainCounts,
+    sideFilter.type,
+    kindFilter,
+    modelTypeFilter,
+    baseModelFilter,
+    isSessionBan,
+    isSessionPause,
+    banSeenByModelId,
+    showForgotten
+  ])
+
+  // Checked-but-empty toggles confuse the empty-state message — clear them when N/A.
+  useEffect(() => {
+    if (!headerToggleAvailability.hideBanned && hideBanned) setHideBanned(false)
+    if (!headerToggleAvailability.hidePaused && hidePaused) setHidePaused(false)
+    if (!headerToggleAvailability.hideMissing && hideMissing) setHideMissing(false)
+    if (!headerToggleAvailability.hideSeen && hideSeen) setHideSeen(false)
+  }, [
+    headerToggleAvailability.hideBanned,
+    headerToggleAvailability.hidePaused,
+    headerToggleAvailability.hideMissing,
+    headerToggleAvailability.hideSeen,
+    hideBanned,
+    hidePaused,
+    hideMissing,
+    hideSeen
+  ])
+
   const toolbar = (
     <div className="gallery-panel-head library-panel-head">
       <div className="browse-results-title-row library-results-title-row">
@@ -1794,54 +1974,98 @@ export const MissingTab = memo(function MissingTab({
         />
         <div className="browse-results-filters-box">
           <div className="browse-results-filters-row">
-            <label className="checkbox-field missing-hide-banned">
+            <label
+              className={`checkbox-field missing-hide-banned${
+                hideBannedRelevant ? ' is-filter-relevant' : ''
+              }${!headerToggleAvailability.hideBanned ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hideBanned
+                  ? t('common.filterToggleEmpty')
+                  : hideBannedRelevant
+                    ? t('missingTab.hideBannedFilterHint')
+                    : undefined
+              }
+            >
               <input
                 type="checkbox"
                 checked={hideBanned}
+                disabled={!headerToggleAvailability.hideBanned}
                 onChange={(e) => onHideBannedChange(e.target.checked)}
               />
               {t('missingTab.hideBanned')}
             </label>
-            <label className="checkbox-field missing-hide-paused">
+            <label
+              className={`checkbox-field missing-hide-paused${
+                hidePausedRelevant ? ' is-filter-relevant' : ''
+              }${!headerToggleAvailability.hidePaused ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hidePaused
+                  ? t('common.filterToggleEmpty')
+                  : hidePausedRelevant
+                    ? t('missingTab.hidePausedFilterHint')
+                    : undefined
+              }
+            >
               <input
                 type="checkbox"
                 checked={hidePaused}
+                disabled={!headerToggleAvailability.hidePaused}
                 onChange={(e) => onHidePausedChange(e.target.checked)}
               />
               {t('missingTab.hidePaused')}
             </label>
             <label
-              className="checkbox-field missing-hide-missing"
-              title={t('missingTab.hideMissingHint')}
+              className={`checkbox-field missing-hide-missing${
+                !headerToggleAvailability.hideMissing ? ' is-unavailable' : ''
+              }`}
+              title={
+                !headerToggleAvailability.hideMissing
+                  ? t('common.filterToggleEmpty')
+                  : t('missingTab.hideMissingHint')
+              }
             >
               <input
                 type="checkbox"
                 checked={hideMissing}
+                disabled={!headerToggleAvailability.hideMissing}
                 onChange={(e) => setHideMissing(e.target.checked)}
               />
               {t('missingTab.hideMissing')}
             </label>
             <label
-              className="checkbox-field missing-hide-seen"
-              title={t('missingTab.hideSeenHint')}
+              className={`checkbox-field missing-hide-seen${
+                hideSeenRelevant ? ' is-filter-relevant' : ''
+              }${!headerToggleAvailability.hideSeen ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hideSeen
+                  ? t('common.filterToggleEmpty')
+                  : hideSeenRelevant
+                    ? t('missingTab.hideSeenFilterHint')
+                    : t('missingTab.hideSeenHint')
+              }
             >
               <input
                 type="checkbox"
                 checked={hideSeen}
-                onChange={(e) => {
-                  const checked = e.target.checked
-                  setHideSeen(checked)
-                  if (checked && sideFilter.type === 'seen') {
-                    setSideFilter({ type: 'all' })
-                  }
-                }}
+                disabled={!headerToggleAvailability.hideSeen}
+                onChange={(e) => setHideSeen(e.target.checked)}
               />
               {t('missingTab.hideSeen')}
             </label>
-            <label className="checkbox-field missing-show-forgotten">
+            <label
+              className={`checkbox-field missing-show-forgotten${
+                !headerToggleAvailability.showForgotten ? ' is-unavailable' : ''
+              }`}
+              title={
+                !headerToggleAvailability.showForgotten
+                  ? t('common.filterToggleEmpty')
+                  : undefined
+              }
+            >
               <input
                 type="checkbox"
                 checked={showForgotten}
+                disabled={!headerToggleAvailability.showForgotten}
                 onChange={(e) => setShowForgotten(e.target.checked)}
               />
               {t('missingTab.showForgotten')}
@@ -2503,39 +2727,22 @@ export const MissingTab = memo(function MissingTab({
 
             <button
               type="button"
-              className={`sidebar-tag ${sideFilterActive({ type: 'unseen' }) ? 'active' : ''}`}
-              onClick={() => applySideFilter({ type: 'unseen' })}
-              title={t('missingTab.unseenBansHint')}
+              className={`sidebar-tag ${sideFilterActive({ type: 'banPauseReview' }) ? 'active' : ''}`}
+              onClick={() => applySideFilter({ type: 'banPauseReview' })}
+              title={t('missingTab.banPauseReviewHint')}
             >
-              <span className="tag-name">{t('missingTab.unseenBans')}</span>
-              <span className="muted tag-count-inline">{unseenBanCount}</span>
+              <span className="tag-name">{t('missingTab.banPauseReview')}</span>
+              <span className="muted tag-count-inline">{reviewableBanCount}</span>
             </button>
 
             <button
               type="button"
-              className={`sidebar-tag ${sideFilterActive({ type: 'seen' }) ? 'active' : ''}`}
-              onClick={() => applySideFilter({ type: 'seen' })}
-              title={t('missingTab.seenBansHint')}
+              className={`sidebar-tag ${sideFilterActive({ type: 'sessionBanPause' }) ? 'active' : ''}`}
+              onClick={() => applySideFilter({ type: 'sessionBanPause' })}
+              title={t('missingTab.sessionBanPauseHint')}
             >
-              <span className="tag-name">{t('missingTab.seenBans')}</span>
-              <span className="muted tag-count-inline">{seenBanCount}</span>
-            </button>
-
-            <button
-              type="button"
-              className={`sidebar-tag ${sideFilterActive({ type: 'sessionBans' }) ? 'active' : ''}`}
-              onClick={() => applySideFilter({ type: 'sessionBans' })}
-            >
-              <span className="tag-name">{t('missingTab.sessionBans')}</span>
-              <span className="muted tag-count-inline">{sessionBanCount}</span>
-            </button>
-            <button
-              type="button"
-              className={`sidebar-tag ${sideFilterActive({ type: 'sessionPause' }) ? 'active' : ''}`}
-              onClick={() => applySideFilter({ type: 'sessionPause' })}
-            >
-              <span className="tag-name">{t('missingTab.sessionPause')}</span>
-              <span className="muted tag-count-inline">{sessionPauseCount}</span>
+              <span className="tag-name">{t('missingTab.sessionBanPause')}</span>
+              <span className="muted tag-count-inline">{sessionBanPauseCount}</span>
             </button>
 
             <button

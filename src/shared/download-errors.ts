@@ -64,10 +64,11 @@ export function classifyDownloadFailure(rawMessage: string): ClassifiedDownloadF
   }
 
   // Fresh publish / empty files[] while parent model listing is live — retry, do not Missing.
+  // Must NOT use `interrupted` (that triggers a 12s strip thrash via scheduleQuickRetry).
   if (/not ready for download/i.test(rawMessage)) {
     return {
       defer: true,
-      kind: 'interrupted',
+      kind: 'rate_limit',
       reason: 'Version not ready for download yet — will retry shortly'
     }
   }

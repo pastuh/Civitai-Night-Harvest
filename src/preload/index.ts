@@ -297,6 +297,8 @@ const api = {
     ipcRenderer.invoke('scan:scheduleInfo'),
   getActivity: (): Promise<ActivityEntry[]> => ipcRenderer.invoke('activity:get'),
   getPending: (): Promise<PendingVersion[]> => ipcRenderer.invoke('pending:get'),
+  syncBrowseUpdates: (models: WatchRuleTestModel[]): Promise<{ offered: number }> =>
+    ipcRenderer.invoke('pending:syncBrowse', models),
   getBrowseGallery: (): Promise<WatchRuleTestResult | null> =>
     ipcRenderer.invoke('browse:getGallery'),
   getBrowseCardCache: (

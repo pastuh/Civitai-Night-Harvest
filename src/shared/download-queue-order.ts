@@ -23,13 +23,24 @@ export function compareDownloadPipelineItems(
   return indexA - indexB
 }
 
-export function pickNextQueuedItem(items: DownloadQueueItem[], isBanned: (modelId: number) => boolean): DownloadQueueItem | undefined {
+export function pickNextQueuedItem(
+  items: DownloadQueueItem[],
+  isBanned: (modelId: number) => boolean,
+  isVersionAutoBlocked?: (versionId: number) => boolean
+): DownloadQueueItem | undefined {
   let best: DownloadQueueItem | undefined
   let bestIdx = -1
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     if (item.status !== 'queued') continue
     if (isBanned(item.modelId)) continue
+    if (
+      item.versionId &&
+      item.manual !== true &&
+      isVersionAutoBlocked?.(item.versionId)
+    ) {
+      continue
+    }
     if (!best || compareDownloadPipelineItems(item, best, i, bestIdx) < 0) {
       best = item
       bestIdx = i

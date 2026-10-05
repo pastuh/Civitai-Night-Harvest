@@ -216,9 +216,9 @@ export default function App() {
   const [libraryViewPrefs, setLibraryViewPrefs] = useState<LibraryViewPrefs>(DEFAULT_LIBRARY_VIEW_PREFS)
   const [browseViewPrefs, setBrowseViewPrefs] = useState<BrowseViewPrefs>(DEFAULT_BROWSE_VIEW_PREFS)
   const [missingViewPrefs, setMissingViewPrefs] = useState<MissingViewPrefs>(DEFAULT_MISSING_VIEW_PREFS)
-  const [missingJumpSideFilter, setMissingJumpSideFilter] = useState<
-    { type: 'sessionBans' } | { type: 'sessionPause' } | null
-  >(null)
+  const [missingJumpSideFilter, setMissingJumpSideFilter] = useState<{
+    type: 'sessionBanPause'
+  } | null>(null)
   const [pendingViewPrefs, setPendingViewPrefs] = useState<PendingViewPrefs>(DEFAULT_PENDING_VIEW_PREFS)
   const onLibraryViewPrefsChange = useCallback((prefs: LibraryViewPrefs) => {
     setLibraryViewPrefs((prev) =>
@@ -1820,6 +1820,74 @@ export default function App() {
     return inventory.filter((r) => ids.has(r.modelId))
   }, [pending, inventory])
 
+  /** Owned modelIds for immediate Browse → Updates sync (with pack fixup, same as Browse badge). */
+  const ownedModelIdsForSync = useMemo(() => {
+    const ids = new Set<number>()
+    for (const r of inventory) {
+      if (r.modelId > 0) ids.add(r.modelId)
+    }
+    // Pack pages: owning any versionId on a Browse card marks that modelId as owned,
+    // even if the library row still has a stale/missing modelId.
+    const gallery = liveCrawlBrowse?.sampleModels
+    if (gallery?.length) {
+      for (const m of gallery) {
+        if (m.id > 0 && m.versionId > 0 && ownedVersionIds.has(m.versionId)) {
+          ids.add(m.id)
+        }
+      }
+    }
+    return ids
+  }, [inventory, liveCrawlBrowse?.sampleModels, ownedVersionIds])
+
+  /** VersionIds already pushed via pending:syncBrowse this session — never resend. */
+  const browseUpdateSyncSentRef = useRef<Set<number>>(new Set())
+
+  // Immediate Browse → Updates: Browse badge ("Update") is computed from owned modelIds,
+  // but Updates rows need pending_versions rows. Push owned-model newer versions seen in
+  // the Browse gallery (incl. search pack extras merged into liveCrawlBrowse) to main
+  // without waiting for the Library scan cooldown or crawl position.
+  useEffect(() => {
+    if (!startupReady) return
+    const gallery = liveCrawlBrowse?.sampleModels
+    if (!gallery?.length) return
+    if (typeof window.api.syncBrowseUpdates !== 'function') return
+    const pendingIds = new Set(pending.map((p) => p.versionId).filter((id) => id > 0))
+    const candidates: typeof gallery = []
+    for (const m of gallery) {
+      if (!m || m.id <= 0 || !(m.versionId > 0)) continue
+      if (m.inInventory || ownedVersionIds.has(m.versionId)) continue
+      if (!ownedModelIdsForSync.has(m.id)) continue
+      if (pendingIds.has(m.versionId)) continue
+      if (m.isBanned || bannedModelIds.has(m.id)) continue
+      if (skippedPendingVersionIds.has(m.versionId)) continue
+      if (forgottenPendingVersionIds.has(m.versionId)) continue
+      if (browseUpdateSyncSentRef.current.has(m.versionId)) continue
+      candidates.push(m)
+    }
+    if (!candidates.length) return
+    const batch = candidates.slice(0, 100)
+    for (const m of batch) browseUpdateSyncSentRef.current.add(m.versionId)
+    if (browseUpdateSyncSentRef.current.size > 5000) {
+      browseUpdateSyncSentRef.current = new Set(batch.map((m) => m.versionId))
+    }
+    const timer = window.setTimeout(() => {
+      void window.api.syncBrowseUpdates(batch).catch(() => {
+        /* main not ready — Library scan covers these in background */
+      })
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [
+    startupReady,
+    liveCrawlBrowse?.sampleModels,
+    inventory,
+    pending,
+    ownedVersionIds,
+    ownedModelIdsForSync,
+    bannedModelIds,
+    skippedPendingVersionIds,
+    forgottenPendingVersionIds
+  ])
+
   // Browse was unmounted / gallery updates skipped while away — refresh snapshot when returning.
   useEffect(() => {
     if (!startupReady) return
@@ -2091,6 +2159,7 @@ export default function App() {
       pending,
       deferred,
       bannedModelIds,
+      excludedVersionIds: forgottenPendingVersionIds,
       hiddenTags: settings?.hiddenTags ?? [],
       bannedTags: settings?.bannedTags ?? [],
       tagPolicyOptions: {
@@ -2105,6 +2174,7 @@ export default function App() {
     pending,
     deferred,
     bannedModelIds,
+    forgottenPendingVersionIds,
     settings?.hiddenTags,
     settings?.bannedTags,
     settings?.allowHighPriorityTagBypass,
@@ -2730,8 +2800,8 @@ export default function App() {
               onRetryDeferred={retryDeferred}
               onJumpToGallery={jumpToGallery}
               onOpenTagFolders={openTagFolders}
-              onOpenMissingSession={(kind) => {
-                setMissingJumpSideFilter({ type: kind })
+              onOpenMissingSession={() => {
+                setMissingJumpSideFilter({ type: 'sessionBanPause' })
                 setTab('missing')
               }}
               onSaveTagRules={saveTagRules}
@@ -2781,7 +2851,7 @@ export default function App() {
               })}
               onShowInLibrary={jumpToGallery}
               onOpenTagFolders={openTagFolders}
-              onBannedChange={(modelId, banned) => markBrowseModelBan(modelId, banned)}
+              onBannedChange={(modelId, banned, stub) => markBrowseModelBan(modelId, banned, stub)}
               onInventoryRefresh={refreshInventory}
               onSeedBrowseModels={seedBrowseModels}
               onQueueRefresh={refreshQueueOnly}

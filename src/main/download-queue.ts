@@ -336,6 +336,13 @@ export class DownloadQueue {
         }
       }
       if (item.status === 'deferred' && item.failureKind === 'interrupted') {
+        if (
+          item.versionId &&
+          item.manual !== true &&
+          inventory.isVersionAutoDownloadBlocked(item.versionId)
+        ) {
+          continue
+        }
         item.status = 'queued'
         item.reason = undefined
         item.failureKind = undefined
@@ -360,6 +367,7 @@ export class DownloadQueue {
     this.pruneFailedNowOwned()
     const reclassified = this.reclassifyStuckFailures()
     this.mergeDeferredIntoQueue()
+    this.purgeExcludedVersionsFromQueue()
 
     const purged = this.purgeHiddenTags()
     if (purged > 0) {
@@ -535,6 +543,15 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(item.versionId)
         continue
       }
+      if (
+        !manual &&
+        item.versionId &&
+        inventory.isVersionAutoDownloadBlocked(item.versionId)
+      ) {
+        this.items = this.items.filter((i) => i.id !== item.id)
+        inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
       if (!manual && inventory.isMissingUnavailable(item.modelId)) {
         continue
       }
@@ -591,6 +608,10 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
+      if (!manual && inventory.isVersionAutoDownloadBlocked(d.versionId)) {
+        inventory.removeDeferredDownload(d.versionId)
+        continue
+      }
       if (!manual && inventory.isMissingUnavailable(d.modelId)) continue
       if (inventory.hasVersion(d.versionId)) {
         inventory.removeDeferredDownload(d.versionId)
@@ -643,6 +664,15 @@ export class DownloadQueue {
    */
   requeueDeferredVersion(versionId: number, options?: { force?: boolean }): boolean {
     const force = options?.force === true
+    if (!force && inventory.isVersionAutoDownloadBlocked(versionId)) {
+      inventory.removeDeferredDownload(versionId)
+      this.items = this.items.filter(
+        (i) =>
+          i.versionId !== versionId ||
+          (i.status !== 'queued' && i.status !== 'downloading' && i.status !== 'deferred')
+      )
+      return false
+    }
     if (!force && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
       return false
     }
@@ -1379,6 +1409,50 @@ export class DownloadQueue {
     }
   }
 
+  /**
+   * Version Ban / Updates Skip|Forget only — also drop deferred/failed stubs.
+   * `cancel` alone left interrupted rows that could flash back into the strip.
+   * Does not change auto-queue / prune / retry policy.
+   */
+  purgeVersion(versionId: number): void {
+    if (versionId <= 0) {
+      this.cancel(versionId)
+      return
+    }
+    const downloading = this.items.find((i) => i.versionId === versionId && i.status === 'downloading')
+    if (downloading) this.downloadService.cancel(versionId)
+
+    const before = this.items.length
+    let touchedDeferred = false
+    this.items = this.items.filter((i) => {
+      if (i.versionId !== versionId) return true
+      if (
+        i.status === 'queued' ||
+        i.status === 'downloading' ||
+        i.status === 'deferred' ||
+        i.status === 'failed'
+      ) {
+        if (i.status === 'deferred') touchedDeferred = true
+        return false
+      }
+      return true
+    })
+    if (inventory.getDeferredDownload(versionId)) {
+      inventory.removeDeferredDownload(versionId)
+      touchedDeferred = true
+    }
+    if (this.items.length === before && !touchedDeferred) {
+      this.purgeExcludedVersionsFromQueue()
+      return
+    }
+    this.purgeExcludedVersionsFromQueue()
+    this.broadcast()
+    if (touchedDeferred) this.emitDeferred()
+    this.checkIdle()
+    this.onQueueMutated?.()
+    if (!this.paused) void this.pump()
+  }
+
   dismissQueueItem(id: string): void {
     const item = this.items.find((i) => i.id === id)
     if (!item) return
@@ -1548,6 +1622,7 @@ export class DownloadQueue {
       this.recoverStuckDownloads()
       this.reconcileOwnedInQueue()
       this.syncDeferredInQueue()
+      this.purgeExcludedVersionsFromQueue()
       this.ensurePumpHealthy()
       this.pruneQueue()
     }
@@ -1599,6 +1674,28 @@ export class DownloadQueue {
     }
   }
 
+  /** Drop auto pipeline rows for Browse-banned / skipped versions (manual queue still OK). */
+  private purgeExcludedVersionsFromQueue(): boolean {
+    let changed = false
+    for (const item of this.items) {
+      if (item.manual) continue
+      if (!item.versionId || !inventory.isVersionAutoDownloadBlocked(item.versionId)) continue
+      if (item.status === 'downloading') this.downloadService.cancel(item.versionId)
+      inventory.removeDeferredDownload(item.versionId)
+    }
+    const before = this.items.length
+    this.items = this.items.filter((i) => {
+      if (i.manual) return true
+      if (i.versionId && inventory.isVersionAutoDownloadBlocked(i.versionId)) return false
+      return true
+    })
+    if (this.items.length !== before) {
+      changed = true
+      this.schedulePersist()
+    }
+    return changed
+  }
+
   /** Ensure deferred_downloads rows also appear in the download queue as planned items. */
   private mergeDeferredIntoQueue(): void {
     const settings = getSettings()
@@ -1608,6 +1705,10 @@ export class DownloadQueue {
     for (const d of inventory.getAllDeferredDownloads()) {
       if (inventory.hasVersion(d.versionId)) continue
       if (inventory.isModelBanned(d.modelId)) continue
+      if (inventory.isVersionAutoDownloadBlocked(d.versionId)) {
+        inventory.removeDeferredDownload(d.versionId)
+        continue
+      }
       if (inventory.isMissingUnavailable(d.modelId)) continue
       if (
         !inventory.isTagSkipAllowed(d.modelId) &&
@@ -1957,6 +2058,16 @@ export class DownloadQueue {
   }
 
   private markDeferredForRetry(item: DownloadQueueItem, message: string): void {
+    if (
+      !item.manual &&
+      item.versionId &&
+      inventory.isVersionAutoDownloadBlocked(item.versionId)
+    ) {
+      this.items = this.items.filter((i) => i.id !== item.id)
+      inventory.removeDeferredDownload(item.versionId)
+      this.schedulePersist()
+      return
+    }
     const now = new Date().toISOString()
     item.status = 'deferred'
     item.reason = message
@@ -1988,9 +2099,31 @@ export class DownloadQueue {
     let count = 0
     for (const item of this.items) {
       if (item.status !== 'deferred' || item.failureKind !== 'interrupted') continue
+      // Legacy rows: "not ready" was mis-tagged as interrupted and thrashed the strip every 12s.
+      if (/not ready for download/i.test(item.reason ?? '')) {
+        item.failureKind = 'rate_limit'
+        if (item.versionId) {
+          const d = inventory.getDeferredDownload(item.versionId)
+          if (d) {
+            inventory.upsertDeferredDownload({
+              ...d,
+              failureKind: 'rate_limit',
+              reason: item.reason ?? d.reason,
+              bumpAttempt: false
+            })
+          }
+        }
+        continue
+      }
       if (inventory.isModelBanned(item.modelId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         if (item.versionId) inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
+      // Model Details / Browse version Ban (forgotten) or Updates Skip — do not flash back into strip.
+      if (item.versionId && inventory.isPendingVersionSkipped(item.versionId)) {
+        this.items = this.items.filter((i) => i.id !== item.id)
+        inventory.removeDeferredDownload(item.versionId)
         continue
       }
       if (item.versionId && inventory.hasVersion(item.versionId)) {
@@ -2060,6 +2193,16 @@ export class DownloadQueue {
       if (item.status !== 'failed') continue
       const reason = item.reason ?? ''
       if (!isRetryableDownloadError(reason)) continue
+      if (inventory.isModelBanned(item.modelId)) {
+        this.items = this.items.filter((i) => i.id !== item.id)
+        if (item.versionId) inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
+      if (item.versionId && inventory.isPendingVersionSkipped(item.versionId)) {
+        this.items = this.items.filter((i) => i.id !== item.id)
+        inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
       if (item.versionId) {
         const d = inventory.getDeferredDownload(item.versionId)
         if (d && !shouldAutoRetryDeferred(d, hasApiKey)) continue
@@ -2112,7 +2255,11 @@ export class DownloadQueue {
       const pool = this.paused
         ? this.items.filter((i) => i.runImmediate && i.status === 'queued')
         : this.items
-      const next = pickNextQueuedItem(pool, (id) => inventory.isModelBanned(id))
+      const next = pickNextQueuedItem(
+        pool,
+        (id) => inventory.isModelBanned(id),
+        (vid) => inventory.isVersionAutoDownloadBlocked(vid)
+      )
       if (!next || this.runningIds.has(next.id)) break
       this.active++
       void this.runOne(next).finally(() => {
@@ -2148,6 +2295,18 @@ export class DownloadQueue {
     let stallCheck: ReturnType<typeof setInterval> | undefined
 
     try {
+      if (
+        !item.manual &&
+        item.versionId &&
+        inventory.isVersionAutoDownloadBlocked(item.versionId)
+      ) {
+        inventory.removeDeferredDownload(item.versionId)
+        this.items = this.items.filter((i) => i.id !== item.id)
+        this.broadcast()
+        this.checkIdle()
+        return
+      }
+
       if (item.versionId && inventory.hasVersion(item.versionId)) {
         inventory.removeDeferredDownload(item.versionId)
         logItem('info', `Skip ${itemLabel()} — already in library`)

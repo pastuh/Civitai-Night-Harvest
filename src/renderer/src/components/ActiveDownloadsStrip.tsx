@@ -251,9 +251,15 @@ function DownloadQueueMinimalRow({
           <strong
             className="active-queue-minimal-title"
             title={
-              item.versionName
-                ? `${item.modelName} · ${item.versionName}`
-                : item.modelName
+              [
+                item.versionName
+                  ? `${item.modelName} · ${item.versionName}`
+                  : item.modelName,
+                item.modelId > 0 ? `Model #${item.modelId}` : '',
+                item.versionId > 0 ? `Version #${item.versionId}` : ''
+              ]
+                .filter(Boolean)
+                .join(' · ')
             }
           >
             {item.modelName}

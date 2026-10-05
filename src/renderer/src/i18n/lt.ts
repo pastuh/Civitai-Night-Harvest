@@ -16,7 +16,8 @@ export const lt: Messages = {
     help: 'Pagalba',
     openSettings: 'Atidaryti nustatymus',
     openHelp: 'Pagalbos vadovas',
-    scrollToTop: 'Į viršų'
+    scrollToTop: 'Į viršų',
+    filterToggleEmpty: 'Nėra ką filtruoti — šioje peržiūroje nėra atitinkančių elementų'
   },
   listSort: {
     label: 'Rikiuoti',
@@ -1015,10 +1016,18 @@ export const lt: Messages = {
   modelDetail: {
     back: 'Atgal',
     banned: 'Užbaninta',
+    versionExcluded: 'Versija excluded',
     ban: 'Ban',
+    banAll: 'Ban all',
     unban: 'Unban',
+    banHint:
+      'Exclude tik šią versiją — kitos lieka. Jei turite šią versiją, failai ištrinami.',
+    banAllHint:
+      'Ban visą modelį — visos versijos exclude’inamos ir turimi failai ištrinami.',
     banConfirm:
-      'Ban „{name}“? Bus ištrintos visos {count} turimos versijos iš bibliotekos/disko ir modelis exclude’intas nuo būsimų siuntimų.',
+      'Ban versiją „{version}“ modelio „{name}“? Tik ši versija — kitos lieka. Exclude nuo auto-download; turimi šios versijos failai ištrinami.',
+    banAllConfirm:
+      'Ban visas „{name}“ versijas? Visas modelis exclude’inamas nuo būsimų siuntimų. Jei turite versijų ({count}), jų failai ištrinami iš disko.',
     civitaiPage: 'Civitai page ↗',
     openInExplorer: 'Atidaryti Explorer',
     deleteFiles: 'Ištrinti failus ir exclude',
@@ -1105,6 +1114,8 @@ export const lt: Messages = {
     downloadNow: 'Siųsti dabar',
     downloadNowHint: 'Pradėti atsisiuntimą net kai įjungta Pause',
     downloadHint: 'Atsisiųsti šią versiją',
+    downloadUnban: 'Unban ir download',
+    downloadUnbanHint: 'Leisti šią versiją iš naujo ir atsisiųsti',
     downloadEarlyHint: 'Įdėti early-access versiją į eilę (lauks Early access, kol atrakins)',
     loadPreviews: 'Įkelti preview',
     loadingPreviews: 'Kraunami preview…',
@@ -1793,6 +1804,12 @@ export const lt: Messages = {
     hideSeen: 'Slėpti seen',
     hideSeenHint:
       'Slepia Banned/Paused korteles, pažymėtas seen (žalias titulas). Missing (404) neslepia.',
+    hideSeenFilterHint:
+      'Ban/pause review ar Session — ON rodo tik unseen (inbox); OFF ir korteles, kurias jau pažymėjote seen.',
+    hideBannedFilterHint:
+      'Ban/pause review ar Session — slepia ban/exclude eilutes (manual, by-tag, excluded versija).',
+    hidePausedFilterHint:
+      'Ban/pause review ar Session — slepia pause-by-tag eilutes sąraše.',
     markSeen: 'Mark seen',
     unmarkSeen: 'Unmark seen',
     markSeenModeOn: 'Mark seen įj.',
@@ -1808,6 +1825,9 @@ export const lt: Messages = {
     sidebarAll: 'Visi',
     sessionBans: 'Sesijos banai',
     sessionPause: 'Sesijos pause',
+    sessionBanPause: 'Session ban/pause',
+    sessionBanPauseHint:
+      'Ban ar pause šioje sesijoje (manual, by-tag ar excluded versija). Hide banned / Hide paused filtruoja šį sąrašą.',
     blockedTagsSection: 'Policy tagai',
     policyTagsSection: 'Policy tagai',
     policyTagsHint: 'Spausk tagą — rodo modelius, praleistus dėl to policy tago (tas pats skaičius). Hide seen vis dar veikia.',
@@ -1822,6 +1842,9 @@ export const lt: Messages = {
     seenBans: 'Seen ban/pause',
     seenBansHint:
       'Banned arba paused kortelės su seen (žalias titulas). Apima ir ban, ir pause — atskiro Seen pauses filtro nėra. Ne Missing (404).',
+    banPauseReview: 'Ban/pause review',
+    banPauseReviewHint:
+      'Visos ban/pause/exclude kortelės, kurias galima Mark seen. Hide seen ON = inbox (tik unseen). OFF = ir jau peržiūrėtos.',
     banReviewSummary: 'peržiūra {unseen}+{seen}={total}',
     banReviewHint:
       'Unseen + Seen = ban/pause/exclude kortelės šiame puslapyje dabar. Missing (404) — atskiras filtras.',

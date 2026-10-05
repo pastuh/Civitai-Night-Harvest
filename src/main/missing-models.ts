@@ -55,7 +55,7 @@ export function noteMissingModel404(
 
 export type NotFoundDisposition = {
   trackAsMissing: boolean
-  failureKind: 'not_found' | 'interrupted'
+  failureKind: 'not_found' | 'interrupted' | 'rate_limit'
   reason: string
 }
 
@@ -73,7 +73,8 @@ export async function disposeNotFoundFailure(
   const domains: CivitaiDomain[] = [preferred, preferred === 'com' ? 'red' : 'com']
   const retry: NotFoundDisposition = {
     trackAsMissing: false,
-    failureKind: 'interrupted',
+    // rate_limit (not interrupted): avoids 12s Active-downloads strip thrash
+    failureKind: 'rate_limit',
     reason: 'Version not ready for download yet — will retry shortly'
   }
 

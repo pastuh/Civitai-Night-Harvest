@@ -1873,6 +1873,56 @@ export function SearchBrowsePanel({
       !m.isEarlyAccess &&
       !awaitingAccessVersionIds.has(m.versionId)
   ).length
+
+  const headerToggleAvailability = useMemo(() => {
+    let owned = 0
+    let banned = 0
+    let awaiting = 0
+    let awaitingConfirm = 0
+    let skipped = 0
+    let blocked = 0
+    for (const m of ruleScopedModels) {
+      if (m.inInventory) owned++
+      if (m.isBanned) banned++
+      if (m.isEarlyAccess || awaitingAccessVersionIds.has(m.versionId)) awaiting++
+      if (isAwaitingConfirmModel?.(m)) awaitingConfirm++
+      if (isSkippedPendingModel(m)) skipped++
+      if (modelHasPolicyTag(m.tags, hiddenTags, bannedTags, tagPolicyOptions)) blocked++
+    }
+    return {
+      hideOwned: owned > 0,
+      hideBanned: banned > 0,
+      hideAwaiting: awaiting > 0,
+      showAwaitingConfirm: awaitingConfirm > 0 || showAwaitingConfirm,
+      showSkipped: skipped > 0 || showSkipped,
+      showBlocked: blocked > 0 || showBlockedModels
+    }
+  }, [
+    ruleScopedModels,
+    awaitingAccessVersionIds,
+    isAwaitingConfirmModel,
+    isSkippedPendingModel,
+    hiddenTags,
+    bannedTags,
+    tagPolicyOptions,
+    showAwaitingConfirm,
+    showSkipped,
+    showBlockedModels
+  ])
+
+  useEffect(() => {
+    if (!headerToggleAvailability.hideOwned && onlyMissing) setOnlyMissing(false)
+    if (!headerToggleAvailability.hideBanned && hideBanned) setHideBanned(false)
+    if (!headerToggleAvailability.hideAwaiting && hideAwaitingAccess) setHideAwaitingAccess(false)
+  }, [
+    headerToggleAvailability.hideOwned,
+    headerToggleAvailability.hideBanned,
+    headerToggleAvailability.hideAwaiting,
+    onlyMissing,
+    hideBanned,
+    hideAwaitingAccess
+  ])
+
   const filterBreakdown = useMemo(() => {
     const counts = { content: 0, skipped: 0, owned: 0, tag: 0, banned: 0 }
     for (const m of ruleScopedModels) {
@@ -2787,51 +2837,97 @@ export function SearchBrowsePanel({
             ) : null}
             <div className="browse-results-filters-box">
             <div className="browse-results-filters-row">
-              <label className="checkbox-field" title={t('browse.hideOwnedTitle')}>
+              <label
+                className={`checkbox-field${!headerToggleAvailability.hideOwned ? ' is-unavailable' : ''}`}
+                title={
+                  !headerToggleAvailability.hideOwned
+                    ? t('common.filterToggleEmpty')
+                    : t('browse.hideOwnedTitle')
+                }
+              >
                 <input
                   type="checkbox"
                   checked={onlyMissing}
+                  disabled={!headerToggleAvailability.hideOwned}
                   onChange={(e) => setOnlyMissing(e.target.checked)}
                 />
                 {t('browse.hideOwned')}
               </label>
-              <label className="checkbox-field">
+              <label
+                className={`checkbox-field${!headerToggleAvailability.hideBanned ? ' is-unavailable' : ''}`}
+                title={
+                  !headerToggleAvailability.hideBanned ? t('common.filterToggleEmpty') : undefined
+                }
+              >
                 <input
                   type="checkbox"
                   checked={hideBanned}
+                  disabled={!headerToggleAvailability.hideBanned}
                   onChange={(e) => setHideBanned(e.target.checked)}
                 />
                 {t('browse.hideExcluded')}
               </label>
-              <label className="checkbox-field" title={t('browse.hideAwaitingTitle')}>
+              <label
+                className={`checkbox-field${!headerToggleAvailability.hideAwaiting ? ' is-unavailable' : ''}`}
+                title={
+                  !headerToggleAvailability.hideAwaiting
+                    ? t('common.filterToggleEmpty')
+                    : t('browse.hideAwaitingTitle')
+                }
+              >
                 <input
                   type="checkbox"
                   checked={hideAwaitingAccess}
+                  disabled={!headerToggleAvailability.hideAwaiting}
                   onChange={(e) => setHideAwaitingAccess(e.target.checked)}
                 />
                 {t('browse.hideAwaitingAccess')}
               </label>
-              <label className="checkbox-field" title={t('browse.showAwaitingConfirmTitle')}>
+              <label
+                className={`checkbox-field${!headerToggleAvailability.showAwaitingConfirm ? ' is-unavailable' : ''}`}
+                title={
+                  !headerToggleAvailability.showAwaitingConfirm
+                    ? t('common.filterToggleEmpty')
+                    : t('browse.showAwaitingConfirmTitle')
+                }
+              >
                 <input
                   type="checkbox"
                   checked={showAwaitingConfirm}
+                  disabled={!headerToggleAvailability.showAwaitingConfirm}
                   onChange={(e) => setShowAwaitingConfirm(e.target.checked)}
                 />
                 {t('browse.showAwaitingConfirm')}
               </label>
-              <label className="checkbox-field" title={t('browse.showSkippedTitle')}>
+              <label
+                className={`checkbox-field${!headerToggleAvailability.showSkipped ? ' is-unavailable' : ''}`}
+                title={
+                  !headerToggleAvailability.showSkipped
+                    ? t('common.filterToggleEmpty')
+                    : t('browse.showSkippedTitle')
+                }
+              >
                 <input
                   type="checkbox"
                   checked={showSkipped}
+                  disabled={!headerToggleAvailability.showSkipped}
                   onChange={(e) => setShowSkipped(e.target.checked)}
                 />
                 {t('browse.showSkipped')}
               </label>
               {hiddenTags.length > 0 && (
-                <label className="checkbox-field" title={t('browse.showBlockedTitle')}>
+                <label
+                  className={`checkbox-field${!headerToggleAvailability.showBlocked ? ' is-unavailable' : ''}`}
+                  title={
+                    !headerToggleAvailability.showBlocked
+                      ? t('common.filterToggleEmpty')
+                      : t('browse.showBlockedTitle')
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={showBlockedModels}
+                    disabled={!headerToggleAvailability.showBlocked}
                     onChange={(e) => setShowBlockedModels(e.target.checked)}
                   />
                   {t('browse.showBlocked')}

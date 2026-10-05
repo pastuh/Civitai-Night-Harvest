@@ -77,7 +77,11 @@ interface Props {
   onOpenTagFolders?: (tag: string) => void
   /** Owned inventory rows for this model (disk preview paths). */
   ownedRecords?: InventoryRecord[]
-  onBannedChange?: (modelId: number, banned: boolean) => void
+  onBannedChange?: (
+    modelId: number,
+    banned: boolean,
+    stub?: { name?: string; versionId?: number }
+  ) => void
   onInventoryRefresh?: () => void | Promise<void>
   /** Push refreshed likes/downloads into the live Browse grid after API detail load. */
   onSeedBrowseModels?: (models: WatchRuleTestModel[]) => void
@@ -249,9 +253,13 @@ export function ModelDetailPage({
   )
   const [versionSort, setVersionSort] = useState<VersionSort>('default')
   const [versionFilter, setVersionFilter] = useState('')
-  const [banned, setBanned] = useState(false)
+  /** Whole-model ban (banned_models) — blocks every version. */
+  const [modelBanned, setModelBanned] = useState(false)
+  /** Version-scoped excludes (skipped_pending_versions.forgotten) for this model. */
+  const [excludedVersionIds, setExcludedVersionIds] = useState<Set<number>>(() => new Set())
   const [banBusy, setBanBusy] = useState(false)
-  const [confirmBan, setConfirmBan] = useState(false)
+  /** Confirm dialog: this version only, or Ban all (whole model). */
+  const [confirmBan, setConfirmBan] = useState<'version' | 'all' | null>(null)
   const [downloadBusyIds, setDownloadBusyIds] = useState<Set<number>>(() => new Set())
   const [previewOverrides, setPreviewOverrides] = useState<Record<number, string[]>>({})
   const [previewIndex, setPreviewIndex] = useState(0)
@@ -377,7 +385,7 @@ export function ModelDetailPage({
   }, [modelId])
 
   useEffect(() => {
-    if (!detail || banned || !allowRemote || loading) return
+    if (!detail || modelBanned || !allowRemote || loading) return
     if (target.kind === 'browse' && target.fromAwaitingAccess) return
     const key = `${detail.modelId}:${detail.versions.map((v) => `${v.id}:${v.availability ?? ''}:${v.earlyAccessEndsAt ?? ''}`).join('|')}`
     if (unlockedPromoteKeyRef.current === key) return
@@ -386,6 +394,7 @@ export function ModelDetailPage({
       (v) =>
         promoteDeferredVersionIds.has(v.id) &&
         !ownedSet.has(v.id) &&
+        !excludedVersionIds.has(v.id) &&
         !isVersionEarlyAccess(v)
     )
     if (!candidates.length) {
@@ -407,7 +416,17 @@ export function ModelDetailPage({
     return () => {
       cancelled = true
     }
-  }, [detail, banned, allowRemote, loading, ownedSet, onQueueRefresh, target, promoteDeferredVersionIds])
+  }, [
+    detail,
+    modelBanned,
+    excludedVersionIds,
+    allowRemote,
+    loading,
+    ownedSet,
+    onQueueRefresh,
+    target,
+    promoteDeferredVersionIds
+  ])
 
   useEffect(() => {
     setDetail(null)
@@ -438,7 +457,17 @@ export function ModelDetailPage({
   useEffect(() => {
     let cancelled = false
     void window.api.getBannedModels().then((list) => {
-      if (!cancelled) setBanned(list.some((b: BannedModel) => b.modelId === modelId))
+      if (!cancelled) setModelBanned(list.some((b: BannedModel) => b.modelId === modelId))
+    })
+    void window.api.getExclusions().then((items) => {
+      if (cancelled) return
+      const excluded = new Set<number>()
+      for (const item of items) {
+        if (item.kind === 'excludedVersion' && item.modelId === modelId && item.versionId && item.versionId > 0) {
+          excluded.add(item.versionId)
+        }
+      }
+      setExcludedVersionIds(excluded)
     })
     return () => {
       cancelled = true
@@ -493,24 +522,42 @@ export function ModelDetailPage({
           // Persist already done in main; refresh Library + seed Browse live grid counts.
           void onInventoryRefresh?.()
           if (d.versions?.length) {
-            onSeedBrowseModels?.(
-              d.versions.map((v) => ({
-                id: d.modelId,
-                versionId: v.id,
-                name: d.name,
-                versionName: v.name,
-                type: d.type,
-                baseModel: v.baseModel || d.baseModel || '',
-                tags: d.tags ?? [],
-                pageUrl: d.pageUrl ?? '',
-                creator: d.creator,
-                inInventory: false,
-                isBanned: false,
-                downloadCount: v.downloadCount,
-                thumbsUpCount: v.thumbsUpCount,
-                publishedAt: v.publishedAt
-              }))
-            )
+            void Promise.all([
+              window.api.getExclusions().catch(() => [] as import('../../../shared/types').ExclusionReviewItem[]),
+              window.api.getBannedModels().catch(() => [] as import('../../../shared/types').BannedModel[])
+            ]).then(([excl, banned]) => {
+              if (cancelled) return
+              const excluded = new Set<number>()
+              for (const item of excl) {
+                if (
+                  item.kind === 'excludedVersion' &&
+                  item.modelId === d.modelId &&
+                  item.versionId &&
+                  item.versionId > 0
+                ) {
+                  excluded.add(item.versionId)
+                }
+              }
+              const wholeBanned = banned.some((b) => b.modelId === d.modelId)
+              onSeedBrowseModels?.(
+                d.versions.map((v) => ({
+                  id: d.modelId,
+                  versionId: v.id,
+                  name: d.name,
+                  versionName: v.name,
+                  type: d.type,
+                  baseModel: v.baseModel || d.baseModel || '',
+                  tags: d.tags ?? [],
+                  pageUrl: d.pageUrl ?? '',
+                  creator: d.creator,
+                  inInventory: false,
+                  isBanned: wholeBanned || excluded.has(v.id),
+                  downloadCount: v.downloadCount,
+                  thumbsUpCount: v.thumbsUpCount,
+                  publishedAt: v.publishedAt
+                }))
+              )
+            })
           }
         }
       })
@@ -999,6 +1046,14 @@ export function ModelDetailPage({
     return displayDetail.versions.filter((v) => ownedSet.has(v.id)).length
   }, [displayDetail, ownedSet])
 
+  const activeVersionExcluded = activeVersionId > 0 && excludedVersionIds.has(activeVersionId)
+  /** Active version blocked by whole-model ban or this-version exclude. */
+  const activeBlocked = modelBanned || activeVersionExcluded
+  const isVersionBlocked = useCallback(
+    (versionId: number) => modelBanned || (versionId > 0 && excludedVersionIds.has(versionId)),
+    [modelBanned, excludedVersionIds]
+  )
+
   const switchVersion = (versionId: number) => {
     if (versionId === activeVersionId) return
     setActiveVersionId(versionId)
@@ -1285,8 +1340,46 @@ export function ModelDetailPage({
     })
   }
 
+  /** Lift version exclude / whole-model ban for one version so Download can proceed. */
+  const allowVersionForDownload = async (versionId: number) => {
+    if (!isVersionBlocked(versionId) || modelId <= 0 || versionId <= 0) return
+    const siblings = (displayDetail?.versions ?? [])
+      .filter((row) => row.id > 0 && row.id !== versionId)
+      .map((row) => ({
+        versionId: row.id,
+        modelName: title,
+        versionName: row.name,
+        baseModel: row.baseModel,
+        author: creatorLabel,
+        previewUrl: row.previewUrl,
+        modelType: detail?.type,
+        tags: detail?.tags
+      }))
+    if (typeof window.api.allowVersion === 'function') {
+      await window.api.allowVersion({ modelId, versionId, siblings })
+    } else if (modelBanned) {
+      await window.api.unbanModel(modelId)
+    }
+    if (modelBanned) {
+      setModelBanned(false)
+      // allowVersion keeps siblings excluded when lifting a whole-model ban.
+      const keptExcluded = new Set(
+        siblings.map((s) => s.versionId).filter((id) => id > 0 && id !== versionId)
+      )
+      setExcludedVersionIds(keptExcluded)
+      onBannedChange?.(modelId, false, { name: title, versionId })
+    } else {
+      setExcludedVersionIds((prev) => {
+        const next = new Set(prev)
+        next.delete(versionId)
+        return next
+      })
+      onBannedChange?.(modelId, false, { name: title, versionId })
+    }
+  }
+
   const downloadVersion = async (v: CivitaiModelDetailVersion) => {
-    if (ownedSet.has(v.id) || downloadBusyIds.has(v.id) || banned) {
+    if (ownedSet.has(v.id) || downloadBusyIds.has(v.id)) {
       return
     }
     // On Missing list (404) — Download only loops; Retry above rechecks Civitai first.
@@ -1326,6 +1419,10 @@ export function ModelDetailPage({
 
     markDownloadBusy(v.id, true)
     try {
+      // Excluded / banned version — Download means allow this version again, then queue.
+      if (isVersionBlocked(v.id)) {
+        await allowVersionForDownload(v.id)
+      }
       // Stale deferred row (creator ended EA early) — promote to real queue.
       if (deferredVersionIds.has(v.id)) {
         const { ok, queue: nextQueue } = await window.api.retryDeferred(v.id)
@@ -1365,10 +1462,73 @@ export function ModelDetailPage({
     }
   }
 
-  const runBan = useCallback(async () => {
+  const runBanVersion = useCallback(async () => {
+    if (banBusy || modelId <= 0 || activeVersionId <= 0) return
+    setBanBusy(true)
+    setConfirmBan(null)
+    try {
+      if (typeof window.api.excludeVersion === 'function') {
+        await window.api.excludeVersion({
+          modelId,
+          versionId: activeVersionId,
+          modelName: title,
+          versionName: versionLabel,
+          previewUrl:
+            activeVersionMeta?.previewUrl ??
+            detail?.versions?.[0]?.previewUrl ??
+            libraryRecord?.previewPath,
+          author: creatorLabel || undefined,
+          baseModel: baseModelLabel,
+          modelType: detail?.type,
+          sourceDomain: domain,
+          tags: detail?.tags
+        })
+        setExcludedVersionIds((prev) => new Set(prev).add(activeVersionId))
+        onBannedChange?.(modelId, true, { name: title, versionId: activeVersionId })
+      } else {
+        // Older preload — fall back to whole-model ban.
+        await window.api.banModel(modelId, title, {
+          modelName: title,
+          versionId: activeVersionId,
+          previewUrl:
+            activeVersionMeta?.previewUrl ??
+            detail?.versions?.[0]?.previewUrl ??
+            libraryRecord?.previewPath,
+          author: creatorLabel || undefined,
+          baseModel: baseModelLabel,
+          modelType: detail?.type,
+          sourceDomain: domain,
+          tags: detail?.tags,
+          downloadCount: detail?.downloadCount ?? libraryRecord?.downloadCount,
+          thumbsUpCount: detail?.thumbsUpCount ?? libraryRecord?.thumbsUpCount
+        })
+        setModelBanned(true)
+        onBannedChange?.(modelId, true)
+      }
+      await onInventoryRefresh?.()
+    } finally {
+      setBanBusy(false)
+    }
+  }, [
+    banBusy,
+    modelId,
+    activeVersionId,
+    title,
+    versionLabel,
+    detail,
+    activeVersionMeta,
+    libraryRecord,
+    creatorLabel,
+    baseModelLabel,
+    domain,
+    onBannedChange,
+    onInventoryRefresh
+  ])
+
+  const runBanAll = useCallback(async () => {
     if (banBusy || modelId <= 0) return
     setBanBusy(true)
-    setConfirmBan(false)
+    setConfirmBan(null)
     try {
       await window.api.banModel(modelId, title, {
         modelName: title,
@@ -1383,7 +1543,8 @@ export function ModelDetailPage({
         downloadCount: detail?.downloadCount ?? libraryRecord?.downloadCount,
         thumbsUpCount: detail?.thumbsUpCount ?? libraryRecord?.thumbsUpCount
       })
-      setBanned(true)
+      setModelBanned(true)
+      setExcludedVersionIds(new Set())
       onBannedChange?.(modelId, true)
       await onInventoryRefresh?.()
     } finally {
@@ -1408,13 +1569,54 @@ export function ModelDetailPage({
     if (banBusy || modelId <= 0) return
     setBanBusy(true)
     try {
-      await window.api.unbanModel(modelId)
-      setBanned(false)
-      onBannedChange?.(modelId, false)
+      if (modelBanned) {
+        await window.api.unbanModel(modelId)
+        setModelBanned(false)
+        onBannedChange?.(modelId, false)
+      } else if (activeVersionId > 0 && excludedVersionIds.has(activeVersionId)) {
+        const siblings = (displayDetail?.versions ?? [])
+          .filter((v) => v.id > 0 && v.id !== activeVersionId)
+          .map((v) => ({
+            versionId: v.id,
+            modelName: title,
+            versionName: v.name,
+            baseModel: v.baseModel,
+            author: creatorLabel,
+            previewUrl: v.previewUrl,
+            modelType: detail?.type,
+            tags: detail?.tags
+          }))
+        if (typeof window.api.allowVersion === 'function') {
+          await window.api.allowVersion({
+            modelId,
+            versionId: activeVersionId,
+            siblings
+          })
+        } else {
+          await window.api.unbanModel(modelId)
+        }
+        setExcludedVersionIds((prev) => {
+          const next = new Set(prev)
+          next.delete(activeVersionId)
+          return next
+        })
+        onBannedChange?.(modelId, false, { name: title, versionId: activeVersionId })
+      }
     } finally {
       setBanBusy(false)
     }
-  }, [banBusy, modelId, onBannedChange])
+  }, [
+    banBusy,
+    modelId,
+    modelBanned,
+    activeVersionId,
+    excludedVersionIds,
+    displayDetail,
+    title,
+    creatorLabel,
+    detail,
+    onBannedChange
+  ])
 
   const displayTarget: ModelDetailTarget =
     target.kind === 'library' && libraryRecord
@@ -1430,7 +1632,10 @@ export function ModelDetailPage({
           </button>
           <div className="model-detail-page-toolbar-title">
             <h2 title={title}>{title}</h2>
-            {banned && <span className="model-detail-banned-badge">{t('modelDetail.banned')}</span>}
+            {modelBanned && <span className="model-detail-banned-badge">{t('modelDetail.banned')}</span>}
+            {activeVersionExcluded && !modelBanned && (
+              <span className="model-detail-banned-badge">{t('modelDetail.versionExcluded')}</span>
+            )}
             {unavailableConfirmed ? (
               <span
                 className="model-detail-unavailable-badge"
@@ -1476,19 +1681,31 @@ export function ModelDetailPage({
             </button>
           )}
           {modelId > 0 &&
-            (banned ? (
+            (activeBlocked ? (
               <button type="button" className="btn-sm" disabled={banBusy} onClick={() => void runUnban()}>
                 {t('modelDetail.unban')}
               </button>
             ) : (
-              <button
-                type="button"
-                className="btn-sm danger-btn"
-                disabled={banBusy}
-                onClick={() => setConfirmBan(true)}
-              >
-                {t('modelDetail.ban')}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn-sm danger-btn"
+                  disabled={banBusy || activeVersionId <= 0}
+                  title={t('modelDetail.banHint')}
+                  onClick={() => setConfirmBan('version')}
+                >
+                  {t('modelDetail.ban')}
+                </button>
+                <button
+                  type="button"
+                  className="btn-sm danger-btn"
+                  disabled={banBusy}
+                  title={t('modelDetail.banAllHint')}
+                  onClick={() => setConfirmBan('all')}
+                >
+                  {t('modelDetail.banAll')}
+                </button>
+              </>
             ))}
           {onDelete && displayTarget.kind === 'library' && libraryRecord && (
             <button type="button" className="btn-sm danger-btn" onClick={onDelete}>
@@ -2131,6 +2348,7 @@ export function ModelDetailPage({
                   // Trust live Civitai fields from model detail — not a stale deferred queue flag.
                   const awaiting = ea
                   const busy = downloadBusyIds.has(v.id)
+                  const blocked = isVersionBlocked(v.id)
                   const created = formatVersionDate(v.publishedAt ?? v.createdAt)
                   const pairInfo = versionPairIndex.get(v.id)
                   const showBaseOnRow =
@@ -2239,7 +2457,6 @@ export function ModelDetailPage({
                               isDownloading ||
                               (isQueuedOnly && !queue.paused) ||
                               awaiting ||
-                              banned ||
                               unavailableConfirmed ||
                               onMissingList
                             }
@@ -2252,11 +2469,13 @@ export function ModelDetailPage({
                                     ? t('modelDetail.downloadNowHint')
                                     : awaiting
                                       ? t('modelDetail.downloadEarlyHint')
-                                      : isFailed
-                                        ? queue.paused
-                                          ? t('modelDetail.downloadNowHint')
-                                          : t('modelDetail.retryDownloadHint')
-                                        : t('modelDetail.downloadHint')
+                                      : blocked
+                                        ? t('modelDetail.downloadUnbanHint')
+                                        : isFailed
+                                          ? queue.paused
+                                            ? t('modelDetail.downloadNowHint')
+                                            : t('modelDetail.retryDownloadHint')
+                                          : t('modelDetail.downloadHint')
                             }
                             onClick={() => void downloadVersion(v)}
                           >
@@ -2270,11 +2489,13 @@ export function ModelDetailPage({
                                     ? t('modelDetail.inQueue')
                                     : awaiting
                                       ? t('modelDetail.awaitingAccess')
-                                      : isFailed
-                                        ? queue.paused
-                                          ? t('modelDetail.downloadNow')
-                                          : t('modelDetail.retryDownload')
-                                        : t('modelDetail.download')}
+                                      : blocked
+                                        ? t('modelDetail.downloadUnban')
+                                        : isFailed
+                                          ? queue.paused
+                                            ? t('modelDetail.downloadNow')
+                                            : t('modelDetail.retryDownload')
+                                          : t('modelDetail.download')}
                           </button>
                         </div>
                       )}
@@ -2415,17 +2636,30 @@ export function ModelDetailPage({
         />
       )}
 
-      {confirmBan && (
+      {confirmBan === 'version' && (
         <ConfirmModal
           title={t('modelDetail.ban')}
           message={t('modelDetail.banConfirm', {
             name: title,
-            count: ownedCount
+            version: versionLabel || String(activeVersionId)
           })}
           confirmLabel={t('modelDetail.ban')}
           danger
-          onConfirm={() => void runBan()}
-          onCancel={() => setConfirmBan(false)}
+          onConfirm={() => void runBanVersion()}
+          onCancel={() => setConfirmBan(null)}
+        />
+      )}
+      {confirmBan === 'all' && (
+        <ConfirmModal
+          title={t('modelDetail.banAll')}
+          message={t('modelDetail.banAllConfirm', {
+            name: title,
+            count: String(ownedCount)
+          })}
+          confirmLabel={t('modelDetail.banAll')}
+          danger
+          onConfirm={() => void runBanAll()}
+          onCancel={() => setConfirmBan(null)}
         />
       )}
     </div>

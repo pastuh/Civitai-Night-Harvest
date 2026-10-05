@@ -14,7 +14,8 @@ export const en = {
     help: 'Help',
     openSettings: 'Open Settings',
     openHelp: 'Help guide',
-    scrollToTop: 'Scroll to top'
+    scrollToTop: 'Scroll to top',
+    filterToggleEmpty: 'Nothing to filter here — no matching items in the current view'
   },
   listSort: {
     label: 'Sort',
@@ -1005,10 +1006,18 @@ export const en = {
   modelDetail: {
     back: 'Back',
     banned: 'Banned',
+    versionExcluded: 'Version excluded',
     ban: 'Ban',
+    banAll: 'Ban all',
     unban: 'Unban',
+    banHint:
+      'Exclude this version only — siblings stay available. Owned files for this version are deleted.',
+    banAllHint:
+      'Ban the whole model — every version is excluded from auto-download and owned files are deleted.',
     banConfirm:
-      'Ban “{name}”? Deletes all {count} owned version(s) from library/disk and excludes the model from future downloads.',
+      'Ban version “{version}” of “{name}”? This version only — other versions stay. Excluded from auto-download; owned files for this version are removed if present.',
+    banAllConfirm:
+      'Ban all versions of “{name}”? Excludes the whole model from future downloads. If you own any versions ({count}), their files are deleted from disk.',
     civitaiPage: 'Civitai page ↗',
     openInExplorer: 'Open in Explorer',
     deleteFiles: 'Delete files & exclude',
@@ -1095,6 +1104,8 @@ export const en = {
     downloadNow: 'Download now',
     downloadNowHint: 'Start this download even while Pause is on',
     downloadHint: 'Download this version',
+    downloadUnban: 'Unban & download',
+    downloadUnbanHint: 'Allow this version again and download it',
     downloadEarlyHint: 'Queue this early-access version (Awaiting access until unlock)',
     loadPreviews: 'Load previews',
     loadingPreviews: 'Loading previews…',
@@ -1777,6 +1788,12 @@ export const en = {
     hideSeen: 'Hide seen',
     hideSeenHint:
       'Hide Banned/Paused cards you marked seen (green title). Does not hide Missing (404).',
+    hideSeenFilterHint:
+      'On Ban/pause review or Session — ON shows only unseen (inbox); OFF also shows cards you already marked seen.',
+    hideBannedFilterHint:
+      'On Ban/pause review or Session — hide ban/exclude rows in this list (manual, by-tag, excluded version).',
+    hidePausedFilterHint:
+      'On Ban/pause review or Session — hide pause-by-tag rows in this list.',
     markSeen: 'Mark seen',
     unmarkSeen: 'Unmark seen',
     markSeenModeOn: 'Mark seen on',
@@ -1792,6 +1809,9 @@ export const en = {
     sidebarAll: 'All',
     sessionBans: 'Session bans',
     sessionPause: 'Session pause',
+    sessionBanPause: 'Session ban/pause',
+    sessionBanPauseHint:
+      'Ban or pause actions from this app session (manual, by-tag, or excluded version). Hide banned / Hide paused checkboxes filter this list.',
     blockedTagsSection: 'Policy tags',
     policyTagsSection: 'Policy tags',
     policyTagsHint: 'Click a tag to list models skipped because of that policy tag (same count). Hide seen still applies.',
@@ -1806,6 +1826,9 @@ export const en = {
     seenBans: 'Seen ban/pause',
     seenBansHint:
       'Banned or paused cards you marked seen (green title). Includes both bans and pauses — no separate Seen pauses filter. Not Missing (404).',
+    banPauseReview: 'Ban/pause review',
+    banPauseReviewHint:
+      'All ban/pause/exclude cards you can Mark seen. Hide seen ON = inbox (unseen only). OFF = include already-seen cards.',
     banReviewSummary: 'review {unseen}+{seen}={total}',
     banReviewHint:
       'Unseen + Seen = ban/pause/exclude cards currently on this page. Missing (404) is a separate filter.',

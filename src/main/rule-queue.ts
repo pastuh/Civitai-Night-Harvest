@@ -168,8 +168,10 @@ function ownedBaseModels(knownVersions: { baseModel: string }[]): Set<string> {
 
 /**
  * New Versions must match bases you already own for that model.
- * When Browse Rules set baseModels, the candidate must also pass that filter.
- * Empty owned bases (missing metadata) → only the rule filter applies.
+ * When Browse Rules also allow other bases, those count too — a Browse "Update"
+ * badge ignores base, so Updates must keep rule-matching rows confirmable instead
+ * of pruning them on read. Empty sets (missing metadata / unrestricted rules)
+ * fall back to the other filter; both empty → keep.
  */
 function versionMatchesBaseFilters(
   baseModel: string | undefined,
@@ -178,6 +180,9 @@ function versionMatchesBaseFilters(
 ): boolean {
   const b = normalizeBaseModel(baseModel)
   if (!b) return false
+  if (ownedBases.size > 0 && ruleBases.size > 0) {
+    return ownedBases.has(b) || ruleBases.has(b)
+  }
   if (ownedBases.size > 0 && !ownedBases.has(b)) return false
   if (ruleBases.size > 0 && !ruleBases.has(b)) return false
   return true
@@ -235,37 +240,55 @@ function pickVersionsForNewModel(
  * Drop New Versions rows that are already owned or whose baseModel no longer
  * matches owned bases / Browse Rules baseModels.
  */
-export function pruneIrrelevantPendingVersions(pending: PendingVersion[]): PendingVersion[] {
+export function pruneIrrelevantPendingVersions(
+  pending: PendingVersion[],
+  log?: ActivityLogFn
+): PendingVersion[] {
   if (!pending.length) return pending
   const ruleBases = allowedBaseModelsFromRules()
   const ruleSet = ruleBases ?? new Set<string>()
   // Reuse recent snapshot — boot used to call getAllVersions() on every pending:get.
   const snapshot = inventory.getInventorySnapshotCached(60_000)
   const kept: PendingVersion[] = []
+  const dropped: Record<string, number> = {}
+  const droppedIds: number[] = []
+  const drop = (p: PendingVersion, reason: string) => {
+    inventory.removePendingVersion(p.versionId)
+    dropped[reason] = (dropped[reason] ?? 0) + 1
+    if (droppedIds.length < 10) droppedIds.push(p.versionId)
+  }
   for (const p of pending) {
     if (inventory.isModelBanned(p.modelId) || inventory.isMissingUnavailable(p.modelId)) {
-      inventory.removePendingVersion(p.versionId)
+      drop(p, 'banned/missing')
       continue
     }
     if (snapshot.versionIds.has(p.versionId) || inventory.hasVersion(p.versionId)) {
-      inventory.removePendingVersion(p.versionId)
+      drop(p, 'already-owned')
       continue
     }
     // Already approved → waiting Early access / deferred download — leave Updates.
     if (inventory.getDeferredDownload(p.versionId)) {
-      inventory.removePendingVersion(p.versionId)
+      drop(p, 'deferred-ea')
       continue
     }
     const known = snapshot.versionsByModel.get(p.modelId) ?? []
     if (!known.length) {
-      inventory.removePendingVersion(p.versionId)
+      drop(p, 'model-not-owned')
       continue
     }
     if (!versionMatchesBaseFilters(p.baseModel, ownedBaseModels(known), ruleSet)) {
-      inventory.removePendingVersion(p.versionId)
+      drop(p, 'base-mismatch')
       continue
     }
     kept.push(p)
+  }
+  const total = Object.values(dropped).reduce((n, c) => n + c, 0)
+  if (total > 0) {
+    const parts = Object.entries(dropped).map(([k, n]) => `${k}:${n}`)
+    log?.(
+      'warn',
+      `Updates prune: dropped ${total} row(s) {${parts.join(', ')}} (v${droppedIds.join(', v')})`
+    )
   }
   return kept
 }
@@ -1040,16 +1063,123 @@ export function startDownloadsIfQueued(
   onStarted?.()
 }
 
+/**
+ * Browse saw an unowned version of a model you already own → list it on Updates only.
+ * Cheap (SQLite upsert); no extra Civitai API. Optional auto-queue when Always update /
+ * Settings auto-download owned versions is on.
+ */
+export function offerPendingFromBrowseCard(
+  m: WatchRuleTestModel,
+  options?: {
+    downloadQueue?: DownloadQueue
+    onOffered?: (pending: PendingVersion) => void
+    log?: RuleQueueOptions['log']
+    ruleId?: string
+  }
+): boolean {
+  if (m.id <= 0 || m.versionId <= 0) return false
+  if (inventory.hasVersion(m.versionId)) return false
+  if (inventory.isPendingVersionSkipped(m.versionId)) return false
+  if (inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) return false
+  const owned = inventory.getVersionsForModel(m.id)
+  if (!owned.length) return false
+  if (inventory.getDeferredDownload(m.versionId)) return false
+
+  // Early access siblings belong on Early access, not Updates.
+  if (m.isEarlyAccess && options?.downloadQueue) {
+    const tagRules = getTagRules()
+    const { routingTag } = resolveModelRoutingTag(m.tags ?? [], '', tagRules, m.baseModel)
+    options.downloadQueue.deferEarlyAccess({
+      modelId: m.id,
+      versionId: m.versionId,
+      modelName: m.name,
+      versionName: m.versionName,
+      modelType: m.type,
+      routingTag,
+      previewUrl: m.previewUrl,
+      reason: formatEarlyAccessReason(m.earlyAccessEndsAt),
+      earlyAccessEndsAt: m.earlyAccessEndsAt,
+      civitaiTags: m.tags,
+      downloadCount: m.downloadCount,
+      thumbsUpCount: m.thumbsUpCount,
+      baseModel: m.baseModel
+    })
+    return false
+  }
+
+  const existing = owned[0]
+  const wasPending = inventory.hasPendingVersion(m.versionId)
+  const pending: PendingVersion = {
+    modelId: m.id,
+    modelName: m.name,
+    versionId: m.versionId,
+    versionName: m.versionName || `v${m.versionId}`,
+    baseModel: m.baseModel || existing.baseModel || '',
+    author: m.creator || existing.author || '',
+    previewUrl: m.previewUrl || existing.previewPath || undefined,
+    existingFolder: existing.outputFolder || existing.routingTag || '',
+    modelType: m.type || existing.modelType || undefined,
+    nsfw: m.nsfw,
+    nsfwLevel: m.nsfwLevel,
+    civitaiTags: m.tags,
+    downloadCount: m.downloadCount,
+    thumbsUpCount: m.thumbsUpCount,
+    modelDescription: m.modelDescription,
+    versionDescription: m.versionDescription
+  }
+  inventory.addPendingVersion(pending)
+  if (!wasPending) {
+    options?.onOffered?.(pending)
+    options?.log?.(
+      'warn',
+      `New version available: ${m.name} → ${pending.versionName}`,
+      options.ruleId,
+      { modelId: m.id, versionId: m.versionId }
+    )
+  }
+
+  const autoUpdateThis =
+    getSettings().autoDownloadNewVersions === true || inventory.isModelAutoUpdate(m.id)
+  const dq = options?.downloadQueue
+  if (
+    autoUpdateThis &&
+    dq &&
+    !m.isEarlyAccess &&
+    !dq.hasActiveItem(m.versionId) &&
+    shouldAutoQueue()
+  ) {
+    const tagRules = getTagRules()
+    const { routingTag } = resolveModelRoutingTag(m.tags ?? [], '', tagRules, m.baseModel)
+    dq.enqueue(
+      {
+        modelId: m.id,
+        versionId: m.versionId,
+        routingTag: routingTag || undefined,
+        modelName: m.name,
+        previewUrl: m.previewUrl
+      },
+      {
+        modelType: m.type,
+        civitaiTags: m.tags,
+        baseModel: m.baseModel
+      }
+    )
+  }
+
+  return !wasPending
+}
+
 /** Queue Browse harvest models that are missing from Library — fills download pipeline.
- * Never queues Library (owned) cards. Never auto-queues Updates-style siblings —
- * those stay on Updates until Download / Always update (see processModel + pending:approve). */
+ * Never queues Library (owned) cards. Owned-model siblings go to Updates via
+ * `offerPendingFromBrowseCard` (not the download strip). */
 export function queueEligibleTestModels(
   client: CivitaiClient,
   downloadQueue: DownloadQueue,
   models: WatchRuleTestModel[],
   options: Pick<RuleQueueOptions, 'requireTagMatch' | 'queueEnabled'>,
   log?: RuleQueueOptions['log'],
-  rule?: WatchRule | null
+  rule?: WatchRule | null,
+  onPendingOffered?: (pending: PendingVersion) => void
 ): number {
   const settings = getSettings()
   const pausedTags = settings.hiddenTags ?? []
@@ -1093,11 +1223,15 @@ export function queueEligibleTestModels(
       skipped.needsConfirm++
       continue
     }
-    // Already own this model (any version) → this is an Updates offer, not Browse harvest.
-    // Library cards never go to the download queue from here.
-    // Queue only after Updates → Download / Always update (or Settings auto-NV via processModel).
+    // Already own this model (any version) → Updates offer only (never Browse harvest queue).
     if (inventory.getVersionsForModel(m.id).length > 0) {
       skipped.needsConfirm++
+      offerPendingFromBrowseCard(m, {
+        downloadQueue,
+        onOffered: onPendingOffered,
+        log,
+        ruleId: rule?.id
+      })
       continue
     }
     if (m.isBanned || inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) {

@@ -63,8 +63,7 @@ type SideFilter =
   | { type: 'wait' }
   | { type: 'buy' }
   | { type: 'favorites' }
-  | { type: 'unseen' }
-  | { type: 'seen' }
+  | { type: 'banPauseReview' }
   | { type: 'sessionBans' }
   | { type: 'sessionPause' }
   | { type: 'baseModel'; name: string }
@@ -672,6 +671,54 @@ export function DeferredTab({
     return n
   }, [reviewableItems, banSeenByModelId])
 
+  const reviewableBanCount = unseenBanCount + seenBanCount
+
+  const headerToggleAvailability = useMemo(() => {
+    const onBanReview = sideFilter.type === 'banPauseReview'
+    const plainAll = sideFilter.type === 'all' && !modelTypeFilter
+    const hideBanPauseApplies = onBanReview || plainAll
+    const sessionBannedCount = itemsForMainCounts.filter((d) => {
+      const c = classifyPolicy(d)
+      return c.sessionBanned || c.bannedByTag
+    }).length
+    const banned = onBanReview
+      ? reviewableItems.filter((d) => {
+          const c = classifyPolicy(d)
+          return c.sessionBanned || c.bannedByTag
+        }).length
+      : sessionBannedCount
+    const paused = onBanReview
+      ? reviewableItems.filter((d) => classifyPolicy(d).pausedByTag).length
+      : pausedByTagCount
+    const seen = seenBanCount
+    return {
+      hideBanned: hideBanPauseApplies && banned > 0,
+      hidePaused: hideBanPauseApplies && paused > 0,
+      hideSeen: (onBanReview || plainAll) && seen > 0
+    }
+  }, [
+    sideFilter.type,
+    modelTypeFilter,
+    itemsForMainCounts,
+    classifyPolicy,
+    reviewableItems,
+    pausedByTagCount,
+    seenBanCount
+  ])
+
+  useEffect(() => {
+    if (!headerToggleAvailability.hideBanned && hideBanned) setHideBanned(false)
+    if (!headerToggleAvailability.hidePaused && hidePaused) setHidePaused(false)
+    if (!headerToggleAvailability.hideSeen && hideSeen) setHideSeen(false)
+  }, [
+    headerToggleAvailability.hideBanned,
+    headerToggleAvailability.hidePaused,
+    headerToggleAvailability.hideSeen,
+    hideBanned,
+    hidePaused,
+    hideSeen
+  ])
+
   const sessionPausePool = useMemo(
     () =>
       // Same meaning as Missing → Session pause: paused this session, still on EA list.
@@ -714,11 +761,25 @@ export function DeferredTab({
 
   const baseModelCounts = useMemo(() => {
     const pool = modelTypeFilter ? itemsForMainCounts : scopedDeferred
-    // Same as Missing: Hide banned / Hide paused cards don't advertise base models.
     return aggregateBaseModelOptions(
       pool
         .filter((d) => {
+          if (sideFilter.type === 'banPauseReview') {
+            if (!canMarkDeferredSeen(d)) return false
+            if (hideSeen && banSeenByModelId[d.modelId]) return false
+            const c = classifyPolicy(d)
+            if (hideBanned && (c.sessionBanned || c.bannedByTag)) return false
+            if (hidePaused && c.pausedByTag) return false
+            return true
+          }
           const c = classifyPolicy(d)
+          if (sideFilter.type === 'sessionBans') {
+            return c.sessionBanned || sessionBanLive.some((x) => x.modelId === d.modelId)
+          }
+          if (sideFilter.type === 'sessionPause') {
+            return c.pausedByTag || sessionPauseSet.has(d.modelId)
+          }
+          // All / other: Hide banned / Hide paused cards don't advertise base models.
           if (hideBanned && (c.sessionBanned || c.bannedByTag)) return false
           if (hidePaused && c.pausedByTag) return false
           return true
@@ -733,7 +794,13 @@ export function DeferredTab({
     inventoryByVersion,
     classifyPolicy,
     hideBanned,
-    hidePaused
+    hidePaused,
+    hideSeen,
+    banSeenByModelId,
+    sideFilter.type,
+    canMarkDeferredSeen,
+    sessionBanLive,
+    sessionPauseSet
   ])
 
   useEffect(() => {
@@ -802,7 +869,7 @@ export function DeferredTab({
         }
       }
       list = [...merged.values()]
-    } else if (sideFilter.type === 'unseen' || sideFilter.type === 'seen') {
+    } else if (sideFilter.type === 'banPauseReview') {
       const merged = new Map<number, DeferredDownload>()
       for (const d of scopedDeferred) {
         if (canMarkDeferredSeen(d)) merged.set(d.modelId, d)
@@ -814,11 +881,11 @@ export function DeferredTab({
         if (!temporaryAllowedByModelId.has(d.modelId)) merged.set(d.modelId, d)
       }
       list = [...merged.values()].filter((d) => {
-        const seen = Boolean(banSeenByModelId[d.modelId])
-        if (sideFilter.type === 'seen') return seen
-        if (!seen) return true
-        if (hideSeen) return false
-        return unseenSnapshotRef.current.has(d.modelId)
+        if (hideSeen && banSeenByModelId[d.modelId]) return false
+        const c = classifyPolicy(d)
+        if (hideBanned && (c.sessionBanned || c.bannedByTag)) return false
+        if (hidePaused && c.pausedByTag) return false
+        return true
       })
     } else if (sideFilter.type === 'favorites') {
       list = scopedDeferred.filter((d) => liveFavoriteSet.has(d.modelId))
@@ -895,7 +962,7 @@ export function DeferredTab({
     }
 
     // Hide seen — any view except the Seen filter (like Missing).
-    if (!q && hideSeen && sideFilter.type !== 'seen') {
+    if (!q && hideSeen && sideFilter.type !== 'banPauseReview') {
       list = list.filter((d) => {
         if (!canMarkDeferredSeen(d)) return true
         return !banSeenByModelId[d.modelId]
@@ -971,15 +1038,13 @@ export function DeferredTab({
     (next: SideFilter) => {
       setSideFilter(next)
       setKindFilter('all')
-      if (next.type === 'unseen') {
+      if (next.type === 'banPauseReview') {
         const snapshot = new Set<number>()
         for (const d of reviewPoolRef.current) {
           if (!banSeenByModelIdRef.current[d.modelId]) snapshot.add(d.modelId)
         }
         unseenSnapshotRef.current = snapshot
-      }
-      if (next.type === 'seen') {
-        setHideSeen(false)
+        setHideSeen(true)
         setHideBanned(false)
         setHidePaused(false)
       }
@@ -1413,36 +1478,63 @@ export function DeferredTab({
         />
         <div className="browse-results-filters-box">
           <div className="browse-results-filters-row">
-            <label className="checkbox-field missing-hide-banned">
+            <label
+              className={`checkbox-field missing-hide-banned${
+                sideFilter.type === 'banPauseReview' ? ' is-filter-relevant' : ''
+              }${!headerToggleAvailability.hideBanned ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hideBanned
+                  ? t('common.filterToggleEmpty')
+                  : sideFilter.type === 'banPauseReview'
+                    ? t('missingTab.hideBannedFilterHint')
+                    : undefined
+              }
+            >
               <input
                 type="checkbox"
                 checked={hideBanned}
+                disabled={!headerToggleAvailability.hideBanned}
                 onChange={(e) => onHideBannedChange(e.target.checked)}
               />
               {t('missingTab.hideBanned')}
             </label>
-            <label className="checkbox-field missing-hide-paused">
+            <label
+              className={`checkbox-field missing-hide-paused${
+                sideFilter.type === 'banPauseReview' ? ' is-filter-relevant' : ''
+              }${!headerToggleAvailability.hidePaused ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hidePaused
+                  ? t('common.filterToggleEmpty')
+                  : sideFilter.type === 'banPauseReview'
+                    ? t('missingTab.hidePausedFilterHint')
+                    : undefined
+              }
+            >
               <input
                 type="checkbox"
                 checked={hidePaused}
+                disabled={!headerToggleAvailability.hidePaused}
                 onChange={(e) => onHidePausedChange(e.target.checked)}
               />
               {t('missingTab.hidePaused')}
             </label>
             <label
-              className="checkbox-field missing-hide-seen"
-              title={t('deferredTab.hideSeenHint')}
+              className={`checkbox-field missing-hide-seen${
+                sideFilter.type === 'banPauseReview' ? ' is-filter-relevant' : ''
+              }${!headerToggleAvailability.hideSeen ? ' is-unavailable' : ''}`}
+              title={
+                !headerToggleAvailability.hideSeen
+                  ? t('common.filterToggleEmpty')
+                  : sideFilter.type === 'banPauseReview'
+                    ? t('missingTab.hideSeenFilterHint')
+                    : t('deferredTab.hideSeenHint')
+              }
             >
               <input
                 type="checkbox"
                 checked={hideSeen}
-                onChange={(e) => {
-                  const checked = e.target.checked
-                  setHideSeen(checked)
-                  if (checked && sideFilter.type === 'seen') {
-                    setSideFilter({ type: 'all' })
-                  }
-                }}
+                disabled={!headerToggleAvailability.hideSeen}
+                onChange={(e) => setHideSeen(e.target.checked)}
               />
               {t('deferredTab.hideSeen')}
             </label>
@@ -2117,21 +2209,14 @@ export function DeferredTab({
                 ) : null}
                 <button
                   type="button"
-                  className={`sidebar-tag ${sideFilterActive({ type: 'unseen' }) ? 'active' : ''}`}
-                  onClick={() => applySideFilter({ type: 'unseen' })}
-                  title={t('deferredTab.unseenReviewsHint')}
+                  className={`sidebar-tag ${
+                    sideFilterActive({ type: 'banPauseReview' }) ? 'active' : ''
+                  }`}
+                  onClick={() => applySideFilter({ type: 'banPauseReview' })}
+                  title={t('missingTab.banPauseReviewHint')}
                 >
-                  <span className="tag-name">{t('deferredTab.unseenReviews')}</span>
-                  <span className="muted tag-count-inline">{unseenBanCount}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`sidebar-tag ${sideFilterActive({ type: 'seen' }) ? 'active' : ''}`}
-                  onClick={() => applySideFilter({ type: 'seen' })}
-                  title={t('deferredTab.seenReviewsHint')}
-                >
-                  <span className="tag-name">{t('deferredTab.seenReviews')}</span>
-                  <span className="muted tag-count-inline">{seenBanCount}</span>
+                  <span className="tag-name">{t('missingTab.banPauseReview')}</span>
+                  <span className="muted tag-count-inline">{reviewableBanCount}</span>
                 </button>
                 <button
                   type="button"
