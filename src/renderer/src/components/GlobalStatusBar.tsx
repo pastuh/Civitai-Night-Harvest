@@ -522,11 +522,15 @@ function resolveStatusDotKind(
   pageFoundSignal: boolean
 ): StatusDotKind {
   if (failed.length > 0 && downloading.length === 0) return 'error'
-  // Green triangle — downloadable finds / active download pipeline from that find.
+  // Tamsiai žalias žemyn trikampis — dega TIK kai tikrai siunčiasi.
+  // `status === 'downloading'` be items (ruošiasi) nėra active — kitaip dega tuščiai.
+  if (downloading.length > 0) return 'active'
+  // Rastas naujas siunčiamas modelis, arba eilėje laukia daugiau siuntimų.
+  // Stale latch be pipeline nerodo žaliai — kitaip trikampis lieka tuščiai.
   if (pageFoundSignal) return 'found'
-  if (downloading.length > 0 || status === 'downloading') return 'active'
+  if (queued.length > 0 && !queuePaused) return 'found'
   if (status === 'scanning') return 'scanning'
-  if (status === 'checking' || hasActivity) return 'processing'
+  if (status === 'checking' || status === 'downloading' || hasActivity) return 'processing'
   if (queuePaused && queued.length > 0) return 'paused'
   return 'idle'
 }
@@ -611,7 +615,8 @@ export function GlobalStatusBar({
     return () => window.clearTimeout(id)
   }, [foundLatch, downloading.length, queued.length])
 
-  const pageFoundSignal = foundLatch
+  const pageFoundSignal =
+    foundLatch && (downloading.length > 0 || queued.length > 0)
 
   const activityLabel = useMemo(
 
@@ -895,6 +900,15 @@ export function GlobalStatusBar({
         ? t('globalStatus.dotFound', { count: crawlProgress?.pageFound ?? 0 })
         : t('globalStatus.dotFoundRecent')
 
+  const activeTitle =
+    downloading.length > 0
+      ? queued.length > 0
+        ? `${t('globalStatus.downloading')} · ${t('globalStatus.queuedCount', { count: queued.length })}`
+        : t('globalStatus.downloading')
+      : queued.length > 0
+        ? t('globalStatus.queuedCount', { count: queued.length })
+        : foundTitle
+
   return (
     <footer className="global-status-bar" role="status" aria-live="polite">
       {onNavigateBack ? (
@@ -912,7 +926,7 @@ export function GlobalStatusBar({
       <span
         className={`global-status-pulse is-${dotKind}`}
         aria-hidden
-        title={dotKind === 'found' ? foundTitle : undefined}
+        title={dotKind === 'found' ? foundTitle : dotKind === 'active' ? activeTitle : undefined}
       />
 
       <span className={`global-status-text${downloadingLabel ? ' is-downloading-label' : ''}`}>

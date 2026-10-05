@@ -1910,18 +1910,9 @@ export function SearchBrowsePanel({
     showBlockedModels
   ])
 
-  useEffect(() => {
-    if (!headerToggleAvailability.hideOwned && onlyMissing) setOnlyMissing(false)
-    if (!headerToggleAvailability.hideBanned && hideBanned) setHideBanned(false)
-    if (!headerToggleAvailability.hideAwaiting && hideAwaitingAccess) setHideAwaitingAccess(false)
-  }, [
-    headerToggleAvailability.hideOwned,
-    headerToggleAvailability.hideBanned,
-    headerToggleAvailability.hideAwaiting,
-    onlyMissing,
-    hideBanned,
-    hideAwaitingAccess
-  ])
+  // Paleidžiant programa filtrai lieka įjungti pagal nutylėjimą (hide owned /
+  // hide excluded / hide awaiting), net kai galerija dar tuščia — tuščia
+  // kategorija tik uždisablina checkbox (is-unavailable), bet jo neatžymi.
 
   const filterBreakdown = useMemo(() => {
     const counts = { content: 0, skipped: 0, owned: 0, tag: 0, banned: 0 }
@@ -4322,9 +4313,7 @@ const ModelCard = memo(function ModelCard({
         ? isDownloading
           ? 'Downloading…'
           : 'In queue — click again to remove'
-        : canQueue
-          ? 'Click to add to download queue'
-          : undefined
+        : undefined
 
   return (
     <div
