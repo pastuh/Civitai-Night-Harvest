@@ -542,8 +542,8 @@ const api = {
     return () => { ipcRenderer.removeListener('download:queue', handler) }
   },
   /** Reliable Session-downloads signal (survives done→prune races on download:queue). */
-  onDownloadSessionComplete: (cb: (payload: { versionIds: number[] }) => void) => {
-    const handler = (_: unknown, payload: { versionIds: number[] }) => cb(payload)
+  onDownloadSessionComplete: (cb: (payload: { versionIds: number[]; sessionDownloadCount?: number }) => void) => {
+    const handler = (_: unknown, payload: { versionIds: number[]; sessionDownloadCount?: number }) => cb(payload)
     ipcRenderer.on('download:sessionComplete', handler)
     return () => { ipcRenderer.removeListener('download:sessionComplete', handler) }
   },

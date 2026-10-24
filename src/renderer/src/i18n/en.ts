@@ -580,9 +580,9 @@ export const en = {
       blocked: 'Blocked (pause / ban-by-tag)',
       awaiting: 'Awaiting (Early access)',
       updates: 'Updates (confirm on Updates tab)',
-      yield: 'Yield (queued this session)',
+      yield: 'Yield (downloaded this session)',
       yieldNote:
-        'Yield — models sent to the download strip this session (grows as you queue or Auto sends). Segment colors follow the active theme.'
+        'Yield — unique versions fully downloaded and saved this app session. Queued, awaiting, missing, blocked, banned and linked existing files do not count. Resets when the app restarts. Segment colors follow the active theme.'
     }
   },
   resultsPager: {
@@ -651,7 +651,7 @@ export const en = {
       'You already own another version — confirm on the Updates tab (or Always update) before queueing',
     barLegendYield: 'Yield',
     barLegendYieldHint:
-      'Models sent to the download strip this session (Auto, Updates, Model details). Count only grows.',
+      'Unique versions fully downloaded and saved this app session. Waiting, failed and linked existing files do not count. Resets on app restart.',
     barTooltip:
       '{total} loaded · {owned} owned · Yield {yield} · {awaitingConfirm} updates · {awaiting} awaiting · {skipTag} blocked · {excluded} banned',
     barSegOwned: '{count} already owned',

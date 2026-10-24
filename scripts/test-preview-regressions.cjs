@@ -786,6 +786,13 @@ test('Queue access changes notify membership subscribers without broadcasting by
   assert.equal(changes, 3)
   store.applyDownloadQueueSnapshot({items: [{...ready, failureKind: 'early_access'}], paused: false})
   assert.equal(changes, 4)
+  store.applyDownloadQueueSnapshot({items: [], paused: false, sessionDownloadCount: 1})
+  assert.equal(changes, 5)
+  store.applyDownloadQueueSnapshot({items: [], paused: false, sessionDownloadCount: 2})
+  assert.equal(changes, 6, 'A completion must notify Yield even when its queue row has already been pruned')
+  assert.equal(store.getDownloadQueueSnapshot().sessionDownloadCount, 2)
+  store.applyDownloadQueueSnapshot({items: [], paused: false, sessionDownloadCount: 2})
+  assert.equal(changes, 6, 'Duplicate completion snapshots must not trigger structural updates')
 })
 
 test('Deferred enrichment uses the full access response and keeps uncertain gates', async () => {

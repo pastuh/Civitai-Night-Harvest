@@ -5,6 +5,7 @@ import type {
   ActivityLogMeta,
   DownloadProgress,
   DownloadQueueItem,
+  DownloadQueueState,
   DownloadRequest,
   DownloadResult,
   TagAssignmentPrompt
@@ -90,6 +91,7 @@ export interface DownloadQueueOptions {
 
 export class DownloadQueue {
   private items: DownloadQueueItem[] = []
+  private sessionDownloadedVersionIds = new Set<number>()
   private active = 0
   private paused = true
   private downloadService: DownloadService
@@ -270,8 +272,8 @@ export class DownloadQueue {
     return true
   }
 
-  getState(): { items: DownloadQueueItem[]; paused: boolean } {
-    return { items: this.getItems(), paused: this.paused }
+  getState(): DownloadQueueState {
+    return { items: this.getItems(), paused: this.paused, sessionDownloadCount: this.sessionDownloadedVersionIds.size }
   }
 
   /** Restore queue from disk after restart; interrupted downloads go back to queued. */
@@ -305,6 +307,7 @@ export class DownloadQueue {
     let resumed = 0
     for (const item of this.items) {
       item.downloadReady = false
+      item.downloadedFromNetwork = false
       if (item.status !== 'downloading') continue
       item.status = 'queued'
       item.accessChecked = false
@@ -2404,6 +2407,7 @@ export class DownloadQueue {
       item.status = 'downloading'
       item.origin ??= inventory.isModelOwned(item.modelId) ? 'updates' : 'browse'
       item.downloadReady ??= false
+      item.downloadedFromNetwork = false
       item.accessChecked = false
       item.bytesReceived = 0
       item.totalBytes = 0
@@ -2519,6 +2523,8 @@ export class DownloadQueue {
       if (result.status === 'downloaded') {
         item.status = 'done'
         item.phase = 'done'
+        item.downloadedFromNetwork = result.downloadedFromNetwork === true
+        if (item.downloadedFromNetwork && item.versionId > 0) this.sessionDownloadedVersionIds.add(item.versionId)
         if (item.versionId) this.noteAutoQueueCooldown(item.versionId)
         const deferredEntry = inventory.getDeferredDownload(item.versionId)
         inventory.removeDeferredDownload(item.versionId)
@@ -2569,9 +2575,9 @@ export class DownloadQueue {
 
         // Emit done before prune so Session downloads can observe the completion.
         this.emitQueueState()
-        if (item.versionId > 0) {
+        if (item.downloadedFromNetwork && item.versionId > 0) {
           sendToRenderer(this.getWindow, 'download:sessionComplete', {
-            versionIds: [item.versionId]
+            versionIds: [item.versionId], sessionDownloadCount: this.sessionDownloadedVersionIds.size
           })
         }
         this.items = this.items.filter((i) => i.id !== item.id)

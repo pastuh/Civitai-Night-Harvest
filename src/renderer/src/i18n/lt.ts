@@ -585,9 +585,9 @@ export const lt: Messages = {
       blocked: 'Blocked (pause / ban-by-tag)',
       awaiting: 'Awaiting (Early access)',
       updates: 'Updates (patvirtinti Updates skirtuke)',
-      yield: 'Yield (eilėn šią sesiją)',
+      yield: 'Yield (atsiųsta šią sesiją)',
       yieldNote:
-        'Yield — modeliai, išsiųsti į download juostą šią sesiją (auga kai dedate į eilę arba Auto siunčia). Segmentų spalvos seka aktyvią temą.'
+        'Yield — šią programos sesiją pilnai atsiųstos ir išsaugotos unikalios versijos. Eilė, awaiting, Missing, blocked, banned ir jau esančių failų susiejimas neskaičiuojami. Perkrovus programą skaičius prasideda nuo nulio. Segmentų spalvos seka aktyvią temą.'
     }
   },
   resultsPager: {
@@ -656,7 +656,7 @@ export const lt: Messages = {
       'Jau turite kitą versiją — patvirtinkite Atnaujinimai tab’e (arba Visada atnaujinti) prieš eilę',
     barLegendYield: 'Yield',
     barLegendYieldHint:
-      'Modeliai, išsiųsti į download juostą šią sesiją (Auto, Updates, Model details). Skaičius tik auga.',
+      'Šią programos sesiją pilnai atsiųstos ir išsaugotos unikalios versijos. Laukiantys, nesėkmingi ir susieti jau esantys failai neskaičiuojami. Perkrovus programą prasideda nuo nulio.',
     barTooltip:
       '{total} loaded · {owned} owned · Yield {yield} · {awaitingConfirm} updates · {awaiting} awaiting · {skipTag} blocked · {excluded} banned',
     barSegOwned: '{count} jau turite',

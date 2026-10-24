@@ -49,12 +49,14 @@ if (process.argv.includes('--model-actions')) {
       const progressive = await window.webContents.executeJavaScript('window.runProgressivePreviewTest()')
       const filters = await window.webContents.executeJavaScript('window.runBrowseFilterTest()')
       const startup = await window.webContents.executeJavaScript('window.runFullStartupTest()')
+      const yieldCounter = await window.webContents.executeJavaScript('window.runYieldCounterTest()')
       const strip = await window.webContents.executeJavaScript('window.runDownloadStripTest()')
       const pages = await window.webContents.executeJavaScript('window.runPageAudit()')
       const missingLayout = await window.webContents.executeJavaScript('window.runMissingAllowLayoutTest()')
       const actions = await window.webContents.executeJavaScript('window.runModelActionsUiTest()')
       const result = await window.webContents.executeJavaScript('window.runPreviewBrowserTest()')
       result.startup = startup
+      result.yieldCounter = yieldCounter
       result.strip = strip
       result.progressive = progressive
       result.filters = filters
@@ -129,6 +131,7 @@ if (process.argv.includes('--model-actions')) {
         assert.equal(result.hiddenFrames, 0, 'Painted previews must never disappear')
       }
       assert.equal(result.startup.settingsCalls, 1, 'StrictMode and locale hydration must not repeat startup')
+      assert.deepEqual(result.yieldCounter.sequence, [0, 0, 0, 1, 2, 3, 4, 4], 'Yield must ignore waiting/failures and count completed transfers only')
       assert.equal(result.startup.starts, 1, 'Session must start exactly once')
       assert.equal(result.startup.readyCalls, 1, 'Renderer ready must be sent exactly once')
       assert.equal(result.startup.settingsSaves, 0, 'Boot must not save unchanged favorites and start the scheduler early')
@@ -326,8 +329,10 @@ function rendererSource() {
           name: 'Audit details', versionName: 'Moss v1 v1.0', type: 'LORA', baseModel: 'MOSS Image', tags: [],
           sourceDomain: 'red', pageUrl: 'https://civitai.red/models/' + modelId, license: {commercialUse: 'No'},
           versions: [{id: versionId || 3416068, name: 'Moss v1 v1.0', baseModel: 'MOSS Image', previewUrl: models[0].previewUrl, previewUrls: [models[0].previewUrl]}] }),
-        getDownloadQueue: async () => ({items: [], paused: true}),
-        reconcileDownloadQueue: async () => ({items: [], paused: true}),
+        getDownloadQueue: async () => ({items: Array.from({length: 8}, (_, i) => ({id: 'restored-' + i,
+          modelId: 32000 + i, versionId: 42000 + i, modelName: 'Restored waiting ' + i,
+          modelType: 'LORA', status: 'queued', manual: true, phase: 'model', bytesReceived: 0, totalBytes: 0})), paused: true, sessionDownloadCount: 0}),
+        reconcileDownloadQueue: async () => fixtureApi.getDownloadQueue(),
         getScanStatus: async () => 'scanning', getScanScheduleInfo: async () => ({}),
         getAppIconDataUrl: async () => '', isFullScreen: async () => false,
         getEaAccessSeen: async () => ({byVersionId: {}}),
@@ -379,6 +384,60 @@ function rendererSource() {
       await pause(150);
       if (settings.hideAwaitingAccess !== false) throw new Error('Wrong filter persisted');
       return {ms, settingsCalls, settingsSaves: bootSettingsSaves, filterSaves: settingsSaves - bootSettingsSaves, starts, readyCalls, hiddenFrames, lateLeakedFrames};
+    };
+    window.runYieldCounterTest = async () => {
+      const oldGetQueue = fixtureApi.getDownloadQueue, oldReconcile = fixtureApi.reconcileDownloadQueue;
+      let current = {items: [], paused: true, sessionDownloadCount: 0};
+      fixtureApi.getDownloadQueue = async () => current;
+      fixtureApi.reconcileDownloadQueue = async () => current;
+      const send = (items, count) => {current = {items, paused: true, sessionDownloadCount: count}; emit('onDownloadQueue', current);};
+      const readYield = () => {
+        const legend = [...document.querySelectorAll('.browse-progress-legend-item')].find(el => el.textContent.trim().startsWith('Yield'));
+        if (legend) return Number(legend.querySelector('strong')?.textContent || 0);
+        const line = [...document.querySelectorAll('main li')].find(el => el.textContent.trim().startsWith('Yield'));
+        return Number(line?.textContent.split(':').at(-1)?.trim() || 0);
+      };
+      const expect = async n => {await pause(70); if (readYield() !== n) throw new Error('Wrong Yield: expected ' + n + ', got ' + readYield());};
+      const sequence = [];
+      const rows = Array.from({length: 8}, (_, i) => ({id: 'yield-waiting-' + i, modelId: 32000 + i, versionId: 42000 + i,
+        modelName: 'Yield waiting ' + i, modelType: 'LORA', status: 'queued', phase: 'model', bytesReceived: 0, totalBytes: 1024}));
+      try {
+        await expect(0); sequence.push(readYield());
+        send(rows, 0); await expect(0); sequence.push(readYield());
+        send(rows.map((row, i) => ({...row, status: i % 2 ? 'failed' : 'deferred', failureKind: i % 2 ? 'not_found' : 'early_access'})), 0);
+        await expect(0); sequence.push(readYield());
+        for (let i = 0; i < 4; i++) {
+          const row = {...rows[i], id: 'yield-completed-' + i, modelId: 33000 + i, versionId: 43000 + i,
+            status: 'downloading', accessChecked: true, downloadReady: true, bytesReceived: 512};
+          send([row], i); await expect(i);
+          send([{...row, phase: 'preview', bytesReceived: 1024}], i); await expect(i);
+          send([{...row, phase: 'swarm', bytesReceived: 1024}], i); await expect(i);
+          send([{...row, status: 'done', phase: 'done', downloadedFromNetwork: true}], i + 1);
+          emit('onDownloadSessionComplete', {versionIds: [row.versionId], sessionDownloadCount: i + 1});
+          // Duplicated IPC must not count one saved version twice.
+          emit('onDownloadSessionComplete', {versionIds: [row.versionId], sessionDownloadCount: i + 1});
+          await expect(i + 1); sequence.push(readYield());
+          send([], i + 1); await expect(i + 1);
+        }
+        send([{...rows[7], status: 'done', downloadedFromNetwork: false, reason: 'Linked existing file on disk'}], 4);
+        await expect(4);
+        emit('onScanComplete'); await expect(4);
+        send([], 4); await expect(4); sequence.push(readYield());
+        const search = document.querySelector('.browse-results-search'), previousSearch = search.value;
+        const changeSearch = value => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, value);
+          search.dispatchEvent(new Event('input', {bubbles: true}));
+        };
+        try {
+          changeSearch('yield-fixture-no-matching-model');
+          await waitFor(() => [...document.querySelectorAll('.browse-empty-hint li')].some(el =>
+            el.textContent.trim().startsWith('Yield') && el.textContent.trim().endsWith('4')), 'Empty Browse must show only four completed downloads');
+        } finally { changeSearch(previousSearch); await pause(80); }
+      } finally {
+        fixtureApi.getDownloadQueue = oldGetQueue; fixtureApi.reconcileDownloadQueue = oldReconcile;
+        send([], 4);
+      }
+      return {sequence};
     };
     window.runDownloadStripTest = async () => {
       const originalSettings = await fixtureApi.getSettings();

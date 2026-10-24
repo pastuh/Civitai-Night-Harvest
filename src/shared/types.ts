@@ -537,6 +537,8 @@ export type DownloadQueueStatus = 'queued' | 'downloading' | 'done' | 'failed' |
 export interface DownloadQueueState {
   items: DownloadQueueItem[]
   paused: boolean
+  /** Unique versions fully downloaded in this main-process session; never restored from disk. */
+  sessionDownloadCount?: number
 }
 
 export interface DownloadQueueItem {
@@ -574,6 +576,8 @@ export interface DownloadQueueItem {
   interruptedResume?: boolean
   sourceDomain?: CivitaiDomain
   status: DownloadQueueStatus
+  /** True only after a new model transfer, validation and inventory save all succeed. */
+  downloadedFromNetwork?: boolean
   bytesReceived: number
   totalBytes: number
   phase: DownloadProgress['phase']
@@ -747,6 +751,8 @@ export interface DownloadRequest {
 
 export interface DownloadResult {
   status: 'downloaded' | 'skipped' | 'failed' | 'deferred'
+  /** Existing-file adoption is false; true only after transferring and validating new weights. */
+  downloadedFromNetwork?: boolean
   reason?: string
   failureKind?: DeferredFailureKind
   earlyAccessEndsAt?: string

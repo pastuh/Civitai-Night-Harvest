@@ -419,3 +419,25 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
 - Regresinis testas prieš pataisą atkūrė neteisingą persiuntimą; po pataisos
   tikrina 0 tinklo užklausų esamam preview, vieną dingusio failo atkūrimą,
   jo panaudojimą kito Sync metu ir atskirą NSFW papildymą be preview siuntimo.
+
+## Yield — tik pilnai užbaigti siuntimai — 2026-10-24
+
+- Senas renderer skaitiklis įsimindavo jau queued/downloading versijas ir jų
+  nebeatimdavo po Missing, awaiting ar fail. Todėl Yield nebuvo sėkmės rodiklis.
+- Skaičiavimas perkeltas į pagrindinio proceso siuntimo užbaigimą. Darbininkas
+  aiškiai atskiria naują svorių siuntimą nuo esančio failo adoption; sėkmės žyma
+  grąžinama tik po validacijos, metaduomenų ir inventoriaus įrašo išsaugojimo.
+  Set pagal versijos ID neleidžia dubliuoti vienos versijos sėkmės.
+- Sesijos skaičius laikomas atmintyje, grąžinamas eilės snapshot ir completion
+  pranešime. Jis neįrašomas į queue DB ir neatkuriamas iš senų queue įrašų.
+  Renderer gauna teisingą skaičių ir kai done eilutė jau pašalinta; pakartotiniai
+  ar pavėlavę pranešimai nedubliuoja ir nesumažina sesijos skaitiklio.
+- Library sesijos pranešimai taip pat atskirti nuo adoption. Updates laikinos
+  pipeline narystės skaičiavimas išlieka atskiras nuo sėkmingų siuntimų Yield.
+  Pakeisti EN/LT paaiškinimai ir README.
+- Izoliuotas tikro worker, HTTP ir SQLite testas: 8 Missing → Yield 0;
+  4 validuoti, į Library išsaugoti siuntimai → 1, 2, 3, 4; adoption → lieka 4;
+  naujas queue procesas → 0. Chromium patikra abiejose sesijose tikrina laukimą,
+  klaidas, modelio/preview/Swarm fazes, dvigubą IPC, pruned queue ir tuščią Browse.
+- Praėjo 40 regresijų ir 33 bendrieji testai, tikri izoliuoti siuntimai/SQLite,
+  abu atskiri Chromium procesai, abi TypeScript patikros ir production build.

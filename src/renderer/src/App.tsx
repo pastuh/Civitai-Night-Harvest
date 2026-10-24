@@ -6,6 +6,7 @@ import type {
   AppSettingsSave,
   AppStatus,
   DownloadQueueItem,
+  DownloadQueueState,
   DownloadStripVisibility,
   InventoryRecord,
   LibrarySyncProgress,
@@ -331,25 +332,10 @@ export default function App() {
   /** Full banned model id set — badge must not count banned/queued leftovers. */
   const [bannedModelIds, setBannedModelIds] = useState<Set<number>>(() => new Set())
   const [forgottenModelIds, setForgottenModelIds] = useState<Set<number>>(() => new Set())
-  /** Session Yield: versionIds that entered the download pipeline (only grows). */
-  const sessionYieldIdsRef = useRef<Set<number>>(new Set())
+  /** Confirmed completions suppress stale Updates offers while inventory refresh catches up. */
+  const sessionCompletedVersionIdsRef = useRef<Set<number>>(new Set())
   const [sessionYieldCount, setSessionYieldCount] = useState(0)
   const [libraryBadgeTick, setLibraryBadgeTick] = useState(0)
-
-  const noteSessionYield = useCallback((items: DownloadQueueItem[]) => {
-    const set = sessionYieldIdsRef.current
-    let added = 0
-    for (const item of items) {
-      if (item.status !== 'queued' && item.status !== 'downloading' && item.status !== 'done') {
-        continue
-      }
-      if (item.versionId <= 0) continue
-      if (set.has(item.versionId)) continue
-      set.add(item.versionId)
-      added++
-    }
-    if (added > 0) setSessionYieldCount(set.size)
-  }, [])
 
   /** Real queue completions only — disk sync / inventory import must not appear here. */
   const noteSessionDownloads = useCallback((versionIds: number[]) => {
@@ -362,7 +348,10 @@ export default function App() {
     }
     if (!unique.length) return
     const now = Date.now()
-    for (const id of unique) sessionDownloadNotedAtRef.current.set(id, now)
+    for (const id of unique) {
+      sessionDownloadNotedAtRef.current.set(id, now)
+      sessionCompletedVersionIdsRef.current.add(id)
+    }
     setSessionDownloadIds((prev) => {
       const next = [...prev]
       let changed = false
@@ -406,11 +395,14 @@ export default function App() {
     })
   }, [inventory, sessionDownloadIds.length])
 
-  // Any queue structure change (Auto / Updates / details / Manual) grows Yield for this session.
+  // Main-process completions are authoritative; restored queue rows never imply a download.
   useEffect(() => {
     void queueStructureKeyForBadge
-    noteSessionYield(getDownloadQueueSnapshot().items)
-  }, [queueStructureKeyForBadge, noteSessionYield])
+    const count = getDownloadQueueSnapshot().sessionDownloadCount
+    if (count != null && Number.isSafeInteger(count) && count >= 0) {
+      setSessionYieldCount(prev => Math.max(prev, count))
+    }
+  }, [queueStructureKeyForBadge])
 
   /** Keep existing row order; append newly detected offers at the bottom. */
   const applyPendingVersions = useCallback((pend: PendingVersion[]) => {
@@ -483,7 +475,7 @@ export default function App() {
       setActionError(message)
       setStorageOffline(true)
       setBrowseGalleryAwaiting(false)
-      setDownloadQueueState({ items: getDownloadQueueSnapshot().items, paused: true })
+      setDownloadQueueState({ ...getDownloadQueueSnapshot(), paused: true })
       setBackgroundStatus(null)
       setBusy(null)
       setSyncProgress(null)
@@ -496,7 +488,7 @@ export default function App() {
       setSettings(next)
       if (!next.nightMode) setBrowseGalleryAwaiting(false)
       else if (!hasEnabledWatchRulesRef.current) setBrowseGalleryAwaiting(false)
-      if (next.crawlAutoDownload === false) setDownloadQueueState({ items: getDownloadQueueSnapshot().items, paused: true })
+      if (next.crawlAutoDownload === false) setDownloadQueueState({ ...getDownloadQueueSnapshot(), paused: true })
     })
   }, [])
 
@@ -577,7 +569,7 @@ export default function App() {
         })
       }
       const q = await window.api.reconcileDownloadQueue()
-      setDownloadQueueState({ items: q.items, paused: q.paused })
+      setDownloadQueueState(q)
       if (options.syncDisk) {
         setSyncMessage(formatLibrarySyncSummary(inv, settings?.locale ?? 'en'))
         setSyncProgress(null)
@@ -637,7 +629,7 @@ export default function App() {
           } else {
             setSyncMessage(null)
           }
-          setDownloadQueueState({ items: q.items, paused: q.paused })
+          setDownloadQueueState(q)
           setStatus(await window.api.getScanStatus())
         } catch (err) {
           setActionError(err instanceof Error ? err.message : String(err))
@@ -751,7 +743,7 @@ export default function App() {
       setBrowseGalleryAwaiting(Boolean(s.nightMode) && watch.some((r) => r.enabled))
 
       const q = await window.api.reconcileDownloadQueue()
-      setDownloadQueueState({ items: q.items, paused: q.paused || s.crawlAutoDownload === false })
+      setDownloadQueueState({ ...q, paused: q.paused || s.crawlAutoDownload === false })
       setStatus(await window.api.getScanStatus())
 
       await setBootPhase(
@@ -867,10 +859,10 @@ export default function App() {
     >()
     let lastQueueStructureKey = ''
     let progressQueueTimer: number | null = null
-    let pendingProgressQueue: { items: DownloadQueueItem[]; paused: boolean } | null = null
+    let pendingProgressQueue: DownloadQueueState | null = null
     let inventoryRefreshTimer: number | null = null
 
-    const applyQueueState = (q: { items: DownloadQueueItem[]; paused: boolean }) => {
+    const applyQueueState = (q: DownloadQueueState) => {
       let needsInventory = false
       const completedVersionIds: number[] = []
       const hadActive = Array.from(prevQueueMeta.values()).some(
@@ -880,7 +872,7 @@ export default function App() {
         const prev = prevQueueMeta.get(item.id)
         // Only count transitions we observed — first snapshot seeds the map without false "new" downloads.
         if (item.status === 'done' && prev && prev.status !== 'done' && item.versionId > 0) {
-          completedVersionIds.push(item.versionId)
+          if (item.downloadedFromNetwork === true) completedVersionIds.push(item.versionId)
           needsInventory = true
         }
         if (
@@ -907,8 +899,7 @@ export default function App() {
       }
 
       if (completedVersionIds.length) noteSessionDownloads(completedVersionIds)
-      noteSessionYield(q.items)
-      setDownloadQueueState({ items: q.items, paused: q.paused })
+      setDownloadQueueState(q)
       const hasActive = q.items.some((i) => i.status === 'queued' || i.status === 'downloading')
       if (needsInventory || (hadActive && !hasActive)) {
         if (inventoryRefreshTimer) window.clearTimeout(inventoryRefreshTimer)
@@ -1266,7 +1257,7 @@ export default function App() {
           const pending = pendingProgressQueue
           pendingProgressQueue = null
           if (pending) {
-            setDownloadQueueState({ items: pending.items, paused: pending.paused })
+            setDownloadQueueState(pending)
           }
         }, 900)
       }),
@@ -1274,6 +1265,10 @@ export default function App() {
         ? window.api.onDownloadSessionComplete((payload) => {
             const ids = payload?.versionIds ?? []
             if (ids.length) noteSessionDownloads(ids)
+            const count = payload?.sessionDownloadCount
+            if (count != null && Number.isSafeInteger(count) && count >= 0) {
+              setSessionYieldCount(prev => Math.max(prev, count))
+            }
           })
         : () => {},
       window.api.onTagAssignmentPrompt((prompt) => {
@@ -1304,7 +1299,7 @@ export default function App() {
       if (inventoryRefreshTimer != null) window.clearTimeout(inventoryRefreshTimer)
       unsubs.forEach((u) => u())
     }
-  }, [refreshAfterScan, refreshInventory, withBusy, applyPendingVersions, applyDeferredVersions, noteSessionDownloads, noteSessionYield])
+  }, [refreshAfterScan, refreshInventory, withBusy, applyPendingVersions, applyDeferredVersions, noteSessionDownloads])
 
   useEffect(() => {
     if (!settings) return
@@ -1477,7 +1472,7 @@ export default function App() {
   const refreshDownloadQueueState = async () => {
     try {
       const q = await window.api.getDownloadQueue()
-      setDownloadQueueState({ items: q.items, paused: q.paused })
+      setDownloadQueueState(q)
       setStatus(await window.api.getScanStatus())
     } catch {
       /* queue broadcast may have already updated state */
@@ -1491,7 +1486,7 @@ export default function App() {
     if (!nextManual) {
       try {
         const q = await window.api.reconcileDownloadQueue()
-        setDownloadQueueState({ items: q.items, paused: q.paused })
+        setDownloadQueueState(q)
       } catch {
         await refreshDownloadQueueState()
       }
@@ -1542,7 +1537,7 @@ export default function App() {
     setClearQueueBusy(true)
     try {
       const result = await window.api.clearDownloadQueue()
-      setDownloadQueueState({ items: result.queue.items, paused: result.queue.paused })
+      setDownloadQueueState(result.queue)
       setSettings(result.settings)
       setStatus(await window.api.getScanStatus())
     } catch (err) {
@@ -1835,14 +1830,14 @@ export default function App() {
         inPipeline.add(item.versionId)
       }
     }
-    const yielded = sessionYieldIdsRef.current
+    const completed = sessionCompletedVersionIdsRef.current
     const n = pending.filter(
       (p) =>
         !p.skipped &&
         !p.forgotten &&
         !ownedVersionIds.has(p.versionId) &&
         !inPipeline.has(p.versionId) &&
-        !yielded.has(p.versionId) &&
+        !completed.has(p.versionId) &&
         !bannedModelIds.has(p.modelId)
     ).length
     return n || undefined
@@ -2011,7 +2006,7 @@ export default function App() {
     try {
       setActionError(null)
       const result = await window.api.retryAllDeferred()
-      setDownloadQueueState({ items: result.queue.items, paused: result.queue.paused })
+      setDownloadQueueState(result.queue)
       applyDeferredVersions(result.deferred)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
@@ -2030,7 +2025,7 @@ export default function App() {
         await saveSettings({ crawlAutoDownload: true })
       }
       const state = await window.api.startDownloads()
-      setDownloadQueueState({ items: state.items, paused: state.paused })
+      setDownloadQueueState(state)
       setStatus(await window.api.getScanStatus())
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
@@ -2094,7 +2089,7 @@ export default function App() {
   const refreshQueueOnly = useCallback(async () => {
     try {
       const q = await window.api.getDownloadQueue()
-      setDownloadQueueState({ items: q.items, paused: q.paused })
+      setDownloadQueueState(q)
     } catch {
       /* keep existing queue */
     }
@@ -2714,16 +2709,16 @@ export default function App() {
               clearQueueBusy={clearQueueBusy}
               onRetryFailed={async (id) => {
                 const state = await window.api.retryFailedDownload(id)
-                setDownloadQueueState({ items: state.items, paused: state.paused })
+                setDownloadQueueState(state)
                 if (!state.paused) setStatus(await window.api.getScanStatus())
               }}
               onDismissFailed={async (id) => {
                 const state = await window.api.dismissDownload(id)
-                setDownloadQueueState({ items: state.items, paused: state.paused })
+                setDownloadQueueState(state)
               }}
               onPrioritizeDownload={async (id) => {
                 const state = await window.api.prioritizeDownload(id)
-                setDownloadQueueState({ items: state.items, paused: state.paused })
+                setDownloadQueueState(state)
                 if (!state.paused) setStatus(await window.api.getScanStatus())
               }}
               onBrowseModelBanChange={markBrowseModelBan}

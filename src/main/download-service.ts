@@ -509,6 +509,7 @@ export class DownloadService {
           })
           return {
             status: 'downloaded',
+            downloadedFromNetwork: false,
             slug: adopted.slug,
             paths: [modelPath, previewPath, swarmPath],
             modelId: model.id,
@@ -780,6 +781,7 @@ export class DownloadService {
 
       return {
         status: 'downloaded',
+        downloadedFromNetwork: true,
         slug,
         paths: [modelPath, previewPath, swarmPath],
         modelId: model.id,

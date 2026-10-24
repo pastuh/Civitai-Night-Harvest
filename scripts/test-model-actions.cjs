@@ -249,7 +249,7 @@ if (process.versions.electron) {
           assert.equal(traffic.accessChecked, false, 'Preparing a file must not falsely confirm an HTTP payload')
           progress({...metadata, bytesReceived: 512, totalBytes: 1024})
           assert.equal(traffic.accessChecked, true, 'Actual model transfer confirms access')
-          return {status: 'downloaded', modelId: 83, versionId: 8301}
+          return {status: 'downloaded', downloadedFromNetwork: true, modelId: 83, versionId: 8301}
         }
         return {status: 'deferred', failureKind: 'early_access', reason: 'Still gated',
           earlyAccessEndsAt: future, modelId: 83, versionId: 8301}
@@ -320,6 +320,77 @@ if (process.versions.electron) {
     inv.removeDeferredDownload(8101)
     inv.removeDeferredDownload(8201)
     process.stdout.write('PASS access gates: guarded early release; no metadata-only access confirmation; first payload confirms transfer; parent-only EarlyAccess defers before Browse\n')
+    // Exercise the actual worker, transfer validation, SQLite save and queue completion together.
+    const yieldHeader = Buffer.from(JSON.stringify({weight: {dtype: 'U8', shape: [4], data_offsets: [0, 4]}}))
+    const yieldLength = Buffer.alloc(8); yieldLength.writeBigUInt64LE(BigInt(yieldHeader.length))
+    const yieldBytes = Buffer.concat([yieldLength, yieldHeader, Buffer.from([1, 2, 3, 4])])
+    let transfers = 0
+    const server = require('node:http').createServer((_request, response) => {transfers++; response.end(yieldBytes)})
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const downloadUrl = 'http://127.0.0.1:' + server.address().port + '/model'
+    const downloadedModels = new Map(Array.from({length: 4}, (_, i) => {
+      const id = 31000 + i, versionId = 41000 + i
+      return [id, {id, name: 'Yield download ' + i, type: 'LORA', tags: [], nsfw: false, nsfwLevel: 1,
+        modelVersions: [{id: versionId, name: 'yield-v' + i, baseModel: 'MOSS Image', availability: 'Public',
+          files: [{id: versionId, type: 'Model', primary: true, name: 'model.safetensors', sizeKB: yieldBytes.length / 1024,
+            downloadUrl, hashes: {SHA256: require('node:crypto').createHash('sha256').update(yieldBytes).digest('hex')}}], images: []}]}]
+    }))
+    const yieldClient = {
+      getDomain: () => 'red', getDownloadUrl: () => downloadUrl,
+      getModelPageUrl: id => 'https://example.test/models/' + id,
+      getModel: async id => {if (!downloadedModels.has(id)) throw new Error('404 Model not found'); return downloadedModels.get(id)},
+      getModelVersion: async id => {const found = [...downloadedModels.values()].find(model => model.modelVersions[0].id === id)
+        if (!found) throw new Error('404 Model version not found'); return found.modelVersions[0]},
+      getVersionMini: async () => ({availability: 'Public'}), searchImagesForVersion: async () => []
+    }
+    const yieldPool = {getSetting: () => 'red', primaryDomain: () => 'red', forDomain: () => yieldClient, primary: () => yieldClient}
+    const messages = [], yieldWindow = {isDestroyed: () => false, webContents: {send: (channel, payload) => messages.push({channel, payload})}}
+    const yieldQueue = new DownloadQueue(new DownloadService(yieldPool), () => yieldWindow)
+    yieldQueue.checkIdle = () => {}
+    global.__downloadFixtureSettings = {loraOutputFolder: work, checkpointOutputFolder: work, downloadStreams: 1, slugFormat: 'versionName'}
+    const runYieldRow = async (modelId, versionId) => {
+      const item = {id: 'yield-' + versionId, modelId, versionId, modelName: 'Yield fixture', modelType: 'LORA',
+        status: 'queued', manual: true, routingTag: '', outputFolder: work, phase: 'model', bytesReceived: 0, totalBytes: 0}
+      yieldQueue.items = [item]
+      await yieldQueue.runOne(item)
+      return item
+    }
+    try {
+      for (let i = 0; i < 8; i++) {
+        const failedItem = await runYieldRow(32000 + i, 42000 + i)
+        assert.ok(inv.getMissingModel(32000 + i), 'Unavailable versions must really appear in Missing: ' + JSON.stringify(failedItem))
+        assert.equal(inv.hasVersion(42000 + i), false)
+      }
+      assert.equal(yieldQueue.getState().sessionDownloadCount, 0, 'Eight Missing failures must produce zero Yield')
+      assert.equal(transfers, 0)
+      for (let i = 0; i < 4; i++) {
+        const item = await runYieldRow(31000 + i, 41000 + i)
+        assert.equal(item.status, 'done', item.reason)
+        assert.equal(item.downloadedFromNetwork, true)
+        assert.equal(inv.hasVersion(41000 + i), true)
+        assert.equal(yieldQueue.getState().sessionDownloadCount, i + 1, 'Yield grows only after complete downloads land in Library')
+      }
+      assert.equal(transfers, 4)
+      assert.equal(messages.filter(message => message.channel === 'download:sessionComplete').length, 4)
+      assert.deepEqual(messages.filter(message => message.channel === 'download:sessionComplete').map(message => message.payload.sessionDownloadCount), [1, 2, 3, 4])
+      // Re-link the already saved file, without another network transfer.
+      inv.removeVersion(41000)
+      const adopted = await runYieldRow(31000, 41000)
+      assert.equal(adopted.status, 'done', adopted.reason)
+      assert.equal(adopted.downloadedFromNetwork, false)
+      assert.equal(transfers, 4)
+      assert.equal(yieldQueue.getState().sessionDownloadCount, 4, 'Adopting an existing file cannot increase Yield')
+      assert.equal(messages.filter(message => message.channel === 'download:sessionComplete').length, 4)
+      yieldQueue.flushPersist()
+      assert.equal(inv.loadDownloadQueueState().sessionDownloadCount, undefined, 'Session Yield must never be persisted with queue history')
+      const restarted = new DownloadQueue(new DownloadService(yieldPool), () => null)
+      try { restarted.restoreFromDisk(); assert.equal(restarted.getState().sessionDownloadCount, 0) }
+      finally { restarted.dispose() }
+    } finally {
+      yieldQueue.dispose(); delete global.__downloadFixtureSettings
+      server.closeAllConnections(); await new Promise(resolve => server.close(resolve))
+    }
+    process.stdout.write('PASS Yield: 8 Missing = 0; 4 real validated downloads = 4; existing-file adoption excluded; restart resets\n')
     inv.upsertBrowseCardCache([a, sibling, unrelated].map(row => ({ modelId: row.modelId, versionId: row.versionId, card: card(row) })))
     inv.appendBrowseRuleGalleryMembers('wan', [101, 102, 201])
     for (const row of [a, sibling]) {
@@ -328,7 +399,7 @@ if (process.versions.electron) {
       db.prepare('INSERT INTO pending_seen VALUES (?, ?, ?)').run(row.versionId, '2026-01-01', '2026-01-01')
       db.prepare('INSERT INTO ea_access_seen VALUES (?, ?, ?)').run(row.versionId, '2026-01-01', '2026-01-01')
     }
-    db.prepare('INSERT INTO download_queue_state VALUES (1, 1, ?, ?)').run(JSON.stringify([
+    db.prepare('INSERT OR REPLACE INTO download_queue_state VALUES (1, 1, ?, ?)').run(JSON.stringify([
       { id: 'a', modelId: 10, versionId: 101, status: 'done' }, { id: 'b', modelId: 10, versionId: 102, status: 'queued' }]), '2026-01-01')
     inv.banVersion(pending(a)); inv.skipPendingVersion(pending(sibling))
     await assert.rejects(forgetSelection({ modelId: 20, versionId: 101 }, services), /does not belong/)

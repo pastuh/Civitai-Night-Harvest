@@ -1,10 +1,7 @@
-import type { DeferredDownload, DownloadQueueItem } from '../../../shared/types'
+import type { DeferredDownload, DownloadQueueState } from '../../../shared/types'
 import { visibleDownloadItems } from '../../../shared/download-pipeline'
 
-export type DownloadQueueSnapshot = {
-  items: DownloadQueueItem[]
-  paused: boolean
-}
+export type DownloadQueueSnapshot = DownloadQueueState
 
 type Listener = () => void
 
@@ -14,8 +11,8 @@ const queueListeners = new Set<Listener>()
 const structureListeners = new Set<Listener>()
 
 export function queueStructureKey(q: DownloadQueueSnapshot): string {
-  return `${q.paused ? 1 : 0}:${q.items
-    .map((i) => `${i.id}:${i.status}:${i.versionId}:${i.manual ? 1 : 0}:${i.failureKind ?? ''}:${i.accessChecked ?? ''}:${i.downloadReady ?? ''}:${i.origin ?? ''}`)
+  return `${q.paused ? 1 : 0}:${q.sessionDownloadCount ?? 0}:${q.items
+    .map((i) => `${i.id}:${i.status}:${i.versionId}:${i.manual ? 1 : 0}:${i.failureKind ?? ''}:${i.accessChecked ?? ''}:${i.downloadReady ?? ''}:${i.origin ?? ''}:${i.downloadedFromNetwork ?? ''}`)
     .join('|')}`
 }
 
