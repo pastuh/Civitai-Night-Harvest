@@ -1,3 +1,4 @@
+import { useForgetModel } from '../hooks/useForgetModel'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, memo, startTransition, type MouseEvent } from 'react'
 import type {
   BannedModel,
@@ -289,11 +290,14 @@ function GalleryTabInner({
   onInventoryVersionsRemoved
 }: Props) {
   const t = useT()
+  const { requestForget, confirmation: forgetConfirmation } = useForgetModel()
   const resultsDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
   const initial = viewPrefs ? coerceLibraryViewPrefs(viewPrefs) : DEFAULT_LIBRARY_VIEW_PREFS
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>(initial.libraryFilter)
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>(() =>
+    preferSessionFilter && focusModelId == null ? { type: 'session' } : initial.libraryFilter
+  )
   const [modelTypeFilter, setModelTypeFilter] = useState<string | null>(
     initial.modelTypeFilter ?? null
   )
@@ -326,6 +330,8 @@ function GalleryTabInner({
   })
   const [moving, setMoving] = useState(false)
   const [message, setMessage] = useState('')
+  const [banTarget, setBanTarget] = useState<{ modelId: number; modelName: string; versionId?: number } | null>(null)
+  const [versionBanIds, setVersionBanIds] = useState<Set<number>>(() => new Set())
   const [bannedList, setBannedList] = useState<BannedModel[]>([])
   /** Instant hide on Ban — survives stale loadBanned / refresh races that caused card flicker. */
   const [pendingBanIds, setPendingBanIds] = useState<Set<number>>(() => new Set())
@@ -357,21 +363,6 @@ function GalleryTabInner({
   }, [inventory])
   const libraryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<{
-    versionId: number
-    modelId: number
-    modelName: string
-    versionName: string
-    siblingCount: number
-    /** Taken down / archived — always confirm, even if session skip is on. */
-    goneFromCivitai?: boolean
-    modeLabel?: string
-  } | null>(null)
-  const [localDeleteConfirm, setLocalDeleteConfirm] = useState<{
-    versionId: number
-    modelName: string
-  } | null>(null)
-  const deleteConfirmSkipRef = useRef(false)
   /** Keep `.content` scroll stable across exclude/delete re-renders (Missing-style). */
   const savedContentScrollRef = useRef<number | null>(null)
   const rememberContentScroll = useCallback(() => {
@@ -748,16 +739,17 @@ function GalleryTabInner({
 
   const loadBanned = async () => {
     try {
-      const list = await window.api.getBannedModels()
+      const [list, exclusions] = await Promise.all([window.api.getBannedModels(), window.api.getExclusions()])
       setBannedList(list)
+      setVersionBanIds(new Set(exclusions.filter(row => row.kind === 'excludedVersion').map(row => row.versionId!)))
     } catch {
       /* ignore */
     }
   }
 
   useEffect(() => {
-    void loadBanned()
-  }, [inventory])
+    if (isActive) void loadBanned()
+  }, [inventory, isActive])
 
   // Drop pending hides once inventory no longer contains those models/versions.
   useEffect(() => {
@@ -818,8 +810,6 @@ function GalleryTabInner({
     pendingHiddenVersionIds,
     heldAssignedVersionIds,
     message,
-    deleteConfirm,
-    localDeleteConfirm,
     restoreContentScroll
   ])
 
@@ -911,7 +901,7 @@ function GalleryTabInner({
         recordMatchesLibraryModelType(r, modelTypeFilter, checkpointFolder ?? '')
       )
     }
-    // Banned models are removed from disk; hide by modelId. Temporary excludes stay visible (dimmed).
+    // Whole-model bans stay off the active library list; their files remain on disk.
     list = list.filter((r) => !hiddenModelIds.has(r.modelId))
     if (nsfwFilter !== 'all') {
       list = list.filter((r) =>
@@ -975,6 +965,10 @@ function GalleryTabInner({
     const hideApplies =
       libraryFilter.type !== 'session' && !deferredModelSearch.trim() && pinModelId == null
     const excluded = normalizeHiddenTags(libraryExcludedTags)
+    const ignoreExcluded = excluded.length > 0 || ignoreExcludedTags
+    if (!hideApplies) {
+      return { hideFolderAssigned: false, hideFullyTagged: false, ignoreExcluded }
+    }
     let folderAssigned = 0
     let fullyTagged = 0
     for (const r of inventory) {
@@ -991,13 +985,17 @@ function GalleryTabInner({
           folderAssigned++
         }
       }
-      const folderLabel = folderLabelForRecord(r, tagRules, loraFolder, checkpointFolder)
-      if (recordTagsFullyAssigned(r, tagRules, folderLabel)) fullyTagged++
+      if (!fullyTagged) {
+        const folderLabel = folderLabelForRecord(r, tagRules, loraFolder, checkpointFolder)
+        if (recordTagsFullyAssigned(r, tagRules, folderLabel)) fullyTagged++
+      }
+      // Only availability is needed, not counts across the entire library.
+      if (folderAssigned && fullyTagged) break
     }
     return {
       hideFolderAssigned: hideApplies && folderAssigned > 0,
       hideFullyTagged: hideApplies && fullyTagged > 0,
-      ignoreExcluded: excluded.length > 0 || ignoreExcludedTags
+      ignoreExcluded
     }
   }, [
     inventory,
@@ -1410,165 +1408,40 @@ function GalleryTabInner({
     }
   }
 
-  const performDelete = async (
-    versionId: number,
-    modelId: number,
-    modelName: string,
-    scope: 'version' | 'all' = 'version'
-  ) => {
-    const rec = inventory.find((r) => r.versionId === versionId)
-    const siblings =
-      modelId > 0 ? inventory.filter((r) => r.modelId === modelId) : rec ? [rec] : []
-    const versionIds =
-      scope === 'all' && siblings.length > 0 ? siblings.map((r) => r.versionId) : [versionId]
-
-    // Pin scroll before modal unmount / card dim — focus return was yanking the grid to top.
-    rememberContentScroll()
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  const applyBan = useCallback((modelId: number, modelName: string, versionId?: number) => {
+    setBanTarget(null)
     setContextMenu(null)
-    setDeleteConfirm(null)
-
-    try {
-      const removedIds: number[] = []
-      for (const id of versionIds) {
-        // Dim immediately — stay in-grid until removed from App inventory below.
-        setPendingHiddenVersionIds((prev) => {
-          const next = new Set(prev)
-          next.add(id)
-          return next
-        })
-        setSelected((prev) => {
-          const next = new Set(prev)
-          next.delete(id)
-          return next
-        })
-        onBannedChange?.(modelId, true, { name: modelName, versionId: id })
-        try {
-          // awaitFiles:false on main — DB detach returns quickly; disk unlink is background.
-          // Idempotent when already gone (retry after first exclude).
-          await window.api.deleteInventoryVersion(id, { ban: true, modelId })
-          removedIds.push(id)
-        } catch (err) {
-          setPendingHiddenVersionIds((prev) => {
-            if (!prev.has(id)) return prev
-            const next = new Set(prev)
-            next.delete(id)
-            return next
-          })
-          throw err
-        }
-      }
-      // Drop from App inventory now so sidebar base-model counts / filters update immediately.
-      if (removedIds.length) onInventoryVersionsRemoved?.(removedIds)
-      // Done badge on the card is enough — status text was shifting layout / scroll.
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    } finally {
-      restoreContentScroll()
-      window.requestAnimationFrame(() => {
-        restoreContentScroll()
-        savedContentScrollRef.current = null
-      })
-    }
-  }
-
-  const deleteModel = async (versionId: number, modelId: number, modelName: string) => {
-    const rec = inventory.find((r) => r.versionId === versionId)
-    const versionLabel = rec?.versionName || String(versionId)
-    const siblings =
-      modelId > 0 ? inventory.filter((r) => r.modelId === modelId) : rec ? [rec] : []
-    const goneFromCivitai = Boolean(
-      rec && (isModelTakenDown(rec.civitaiMode) || isModelArchived(rec.civitaiMode))
-    )
-    const modeLabel = modelModeLabel(rec?.civitaiMode) || rec?.civitaiMode || 'unavailable'
-    // Session skip is OK for normal deletes; always re-confirm if gone from Civitai.
-    const maySkip = deleteConfirmSkipRef.current && !goneFromCivitai
-
-    if (!maySkip) {
-      setDeleteConfirm({
-        versionId,
-        modelId,
-        modelName,
-        versionName: versionLabel,
-        siblingCount: Math.max(1, siblings.length),
-        goneFromCivitai,
-        modeLabel
-      })
-      setContextMenu(null)
+    const record = inventory.find(row => row.versionId === versionId)
+    if (modelId <= 0 || (versionId != null && versionId <= 0)) {
+      if (record) requestForget({ modelId: record.modelId, versionId: record.versionId, modelName })
       return
     }
-
-    // Session "don't ask": always this version only (not all versions).
-    await performDelete(versionId, modelId, modelName, 'version')
-  }
-
-  const banModel = useCallback(
-    (modelId: number, modelName: string, versionId?: number) => {
-      const rec =
-        versionId != null && versionId > 0
-          ? inventory.find((r) => r.versionId === versionId)
-          : inventory.find((r) => r.modelId === modelId) ??
-            (versionId != null ? inventory.find((r) => r.versionId === versionId) : undefined)
-      // Local/custom rows use negative versionIds — find by versionId even when ≤ 0.
-      const row =
-        rec ??
-        (versionId != null ? inventory.find((r) => r.versionId === versionId) : undefined)
-      const isLocal = row ? isUnrecognizedInventoryRecord(row) : modelId <= 0
-      const targetVersionId = row?.versionId ?? versionId
-
-      setContextMenu(null)
-
-      // Owned / local files on disk — never delete without an explicit confirm.
-      if (isLocal && row) {
-        setLocalDeleteConfirm({
-          versionId: row.versionId,
-          modelName: modelName || row.modelName
-        })
-        return
-      }
-
-      // Civitai-linked library file — Ban/Exclude deletes from disk; reuse Delete confirm flow.
-      if (row && targetVersionId != null && targetVersionId > 0 && modelId > 0) {
-        void deleteModel(targetVersionId, modelId, modelName)
-        return
-      }
-
-      // Not in library — soft exclude only (no disk files).
-      setSelected((prev) => {
-        const next = new Set(prev)
-        if (targetVersionId && targetVersionId > 0) next.delete(targetVersionId)
-        return next
-      })
-
-      const run = async () => {
-        try {
-          if (targetVersionId && targetVersionId > 0 && modelId > 0) {
-            if (typeof window.api.excludeVersion === 'function') {
-              await window.api.excludeVersion({
-                modelId,
-                versionId: targetVersionId,
-                modelName
-              })
-            } else {
-              await window.api.banModel(modelId, modelName)
-            }
-            onBannedChange?.(modelId, true, {
-              name: modelName,
-              versionId: targetVersionId
-            })
-          } else if (modelId > 0) {
-            await window.api.banModel(modelId, modelName)
-            onBannedChange?.(modelId, true)
-          }
-          scheduleLibraryRefresh()
-        } catch (err) {
-          setMessage(err instanceof Error ? err.message : String(err))
+    void (async () => {
+      try {
+        if (versionId != null) {
+          await window.api.excludeVersion({ modelId, versionId, modelName,
+            versionName: record?.versionName, baseModel: record?.baseModel, author: record?.author,
+            previewUrl: record?.previewPath, modelType: record?.modelType, tags: record?.civitaiTags })
+          onBannedChange?.(modelId, true, { name: modelName, versionId })
+        } else {
+          await window.api.banModel(modelId, modelName)
+          onBannedChange?.(modelId, true)
         }
-      }
-      void run()
-    },
-    [inventory, onBannedChange, scheduleLibraryRefresh, t, deleteModel]
-  )
+        await loadBanned()
+        scheduleLibraryRefresh()
+      } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
+    })()
+  }, [inventory, onBannedChange, scheduleLibraryRefresh, requestForget])
+
+  const banModel = useCallback((modelId: number, modelName: string, versionId?: number) => {
+    setContextMenu(null)
+    if (modelId <= 0) {
+      const record = inventory.find(row => row.versionId === versionId)
+      if (record) requestForget({ modelId, versionId: record.versionId, modelName })
+      return
+    }
+    setBanTarget({ modelId, modelName, versionId })
+  }, [inventory, requestForget])
 
   const toggleSelect = useCallback((versionId: number) => {
     setSelected((prev) => {
@@ -2131,6 +2004,7 @@ function GalleryTabInner({
               units={gridUnits}
               selected={selected}
               hiddenModelIds={hiddenModelIds}
+              versionBanIds={versionBanIds}
               temporaryVersionIds={temporaryVersionIds}
               highlightVersionId={highlightVersionId}
               highlightModelId={highlightModelId}
@@ -2634,16 +2508,6 @@ function GalleryTabInner({
           onClose={() => setContextMenu(null)}
         >
           <div className="context-menu-title">{contextMenu.modelName}</div>
-            {contextMenu.modelId > 0 && autoUpdateModelIds.has(contextMenu.modelId) && (
-              <button
-                {...contextMenuButtonProps(() => {
-                  setContextMenu(null)
-                  void turnOffAlwaysUpdate(contextMenu.modelId, contextMenu.modelName)
-                })}
-              >
-                {t('gallery.turnOffAlwaysUpdate')}
-              </button>
-            )}
             {contextMenu.versionId != null && !menuLocal && contextMenu.modelId > 0 && (
               <button
                 {...contextMenuButtonProps(() => {
@@ -2661,6 +2525,18 @@ function GalleryTabInner({
                 })}
               >
                 {t('gallery.openOnCivitaiMenu')}
+              </button>
+            )}
+            {menuRecord && onOpenModelDetail && (
+              <button {...contextMenuButtonProps(() => openLibraryDetails(menuRecord), () => setContextMenu(null))}>
+                {t('gallery.modelDetails')}
+              </button>
+            )}
+            {contextMenu.modelId > 0 && autoUpdateModelIds.has(contextMenu.modelId) && (
+              <button {...contextMenuButtonProps(() => {
+                void turnOffAlwaysUpdate(contextMenu.modelId, contextMenu.modelName)
+              }, () => setContextMenu(null))}>
+                {t('gallery.turnOffAlwaysUpdate')}
               </button>
             )}
             {contextMenu.versionId != null && (
@@ -2759,48 +2635,48 @@ function GalleryTabInner({
                 </div>
               </>
             )}
-            {menuLocal ? (
-              <button
-                {...contextMenuButtonProps(() =>
-                  void banModel(
-                    contextMenu.modelId,
-                    contextMenu.modelName,
-                    contextMenu.versionId
-                  )
-                )}
-                className="context-menu-danger"
-              >
-                {t('gallery.deleteLocal')}
-              </button>
-            ) : menuBanned || menuTemporary ? (
-              menuBanned ? (
-                <button
-                  {...contextMenuButtonProps(() =>
-                    void unbanModel(contextMenu.modelId, contextMenu.modelName)
-                  )}
-                >
-                  {t('gallery.unbanAllow')}
-                </button>
-              ) : (
-                <button type="button" role="menuitem" disabled title={t('gallery.temporaryBadge')}>
-                  {t('gallery.temporaryBadge')}
-                </button>
-              )
+            {!menuLocal && contextMenu.versionId != null && versionBanIds.has(contextMenu.versionId) ? (
+              <button {...contextMenuButtonProps(() => {
+                void window.api.allowVersion({ modelId: contextMenu.modelId, versionId: contextMenu.versionId! })
+                  .then(() => loadBanned()).catch(error => setMessage(String(error)))
+                onBannedChange?.(contextMenu.modelId, false, { versionId: contextMenu.versionId })
+              }, () => setContextMenu(null))}>{t('modelActions.unbanVersion')}</button>
+            ) : null}
+            {!menuLocal && (menuBanned ? (
+              <button {...contextMenuButtonProps(() => { void unbanModel(contextMenu.modelId, contextMenu.modelName) })}>
+                {t('gallery.unbanAllow')}</button>
             ) : (
-              <button
-                {...contextMenuButtonProps(() =>
-                  void banModel(
-                    contextMenu.modelId,
-                    contextMenu.modelName,
-                    contextMenu.versionId
-                  )
-                )}
-              >
-                {t('gallery.excludeBan')}
-              </button>
+              <button {...contextMenuButtonProps(() => banModel(contextMenu.modelId, contextMenu.modelName, contextMenu.versionId))}
+                title={t('modelActions.banHint')}>{t('modelActions.ban')}</button>
+            ))}
+            {contextMenu.versionId != null && (
+              <button className="context-menu-danger" {...contextMenuButtonProps(() => requestForget({
+                modelId: contextMenu.modelId, versionId: contextMenu.versionId, modelName: contextMenu.modelName,
+                versionName: menuRecord?.versionName
+              }), () => setContextMenu(null))}>{t('modelActions.forgetVersion')}</button>
+            )}
+            {contextMenu.modelId > 0 && (
+              <button className="context-menu-danger" {...contextMenuButtonProps(() => requestForget({
+                modelId: contextMenu.modelId, modelName: contextMenu.modelName
+              }), () => setContextMenu(null))}>{t('modelActions.forgetModel')}</button>
             )}
         </ContextMenuPortal>
       )}
+      {banTarget ? (
+        <ConfirmModal
+          title={t('modelActions.ban')}
+          message={t('modelActions.banScopePrompt', {
+            name: banTarget.modelName,
+            version: inventory.find(row => row.versionId === banTarget.versionId)?.versionName || String(banTarget.versionId ?? '')
+          })}
+          confirmLabel={t(banTarget.versionId != null ? 'modelActions.banVersion' : 'modelActions.banModel')}
+          secondaryConfirmLabel={banTarget.versionId != null ? t('modelActions.banModel') : undefined}
+          onConfirm={() => applyBan(banTarget.modelId, banTarget.modelName, banTarget.versionId)}
+          onSecondaryConfirm={() => applyBan(banTarget.modelId, banTarget.modelName)}
+          onCancel={() => setBanTarget(null)}
+          danger
+        />
+      ) : null}
       {quickAssignTarget ? (
         <AssignModelToTagModal
           key={`${quickAssignTarget.versionId}:${quickAssignTarget.initialTag ?? ''}:${quickAssignTarget.initialScope ?? 'model'}`}
@@ -2816,117 +2692,7 @@ function GalleryTabInner({
           }
         />
       ) : null}
-      {deleteConfirm && (
-        <ConfirmModal
-          title={t('gallery.deleteFilesExclude')}
-          message={
-            deleteConfirm.goneFromCivitai
-              ? deleteConfirm.siblingCount > 1
-                ? t('gallery.deleteUnavailableConfirmOrAll', {
-                    name: deleteConfirm.modelName,
-                    version: deleteConfirm.versionName,
-                    count: String(deleteConfirm.siblingCount),
-                    mode: deleteConfirm.modeLabel || 'unavailable'
-                  })
-                : t('gallery.deleteUnavailableConfirm', {
-                    name: deleteConfirm.modelName,
-                    version: deleteConfirm.versionName,
-                    mode: deleteConfirm.modeLabel || 'unavailable'
-                  })
-              : deleteConfirm.siblingCount > 1
-                ? t('gallery.deleteConfirmVersionOrAll', {
-                    name: deleteConfirm.modelName,
-                    version: deleteConfirm.versionName,
-                    count: String(deleteConfirm.siblingCount)
-                  })
-                : t('gallery.deleteConfirmVersion', {
-                    name: deleteConfirm.modelName,
-                    version: deleteConfirm.versionName
-                  })
-          }
-          confirmLabel={
-            deleteConfirm.siblingCount > 1
-              ? t('gallery.deleteThisVersion')
-              : t('gallery.deleteFilesExclude')
-          }
-          secondaryConfirmLabel={
-            deleteConfirm.siblingCount > 1
-              ? t('gallery.deleteAllVersions', {
-                  count: String(deleteConfirm.siblingCount)
-                })
-              : undefined
-          }
-          onSecondaryConfirm={
-            deleteConfirm.siblingCount > 1
-              ? () => {
-                  const pending = deleteConfirm
-                  void performDelete(pending.versionId, pending.modelId, pending.modelName, 'all')
-                }
-              : undefined
-          }
-          danger
-          dontAskAgainLabel={
-            deleteConfirm.goneFromCivitai ? undefined : t('gallery.deleteConfirmDontAsk')
-          }
-          onDontAskAgainChange={
-            deleteConfirm.goneFromCivitai
-              ? undefined
-              : (checked) => {
-                  deleteConfirmSkipRef.current = checked
-                }
-          }
-          onConfirm={() => {
-            const pending = deleteConfirm
-            void performDelete(pending.versionId, pending.modelId, pending.modelName, 'version')
-          }}
-          onCancel={() => setDeleteConfirm(null)}
-        />
-      )}
-      {localDeleteConfirm && (
-        <ConfirmModal
-          title={t('gallery.deleteLocal')}
-          message={t('gallery.deleteLocalConfirm', { name: localDeleteConfirm.modelName })}
-          confirmLabel={t('gallery.deleteLocal')}
-          danger
-          onConfirm={() => {
-            const pending = localDeleteConfirm
-            setLocalDeleteConfirm(null)
-            rememberContentScroll()
-            if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-            setPendingHiddenVersionIds((prev) => {
-              if (prev.has(pending.versionId)) return prev
-              const next = new Set(prev)
-              next.add(pending.versionId)
-              return next
-            })
-            setSelected((prev) => {
-              const next = new Set(prev)
-              next.delete(pending.versionId)
-              return next
-            })
-            void (async () => {
-              try {
-                await window.api.deleteInventoryVersion(pending.versionId, { ban: false })
-              } catch (err) {
-                setPendingHiddenVersionIds((prev) => {
-                  if (!prev.has(pending.versionId)) return prev
-                  const next = new Set(prev)
-                  next.delete(pending.versionId)
-                  return next
-                })
-                setMessage(err instanceof Error ? err.message : String(err))
-              } finally {
-                restoreContentScroll()
-                window.requestAnimationFrame(() => {
-                  restoreContentScroll()
-                  savedContentScrollRef.current = null
-                })
-              }
-            })()
-          }}
-          onCancel={() => setLocalDeleteConfirm(null)}
-        />
-      )}
+      {forgetConfirmation}
     </div>
   )
 }
@@ -2935,6 +2701,7 @@ type LibraryCardGridProps = {
   units: QualityTierGridUnit<InventoryRecord>[]
   selected: Set<number>
   hiddenModelIds: Set<number>
+  versionBanIds?: Set<number>
   temporaryVersionIds?: Set<number>
   highlightVersionId: number | null
   highlightModelId: number | null
@@ -2977,6 +2744,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
   units,
   selected,
   hiddenModelIds,
+  versionBanIds = new Set<number>(),
   temporaryVersionIds,
   highlightVersionId,
   highlightModelId,
@@ -3021,7 +2789,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             browseVideoPreviews={browseVideoPreviews}
             selectedHigh={selected.has(unit.high.versionId)}
             selectedLow={selected.has(unit.low.versionId)}
-            banned={hiddenModelIds.has(unit.high.modelId)}
+            banned={hiddenModelIds.has(unit.high.modelId) || versionBanIds.has(unit.high.versionId) || versionBanIds.has(unit.low.versionId)}
             temporary={
               Boolean(temporaryVersionIds?.has(unit.high.versionId)) ||
               Boolean(temporaryVersionIds?.has(unit.low.versionId))
@@ -3065,7 +2833,7 @@ const LibraryCardGrid = memo(function LibraryCardGrid({
             previewOverride={libraryPreviewOverrides[unit.item.versionId]}
             browseVideoPreviews={browseVideoPreviews}
             selected={selected.has(unit.item.versionId)}
-            banned={hiddenModelIds.has(unit.item.modelId)}
+            banned={hiddenModelIds.has(unit.item.modelId) || versionBanIds.has(unit.item.versionId)}
             temporary={Boolean(temporaryVersionIds?.has(unit.item.versionId))}
             highlight={
               highlightVersionId === unit.item.versionId ||

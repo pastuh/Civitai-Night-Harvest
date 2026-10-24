@@ -1,3 +1,4 @@
+import { useForgetModel } from '../hooks/useForgetModel'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BannedModel,
@@ -17,10 +18,11 @@ import {
   modelModeLabel
 } from '../../../shared/civitai-meta'
 import { isVersionEarlyAccess } from '../../../shared/early-access'
-import { formatCountdownTo, domainLabel, isDisplayablePreviewUrl } from '../../../shared/utils'
+import { formatCountdownTo, domainLabel, getSiteBase, isDisplayablePreviewUrl } from '../../../shared/utils'
 import { tagsEqual } from '../../../shared/tag-fuzzy'
 import { isUnsortedRoutingTag, isPermanentlyBannedModelTag, isPausedOnlyModelTag, expandCivitaiTagNames } from '../../../shared/tag-routing'
 import { PreviewThumb } from './PreviewThumb'
+import { toCachedPreviewSrc } from '../../../shared/preview-cache-url'
 import { ConfirmModal } from './ConfirmModal'
 import { FastTagAssignModal } from './FastTagAssignModal'
 import {
@@ -68,7 +70,6 @@ export type ModelDetailTarget =
 interface Props {
   target: ModelDetailTarget
   onClose: () => void
-  onDelete?: () => void
   onShowInFolder?: (path: string) => void
   onSelectLibraryRecord?: (record: InventoryRecord) => void
   ownedVersionIds?: number[]
@@ -165,12 +166,13 @@ function stubDetailFromTarget(
       versionId: primary.versionId,
       name: primary.modelName,
       versionName: primary.versionName,
-      type: primary.modelType,
+      type: primary.modelType || 'LORA',
       baseModel: primary.baseModel,
       creator: primary.author,
       tags: expandCivitaiTagNames(primary.civitaiTags ?? []),
       license: { commercialUse: '—' },
       sourceDomain: primary.civitaiDomain ?? target.domain ?? 'red',
+      pageUrl: `${getSiteBase(primary.civitaiDomain ?? target.domain ?? 'red')}/models/${modelId}?modelVersionId=${primary.versionId}`,
       versions: [...byVersion.values()].map((r) => ({
         id: r.versionId,
         name: r.versionName || r.modelName,
@@ -192,12 +194,13 @@ function stubDetailFromTarget(
     modelId,
     versionId: target.versionId,
     name: target.name?.trim() || `Model #${modelId}`,
-    versionName: target.name?.trim(),
+    versionName: target.name?.trim() || '',
     type: 'LORA',
     baseModel: '',
     tags: [],
     license: { commercialUse: '—' },
     sourceDomain: target.domain ?? 'red',
+    pageUrl: `${getSiteBase(target.domain ?? 'red')}/models/${modelId}?modelVersionId=${target.versionId}`,
     versions: [
       {
         id: target.versionId,
@@ -213,7 +216,6 @@ function stubDetailFromTarget(
 export function ModelDetailPage({
   target,
   onClose,
-  onDelete,
   onShowInFolder,
   onSelectLibraryRecord,
   ownedVersionIds,
@@ -240,6 +242,7 @@ export function ModelDetailPage({
   awaitingVersionIds
 }: Props) {
   const t = useT()
+  const { requestForget, confirmation: forgetConfirmation } = useForgetModel(() => onClose())
   const queue = useDownloadQueue()
   const [detail, setDetail] = useState<CivitaiModelDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -255,7 +258,7 @@ export function ModelDetailPage({
   const [versionFilter, setVersionFilter] = useState('')
   /** Whole-model ban (banned_models) — blocks every version. */
   const [modelBanned, setModelBanned] = useState(false)
-  /** Version-scoped excludes (skipped_pending_versions.forgotten) for this model. */
+  /** Individual version bans for this model. */
   const [excludedVersionIds, setExcludedVersionIds] = useState<Set<number>>(() => new Set())
   const [banBusy, setBanBusy] = useState(false)
   /** Confirm dialog: this version only, or Ban all (whole model). */
@@ -517,6 +520,7 @@ export function ModelDetailPage({
       .then((d) => {
         if (cancelled) return
         setDetail(d)
+        if (fetchVersionId <= 0 && d.versionId > 0) setActiveVersionId(d.versionId)
         setError(null)
         if (!localOnly) {
           // Persist already done in main; refresh Library + seed Browse live grid counts.
@@ -1281,6 +1285,7 @@ export function ModelDetailPage({
         modelId
       )
       if (result.savedToLibrary && result.record) {
+        const record = result.record
         setLibraryRecord(result.record)
         onSelectLibraryRecord?.(result.record)
         const diskSrc = result.record.previewPath
@@ -1289,7 +1294,7 @@ export function ModelDetailPage({
         if (result.record.previewPath) {
           setPreferredPreviewByVersion((prev) => ({
             ...prev,
-            [activeVersionId]: toPreviewSrc(result.record.previewPath as string)
+            [activeVersionId]: toPreviewSrc(record.previewPath)
           }))
         }
         const all = validPreviewUrls.length
@@ -1544,7 +1549,6 @@ export function ModelDetailPage({
         thumbsUpCount: detail?.thumbsUpCount ?? libraryRecord?.thumbsUpCount
       })
       setModelBanned(true)
-      setExcludedVersionIds(new Set())
       onBannedChange?.(modelId, true)
       await onInventoryRefresh?.()
     } finally {
@@ -1707,10 +1711,14 @@ export function ModelDetailPage({
                 </button>
               </>
             ))}
-          {onDelete && displayTarget.kind === 'library' && libraryRecord && (
-            <button type="button" className="btn-sm danger-btn" onClick={onDelete}>
-              {t('modelDetail.deleteFiles')}
-            </button>
+          {activeVersionId !== 0 && (
+            <button type="button" className="btn-sm danger-btn" onClick={() => requestForget({
+              modelId, versionId: activeVersionId, modelName: title, versionName: versionLabel
+            })}>{t('modelActions.forgetVersion')}</button>
+          )}
+          {modelId > 0 && (
+            <button type="button" className="btn-sm danger-btn" onClick={() => requestForget({ modelId, modelName: title })}>
+              {t('modelActions.forgetModel')}</button>
           )}
         </div>
       </div>
@@ -2376,7 +2384,7 @@ export function ModelDetailPage({
                           {thumbSrc ? (
                             <img
                               className="model-detail-version-thumb-img"
-                              src={thumbSrc}
+                                src={toCachedPreviewSrc(thumbSrc)}
                               alt=""
                               loading="lazy"
                               decoding="async"
@@ -2636,6 +2644,7 @@ export function ModelDetailPage({
         />
       )}
 
+      {forgetConfirmation}
       {confirmBan === 'version' && (
         <ConfirmModal
           title={t('modelDetail.ban')}

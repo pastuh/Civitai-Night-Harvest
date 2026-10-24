@@ -6,6 +6,13 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "npm run typecheck && npm run test:previews && npm run test:startup && npm run test:downloads && npm run test:models && npm run test:previews:electron",
+    "test:previews": "node scripts/test-preview-regressions.cjs",
+    "test:previews:electron": "node scripts/test-preview-electron.cjs",
+    "test:startup": "node scripts/profile-startup.cjs --fixture",
+    "test:downloads": "node scripts/test-downloads.cjs",
+    "test:models": "node scripts/test-preview-electron.cjs --model-actions",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps"
   },

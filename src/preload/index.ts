@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { toMediaProtocolUrl } from '../shared/media-url'
 import {
   applyAppearanceToDocument,
   DEFAULT_APPEARANCE,
@@ -220,37 +221,37 @@ const api = {
   onLibrarySyncProgress: (cb: (p: LibrarySyncProgress) => void) => {
     const handler = (_: unknown, p: LibrarySyncProgress) => cb(p)
     ipcRenderer.on('library:syncProgress', handler)
-    return () => ipcRenderer.removeListener('library:syncProgress', handler)
+    return () => { ipcRenderer.removeListener('library:syncProgress', handler) }
   },
 
   onStorageError: (cb: (message: string) => void) => {
     const handler = (_: unknown, message: string) => cb(message)
     ipcRenderer.on('app:storageError', handler)
-    return () => ipcRenderer.removeListener('app:storageError', handler)
+    return () => { ipcRenderer.removeListener('app:storageError', handler) }
   },
 
   onSettingsChanged: (cb: (settings: AppSettingsPublic) => void) => {
     const handler = (_: unknown, settings: AppSettingsPublic) => cb(settings)
     ipcRenderer.on('settings:changed', handler)
-    return () => ipcRenderer.removeListener('settings:changed', handler)
+    return () => { ipcRenderer.removeListener('settings:changed', handler) }
   },
 
   onLibraryHashProgress: (cb: (p: LibraryHashVerifyProgress) => void) => {
     const handler = (_: unknown, p: LibraryHashVerifyProgress) => cb(p)
     ipcRenderer.on('library:hashProgress', handler)
-    return () => ipcRenderer.removeListener('library:hashProgress', handler)
+    return () => { ipcRenderer.removeListener('library:hashProgress', handler) }
   },
 
   onVideoPreviewSyncProgress: (cb: (p: VideoPreviewSyncProgress) => void) => {
     const handler = (_: unknown, p: VideoPreviewSyncProgress) => cb(p)
     ipcRenderer.on('preview:videoSyncProgress', handler)
-    return () => ipcRenderer.removeListener('preview:videoSyncProgress', handler)
+    return () => { ipcRenderer.removeListener('preview:videoSyncProgress', handler) }
   },
 
   onVideoPreviewSyncComplete: (cb: (result: VideoPreviewSyncResult) => void) => {
     const handler = (_: unknown, result: VideoPreviewSyncResult) => cb(result)
     ipcRenderer.on('preview:videoSyncComplete', handler)
-    return () => ipcRenderer.removeListener('preview:videoSyncComplete', handler)
+    return () => { ipcRenderer.removeListener('preview:videoSyncComplete', handler) }
   },
 
   enqueueDownload: (
@@ -334,8 +335,10 @@ const api = {
     modelId: number,
     modelName?: string,
     stub?: BanModelStub
-  ): Promise<{ modelId: number; deletedVersions: number }> =>
+  ): Promise<import('../shared/model-actions').ForgetResult> =>
     ipcRenderer.invoke('model:forget', { modelId, modelName, ...stub }),
+  forgetVersion: (payload: { modelId: number; versionId: number }): Promise<import('../shared/model-actions').ForgetResult> =>
+    ipcRenderer.invoke('model:forgetVersion', payload),
   unbanModel: (
     modelId: number,
     opts?: {
@@ -383,7 +386,7 @@ const api = {
     wasModelBanned: boolean
     siblingExcludedIds: number[]
   }> => ipcRenderer.invoke('model:allowVersion', payload),
-  getBannedModels: () => ipcRenderer.invoke('model:getBanned'),
+  getBannedModels: (): Promise<BannedModel[]> => ipcRenderer.invoke('model:getBanned'),
   getExclusions: (): Promise<ExclusionReviewItem[]> => ipcRenderer.invoke('exclusions:get'),
   dismissTagSkip: (modelId: number): Promise<{ modelId: number }> =>
     ipcRenderer.invoke('exclusions:dismissTagSkip', modelId),
@@ -436,7 +439,7 @@ const api = {
   }> => ipcRenderer.invoke('exclusions:pruneBanSeen', { keepModelIds }),
   setModelAutoUpdate: (modelId: number, enabled: boolean, modelName?: string) =>
     ipcRenderer.invoke('model:setAutoUpdate', { modelId, enabled, modelName }),
-  getAutoUpdateModels: () => ipcRenderer.invoke('model:getAutoUpdate'),
+  getAutoUpdateModels: (): Promise<Array<{ modelId: number; modelName: string; enabledAt: string }>> => ipcRenderer.invoke('model:getAutoUpdate'),
   dismissPending: (versionId: number): Promise<void> =>
     ipcRenderer.invoke('pending:dismiss', versionId),
   skipPending: (versionId: number): Promise<void> =>
@@ -445,8 +448,6 @@ const api = {
     ipcRenderer.invoke('pending:unskip', versionId),
   forgetPendingVersion: (versionId: number): Promise<void> =>
     ipcRenderer.invoke('pending:forgetVersion', versionId),
-  unforgetPendingVersion: (versionId: number): Promise<void> =>
-    ipcRenderer.invoke('pending:unforgetVersion', versionId),
   getPendingSeen: (): Promise<{ byVersionId: Record<number, string> }> =>
     ipcRenderer.invoke('pending:getSeen'),
   markPendingSeen: (
@@ -527,16 +528,7 @@ const api = {
    * puts %5C in the host and often fails to load (No image).
    */
   toMediaUrl: (filePath: string): string => {
-    const trimmed = filePath?.trim()
-    if (!trimmed) return ''
-    const normalized = trimmed.replace(/\\/g, '/')
-    const abs =
-      /^[A-Za-z]:\//.test(normalized)
-        ? `/${normalized}`
-        : normalized.startsWith('/')
-          ? normalized
-          : `/${normalized}`
-    return `media://${encodeURI(abs)}`
+    return toMediaProtocolUrl(filePath)
   },
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showInFolder', filePath),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url),
@@ -547,48 +539,48 @@ const api = {
   onDownloadQueue: (cb: (state: DownloadQueueState) => void) => {
     const handler = (_: unknown, state: DownloadQueueState) => cb(state)
     ipcRenderer.on('download:queue', handler)
-    return () => ipcRenderer.removeListener('download:queue', handler)
+    return () => { ipcRenderer.removeListener('download:queue', handler) }
   },
   /** Reliable Session-downloads signal (survives done→prune races on download:queue). */
   onDownloadSessionComplete: (cb: (payload: { versionIds: number[] }) => void) => {
     const handler = (_: unknown, payload: { versionIds: number[] }) => cb(payload)
     ipcRenderer.on('download:sessionComplete', handler)
-    return () => ipcRenderer.removeListener('download:sessionComplete', handler)
+    return () => { ipcRenderer.removeListener('download:sessionComplete', handler) }
   },
   onActivity: (cb: (e: ActivityEntry) => void) => {
     const handler = (_: unknown, e: ActivityEntry) => cb(e)
     ipcRenderer.on('activity:entry', handler)
-    return () => ipcRenderer.removeListener('activity:entry', handler)
+    return () => { ipcRenderer.removeListener('activity:entry', handler) }
   },
   onVersionScanProgress: (cb: (p: LibraryVersionScanProgress) => void) => {
     const handler = (_: unknown, p: LibraryVersionScanProgress) => cb(p)
     ipcRenderer.on('version-scan:progress', handler)
-    return () => ipcRenderer.removeListener('version-scan:progress', handler)
+    return () => { ipcRenderer.removeListener('version-scan:progress', handler) }
   },
   onVersionScanComplete: (cb: () => void) => {
     const handler = () => cb()
     ipcRenderer.on('version-scan:complete', handler)
-    return () => ipcRenderer.removeListener('version-scan:complete', handler)
+    return () => { ipcRenderer.removeListener('version-scan:complete', handler) }
   },
   onAppStatus: (cb: (s: AppStatus) => void) => {
     const handler = (_: unknown, s: AppStatus) => cb(s)
     ipcRenderer.on('app:status', handler)
-    return () => ipcRenderer.removeListener('app:status', handler)
+    return () => { ipcRenderer.removeListener('app:status', handler) }
   },
   onPendingVersions: (cb: (p: PendingVersion[]) => void) => {
     const handler = (_: unknown, p: PendingVersion[]) => cb(p)
     ipcRenderer.on('pending:versions', handler)
-    return () => ipcRenderer.removeListener('pending:versions', handler)
+    return () => { ipcRenderer.removeListener('pending:versions', handler) }
   },
   onDeferredVersions: (cb: (d: DeferredDownload[]) => void) => {
     const handler = (_: unknown, d: DeferredDownload[]) => cb(d)
     ipcRenderer.on('deferred:versions', handler)
-    return () => ipcRenderer.removeListener('deferred:versions', handler)
+    return () => { ipcRenderer.removeListener('deferred:versions', handler) }
   },
   onIncompleteList: (cb: (items: IncompleteModel[]) => void) => {
     const handler = (_: unknown, items: IncompleteModel[]) => cb(items)
     ipcRenderer.on('incomplete:list', handler)
-    return () => ipcRenderer.removeListener('incomplete:list', handler)
+    return () => { ipcRenderer.removeListener('incomplete:list', handler) }
   },
   onIncompleteRecheckProgress: (
     cb: (progress: {
@@ -610,17 +602,22 @@ const api = {
       }
     ) => cb(progress)
     ipcRenderer.on('incomplete:recheckProgress', handler)
-    return () => ipcRenderer.removeListener('incomplete:recheckProgress', handler)
+    return () => { ipcRenderer.removeListener('incomplete:recheckProgress', handler) }
   },
   onMissingList: (cb: (items: MissingModel[]) => void) => {
     const handler = (_: unknown, items: MissingModel[]) => cb(items)
     ipcRenderer.on('missing:list', handler)
-    return () => ipcRenderer.removeListener('missing:list', handler)
+    return () => { ipcRenderer.removeListener('missing:list', handler) }
+  },
+  onModelForgotten: (cb: (result: import('../shared/model-actions').ForgetResult) => void) => {
+    const handler = (_: unknown, result: import('../shared/model-actions').ForgetResult) => cb(result)
+    ipcRenderer.on('model:forgotten', handler)
+    return () => { ipcRenderer.removeListener('model:forgotten', handler) }
   },
   onExclusionsList: (cb: (items: ExclusionReviewItem[]) => void) => {
     const handler = (_: unknown, items: ExclusionReviewItem[]) => cb(items)
     ipcRenderer.on('exclusions:list', handler)
-    return () => ipcRenderer.removeListener('exclusions:list', handler)
+    return () => { ipcRenderer.removeListener('exclusions:list', handler) }
   },
   onExclusionsRemoved: (
     cb: (payload: { modelId: number; versionId?: number; kinds?: string[] }) => void
@@ -630,12 +627,12 @@ const api = {
       payload: { modelId: number; versionId?: number; kinds?: string[] }
     ) => cb(payload)
     ipcRenderer.on('exclusions:removed', handler)
-    return () => ipcRenderer.removeListener('exclusions:removed', handler)
+    return () => { ipcRenderer.removeListener('exclusions:removed', handler) }
   },
   onHiddenTagApplyProgress: (cb: (payload: HiddenTagApplyProgress) => void) => {
     const handler = (_: unknown, payload: HiddenTagApplyProgress) => cb(payload)
     ipcRenderer.on('hiddenTags:applyProgress', handler)
-    return () => ipcRenderer.removeListener('hiddenTags:applyProgress', handler)
+    return () => { ipcRenderer.removeListener('hiddenTags:applyProgress', handler) }
   },
   onTagFoldersReconcileProgress: (
     cb: (payload: {
@@ -657,22 +654,22 @@ const api = {
       }
     ) => cb(payload)
     ipcRenderer.on('tagFolders:reconcileProgress', handler)
-    return () => ipcRenderer.removeListener('tagFolders:reconcileProgress', handler)
+    return () => { ipcRenderer.removeListener('tagFolders:reconcileProgress', handler) }
   },
   onScanComplete: (cb: (r: ScanResult[]) => void) => {
     const handler = (_: unknown, r: ScanResult[]) => cb(r)
     ipcRenderer.on('scan:complete', handler)
-    return () => ipcRenderer.removeListener('scan:complete', handler)
+    return () => { ipcRenderer.removeListener('scan:complete', handler) }
   },
   onTagAssignmentPrompt: (cb: (p: TagAssignmentPrompt) => void) => {
     const handler = (_: unknown, p: TagAssignmentPrompt) => cb(p)
     ipcRenderer.on('download:tagPrompt', handler)
-    return () => ipcRenderer.removeListener('download:tagPrompt', handler)
+    return () => { ipcRenderer.removeListener('download:tagPrompt', handler) }
   },
   onCrawlPage: (cb: (payload: CrawlPagePayload) => void) => {
     const handler = (_: unknown, payload: CrawlPagePayload) => cb(payload)
     ipcRenderer.on('crawl:page', handler)
-    return () => ipcRenderer.removeListener('crawl:page', handler)
+    return () => { ipcRenderer.removeListener('crawl:page', handler) }
   },
   onCrawlBrowseReset: (cb: (payload?: { galleryGeneration?: number; keepGallery?: boolean }) => void) => {
     const handler = (
@@ -680,18 +677,18 @@ const api = {
       payload?: { galleryGeneration?: number; keepGallery?: boolean }
     ) => cb(payload)
     ipcRenderer.on('crawl:browseReset', handler)
-    return () => ipcRenderer.removeListener('crawl:browseReset', handler)
+    return () => { ipcRenderer.removeListener('crawl:browseReset', handler) }
   },
   onCrawlProgress: (cb: (payload: import('../shared/types').CrawlProgressPayload | null) => void) => {
     const handler = (_: unknown, payload: import('../shared/types').CrawlProgressPayload | null) =>
       cb(payload)
     ipcRenderer.on('crawl:progress', handler)
-    return () => ipcRenderer.removeListener('crawl:progress', handler)
+    return () => { ipcRenderer.removeListener('crawl:progress', handler) }
   },
   onFullscreenChange: (cb: (full: boolean) => void) => {
     const handler = (_: unknown, full: boolean) => cb(full)
     ipcRenderer.on('window:fullscreenChanged', handler)
-    return () => ipcRenderer.removeListener('window:fullscreenChanged', handler)
+    return () => { ipcRenderer.removeListener('window:fullscreenChanged', handler) }
   },
   onBrowsePreviewPref: (
     cb: (payload: { modelId: number; versionId: number; previewUrl: string }) => void
@@ -701,7 +698,7 @@ const api = {
       payload: { modelId: number; versionId: number; previewUrl: string }
     ) => cb(payload)
     ipcRenderer.on('browse:previewPref', handler)
-    return () => ipcRenderer.removeListener('browse:previewPref', handler)
+    return () => { ipcRenderer.removeListener('browse:previewPref', handler) }
   }
 }
 

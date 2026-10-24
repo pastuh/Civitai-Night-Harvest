@@ -894,6 +894,27 @@ button.downloads-pause-btn:disabled {
   vertical-align: middle;
 }
 
+/* Counter changes must not move neighboring tabs, including Library's completion badge. */
+.tabs .tab.tab-counted {
+  position: relative;
+  padding-right: calc(var(--space-md) + 36px);
+}
+
+.tabs .tab.tab-browse {
+  padding-right: calc(var(--space-md) + 44px);
+}
+
+.tab.tab-counted .tab-badge {
+  position: absolute;
+  right: var(--space-md);
+  top: 50%;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  min-width: 26px;
+  margin-left: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Form controls ── */
 input[type='checkbox'] {
   width: 16px;
@@ -2427,6 +2448,8 @@ label.field-label {
 .missing-tab-message {
   margin: 0 0 10px;
   font-size: 12px;
+  min-height: 18px;
+  line-height: 18px;
 }
 
 .missing-status-badge {

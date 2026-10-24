@@ -8,7 +8,10 @@ export interface FetchedPreview {
 }
 
 /** Try each preview URL until one downloads as a real image (for .preview.jpg and swarm thumbnail). */
-export async function fetchFirstWorkingPreview(urls: string[]): Promise<FetchedPreview | null> {
+export async function fetchFirstWorkingPreview(
+  urls: string[],
+  options?: { fetcher?: typeof fetch }
+): Promise<FetchedPreview | null> {
   const expanded: string[] = []
   const seen = new Set<string>()
   for (const url of urls) {
@@ -37,7 +40,10 @@ export async function fetchFirstWorkingPreview(urls: string[]): Promise<FetchedP
       // CDN image downloads must NOT share the Civitai API pace lane — that made
       // "Fetching page N" wait ~1.25s per preview cache write from earlier pages.
       // One attempt, silent: Browse warm-cache misses must not fill Activity with retries.
-      const res = await withNetworkRetry(`preview ${url}`, () => fetch(url), {
+      const res = await withNetworkRetry(`preview ${url}`, () => (options?.fetcher ?? fetch)(url, {
+        headers: { Referer: /image\.civitai\.red/i.test(url) ? 'https://civitai.red/' : 'https://civitai.com/' },
+        signal: AbortSignal.timeout(10_000)
+      }), {
         attempts: 1,
         silent: true
       })

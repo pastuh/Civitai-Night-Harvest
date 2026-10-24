@@ -106,7 +106,7 @@ export function ratingLevelForFilter(
   }
 }
 
-export function patchForRatingLevel(level: number): RatingFields {
+export function patchForRatingLevel(level: number): { nsfwLevel: number; isNsfw: boolean } {
   const isExplicit = (level & (NSFW_LEVEL.R | NSFW_LEVEL.X | NSFW_LEVEL.XXX)) !== 0
   return { nsfwLevel: level, isNsfw: isExplicit || level > NSFW_LEVEL.PG13 }
 }

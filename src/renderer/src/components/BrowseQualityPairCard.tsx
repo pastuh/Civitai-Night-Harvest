@@ -86,27 +86,20 @@ function BrowseQualityPairCardInner({
           high={{
             urls: resolvePreviewUrls(high),
             videoUrl: videoPreviewUrlFor(high),
+            videoAvailability: videoPreviewAvailabilityFor({ ...high, modelId: high.id }),
+            videoFetch: { ...high, modelId: high.id },
+            onAllFailed: () => onPreviewBroken(high.versionId),
             label: 'H'
           }}
           low={{
             urls: resolvePreviewUrls(low),
             videoUrl: videoPreviewUrlFor(low),
+            videoAvailability: videoPreviewAvailabilityFor({ ...low, modelId: low.id }),
+            videoFetch: { ...low, modelId: low.id },
+            onAllFailed: () => onPreviewBroken(low.versionId),
             label: 'L'
           }}
           browseVideoPreviews={browseVideoPreviews}
-          videoAvailability={videoPreviewAvailabilityFor({
-            modelId: high.id,
-            versionId: high.versionId,
-            videoPreviewUrl: high.videoPreviewUrl,
-            videoPreviewUrls: high.videoPreviewUrls
-          })}
-          videoFetch={{
-            modelId: high.id,
-            versionId: high.versionId,
-            sourceDomain: high.sourceDomain,
-            nsfw: high.nsfw,
-            nsfwLevel: high.nsfwLevel
-          }}
         />
       </div>
       <div className="gallery-card-body">

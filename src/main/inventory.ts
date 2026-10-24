@@ -1,5 +1,4 @@
 import { join } from 'path'
-import { existsSync, statSync } from 'fs'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import type {
@@ -29,10 +28,24 @@ import { expandCivitaiTagNames, matchingHiddenTags, applyCustomAssignmentDefault
 import { tagAliasMatch } from '../shared/tag-fuzzy'
 import { isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import { isAwaitingAccessFailureKind } from '../shared/download-errors'
+import { isEarlyAccessActive } from '../shared/early-access'
 import { safePathExists } from './output-paths'
-import { filterUsablePreviewUrls, isUsableStoredPreviewUrl } from './preview-cache'
+import { filterUsablePreviewUrls, isUsableStoredPreviewUrl, createCachedPreviewLookup } from './preview-cache'
+import { isForgettingModel, isForgettingVersion } from './forget-in-progress'
 
 let db: Database.Database | null = null
+const FORGET_VERSION_TABLES = ['versions', 'pending_versions', 'skipped_pending_versions', 'banned_versions',
+  'deferred_downloads', 'browse_card_cache', 'version_preview_prefs', 'version_video_preview']
+const FORGET_MODEL_TABLES = [...FORGET_VERSION_TABLES, 'auto_update_models', 'library_version_checks',
+  'missing_models', 'incomplete_models', 'tag_skip_reviews', 'tag_skip_allowlist', 'missing_ban_seen']
+
+function pruneStoredQueue(database: Database.Database, matches: (row: DownloadQueueItem) => boolean): void {
+  const saved = database.prepare('SELECT items_json FROM download_queue_state WHERE id = 1').get() as { items_json: string } | undefined
+  if (!saved) return
+  let items: DownloadQueueItem[] = []
+  try { const parsed = JSON.parse(saved.items_json); if (Array.isArray(parsed)) items = parsed } catch { /* broken saved queue */ }
+  database.prepare('UPDATE download_queue_state SET items_json = ? WHERE id = 1').run(JSON.stringify(items.filter(row => !matches(row))))
+}
 
 function getDb(): Database.Database {
   if (!db) {
@@ -165,6 +178,9 @@ function migrateInventorySchema(database: Database.Database): void {
     database.exec(`ALTER TABLE versions ADD COLUMN civitai_domain TEXT NOT NULL DEFAULT 'com'`)
   }
   const deferredCols = database.pragma('table_info(deferred_downloads)') as { name: string }[]
+  if (!deferredCols.some((c) => c.name === 'access_confirmed_at')) {
+    database.exec(`ALTER TABLE deferred_downloads ADD COLUMN access_confirmed_at TEXT`)
+  }
   if (!deferredCols.some((c) => c.name === 'early_access_ends_at')) {
     database.exec(`ALTER TABLE deferred_downloads ADD COLUMN early_access_ends_at TEXT`)
   }
@@ -553,6 +569,40 @@ function migrateInventorySchema(database: Database.Database): void {
   database.exec(
     `CREATE INDEX IF NOT EXISTS idx_version_video_preview_model ON version_video_preview(model_id)`
   )
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS banned_versions (
+      version_id INTEGER NOT NULL PRIMARY KEY,
+      model_id INTEGER NOT NULL,
+      metadata_json TEXT NOT NULL,
+      banned_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_banned_versions_model ON banned_versions(model_id);
+    CREATE TABLE IF NOT EXISTS inventory_migrations (name TEXT PRIMARY KEY);
+  `)
+  const migration = 'separate-ban-and-forget-v1'
+  if (!database.prepare('SELECT 1 FROM inventory_migrations WHERE name = ?').get(migration)) {
+    database.transaction(() => {
+      // Old version Forget and Ban shared one flag; preserve ambiguous exclusions
+      // as reversible bans. Whole-model Forgotten is unambiguous: remove its data.
+      const legacy = database.prepare('SELECT * FROM skipped_pending_versions WHERE forgotten = 1').all() as Record<string, unknown>[]
+      const insert = database.prepare('INSERT OR IGNORE INTO banned_versions VALUES (?, ?, ?, ?)')
+      for (const row of legacy) insert.run(row.version_id, row.model_id, JSON.stringify(rowToPending(row)), row.skipped_at)
+      database.prepare('DELETE FROM skipped_pending_versions WHERE forgotten = 1').run()
+      const forgotten = database.prepare('SELECT model_id FROM banned_models WHERE forgotten = 1').all() as { model_id: number }[]
+      if (forgotten.length) {
+        const selection = 'SELECT model_id FROM banned_models WHERE forgotten = 1'
+        const ids = FORGET_VERSION_TABLES.map(table => `SELECT version_id FROM ${table} WHERE model_id IN (${selection})`).join(' UNION ')
+        for (const table of ['pending_seen', 'ea_access_seen', 'browse_rule_gallery']) {
+          database.prepare(`DELETE FROM ${table} WHERE version_id IN (${ids})`).run()
+        }
+        for (const table of FORGET_MODEL_TABLES) database.prepare(`DELETE FROM ${table} WHERE model_id IN (${selection})`).run()
+        const modelIds = new Set(forgotten.map(row => row.model_id))
+        pruneStoredQueue(database, row => modelIds.has(row.modelId))
+        database.prepare('DELETE FROM banned_models WHERE forgotten = 1').run()
+      }
+      database.prepare('INSERT INTO inventory_migrations VALUES (?)').run(migration)
+    })()
+  }
 }
 
 function parseCivitaiTags(raw: unknown): string[] {
@@ -563,19 +613,6 @@ function parseCivitaiTags(raw: unknown): string[] {
     return expandCivitaiTagNames(list)
   } catch {
     return []
-  }
-}
-
-function sanitizePreviewPath(path: string | null | undefined): string {
-  const p = (path ?? '').trim()
-  if (!p) return ''
-  try {
-    if (!existsSync(p)) return ''
-    // 1×1 JPEG placeholders are <128 bytes — treat as missing so UI/API can refill.
-    if (statSync(p).size < 128) return ''
-    return p
-  } catch {
-    return ''
   }
 }
 
@@ -595,7 +632,9 @@ function rowToRecord(row: Record<string, unknown>): InventoryRecord {
     routingLocked: Boolean(row.routing_locked),
     outputFolder: row.output_folder as string,
     modelPath: row.model_path as string,
-    previewPath: sanitizePreviewPath(row.preview_path as string),
+    // Reading metadata must not stat every file on the output drive. Visible images
+    // handle load failures; explicit Library sync/repair validates files on disk.
+    previewPath: ((row.preview_path as string) || '').trim(),
     swarmPath: row.swarm_path as string,
     downloadedAt: row.downloaded_at as string,
     ignored: Boolean(row.ignored),
@@ -699,6 +738,40 @@ export function isModelOwned(modelId: number): boolean {
   return Boolean(row)
 }
 
+export interface BrowseCardState {
+  ownedVersionIds: Set<number>
+  bannedIds: Set<number>
+  bannedVersionIds: Set<number>
+  awaitingVersionIds: Set<number>
+}
+
+/** Filter membership only: no library metadata, preview checks or network work. */
+export function getBrowseCardState(): BrowseCardState {
+  const database = getDb()
+  const ids = (sql: string) => new Set((database.prepare(sql).all() as { version_id: number }[]).map(row => row.version_id))
+  return {
+    ownedVersionIds: ids('SELECT version_id FROM versions'),
+    bannedIds: getBannedModelIds(),
+    bannedVersionIds: getBannedVersionIds(),
+    awaitingVersionIds: ids('SELECT version_id FROM deferred_downloads')
+  }
+}
+
+/** Cached flags can be stale; every outgoing Browse page gets current DB membership. */
+export function refreshBrowseCardStates(cards: WatchRuleTestModel[]): WatchRuleTestModel[] {
+  if (!cards.length) return cards
+  const state = getBrowseCardState()
+  return cards.map(card => {
+    const inInventory = state.ownedVersionIds.has(card.versionId)
+    const isBanned = state.bannedIds.has(card.id) || state.bannedVersionIds.has(card.versionId)
+    const isAwaitingAccess = state.awaitingVersionIds.has(card.versionId)
+    const isEarlyAccess = Boolean(card.isEarlyAccess || isEarlyAccessActive(card.earlyAccessEndsAt))
+    return card.inInventory === inInventory && card.isBanned === isBanned && card.isAwaitingAccess === isAwaitingAccess &&
+      Boolean(card.isEarlyAccess) === isEarlyAccess
+      ? card : { ...card, inInventory, isBanned, isAwaitingAccess, isEarlyAccess }
+  })
+}
+
 export function isModelIgnored(modelId: number): boolean {
   if (isModelBanned(modelId)) return true
   const row = getDb()
@@ -708,6 +781,7 @@ export function isModelIgnored(modelId: number): boolean {
 }
 
 export function isModelBanned(modelId: number): boolean {
+  if (isForgettingModel(modelId)) return true
   const row = getDb().prepare('SELECT 1 FROM banned_models WHERE model_id = ?').get(modelId)
   return Boolean(row)
 }
@@ -786,27 +860,39 @@ export function banModel(modelId: number, modelName = '', stub?: BanModelStub): 
   invalidateInventorySnapshotCache()
 }
 
-/** Ban + hide everywhere (Missing/Browse/Library) unless Show forgotten. */
-export function forgetModel(modelId: number, modelName = '', stub?: BanModelStub): void {
-  banModel(modelId, modelName, stub)
-  getDb().prepare('UPDATE banned_models SET forgotten = 1 WHERE model_id = ?').run(modelId)
-  removeMissingModel(modelId)
-  removeTagSkipAllow(modelId)
-}
-
-export function isModelForgotten(modelId: number): boolean {
-  if (!modelId || modelId <= 0) return false
-  const row = getDb()
-    .prepare('SELECT forgotten FROM banned_models WHERE model_id = ?')
-    .get(modelId) as { forgotten: number } | undefined
-  return Boolean(row?.forgotten)
-}
-
-export function getForgottenModelIds(): Set<number> {
-  const rows = getDb()
-    .prepare('SELECT model_id FROM banned_models WHERE forgotten = 1')
-    .all() as { model_id: number }[]
-  return new Set(rows.map((r) => r.model_id))
+/** Forget removes identity/history; it never creates an exclusion or restore entry. */
+export function forgetModelData(modelId: number, versionId?: number): void {
+  const database = getDb()
+  database.transaction(() => {
+    const versionTables = FORGET_VERSION_TABLES
+    if (versionId != null) {
+      for (const table of ['pending_seen', 'ea_access_seen', 'browse_rule_gallery']) {
+        database.prepare(`DELETE FROM ${table} WHERE version_id = ?`).run(versionId)
+      }
+      for (const table of versionTables) {
+        database.prepare(`DELETE FROM ${table} WHERE model_id = ? AND version_id = ?`).run(modelId, versionId)
+      }
+      for (const table of ['missing_models', 'tag_skip_reviews']) {
+        database.prepare(`DELETE FROM ${table} WHERE model_id = ? AND version_id = ?`).run(modelId, versionId)
+      }
+      database.prepare('DELETE FROM incomplete_models WHERE model_id = ? AND resolved_version_id = ?').run(modelId, versionId)
+      for (const table of ['auto_update_models', 'library_version_checks']) {
+        database.prepare(`DELETE FROM ${table} WHERE model_id = ? AND NOT EXISTS (SELECT 1 FROM versions WHERE model_id = ?)`).run(modelId, modelId)
+      }
+      database.prepare('UPDATE banned_models SET version_id = NULL, preview_url = NULL WHERE model_id = ? AND version_id = ?').run(modelId, versionId)
+    } else {
+      const ids = versionTables.map(table => `SELECT version_id FROM ${table} WHERE model_id = ?`).join(' UNION ')
+      for (const table of ['pending_seen', 'ea_access_seen', 'browse_rule_gallery']) {
+        database.prepare(`DELETE FROM ${table} WHERE version_id IN (${ids})`).run(...versionTables.map(() => modelId))
+      }
+      for (const table of [...FORGET_MODEL_TABLES, 'banned_models']) {
+        database.prepare(`DELETE FROM ${table} WHERE model_id = ?`).run(modelId)
+      }
+    }
+    // A persisted queue must not restore the forgotten selection on next launch.
+    pruneStoredQueue(database, row => row.modelId === modelId && (versionId == null || row.versionId === versionId))
+  })()
+  invalidateInventorySnapshotCache()
 }
 
 export function unbanModel(modelId: number): void {
@@ -1082,8 +1168,10 @@ export function pruneStaleTagSkipReviews(
   let removed = 0
   const paused = activePausedTags
   const banned = activeBannedTags
+  const owned = new Set((getDb().prepare('SELECT DISTINCT model_id FROM versions').all() as { model_id: number }[]).map((r) => r.model_id))
+  const allowed = new Set(getTagSkipAllowlistIds())
   for (const row of getAllTagSkipReviews()) {
-    if (isTagSkipAllowed(row.modelId) || isModelOwned(row.modelId)) {
+    if (allowed.has(row.modelId) || owned.has(row.modelId)) {
       removeTagSkipReview(row.modelId)
       removed++
       continue
@@ -1136,21 +1224,28 @@ export function removeTagSkipReviewsForTags(tags: string[]): number {
 export function getExclusionReviewItems(): ExclusionReviewItem[] {
   pruneStaleTagSkipReviews()
   const localPreviewByModel = new Map<number, string>()
-  for (const r of getAllVersions()) {
-    if (r.modelId <= 0 || !r.previewPath?.trim()) continue
-    if (!localPreviewByModel.has(r.modelId)) localPreviewByModel.set(r.modelId, r.previewPath)
+  const previewRows = getDb().prepare(
+    "SELECT model_id, preview_path FROM versions WHERE model_id > 0 AND TRIM(preview_path) != '' ORDER BY downloaded_at DESC"
+  ).all() as { model_id: number; preview_path: string }[]
+  for (const r of previewRows) {
+    if (!localPreviewByModel.has(r.model_id)) localPreviewByModel.set(r.model_id, r.preview_path.trim())
+  }
+  const checkedPaths = new Map<string, boolean>()
+  const exists = (path: string): boolean => {
+    if (!checkedPaths.has(path)) checkedPaths.set(path, safePathExists(path) === true)
+    return checkedPaths.get(path)!
   }
   const withLocalPreview = (modelId: number, remote?: string): string | undefined => {
     const local = localPreviewByModel.get(modelId)
     // Prefer on-disk Library preview only when the file still exists.
-    if (local && safePathExists(local) === true) return local
+    if (local && exists(local)) return local
     const remoteTrimmed = remote?.trim()
     if (!remoteTrimmed) return undefined
     // HTTP(S) / media URLs are fine; dead local paths should fall through to browse enrich.
     if (/^https?:\/\//i.test(remoteTrimmed) || /^media:\/\//i.test(remoteTrimmed) || /^data:/i.test(remoteTrimmed)) {
       return remoteTrimmed
     }
-    if (safePathExists(remoteTrimmed) === true) return remoteTrimmed
+    if (exists(remoteTrimmed)) return remoteTrimmed
     return undefined
   }
 
@@ -1180,7 +1275,7 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
   const banned = getBannedModels().map((b): ExclusionReviewItem => {
     bannedIds.add(b.modelId)
     return {
-      kind: b.forgotten ? 'forgotten' : 'bannedManual',
+      kind: 'bannedManual',
       modelId: b.modelId,
       versionId: b.versionId,
       modelName: b.modelName,
@@ -1197,12 +1292,21 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
     }
   })
 
+  // pruneStaleTagSkipReviews already removes owned/allowlisted rows. Build the
+  // deferred lookup once instead of SELECT + parse the entire table per review.
+  const awaitingModels = new Set<number>()
+  const awaitingVersions = new Set<number>()
+  for (const d of getAllDeferredDownloads()) {
+    if (!isAwaitingAccessFailureKind(d.failureKind)) continue
+    awaitingModels.add(d.modelId)
+    awaitingVersions.add(d.versionId)
+  }
   const tagSkips = getAllTagSkipReviews()
-    .filter((s) => !bannedIds.has(s.modelId) && !isModelOwned(s.modelId) && !isTagSkipAllowed(s.modelId))
+    .filter((s) => !bannedIds.has(s.modelId))
     .filter((s) => {
       // EA/Buzz deferred must not appear on Missing — they stay on Early access
       // (including pause-tagged EA under Session pause).
-      if (modelHasAwaitingAccessDeferred(s.modelId, s.versionId)) {
+      if (awaitingModels.has(s.modelId) || (s.versionId != null && awaitingVersions.has(s.versionId))) {
         removeTagSkipReview(s.modelId)
         return false
       }
@@ -1232,8 +1336,8 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
     )
 
   // Version-scoped Browse/Updates excludes — not whole-model banned_models.
-  const excludedVersions = getAllSkippedPendingVersions()
-    .filter((p) => p.forgotten && p.versionId > 0 && p.modelId > 0)
+  const excludedVersions = getAllBannedVersions()
+    .filter((p) => p.versionId > 0 && p.modelId > 0)
     .filter((p) => !bannedIds.has(p.modelId))
     .map((p): ExclusionReviewItem => {
       return {
@@ -1332,11 +1436,16 @@ function fillExclusionVersionNames(items: ExclusionReviewItem[]): void {
         const name = row.versionName.trim()
         if (name) byVersionId.set(row.versionId, name)
       }
-      const cache = getBrowseCardCache(chunk)
-      for (const [vid, card] of cache) {
-        if (byVersionId.has(vid)) continue
-        const name = (card.versionName || '').trim()
-        if (name) byVersionId.set(vid, name)
+      // Titles need no image sanitization or cache-file probes.
+      const cached = db.prepare(
+        `SELECT version_id, card_json FROM browse_card_cache WHERE version_id IN (${placeholders})`
+      ).all(...chunk) as { version_id: number; card_json: string }[]
+      for (const row of cached) {
+        if (byVersionId.has(row.version_id)) continue
+        try {
+          const name = (JSON.parse(row.card_json).versionName || '').trim()
+          if (name) byVersionId.set(row.version_id, name)
+        } catch { /* corrupt card must not prevent the rest of the list loading */ }
       }
     }
   }
@@ -1631,14 +1740,14 @@ export function getDeferredDownload(versionId: number): DeferredDownload | null 
 
 /** True when this model (or version) is waiting on Early Access / Buzz / auth — not Missing. */
 export function modelHasAwaitingAccessDeferred(modelId: number, versionId?: number): boolean {
-  if (versionId && versionId > 0) {
-    const byVersion = getDeferredDownload(versionId)
-    if (byVersion && isAwaitingAccessFailureKind(byVersion.failureKind)) return true
-  }
-  if (!modelId || modelId <= 0) return false
-  return getAllDeferredDownloads().some(
-    (d) => d.modelId === modelId && isAwaitingAccessFailureKind(d.failureKind)
-  )
+  const database = getDb()
+  const kinds = "failure_kind IN ('early_access', 'auth', 'forbidden')"
+  if (versionId && versionId > 0 && database.prepare(
+    `SELECT 1 FROM deferred_downloads WHERE version_id = ? AND ${kinds}`
+  ).get(versionId)) return true
+  return modelId > 0 && Boolean(database.prepare(
+    `SELECT 1 FROM deferred_downloads WHERE model_id = ? AND ${kinds} LIMIT 1`
+  ).get(modelId))
 }
 
 export function addVersion(record: InventoryRecord): void {
@@ -1965,6 +2074,7 @@ export function getAllPendingVersions(): PendingVersion[] {
 }
 
 export function addPendingVersion(pending: PendingVersion): void {
+  if (isModelBanned(pending.modelId) || isVersionExcluded(pending.versionId)) return
   const tagsJson = JSON.stringify(pending.civitaiTags ?? [])
   const detectedAt = pending.detectedAt?.trim() || new Date().toISOString()
   getDb()
@@ -2140,25 +2250,39 @@ export function isPendingVersionSkipped(versionId: number): boolean {
   return Boolean(row)
 }
 
-/** Browse Ban / Updates Skip|Forget — block harvest, deferred promote, and auto-retry. */
-export function isVersionAutoDownloadBlocked(versionId: number): boolean {
-  return isPendingVersionSkipped(versionId)
+/** A reversible version ban is independent of an Updates Skip. */
+export function isVersionExcluded(versionId: number): boolean {
+  return isForgettingVersion(versionId) || isVersionBanned(versionId) || getDb().prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ?').get(versionId) != null
+}
+export const isVersionAutoDownloadBlocked = isVersionExcluded
+
+export function isVersionBanned(versionId: number): boolean {
+  return Boolean(getDb().prepare('SELECT 1 FROM banned_versions WHERE version_id = ?').get(versionId))
 }
 
-/** Browse Ban / version exclude — forgotten=1 in skipped_pending_versions. */
-export function isVersionForgotten(versionId: number): boolean {
-  if (!versionId || versionId <= 0) return false
-  const row = getDb()
-    .prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ? AND forgotten = 1')
-    .get(versionId)
-  return Boolean(row)
+export function getBannedVersionIds(): Set<number> {
+  return new Set((getDb().prepare('SELECT version_id FROM banned_versions').all() as { version_id: number }[]).map(row => row.version_id))
 }
 
-export function getForgottenVersionIds(): Set<number> {
-  const rows = getDb()
-    .prepare('SELECT version_id FROM skipped_pending_versions WHERE forgotten = 1')
-    .all() as Array<{ version_id: number }>
-  return new Set(rows.map((r) => r.version_id))
+export function getAllBannedVersions(): PendingVersion[] {
+  return (getDb().prepare('SELECT metadata_json FROM banned_versions ORDER BY banned_at DESC').all() as { metadata_json: string }[])
+    .flatMap(row => { try { return [JSON.parse(row.metadata_json) as PendingVersion] } catch { return [] } })
+}
+
+export function getBannedVersion(versionId: number): PendingVersion | null {
+  const row = getDb().prepare('SELECT metadata_json FROM banned_versions WHERE version_id = ?').get(versionId) as { metadata_json: string } | undefined
+  try { return row ? JSON.parse(row.metadata_json) as PendingVersion : null } catch { return null }
+}
+
+export function banVersion(pending: PendingVersion): void {
+  getDb().prepare('INSERT OR REPLACE INTO banned_versions VALUES (?, ?, ?, ?)')
+    .run(pending.versionId, pending.modelId, JSON.stringify({ ...pending, skipped: false, forgotten: undefined }), new Date().toISOString())
+  removePendingVersion(pending.versionId)
+  removeSkippedPendingVersion(pending.versionId)
+}
+
+export function unbanVersion(versionId: number): void {
+  getDb().prepare('DELETE FROM banned_versions WHERE version_id = ?').run(versionId)
 }
 
 export function getSkippedPendingVersionIds(): Set<number> {
@@ -2174,11 +2298,9 @@ export function getAllSkippedPendingVersions(): PendingVersion[] {
     .all()
   return rows.map((r) => {
     const row = r as Record<string, unknown>
-    const forgotten = Number(row.forgotten) === 1
     return {
       ...rowToPending(row),
-      skipped: !forgotten,
-      forgotten
+      skipped: true
     }
   })
 }
@@ -2186,11 +2308,6 @@ export function getAllSkippedPendingVersions(): PendingVersion[] {
 /** Persist a skipped Updates offer (keeps library files). */
 export function skipPendingVersion(pending: PendingVersion): void {
   upsertSkippedPendingVersion(pending, false)
-}
-
-/** Persist a forgotten Updates offer — this version only, never resurface unless Unforget. */
-export function forgetPendingVersion(pending: PendingVersion): void {
-  upsertSkippedPendingVersion(pending, true)
 }
 
 function upsertSkippedPendingVersion(pending: PendingVersion, forgotten: boolean): void {
@@ -2242,16 +2359,6 @@ export function unskipPendingVersion(versionId: number): PendingVersion | null {
   return pending
 }
 
-export function unforgetPendingVersion(versionId: number): PendingVersion | null {
-  const row = getDb()
-    .prepare('SELECT * FROM skipped_pending_versions WHERE version_id = ? AND forgotten = 1')
-    .get(versionId) as Record<string, unknown> | undefined
-  if (!row) return null
-  const pending = rowToPending(row)
-  getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
-  return pending
-}
-
 export function removeSkippedPendingVersion(versionId: number): void {
   getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
   clearPendingSeen(versionId)
@@ -2269,13 +2376,6 @@ export function pruneSkippedPendingVersions(): void {
   if (!rows.length) return
   const snapshot = getInventorySnapshotCached(60_000)
   for (const p of rows) {
-    // Forgotten: keep until the user downloads this version (or Unforget).
-    if (p.forgotten) {
-      if (snapshot.versionIds.has(p.versionId) || hasVersion(p.versionId)) {
-        removeSkippedPendingVersion(p.versionId)
-      }
-      continue
-    }
     if (isModelBanned(p.modelId) || isMissingUnavailable(p.modelId)) {
       removeSkippedPendingVersion(p.versionId)
       continue
@@ -2323,15 +2423,23 @@ export function clearLibraryVersionChecked(modelId: number): void {
 export function filterModelsDueForVersionCheck(modelIds: number[], cooldownMs: number): number[] {
   if (!modelIds.length) return []
   const cutoff = Date.now() - Math.max(0, cooldownMs)
-  const stmt = getDb().prepare('SELECT checked_at FROM library_version_checks WHERE model_id = ?')
+  const checkedAt = new Map<number, string>()
+  const ids = [...new Set(modelIds)]
+  for (let i = 0; i < ids.length; i += 400) {
+    const chunk = ids.slice(i, i + 400)
+    const rows = getDb().prepare(
+      `SELECT model_id, checked_at FROM library_version_checks WHERE model_id IN (${chunk.map(() => '?').join(',')})`
+    ).all(...chunk) as { model_id: number; checked_at: string }[]
+    for (const row of rows) checkedAt.set(row.model_id, row.checked_at)
+  }
   const due: { id: number; checkedMs: number }[] = []
   for (const id of modelIds) {
-    const row = stmt.get(id) as { checked_at: string } | undefined
-    if (!row?.checked_at) {
+    const checked = checkedAt.get(id)
+    if (!checked) {
       due.push({ id, checkedMs: 0 })
       continue
     }
-    const ms = Date.parse(row.checked_at)
+    const ms = Date.parse(checked)
     if (!Number.isFinite(ms) || ms < cutoff) {
       due.push({ id, checkedMs: Number.isFinite(ms) ? ms : 0 })
     }
@@ -2358,6 +2466,7 @@ function rowToDeferred(row: Record<string, unknown>): DeferredDownload {
     lastAttemptAt: row.last_attempt_at as string,
     attemptCount: row.attempt_count as number,
     earlyAccessEndsAt: endsAt || undefined,
+    accessConfirmedAt: (row.access_confirmed_at as string) || undefined,
     civitaiTags: parseCivitaiTags(row.civitai_tags),
     downloadCount: optStatCount(row.download_count),
     thumbsUpCount: optStatCount(row.thumbs_up_count),
@@ -2384,10 +2493,13 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
   earlyAccessEndsAt?: string
   /** When false, keep existing attempt_count (metadata enrich). Default true. */
   bumpAttempt?: boolean
+  /** A positive access-gate response revokes any previous Public confirmation. */
+  clearAccessConfirmation?: boolean
 }): void {
+  if (isModelBanned(entry.modelId) || isVersionBanned(entry.versionId) || isForgettingVersion(entry.versionId)) return
   const existing = getDb()
     .prepare(
-      'SELECT attempt_count, deferred_at, civitai_tags, download_count, thumbs_up_count FROM deferred_downloads WHERE version_id = ?'
+      'SELECT attempt_count, deferred_at, civitai_tags, download_count, thumbs_up_count, access_confirmed_at FROM deferred_downloads WHERE version_id = ?'
     )
     .get(entry.versionId) as
     | {
@@ -2396,6 +2508,7 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
         civitai_tags: string
         download_count: number | null
         thumbs_up_count: number | null
+        access_confirmed_at: string | null
       }
     | undefined
 
@@ -2431,8 +2544,9 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       `INSERT INTO deferred_downloads (
         version_id, model_id, model_name, version_name, model_type, routing_tag, preview_url,
         output_folder, reason, failure_kind, deferred_at, last_attempt_at, attempt_count,
-        early_access_ends_at, civitai_tags, download_count, thumbs_up_count, base_model, deferred_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        early_access_ends_at, civitai_tags, download_count, thumbs_up_count, base_model, deferred_source,
+        access_confirmed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(version_id) DO UPDATE SET
         model_name = excluded.model_name,
         version_name = CASE
@@ -2448,6 +2562,7 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
         last_attempt_at = excluded.last_attempt_at,
         attempt_count = excluded.attempt_count,
         early_access_ends_at = COALESCE(excluded.early_access_ends_at, deferred_downloads.early_access_ends_at),
+        access_confirmed_at = excluded.access_confirmed_at,
         civitai_tags = CASE
           WHEN excluded.civitai_tags != '[]' THEN excluded.civitai_tags
           ELSE deferred_downloads.civitai_tags
@@ -2483,7 +2598,9 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
       downloadCount,
       thumbsUpCount,
       entry.baseModel?.trim() || '',
-      entry.deferredSource ?? 'harvest'
+      entry.deferredSource ?? 'harvest',
+      // Metadata cannot grant access or resurrect a stale confirmation. Real failures clear it.
+      entry.bumpAttempt === false && !entry.clearAccessConfirmation ? existing?.access_confirmed_at ?? null : null
     )
 }
 
@@ -3233,13 +3350,19 @@ export function upsertBrowseCardCache(
   tx(rows)
 }
 
-function sanitizeBrowseCardPreviews(card: WatchRuleTestModel): WatchRuleTestModel {
+function sanitizeBrowseCardPreviews(
+  card: WatchRuleTestModel,
+  cachedPath: (url: string) => string | undefined
+): WatchRuleTestModel {
   const raw = card.previewUrls?.length
     ? card.previewUrls
     : card.previewUrl
       ? [card.previewUrl]
       : []
-  const usable = filterUsablePreviewUrls(raw)
+  const usable = [...new Set(filterUsablePreviewUrls(raw).flatMap((url) => {
+    const local = /^https?:\/\//i.test(url) ? cachedPath(url) : undefined
+    return local ? [local, url] : [url]
+  }))]
   const prevUrl = card.previewUrl?.trim() || undefined
   const sameSingle = usable.length === 1 && usable[0] === prevUrl && !card.previewUrls?.length
   const sameList =
@@ -3257,6 +3380,7 @@ function sanitizeBrowseCardPreviews(card: WatchRuleTestModel): WatchRuleTestMode
 
 export function getBrowseCardCache(versionIds: number[]): Map<number, WatchRuleTestModel> {
   const out = new Map<number, WatchRuleTestModel>()
+  const cachedPath = createCachedPreviewLookup()
   const ids = versionIds.filter((id) => id > 0)
   if (!ids.length) return out
   const placeholders = ids.map(() => '?').join(',')
@@ -3268,7 +3392,7 @@ export function getBrowseCardCache(versionIds: number[]): Map<number, WatchRuleT
   for (const row of rows) {
     try {
       const card = JSON.parse(row.card_json) as WatchRuleTestModel
-      if (card?.versionId) out.set(row.version_id, sanitizeBrowseCardPreviews(card))
+      if (card?.versionId) out.set(row.version_id, sanitizeBrowseCardPreviews(card, cachedPath))
     } catch {
       /* skip corrupt row */
     }
@@ -3379,6 +3503,7 @@ export function clearBrowseCardEarlyAccessFlag(versionId: number): void {
   if (versionId <= 0) return
   const hit = getBrowseCardCache([versionId]).get(versionId)
   const deferred = getDeferredDownload(versionId)
+  if (isEarlyAccessActive(deferred?.earlyAccessEndsAt)) return
   const deferredPreview = coalesceDeferredPreviewUrl(
     deferred?.previewUrl,
     hit?.previewUrl,
@@ -3420,7 +3545,7 @@ export function clearBrowseCardEarlyAccessFlag(versionId: number): void {
     return
   }
 
-  if (!hit.isEarlyAccess && hadBrowsePreview) return
+  if (!hit.isEarlyAccess && !isEarlyAccessActive(hit.earlyAccessEndsAt) && hadBrowsePreview) return
 
   const previewUrls =
     hit.previewUrls?.length && hadBrowsePreview
@@ -3444,22 +3569,25 @@ export function clearBrowseCardEarlyAccessFlag(versionId: number): void {
   ])
 }
 
-/**
- * Mark an unlocked EA row ready for auto-queue without dumping the whole list into the strip.
- * Past endsAt → shouldAutoRetryDeferred is true; 2 days ago → not shown as "unlocks today" on strip.
- */
+/** Confirmed full API response may supersede a deadline, unless the stored gate changed meanwhile. */
+export function confirmDeferredAccessUnlocked(versionId: number, checked: DeferredDownload): boolean {
+  const row = getDeferredDownload(versionId)
+  // A slower API check must not replace a newer download failure or a changed deadline.
+  if (!row || row.lastAttemptAt !== checked.lastAttemptAt || row.earlyAccessEndsAt !== checked.earlyAccessEndsAt) return false
+  const now = new Date().toISOString()
+  getDb().prepare(`UPDATE deferred_downloads SET early_access_ends_at = NULL,
+    access_confirmed_at = ?, failure_kind = 'early_access', reason = ?, last_attempt_at = ?
+    WHERE version_id = ?`).run(now, 'Ready — waiting for download pipeline slot', now, versionId)
+  clearBrowseCardEarlyAccessFlag(versionId)
+  return true
+}
+
+/** Keep an unlocked row ready for pipeline capacity; future gates require explicit API confirmation. */
 export function markDeferredReadyForPipeline(versionId: number): void {
   const row = getDeferredDownload(versionId)
-  if (!row) return
-  const readyAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-  upsertDeferredDownload({
-    ...row,
-    failureKind: 'early_access',
-    earlyAccessEndsAt: readyAt,
-    reason: 'Ready — waiting for download pipeline slot',
-    lastAttemptAt: new Date().toISOString(),
-    bumpAttempt: false
-  })
+  if (!row?.accessConfirmedAt || isEarlyAccessActive(row.earlyAccessEndsAt)) return
+  getDb().prepare('UPDATE deferred_downloads SET reason = ? WHERE version_id = ?')
+    .run('Ready — waiting for download pipeline slot', versionId)
 }
 
 export function patchBrowseCardCachePreview(
@@ -3685,7 +3813,6 @@ export function listVideoPreviewSyncCandidates(): import('../shared/types').Vide
       versionId: row.versionId,
       modelId: row.modelId,
       modelName: row.modelName,
-      sourceDomain: row.sourceDomain,
       nsfw: undefined,
       nsfwLevel: undefined
     })

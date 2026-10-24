@@ -1,5 +1,5 @@
 import type { CivitaiClient } from './civitai-client'
-import type { CivitaiModelVersion, DeferredDownload, DeferredFailureKind } from './types'
+import type { CivitaiModel, CivitaiModelVersion, DeferredDownload, DeferredFailureKind } from './types'
 import type { ClassifiedDownloadFailure } from './download-errors'
 
 export interface CivitaiVersionMini {
@@ -26,35 +26,7 @@ export function isVersionEarlyAccess(version: {
   additionalResourceCharge?: boolean
   paidAccess?: { permanent?: boolean; endsAt?: string | null }
 }): boolean {
-  const paidEnds = version.paidAccess?.endsAt
-  const paidAccessEndsActive = Boolean(paidEnds && new Date(paidEnds).getTime() > Date.now())
-  if (version.earlyAccessEndsAt) {
-    if (new Date(version.earlyAccessEndsAt).getTime() > Date.now()) return true
-    if (
-      version.checkPermission ||
-      version.paidAccess?.permanent === true ||
-      paidAccessEndsActive
-    ) {
-      return true
-    }
-    return false
-  }
-  const avail = version.availability?.toLowerCase()
-  if (avail === 'earlyaccess') return true
-  // `checkPermission` and `paidAccess.permanent` are real access gates — download will fail
-  // with 401/403 until the user pays. `additionalResourceCharge` alone is NOT a gate — it
-  // only marks an extra Buzz cost on top of a public download and must not route a model
-  // to Awaiting access. If a charge-gated download truly fails, `refineDeferredFailure`
-  // upgrades the row then.
-  // Past `paidAccess.endsAt` is NOT a gate — the pay window already ended.
-  if (
-    version.checkPermission ||
-    version.paidAccess?.permanent === true ||
-    paidAccessEndsActive
-  ) {
-    return true
-  }
-  return false
+  return earlyAccessFromMini(version).isEarlyAccess
 }
 
 export function isEarlyAccessActive(endsAt: string | null | undefined): boolean {
@@ -102,7 +74,7 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   isEarlyAccess: boolean
   endsAt?: string
 } {
-  const avail = mini.availability?.toLowerCase()
+  const avail = mini.availability?.toLowerCase().replace(/[\s_-]/g, '')
   const endsAt = mini.earlyAccessEndsAt ?? undefined
   const endsActive = endsAt && isEarlyAccessActive(endsAt) ? endsAt : undefined
 
@@ -152,6 +124,22 @@ export function earlyAccessFromMini(mini: CivitaiVersionMini): {
   return { isEarlyAccess: false }
 }
 
+/** A sparse latest-version search row may carry its access status only on the parent. */
+export function modelVersionAccess(model: CivitaiModel, version: CivitaiModelVersion): {
+  isEarlyAccess: boolean
+  endsAt?: string
+} {
+  const access = earlyAccessFromMini(version)
+  if (access.isEarlyAccess) return access
+  const versionHasStatus =
+    Boolean(version.availability?.trim()) || version.earlyAccessEndsAt != null ||
+    version.paidAccess != null || version.checkPermission != null
+  if (!versionHasStatus && model.modelVersions?.[0]?.id === version.id) {
+    return earlyAccessFromMini(model)
+  }
+  return access
+}
+
 export async function checkVersionEarlyAccess(
   client: CivitaiClient,
   versionId: number,
@@ -182,21 +170,14 @@ export async function refineDeferredFailure(
   try {
     const mini = await client.getVersionMini(versionId, { pace: 'interactive' })
     let ea = earlyAccessFromMini(mini)
-    // The mini endpoint omits `paidAccess`, so a 401/403 with an API key set often hides
-    // behind a `paidAccess.permanent=true` flag that only the full GET /model-versions/{id}
-    // response carries. Fetch the full version once a mini check returns "not EA" — without
-    // this fallback the watcher would call `onUnlocked`, re-queue via `requeueDeferredVersion`
-    // (which bypasses `shouldAutoRetryDeferred`), and stage a 401/403 download attempt that
-    // just rolls the row back into Deferred. With `early_access` and no `endsAt` set, the row
-    // sits in Awaiting access until the user pays and clicks Retry / the API clears the gate.
+    // Mini can omit paidAccess, availability or the unlock deadline. Check the full version
+    // before keeping an auth/forbidden failure that could actually be an access gate.
     if (!ea.isEarlyAccess) {
       try {
         const version = await client.getModelVersion(versionId, { pace: 'interactive' })
-        if (version.paidAccess) {
-          ea = earlyAccessFromMini({ ...mini, paidAccess: version.paidAccess })
-        }
+        ea = earlyAccessFromMini({ ...mini, ...version })
       } catch {
-        /* keep mini classification (paidAccess lookup failed — version may be deleted now) */
+        /* keep mini classification (full version lookup failed) */
       }
     }
     // Upgrade to early_access whenever the API reports any kind of gating — a waitable
@@ -226,24 +207,19 @@ export async function enrichDeferredDownloads(
   items: DeferredDownload[],
   persist: (item: DeferredDownload) => void,
   maxChecks = 80,
-  /** Called when live API says early access / auth gate is gone (creator ended EA early). */
-  onUnlocked?: (versionId: number) => void,
-  /** UI enrich must not drop rows — only the background watcher may unlock/re-queue. */
+  /** Called after the full version API confirms a gate is gone and no future deadline remains. */
+  onUnlocked?: (versionId: number, checked: DeferredDownload) => void,
+  /** Set false for metadata-only callers that must not unlock/re-queue rows. */
   options?: { allowUnlock?: boolean }
 ): Promise<DeferredDownload[]> {
   const allowUnlock = options?.allowUnlock !== false
-  // Rotate through the list: prefer never-checked (no endsAt), then oldest lastAttemptAt.
-  // Previously missing-endsAt always sorted first — the same still-gated Sub/Buzz rows were
-  // re-polled every tick while expired Wait rows never got a live check.
+  // Rotate all access gates by age, including future deadlines: creators can unlock early.
   const ordered = [...items].sort((a, b) => {
     const aGate =
       a.failureKind === 'early_access' || a.failureKind === 'auth' || a.failureKind === 'forbidden'
     const bGate =
       b.failureKind === 'early_access' || b.failureKind === 'auth' || b.failureKind === 'forbidden'
     if (aGate !== bGate) return aGate ? -1 : 1
-    const aMiss = aGate && !a.earlyAccessEndsAt ? 0 : 1
-    const bMiss = bGate && !b.earlyAccessEndsAt ? 0 : 1
-    if (aMiss !== bMiss) return aMiss - bMiss
     const aAt = Date.parse(a.lastAttemptAt) || 0
     const bAt = Date.parse(b.lastAttemptAt) || 0
     return aAt - bAt
@@ -251,49 +227,49 @@ export async function enrichDeferredDownloads(
 
   const byVersion = new Map(items.map((i) => [i.versionId, i]))
   let checks = 0
-  // Cap the expensive paid-access fallback (full GET /model-versions/{id}) per maintenance pass
-  // so the walker does not double the API load on a large Awaiting list. Mini still resolves
-  // most rows; this only catches permanent-paid-access versions whose mini omits `paidAccess`.
-  let paidAccessProbes = 0
-  const maxPaidAccessProbes = Math.min(30, Math.max(10, Math.floor(maxChecks / 4)))
+  // Bound full-version confirmations. A mini response alone never unlocks a deferred row.
+  let fullVersionProbes = 0
+  const maxFullVersionProbes = Math.min(30, Math.max(10, Math.floor(maxChecks / 4)))
   for (const item of ordered) {
+    // Leave unchecked rows' timestamps untouched so they lead the next maintenance pass.
+    if (checks >= maxChecks || fullVersionProbes >= maxFullVersionProbes) break
     const shouldCheck =
       item.failureKind === 'early_access' ||
       item.failureKind === 'auth' ||
       item.failureKind === 'forbidden'
 
-    if (shouldCheck && checks < maxChecks) {
+    if (shouldCheck) {
       checks++
       try {
         const mini = await client.getVersionMini(item.versionId, { pace: 'background' })
         let ea = earlyAccessFromMini(mini)
-        let patch: Partial<DeferredDownload> = {
+        let confirmedPublic = false
+        const patch: Partial<DeferredDownload> = {
           additionalResourceCharge: mini.additionalResourceCharge,
           freeTrialLimit: mini.freeTrialLimit ?? undefined,
           // Bump so the next pass rotates to other rows instead of rechecking the same gate.
           lastAttemptAt: new Date().toISOString()
         }
-        // Mini omits `paidAccess`, so versions gated only by `paidAccess.permanent` look "not
-        // EA" via the mini and would otherwise drop the row and trigger `onUnlocked` → the
-        // watcher re-queues a doomed 401/403 download attempt. Falling back to the full
-        // version endpoint for these rows keeps them in Awaiting access (matching the initial
-        // classify path) until the user pays or the creator removes the paywall.
+        // A sparse mini response can look public while the full response still carries a
+        // future deadline or paid gate. Confirm all access fields before clearing the row.
         const needsFullVersion =
-          (!ea.isEarlyAccess && paidAccessProbes < maxPaidAccessProbes) ||
-          !(item.baseModel || '').trim()
+          fullVersionProbes < maxFullVersionProbes &&
+          (!ea.isEarlyAccess || !(item.baseModel || '').trim())
         if (needsFullVersion) {
           try {
+            fullVersionProbes++
             const fullVersion = await client.getModelVersion(item.versionId, { pace: 'background' })
-            if (!ea.isEarlyAccess && fullVersion.paidAccess && paidAccessProbes < maxPaidAccessProbes) {
-              paidAccessProbes++
-              ea = earlyAccessFromMini({ ...mini, paidAccess: fullVersion.paidAccess })
+            if (!ea.isEarlyAccess) {
+              ea = earlyAccessFromMini({ ...mini, ...fullVersion })
+              confirmedPublic = fullVersion.id === item.versionId && !ea.isEarlyAccess &&
+                fullVersion.availability?.trim().toLowerCase() === 'public'
             }
             const bm = fullVersion.baseModel?.trim()
             if (bm && !(item.baseModel || '').trim()) {
               patch.baseModel = bm
             }
           } catch {
-            /* full version lookup failed — keep mini classification (likely deleted upstream) */
+            /* Uncertain access stays deferred; an unavailable lookup is not an unlock. */
           }
         }
         if (ea.isEarlyAccess) {
@@ -301,17 +277,18 @@ export async function enrichDeferredDownloads(
             ...item,
             ...patch,
             failureKind: 'early_access' as const,
+            accessConfirmedAt: undefined,
             reason: formatEarlyAccessReason(ea.endsAt),
             earlyAccessEndsAt: ea.endsAt ?? item.earlyAccessEndsAt
           }
           persist(next)
           byVersion.set(item.versionId, next)
-        } else if (allowUnlock) {
+        } else if (allowUnlock && confirmedPublic) {
           // Public again (or never gated) — drop stale Waiting row; caller may re-queue.
           byVersion.delete(item.versionId)
-          onUnlocked?.(item.versionId)
+          onUnlocked?.(item.versionId, item)
         } else {
-          // Metadata-only (Awaiting tab / startup) — mini can falsely look "public".
+          // Unconfirmed or metadata-only: retain the gate and rotate to another row next pass.
           const next = { ...item, ...patch }
           persist(next)
           byVersion.set(item.versionId, next)
@@ -356,16 +333,11 @@ export function isSameLocalCalendarDay(isoTimestamp: string, reference: Date = n
   )
 }
 
-/** Download strip shows deferred rows only when early access unlocks today. */
+/** Interrupted transfers may be retried from the strip; access gates belong in Early access. */
 export function shouldShowDeferredInDownloadStrip(
   entry: Pick<DeferredDownload, 'failureKind' | 'earlyAccessEndsAt'>
 ): boolean {
-  if (entry.failureKind === 'interrupted') return true
-  return (
-    entry.failureKind === 'early_access' &&
-    Boolean(entry.earlyAccessEndsAt) &&
-    isSameLocalCalendarDay(entry.earlyAccessEndsAt!)
-  )
+  return entry.failureKind === 'interrupted' && !isEarlyAccessActive(entry.earlyAccessEndsAt)
 }
 
 export function deferEarlyAccess(

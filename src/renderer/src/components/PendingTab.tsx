@@ -1,3 +1,5 @@
+import { useForgetModel, useOnModelForgotten } from '../hooks/useForgetModel'
+import { matchesSelection } from '../../../shared/model-actions'
 import {
   useEffect,
   useMemo,
@@ -36,6 +38,7 @@ import {
 import { useT } from '../i18n/context'
 import type { ModelDetailTarget } from './ModelDetailModal'
 import { StatusModelCard } from './StatusModelCard'
+import { usePreviewViewportPriority } from '../hooks/usePreviewViewportPriority'
 import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
 import { FloatingMarkSeenToggle } from './FloatingMarkSeenToggle'
@@ -228,6 +231,20 @@ export const PendingTab = memo(function PendingTab({
   onOpenTagFolders
 }: Props) {
   const t = useT()
+  const { requestForget, confirmation: forgetConfirmation } = useForgetModel()
+  useOnModelForgotten(selection => {
+    if (selection.versionId == null) setHiddenModelIds(prev => { const next = new Set(prev); next.delete(selection.modelId); return next })
+    const ids = new Set([...(selection.removedVersionIds ?? []), ...(selection.versionId == null ? [] : [selection.versionId])])
+    for (const [id, row] of tempHoldRef.current.snaps) {
+      if (matchesSelection(selection, row.modelId, row.versionId)) {
+        tempHoldRef.current.snaps.delete(id)
+        tempHoldRef.current.everActive.delete(id)
+        ids.add(id)
+      }
+    }
+    tempHoldRef.current.order = tempHoldRef.current.order.filter(id => !ids.has(id))
+    setHiddenVersionIds(prev => new Set([...prev].filter(id => !ids.has(id))))
+  })
   const { items: queueItems, paused: queuePaused } = useDownloadQueue()
   const queueByVersionId = useMemo(() => {
     const map = new Map<number, DownloadQueueItem>()
@@ -271,7 +288,7 @@ export const PendingTab = memo(function PendingTab({
   const [hideSeen, setHideSeen] = useState(initial.hideSeen)
   const [hideConfirmed, setHideConfirmed] = useState(initial.hideConfirmed)
   const [markSeenMode, setMarkSeenMode] = useState(initial.markSeenMode)
-  const [showForgotten, setShowForgotten] = useState(initial.showForgotten)
+  const [showForgotten, setShowForgotten] = useState(false)
   const [sortMode, setSortMode] = useState<PendingSort>(initial.sortMode)
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>(initial.ratingFilter)
   const [search, setSearch] = useState(initial.search)
@@ -305,6 +322,7 @@ export const PendingTab = memo(function PendingTab({
     row: DisplayRow
   } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  const previewGridRef = useRef<HTMLDivElement>(null)
   const displayMode = resultsDisplayMode === 'autoAdvance' ? 'lazy' : resultsDisplayMode
 
   useEffect(() => {
@@ -371,6 +389,7 @@ export const PendingTab = memo(function PendingTab({
   const toggleBanMode = useCallback(() => {
     const next = !banMode
     setBanMode(next)
+    if (next) setForgetFunctionMode(false)
     onBanFunctionModeChange?.(next)
   }, [banMode, onBanFunctionModeChange])
 
@@ -565,37 +584,9 @@ export const PendingTab = memo(function PendingTab({
     }
   }
 
-  const forgetVersion = async (item: PendingVersion) => {
-    if (busyVersionIds.has(item.versionId) || item.forgotten) return
-    markBusy(item.versionId, true)
-    // Keep current sidebar filter — only ensure forgotten cards stay visible (Show forgotten).
-    startTransition(() => {
-      onPendingPatched?.(item.versionId, { forgotten: true, skipped: false })
-      setShowForgotten(true)
-    })
-    try {
-      await window.api.forgetPendingVersion(item.versionId)
-    } catch {
-      startTransition(() => {
-        onPendingPatched?.(item.versionId, { forgotten: false, skipped: Boolean(item.skipped) })
-      })
-    } finally {
-      markBusy(item.versionId, false)
-    }
-  }
-
-  const unforgetVersion = async (item: PendingVersion) => {
-    if (busyVersionIds.has(item.versionId) || !item.forgotten) return
-    markBusy(item.versionId, true)
-    onPendingPatched?.(item.versionId, { forgotten: false, skipped: false })
-    try {
-      await window.api.unforgetPendingVersion(item.versionId)
-    } catch {
-      onPendingPatched?.(item.versionId, { forgotten: true, skipped: false })
-    } finally {
-      markBusy(item.versionId, false)
-    }
-  }
+  const forgetVersion = (item: PendingVersion) => requestForget({
+    modelId: item.modelId, versionId: item.versionId, modelName: item.modelName, versionName: item.versionName
+  })
 
   const approve = async (item: PendingVersion) => {
     if (busyVersionIds.has(item.versionId) || item.forgotten) return
@@ -673,7 +664,6 @@ export const PendingTab = memo(function PendingTab({
     markBusy(item.versionId, true)
     setHiddenVersionIds((prev) => new Set(prev).add(item.versionId))
     onPendingRemoved?.(item.versionId)
-    onPendingPatched?.(item.versionId, { forgotten: true, skipped: false })
     onBrowseModelBanned?.(item.modelId, {
       name: item.modelName,
       versionId: item.versionId,
@@ -694,9 +684,6 @@ export const PendingTab = memo(function PendingTab({
           modelType: item.modelType,
           tags: item.civitaiTags
         })
-      } else {
-        // Preload not restarted — forget this version only (no whole-model ban).
-        await window.api.forgetPendingVersion(item.versionId)
       }
       await onLibraryRefresh?.()
     } catch {
@@ -1167,11 +1154,16 @@ export const PendingTab = memo(function PendingTab({
     [visibleRows, ownedPrimaryByModel]
   )
 
+  const previewPriority = usePreviewViewportPriority(
+    previewGridRef, isActive, visibleRows.map((row) => row.item.versionId).join(',')
+  )
   const { overrides: previewOverrides, browseCards, markPreviewBroken } =
     useModelCardPreviewOverrides(previewSources, {
       enabled: isActive,
       contentFilter: 'all',
-      fetchVideo: browseVideoPreviews
+      fetchVideo: browseVideoPreviews,
+      priorityVersionIdsRef: previewPriority.idsRef,
+      priorityEpoch: previewPriority.epoch
     })
 
   const versionsLabel = (item: PendingVersion) => {
@@ -1293,30 +1285,6 @@ export const PendingTab = memo(function PendingTab({
               />
               {t('pending.hideConfirmed')}
             </label>
-            <label
-              className={`checkbox-field missing-show-forgotten${!headerToggleAvailability.showForgotten ? ' is-unavailable' : ''}`}
-              title={
-                !headerToggleAvailability.showForgotten
-                  ? t('common.filterToggleEmpty')
-                  : t('pending.showForgottenHint')
-              }
-            >
-              <input
-                type="checkbox"
-                checked={showForgotten}
-                disabled={!headerToggleAvailability.showForgotten}
-                onChange={(e) => {
-                  const on = e.target.checked
-                  setShowForgotten(on)
-                  // Don't switch sideFilter / chip — checkbox only toggles visibility
-                  // (same as Show skipped). Use the sidebar "Forgotten" row to filter.
-                  if (!on && sideFilter.type === 'forgotten') {
-                    setSideFilter({ type: 'all' })
-                  }
-                }}
-              />
-              {t('missingTab.showForgotten')}
-            </label>
             <div className="browse-mode-toggles">
               <button
                 type="button"
@@ -1337,7 +1305,13 @@ export const PendingTab = memo(function PendingTab({
               <button
                 type="button"
                 className={`btn-sm browse-ban-toggle ${forgetFunctionMode ? 'browse-ban-toggle-on' : 'browse-ban-toggle-off'}`}
-                onClick={() => setForgetFunctionMode((v) => !v)}
+                onClick={() => {
+                  setForgetFunctionMode((v) => !v)
+                  if (!forgetFunctionMode && banMode) {
+                    setBanMode(false)
+                    onBanFunctionModeChange?.(false)
+                  }
+                }}
                 title={t('missingTab.forgetModeTitle')}
                 aria-pressed={forgetFunctionMode}
               >
@@ -1437,7 +1411,7 @@ export const PendingTab = memo(function PendingTab({
                       : t('pending.emptyHint')}
                   </p>
                 ) : (
-                  <div className="gallery-grid status-card-grid">
+                  <div ref={previewGridRef} className="gallery-grid status-card-grid">
                     {visibleRows.map((row) => {
                       const item = row.item
                       const temporary = Boolean(row.temporary)
@@ -1564,7 +1538,7 @@ export const PendingTab = memo(function PendingTab({
                             .join(' ')}
                           dataBanSeenPending={canMarkSeen ? item.versionId : undefined}
                           title={item.modelName}
-                          onContextMenu={temporary ? undefined : (e) => openContextMenu(e, row)}
+                          onContextMenu={(e) => openContextMenu(e, row)}
                           onOpen={
                             canMarkSeen
                               ? () => queuePendingSeen(item.versionId)
@@ -1734,6 +1708,7 @@ export const PendingTab = memo(function PendingTab({
                             ) : undefined
                           }
                           previewUrl={cardThumb.urls[0]}
+                          previewVersionId={item.versionId}
                           previewUrls={cardThumb.urls}
                           videoUrl={cardThumb.videoUrl}
                           videoPreviews={browseVideoPreviews}
@@ -1776,21 +1751,13 @@ export const PendingTab = memo(function PendingTab({
                                   type="button"
                                   className={`gallery-ban-inline-btn electron-no-drag${forgotten ? ' is-unban' : ''}`}
                                   disabled={busy}
-                                  title={
-                                    forgotten
-                                      ? t('pending.unforgetHint')
-                                      : t('pending.forgetHint')
-                                  }
-                                  onClick={() =>
-                                    void (forgotten
-                                      ? unforgetVersion(item)
-                                      : forgetVersion(item))
-                                  }
+                                  title={t('missingTab.forgetHint')}
+                                  onClick={() => forgetVersion(item)}
                                 >
                                   ×
                                 </button>
                               )}
-                              {!temporary && banMode && !skipped && !forgotten && !forgetFunctionMode && (
+                              {!temporary && banMode && (
                                 <button
                                   type="button"
                                   className="gallery-ban-inline-btn electron-no-drag"
@@ -1813,15 +1780,6 @@ export const PendingTab = memo(function PendingTab({
                                   {t('pending.openInLibrary')}
                                 </button>
                               ) : null
-                            ) : forgotten ? (
-                              <button
-                                type="button"
-                                className="primary"
-                                disabled={busy}
-                                onClick={() => void unforgetVersion(item)}
-                              >
-                                {t('pending.unforget')}
-                              </button>
                             ) : skipped ? (
                               <>
                                 <button
@@ -1979,15 +1937,6 @@ export const PendingTab = memo(function PendingTab({
                   <span className="tag-name">{t('pending.showSkipped')}</span>
                   <span className="muted tag-count-inline">{skippedCount}</span>
                 </button>
-                <button
-                  type="button"
-                  className={`sidebar-tag ${sideFilterActive({ type: 'forgotten' }) ? 'active' : ''}`}
-                  onClick={() => applySideFilter({ type: 'forgotten' })}
-                >
-                  <span className="tag-name">{t('missingTab.showForgotten')}</span>
-                  <span className="muted tag-count-inline">{forgottenCount}</span>
-                </button>
-
                 {typeCounts.length ? (
                   <>
                     <h4 className="sidebar-section-title">{t('pending.sidebarTypes')}</h4>
@@ -2059,139 +2008,101 @@ export const PendingTab = memo(function PendingTab({
         />
       )}
 
+      {forgetConfirmation}
       {contextMenu && (
-        <ContextMenuPortal>
-          <div
-            className="context-menu-backdrop"
-            onClick={() => setContextMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              setContextMenu(null)
-            }}
-          />
-          <div
-            ref={contextMenuRef}
-            className="context-menu"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-            role="menu"
-          >
+        <ContextMenuPortal
+          open
+          x={contextMenu.x}
+          y={contextMenu.y}
+          menuRef={contextMenuRef}
+          onClose={() => setContextMenu(null)}
+        >
+            <div className="context-menu-title">{contextMenu.modelName}</div>
             <button
-              type="button"
               role="menuitem"
-              {...contextMenuButtonProps}
-              onClick={() => {
+              {...contextMenuButtonProps(() => {
                 void window.api.openExternal(
                   getModelPageUrl('red', contextMenu.modelId, contextMenu.versionId)
                 )
-                setContextMenu(null)
-              }}
+              }, () => setContextMenu(null))}
             >
               {t('gallery.openOnCivitai')}
             </button>
-            {contextMenu.row.item.forgotten ? (
-              <button
-                type="button"
-                role="menuitem"
-                {...contextMenuButtonProps}
-                onClick={() => {
-                  void unforgetVersion(contextMenu.row.item)
-                  setContextMenu(null)
-                }}
-              >
-                {t('pending.unforget')}
+            {onOpenModelDetail && (
+              <button {...contextMenuButtonProps(() => onOpenModelDetail({
+                kind: 'browse', modelId: contextMenu.modelId,
+                versionId: contextMenu.versionId, name: contextMenu.modelName,
+                previewUrl: contextMenu.row.item.previewUrl, domain: 'red'
+              }), () => setContextMenu(null))}>
+                {t('gallery.modelDetails')}
               </button>
-            ) : (
+            )}
+            {onOpenInLibrary && (
+              <button {...contextMenuButtonProps(() => onOpenInLibrary(contextMenu.modelId, contextMenu.modelName), () => setContextMenu(null))}>
+                {t('pending.openInLibrary')}
+              </button>
+            )}
+            {!contextMenu.row.temporary && (
               <>
+                {!contextMenu.row.item.skipped && !queueByVersionId.has(contextMenu.versionId) && (
+                  <button {...contextMenuButtonProps(() => {
+                    void approve(contextMenu.row.item)
+                  }, () => setContextMenu(null))}>
+                    {t('pending.queueDownload')}
+                  </button>
+                )}
                 {pendingSeenByVersionId[contextMenu.versionId] ? (
                   <button
-                    type="button"
                     role="menuitem"
-                    {...contextMenuButtonProps}
-                    onClick={() => {
+                    {...contextMenuButtonProps(() => {
                       void clearPendingSeenMark(contextMenu.versionId)
-                      setContextMenu(null)
-                    }}
+                    }, () => setContextMenu(null))}
                   >
                     {t('pending.unmarkSeen')}
                   </button>
                 ) : (
                   <button
-                    type="button"
                     role="menuitem"
-                    {...contextMenuButtonProps}
-                    onClick={() => {
+                    {...contextMenuButtonProps(() => {
                       queuePendingSeen(contextMenu.versionId, { force: true })
-                      setContextMenu(null)
-                    }}
+                    }, () => setContextMenu(null))}
                   >
                     {t('pending.markSeen')}
                   </button>
                 )}
-                <button
-                  type="button"
-                  role="menuitem"
-                  {...contextMenuButtonProps}
-                  onClick={() => {
-                    void forgetVersion(contextMenu.row.item)
-                    setContextMenu(null)
-                  }}
-                >
-                  {t('missingTab.forget')}
-                </button>
                 {!contextMenu.row.item.skipped ? (
                   <>
-                    {!queueByVersionId.has(contextMenu.versionId) ? (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        {...contextMenuButtonProps}
-                        onClick={() => {
-                          void approve(contextMenu.row.item)
-                          setContextMenu(null)
-                        }}
-                      >
-                        {t('pending.queueDownload')}
-                      </button>
-                    ) : null}
                     <button
-                      type="button"
                       role="menuitem"
-                      {...contextMenuButtonProps}
-                      onClick={() => {
+                      {...contextMenuButtonProps(() => {
                         void skipVersion(contextMenu.row.item)
-                        setContextMenu(null)
-                      }}
+                      }, () => setContextMenu(null))}
                     >
                       {t('pending.skip')}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      {...contextMenuButtonProps}
-                      onClick={() => {
-                        setBanTarget(contextMenu.row.item)
-                        setContextMenu(null)
-                      }}
-                    >
-                      {t('pending.ban')}
                     </button>
                   </>
                 ) : (
                   <button
-                    type="button"
                     role="menuitem"
-                    {...contextMenuButtonProps}
-                    onClick={() => {
+                    {...contextMenuButtonProps(() => {
                       void unskipVersion(contextMenu.row.item)
-                      setContextMenu(null)
-                    }}
+                    }, () => setContextMenu(null))}
                   >
                     {t('pending.unskip')}
                   </button>
                 )}
+                <button {...contextMenuButtonProps(() => {
+                  void forgetVersion(contextMenu.row.item)
+                }, () => setContextMenu(null))}>
+                  {t('missingTab.forget')}
+                </button>
+                <button className="context-menu-danger" {...contextMenuButtonProps(() => {
+                  setBanTarget(contextMenu.row.item)
+                }, () => setContextMenu(null))}>
+                  {t('pending.ban')}
+                </button>
               </>
             )}
-          </div>
         </ContextMenuPortal>
       )}
       {quickAssignTarget && onSaveTagRules ? (

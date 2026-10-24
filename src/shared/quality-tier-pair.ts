@@ -275,7 +275,7 @@ export function tierScannableFromInventory(record: InventoryRecord): TierScannab
   }
 }
 
-export function tierScannableFromBrowse(model: WatchRuleTestModel): TierScannable {
+export function tierScannableFromBrowse(model: Pick<WatchRuleTestModel, 'id' | 'versionId' | 'versionName' | 'primaryFileName' | 'baseModel'>): TierScannable {
   return {
     modelId: model.id,
     versionId: model.versionId,

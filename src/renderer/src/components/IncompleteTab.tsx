@@ -1,3 +1,5 @@
+import { useForgetModel, useOnModelForgotten } from '../hooks/useForgetModel'
+import { matchesSelection } from '../../../shared/model-actions'
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { IncompleteModel, InventoryRecord } from '../../../shared/types'
 import { formatWaitDuration } from '../../../shared/utils'
@@ -18,7 +20,8 @@ import { StatusModelCard } from './StatusModelCard'
 import { ModelCardInfo } from './ModelCardInfo'
 import { ConfirmModal } from './ConfirmModal'
 import type { ModelDetailTarget } from './ModelDetailModal'
-import { useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
+import { modelCardPreviewTrackKey, useModelCardPreviewOverrides } from '../hooks/useModelCardPreviewOverrides'
+import { usePreviewViewportPriority } from '../hooks/usePreviewViewportPriority'
 import {
   resolveModelCardThumb,
   videoPreviewAvailabilityFor,
@@ -91,6 +94,12 @@ export function IncompleteTab({
   onRecheck
 }: Props) {
   const t = useT()
+  const { requestForget, confirmation: forgetConfirmation } = useForgetModel()
+  useOnModelForgotten(selection => {
+    setHiddenModelIds(prev => { const next = new Set(prev); next.delete(selection.modelId); return next })
+    setTemporaryByModelId(prev => new Map([...prev].filter(([, held]) =>
+      !matchesSelection(selection, held.item.modelId, held.item.resolvedVersionId))))
+  })
   const [busyId, setBusyId] = useState<number | null>(null)
   const [pasteModelId, setPasteModelId] = useState<number | null>(null)
   const [pastedUrl, setPastedUrl] = useState('')
@@ -104,6 +113,7 @@ export function IncompleteTab({
     item: IncompleteModel
   } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  const previewGridRef = useRef<HTMLDivElement>(null)
   const [hiddenModelIds, setHiddenModelIds] = useState<Set<number>>(() => new Set())
   /** Download/Ban holds — dimmed in place until leaving Incomplete. */
   const [temporaryByModelId, setTemporaryByModelId] = useState<Map<number, IncompleteHold>>(
@@ -171,21 +181,27 @@ export function IncompleteTab({
   }, [items, hiddenModelIds, temporaryByModelId])
 
   const previewSources = useMemo((): ModelCardPreviewSource[] => {
-    return workingItems
-      .filter((m) => (m.resolvedVersionId ?? 0) > 0)
-      .map((m) => ({
+    return workingItems.map((m) => ({
         modelId: m.modelId,
-        versionId: m.resolvedVersionId!,
+        versionId: m.resolvedVersionId ?? 0,
         previewUrl: m.previewUrl,
-        sourceDomain: m.sourceDomain
+        sourceDomain: m.sourceDomain,
+        nsfw: m.nsfw,
+        nsfwLevel: m.nsfwLevel
       }))
   }, [workingItems])
 
+  const previewPriority = usePreviewViewportPriority(
+    previewGridRef, isActive,
+    [previewSources.map(modelCardPreviewTrackKey).join(','), sideFilter, modelTypeFilter, baseModelFilter, ratingFilter].join('|')
+  )
   const { overrides: previewOverrides, browseCards, markPreviewBroken } =
     useModelCardPreviewOverrides(previewSources, {
       enabled: isActive,
       contentFilter: 'all',
-      fetchVideo: browseVideoPreviews
+      fetchVideo: browseVideoPreviews,
+      priorityVersionIdsRef: previewPriority.idsRef,
+      priorityEpoch: previewPriority.epoch
     })
 
   const ratingCounts = useMemo(() => {
@@ -489,7 +505,7 @@ export function IncompleteTab({
                 {!sorted.length ? (
                   <p className="muted">{t('incompleteTab.emptyFiltered')}</p>
                 ) : (
-                  <div className="gallery-grid status-card-grid incomplete-card-grid">
+                  <div ref={previewGridRef} className="gallery-grid status-card-grid incomplete-card-grid">
                     {sorted.map((item) => {
                       const waiting = formatWaitDuration(item.detectedAt, new Date().toISOString())
                       const ready = Boolean(item.resolvedVersionId)
@@ -509,23 +525,16 @@ export function IncompleteTab({
                         modelId: item.modelId,
                         versionId,
                         previewUrl: item.previewUrl,
-                        sourceDomain: item.sourceDomain
+                        sourceDomain: item.sourceDomain,
+                        ...nsfwFields
                       }
-                      const cardThumb =
-                        versionId > 0
-                          ? resolveModelCardThumb(
-                              previewSource,
-                              previewOverrides[versionId],
-                              browseCard
-                            )
-                          : { urls: item.previewUrl ? [item.previewUrl] : [], videoUrl: undefined }
-                      const videoAvailability =
-                        versionId > 0
-                          ? videoPreviewAvailabilityFor(
-                              previewSource,
-                              previewOverrides[versionId]
-                            )
-                          : undefined
+                      const trackKey = modelCardPreviewTrackKey(previewSource)
+                      const cardThumb = resolveModelCardThumb(
+                        previewSource, previewOverrides[trackKey], browseCard
+                      )
+                      const videoAvailability = videoPreviewAvailabilityFor(
+                        previewSource, previewOverrides[trackKey]
+                      )
                       return (
                         <StatusModelCard
                           key={item.modelId}
@@ -591,14 +600,13 @@ export function IncompleteTab({
                             )
                           }
                           previewUrl={cardThumb.urls[0]}
+                          previewVersionId={trackKey}
                           previewUrls={cardThumb.urls}
                           videoUrl={cardThumb.videoUrl}
                           videoPreviews={browseVideoPreviews}
                           videoAvailability={videoAvailability}
-                          videoFetch={versionId > 0 ? previewSource : undefined}
-                          onPreviewAllFailed={
-                            versionId > 0 ? () => markPreviewBroken(versionId) : undefined
-                          }
+                          videoFetch={previewSource}
+                          onPreviewAllFailed={() => markPreviewBroken(trackKey)}
                           titleActions={
                             hold?.kind === 'banned' ? null : (
                               <>
@@ -857,9 +865,13 @@ export function IncompleteTab({
           >
             {t('gallery.excludeBan')}
           </button>
+          <button className="context-menu-danger" {...contextMenuButtonProps(() => requestForget({
+            modelId: contextMenu.item.modelId, versionId: contextMenu.item.resolvedVersionId || undefined, modelName: contextMenu.item.modelName
+          }), () => setContextMenu(null))}>{t('modelActions.forget')}</button>
         </ContextMenuPortal>
       )}
 
+      {forgetConfirmation}
       {banTarget && (
         <ConfirmModal
           title={t('incompleteTab.ban')}

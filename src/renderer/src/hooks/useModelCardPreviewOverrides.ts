@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ContentFilter } from '../../../shared/types'
+import { loadPreview } from '../utils/preview-loader'
 import {
   overrideFromResolveResult,
   resolveModelCardThumb,
@@ -24,14 +25,14 @@ type Options = {
 
 const BACKGROUND_VIDEO_CHUNK = 3
 /** Cap interactive image resolve storm — rest run as background chunks. */
-const INTERACTIVE_IMAGE_FIRST = 24
-const BACKGROUND_IMAGE_CHUNK = 12
+const INTERACTIVE_IMAGE_FIRST = 4
+const BACKGROUND_IMAGE_CHUNK = 4
 /** On-screen cards — small interactive bursts so thumbs paint ASAP. */
 const VIEWPORT_INTERACTIVE_CAP = 4
 /** Smaller cold chunks so a scroll can claim the new viewport before a long batch. */
 const VIEWPORT_BACKGROUND_CHUNK = 4
 /** First paint when viewport observer has not marked cards yet. */
-const VIEWPORT_COLD_INTERACTIVE = 8
+const VIEWPORT_COLD_INTERACTIVE = 4
 
 /**
  * Stable UI/queue key for a card. Positive = Civitai versionId.
@@ -44,12 +45,6 @@ export function modelCardPreviewTrackKey(item: {
   if (item.versionId > 0) return item.versionId
   if (item.modelId > 0) return -Math.abs(item.modelId)
   return 0
-}
-
-function prefetchVideoPlayUrl(url: string | undefined): void {
-  const trimmed = url?.trim()
-  if (!trimmed) return
-  void window.api.resolveVideoPlayUrl(trimmed).catch(() => {})
 }
 
 function mergeVideoPreviewMeta(
@@ -68,7 +63,6 @@ function mergeVideoPreviewMeta(
         videoPreviewUrl: row.videoPreviewUrl,
         videoPreviewUrls: row.videoPreviewUrls
       }
-      prefetchVideoPlayUrl(row.videoPreviewUrl ?? row.videoPreviewUrls?.[0])
     }
   }
   return next
@@ -90,7 +84,6 @@ function mergeBrowseCacheCards(
     if (!patch.previewUrls?.length && !patch.videoPreviewUrl && !patch.videoPreviewUrls?.length) {
       continue
     }
-    prefetchVideoPlayUrl(patch.videoPreviewUrl ?? patch.videoPreviewUrls?.[0])
     next[versionId] = patch
   }
   return next
@@ -169,6 +162,7 @@ export function useModelCardPreviewOverrides(
     Record<number, import('../../../shared/types').WatchRuleTestModel>
   >({})
   const imageStartedRef = useRef(new Set<number>())
+  const imageInFlightRef = useRef(new Set<number>())
   const emptyAttemptsRef = useRef(new Map<number, number>())
   const brokenAttemptsRef = useRef(new Map<number, number>())
   const interactiveFallbackSentRef = useRef(false)
@@ -177,6 +171,7 @@ export function useModelCardPreviewOverrides(
   const brokenRef = useRef(new Set<number>())
   const [brokenTick, setBrokenTick] = useState(0)
   const [dbReloadKey, setDbReloadKey] = useState(0)
+  const [cacheReadyKey, setCacheReadyKey] = useState<string | null>(null)
   const itemsRef = useRef(items)
   itemsRef.current = items
   /** Stable identity so parent list rebuilds (Allow/Unban) don't refetch every preview. */
@@ -230,9 +225,6 @@ export function useModelCardPreviewOverrides(
     setBrokenTick((t) => t + 1)
   }, [])
 
-  const knownVersionIdsRef = useRef(new Set<number>())
-  const lastDbReloadKeyRef = useRef(dbReloadKey)
-
   useEffect(() => {
     if (!enabled) return
     // Browse/video cache is keyed by real version ids only.
@@ -242,19 +234,10 @@ export function useModelCardPreviewOverrides(
           .map(Number)
           .filter((id) => id > 0)
       : []
-    if (!versionIds.length) return
-    const reloadAll = lastDbReloadKeyRef.current !== dbReloadKey
-    lastDbReloadKeyRef.current = dbReloadKey
-    const toFetch = reloadAll
-      ? versionIds
-      : versionIds.filter((id) => !knownVersionIdsRef.current.has(id))
-    for (const id of versionIds) knownVersionIdsRef.current.add(id)
-    // Shrinking the list (Allow/Unban) must not refetch already-loaded thumbs.
-    if (!toFetch.length) return
     let cancelled = false
     void Promise.all([
-      window.api.getBrowseCardCache(toFetch),
-      window.api.getVersionVideoPreview(toFetch)
+      window.api.getBrowseCardCache(versionIds),
+      window.api.getVersionVideoPreview(versionIds)
     ]).then(([cards, videoMeta]) => {
       if (cancelled) return
       if (Object.keys(cards).length) {
@@ -271,8 +254,10 @@ export function useModelCardPreviewOverrides(
         if (brokenRef.current.has(id)) continue
         safe[id] = row
       }
-      if (!Object.keys(safe).length) return
-      setOverrides((prev) => mergeOverridePatch(prev, safe))
+      if (Object.keys(safe).length) setOverrides((prev) => mergeOverridePatch(prev, safe))
+      setCacheReadyKey(versionIdsKey)
+    }).catch(() => {
+      if (!cancelled) setCacheReadyKey(versionIdsKey)
     })
     return () => {
       cancelled = true
@@ -280,7 +265,7 @@ export function useModelCardPreviewOverrides(
   }, [enabled, versionIdsKey, dbReloadKey])
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || cacheReadyKey !== versionIdsKey) return
     const list = itemsRef.current
     let stopped = false
     if (fallbackKeyRef.current !== versionIdsKey) {
@@ -313,11 +298,12 @@ export function useModelCardPreviewOverrides(
       batch: Array<{ item: ModelCardPreviewSource; trackKey: number }>,
       interactive: boolean
     ) => {
-      const resolved = await window.api.resolvePreviewBatch(
-        batch.map(({ item }) => {
+      let failed = false
+      await Promise.allSettled(batch.map(async ({ item, trackKey }) => {
+        try {
           const cache = item.versionId > 0 ? browseCards[item.versionId] : undefined
           const src = resolveRequestSource(item, cache)
-          return {
+          const r = await loadPreview({
             modelId: src.modelId,
             // API accepts 0 and falls back to any version cover on the model.
             versionId: src.versionId > 0 ? src.versionId : 0,
@@ -327,44 +313,28 @@ export function useModelCardPreviewOverrides(
             strictVersion: src.versionId > 0,
             refreshCache: brokenRef.current.has(modelCardPreviewTrackKey(item)),
             interactive
+          }, contentFilter)
+          brokenRef.current.delete(trackKey)
+          const patch = overrideFromResolveResult(r)
+          if (!patch.previewUrls?.length && !patch.videoPreviewUrl && !patch.videoPreviewUrls?.length) {
+            const attempts = (emptyAttemptsRef.current.get(trackKey) ?? 0) + 1
+            emptyAttemptsRef.current.set(trackKey, attempts)
+            // Retry one empty response, then stop until the user revisits.
+            if (attempts < 2) imageStartedRef.current.delete(trackKey)
+            return
           }
-        }),
-        contentFilter
-      )
-      const next: Record<number, ModelCardPreviewOverride> = {}
-      const byIndex = new Map(resolved.map((r, i) => [i, r]))
-      for (let i = 0; i < batch.length; i++) {
-        const { trackKey } = batch[i]
-        const r = byIndex.get(i) ?? resolved.find((row) => row.versionId === batch[i].item.versionId)
-        brokenRef.current.delete(trackKey)
-        if (!r) {
-          imageStartedRef.current.delete(trackKey)
-          continue
+          emptyAttemptsRef.current.delete(trackKey)
+          const next = { [trackKey]: patch }
+          if (trackKey < 0 && r.versionId > 0) next[r.versionId] = patch
+          setOverrides((prev) => mergeOverridePatch(prev, next))
+        } catch {
+          failed = true
+          // Retry on a later visit; do not spin on transport errors.
+        } finally {
+          imageInFlightRef.current.delete(trackKey)
         }
-        const patch = overrideFromResolveResult(r)
-        if (
-          !patch.previewUrls?.length &&
-          !patch.videoPreviewUrl &&
-          !patch.videoPreviewUrls?.length
-        ) {
-          const attempts = (emptyAttemptsRef.current.get(trackKey) ?? 0) + 1
-          emptyAttemptsRef.current.set(trackKey, attempts)
-          // One automatic retry for flaky/empty version payloads; then wait for
-          // markPreviewBroken / user open-details. Avoids spinning on true 404s.
-          if (attempts < 2) imageStartedRef.current.delete(trackKey)
-          continue
-        }
-        emptyAttemptsRef.current.delete(trackKey)
-        next[trackKey] = patch
-        // Also store under real versionId when API filled one in for a versionless stub.
-        if (trackKey < 0 && r.versionId > 0 && r.versionId !== trackKey) {
-          next[r.versionId] = patch
-        }
-        prefetchVideoPlayUrl(patch.videoPreviewUrl ?? patch.videoPreviewUrls?.[0])
-      }
-      if (Object.keys(next).length) {
-        setOverrides((prev) => mergeOverridePatch(prev, next))
-      }
+      }))
+      return !failed
     }
 
     void (async () => {
@@ -378,6 +348,8 @@ export function useModelCardPreviewOverrides(
       while (!stopped) {
         const pending = collectPending()
         if (!pending.length) break
+        const available = 4 - imageInFlightRef.current.size
+        if (available <= 0) break
 
         const onScreen = priorityVersionIdsRef?.current
         const hot =
@@ -406,9 +378,13 @@ export function useModelCardPreviewOverrides(
           interactive = false
         }
 
-        for (const row of batch) imageStartedRef.current.add(row.trackKey)
+        batch = batch.slice(0, available)
+        for (const row of batch) {
+          imageStartedRef.current.add(row.trackKey)
+          imageInFlightRef.current.add(row.trackKey)
+        }
         try {
-          await runBatch(batch, interactive)
+          if (!await runBatch(batch, interactive)) break
         } catch {
           for (const row of batch) imageStartedRef.current.delete(row.trackKey)
           break
@@ -420,10 +396,11 @@ export function useModelCardPreviewOverrides(
     })()
 
     let videoCancelled = false
-    const missingVideo = !fetchVideo
+    const missingVideo = !fetchVideo || !priorityVersionIdsRef
       ? []
       : list.filter((item) => {
           const trackKey = modelCardPreviewTrackKey(item)
+          if (!priorityVersionIdsRef?.current?.has(trackKey)) return false
           if (item.modelId <= 0 || trackKey === 0) return false
           if (overrides[trackKey]?.videoAbsent) return false
           const cache = item.versionId > 0 ? browseCards[item.versionId] : undefined
@@ -467,7 +444,6 @@ export function useModelCardPreviewOverrides(
                 videoPreviewUrl: r.videoPreviewUrl,
                 videoPreviewUrls: r.videoPreviewUrls
               }
-              prefetchVideoPlayUrl(r.videoPreviewUrl ?? r.videoPreviewUrls?.[0])
             }
             if (Object.keys(next).length) {
               setOverrides((prev) => mergeOverridePatch(prev, next))
@@ -487,6 +463,7 @@ export function useModelCardPreviewOverrides(
     }
   }, [
     enabled,
+    cacheReadyKey,
     versionIdsKey,
     overrides,
     browseCards,

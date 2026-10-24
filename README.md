@@ -18,10 +18,18 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 - **Tag Folders** — map tags to LoRA subfolders; custom folders for local files and Checkpoint overrides
 - **Updates** — other versions of models you already own (download, skip, forget, or ban)
 - **Missing** — models Civitai no longer finds, plus tag pauses/bans you can allow or forget
-- **Download strip** — progress, priority, and early-access waits
+- **Download strip** — confirmed file transfers, progress, and priority; access waits stay in **Early access**
 - **Activity** — harvest and download history
 
-Delete / ban always asks for confirmation before removing files you already own.
+**Ban / Unban** blocks or allows downloads and keeps owned files. **Forget** asks
+before permanently removing a selected version or the entire model, including its
+files and app records. There is no Forgotten list or undo; a new Rules search can
+discover it again.
+
+The **Browse** counter shows prepared downloads still waiting or downloading,
+and decreases as each one finishes. Cached gallery cards and access checks do
+not create a counter. In **Library**, **BAN** opens a version / entire-model
+choice before changing any ban.
 
 Open the in-app **Help** tab for the full UI guide.
 

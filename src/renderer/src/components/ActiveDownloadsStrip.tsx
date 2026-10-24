@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DownloadQueueItem, DeferredDownload, DownloadStripLayout } from '../../../shared/types'
 import { compareDownloadPipelineItems } from '../../../shared/download-queue-order'
-import { shouldShowDeferredInDownloadStrip } from '../../../shared/early-access'
+import { visibleDownloadItems } from '../../../shared/download-pipeline'
 import { describeNsfwRating } from '../../../shared/nsfw-rating'
 import { formatBytes, getModelPageUrl } from '../../../shared/utils'
 import { PreviewThumb } from './PreviewThumb'
@@ -539,19 +539,11 @@ export function ActiveDownloadsStrip({
   }, [deferred])
 
   const stripItems = useMemo(() => {
-    return queue
+    return visibleDownloadItems(queue, { queuePaused, deferred })
       .map((item, index) => ({ item, index }))
-      .filter(({ item }) => {
-        if (item.status === 'downloading' || item.status === 'queued' || item.status === 'failed') {
-          return true
-        }
-        if (item.status !== 'deferred') return false
-        const d = deferredByVersion.get(item.versionId)
-        return d ? shouldShowDeferredInDownloadStrip(d) : false
-      })
       .sort((a, b) => compareDownloadPipelineItems(a.item, b.item, a.index, b.index))
       .map(({ item }) => item)
-  }, [queue, deferredByVersion])
+  }, [queue, queuePaused, deferred])
 
   const displayItems = stripItems
 

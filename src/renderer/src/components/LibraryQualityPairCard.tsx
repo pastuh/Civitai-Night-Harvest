@@ -140,8 +140,8 @@ function LibraryQualityPairCardInner({
     ...libraryCardPreviewSource(low),
     previewUrl: lowPreviewPath || low.previewPath?.trim() || undefined
   }
-  const highThumb = resolveModelCardThumb(highSource, highPreviewOverride)
-  const lowThumb = resolveModelCardThumb(lowSource, lowPreviewOverride)
+  const highThumb = resolveModelCardThumb(highSource, highPreviewOverride, undefined, highPreviewPath)
+  const lowThumb = resolveModelCardThumb(lowSource, lowPreviewOverride, undefined, lowPreviewPath)
   const metaExtra = inventoryMetaExtra(high) || inventoryMetaExtra(low)
   const ratingInfo = describeNsfwRatingForCard(
     high.isNsfw ?? low.isNsfw,
@@ -308,8 +308,8 @@ function LibraryQualityPairCardInner({
           {t('qualityTierPair.pairBadge')}
         </span>
         <SplitPairThumbnail
-          high={{ urls: highThumb.urls, videoUrl: highThumb.videoUrl, label: 'H' }}
-          low={{ urls: lowThumb.urls, videoUrl: lowThumb.videoUrl, label: 'L' }}
+          high={{ urls: highThumb.urls, videoUrl: highThumb.videoUrl, videoFetch: highSource, label: 'H' }}
+          low={{ urls: lowThumb.urls, videoUrl: lowThumb.videoUrl, videoFetch: lowSource, label: 'L' }}
           browseVideoPreviews={browseVideoPreviews}
         />
       </div>

@@ -157,6 +157,7 @@ export async function tryAdoptExistingModelOnDisk(params: {
   outputFolder: string
   routingTag: string
   civitaiDomain: CivitaiDomain
+  signal?: AbortSignal
 }): Promise<AdoptOnDiskResult> {
   const {
     model,
@@ -172,6 +173,7 @@ export async function tryAdoptExistingModelOnDisk(params: {
   } = params
   const versionId = version.id
   const modelId = model.id
+  params.signal?.throwIfAborted()
 
   if (!existsSync(modelPath)) return { ok: false, reason: 'File missing on disk' }
 
@@ -188,6 +190,8 @@ export async function tryAdoptExistingModelOnDisk(params: {
     versionId,
     expectedHash
   })
+  // Hashing can finish after the queue item was cancelled or forgotten.
+  params.signal?.throwIfAborted()
   if (!verified.match) {
     return {
       ok: false,

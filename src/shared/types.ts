@@ -249,6 +249,7 @@ export interface AppSettingsPublic {
   hideAwaitingAccess: boolean
   browseVideoPreviews: boolean
   mediaCacheFolder: string
+  eaFavoriteModelIds?: number[]
 }
 
 /** Partial save from renderer; omit apiKey or send empty to keep existing */
@@ -401,6 +402,7 @@ export interface CivitaiModelVersion {
   name: string
   /** Present on GET /model-versions/{id} payloads. */
   modelId?: number
+  nsfwLevel?: number
   createdAt: string
   updatedAt?: string
   /** ISO timestamp when this version was published — Civitai /models search returns it. */
@@ -408,6 +410,9 @@ export interface CivitaiModelVersion {
   status?: string
   availability?: string
   earlyAccessEndsAt?: string | null
+  checkPermission?: boolean
+  requireAuth?: boolean
+  additionalResourceCharge?: boolean
   /**
    * Paid-access gate from GET /model-versions/{id}. `{ permanent: true }` means the version
    * stays behind a Buzz / subscription paywall with no scheduled public unlock — Civitai
@@ -519,6 +524,8 @@ export interface DownloadProgress {
   routingTag: string
   bytesReceived: number
   totalBytes: number
+  /** Full version/access/file/output checks passed; this is no longer a metadata probe. */
+  downloadReady?: boolean
   phase: 'model' | 'preview' | 'swarm' | 'done'
   speedBps: number
   connections?: number
@@ -553,6 +560,12 @@ export interface DownloadQueueItem {
   confirmTagsAfter?: boolean
   /** True when the user explicitly queued from Browse/Library — affects gallery highlighting. */
   manual?: boolean
+  /** Captured at enqueue so a pack's remaining downloads keep their original badge. */
+  origin?: 'browse' | 'updates'
+  /** Prepared for transfer in this session; retained while paused, reset on retry/restart. */
+  downloadReady?: boolean
+  /** False until this attempt receives real model data from the download endpoint. */
+  accessChecked?: boolean
   /** When set, pump may run this row even while the global queue is paused (Download now). */
   runImmediate?: boolean
   /** Civitai version title (shown in strip / cards). */
@@ -600,8 +613,10 @@ export interface DeferredDownload {
   deferredAt: string
   lastAttemptAt: string
   attemptCount: number
-  /** When set, auto-retry waits until this ISO timestamp (early access window). */
+  /** Advertised unlock time; becoming due requires API confirmation before automatic retry. */
   earlyAccessEndsAt?: string
+  /** Set only after the full API confirms Public access; a passed deadline is not confirmation. */
+  accessConfirmedAt?: string
   /** Civitai tags at defer time — plan Tag folders before download. */
   civitaiTags?: string[]
   downloadCount?: number
@@ -834,6 +849,10 @@ export interface WatchRuleTestModel {
   nsfwLevel?: number
   inInventory: boolean
   isBanned: boolean
+  /** Current local deferred membership, included before full page lists hydrate. */
+  isAwaitingAccess?: boolean
+  /** Queue metadata is still being checked; do not flash it under Hide awaiting. */
+  isAccessChecking?: boolean
   isEarlyAccess?: boolean
   earlyAccessEndsAt?: string
   /** ISO timestamp version was published — used by Browse `published` sort. */
@@ -929,7 +948,7 @@ export type ExclusionKind =
   | 'bannedByTag'
   | 'pausedByTag'
   | 'forgotten'
-  /** Browse / Updates version-scoped exclude (skipped_pending_versions.forgotten=1). */
+  /** Reversible version ban stored independently from Updates Skip. */
   | 'excludedVersion'
 
 /** Unified Missing-page row: 404 missing, manual ban, tag-skip, or version exclude. */

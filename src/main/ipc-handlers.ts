@@ -1,4 +1,5 @@
 import { BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron'
+import { mediaProtocolFilePath } from '../shared/media-url'
 import { CivitaiClient } from '../shared/civitai-client'
 import { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type {
@@ -40,7 +41,7 @@ import { buildSampleModels, buildWatchRuleTestResult, lookupBrowseModelByNumeric
 import { supplementRuleSearchWithTagVariants } from './rule-search-supplement'
 import { getCrawlStatus } from './crawl-state'
 import { moveRecordToTagFolder, reconcileLibraryTagFolders } from './model-move'
-import { deleteModelFromLibrary, deleteVersionFromLibrary } from './model-delete'
+import { forgetSelection } from './model-forget'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
 import { emitMissingList, emitExclusionRemoved, recheckMissingModels } from './missing-models'
 import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
@@ -118,6 +119,7 @@ const IPC_CHANNELS = [
   'inventory:count',
   'model:ban',
   'model:forget',
+  'model:forgetVersion',
   'model:unban',
   'model:getBanned',
   'model:setAutoUpdate',
@@ -154,7 +156,6 @@ const IPC_CHANNELS = [
   'pending:skip',
   'pending:unskip',
   'pending:forgetVersion',
-  'pending:unforgetVersion',
   'pending:getSeen',
   'pending:markSeen',
   'pending:clearSeen',
@@ -462,24 +463,7 @@ export function setMainWindow(win: BrowserWindow): void {
 
 /** Decode media:// URL → absolute filesystem path (Windows + POSIX). */
 function mediaRequestToFilePath(requestUrl: string): string {
-  let raw = requestUrl.replace(/^media:\/\//i, '')
-  const q = raw.indexOf('?')
-  if (q >= 0) raw = raw.slice(0, q)
-  const hash = raw.indexOf('#')
-  if (hash >= 0) raw = raw.slice(0, hash)
-  let decoded = raw
-  try {
-    decoded = decodeURIComponent(raw)
-  } catch {
-    try {
-      decoded = decodeURI(raw)
-    } catch {
-      decoded = raw
-    }
-  }
-  // New form: media:///C:/Users/... → "/C:/Users/..."
-  if (/^\/[A-Za-z]:[/\\]/.test(decoded)) decoded = decoded.slice(1)
-  return decoded
+  return mediaProtocolFilePath(requestUrl)
 }
 
 export function registerMediaProtocol(): void {
@@ -898,7 +882,7 @@ export function initIpc(): void {
         } else {
           resetStorageAlertGate()
           ensureSchedulerStarted()
-          const emitSync = createThrottledProgressEmitter(
+          const emitSync = createThrottledProgressEmitter<import('../shared/types').LibrarySyncProgress>(
             () => mainWindow,
             'library:syncProgress',
             100
@@ -937,7 +921,7 @@ export function initIpc(): void {
           }
           if (options?.recognizeLocalModels && !options?.diskImportOnly) {
             const recognized = await recognizeLocalModels(clientPool, {
-              domain: settings.domain,
+              domain: settings.domain === 'both' ? 'red' : settings.domain,
               onProgress: emitSync
             })
             hashesBackfilled += recognized.hashed
@@ -985,7 +969,7 @@ export function initIpc(): void {
         }
       }
       if (options?.syncDisk && !offline && !options?.diskImportOnly) {
-        const emitHints = createThrottledProgressEmitter(
+        const emitHints = createThrottledProgressEmitter<import('../shared/types').LibrarySyncProgress>(
           () => mainWindow,
           'library:syncProgress',
           300
@@ -1010,7 +994,7 @@ export function initIpc(): void {
         }
       }
       if (options?.repairPreviews && !offline) {
-        const emitPreview = createThrottledProgressEmitter(
+        const emitPreview = createThrottledProgressEmitter<import('../shared/types').LibrarySyncProgress>(
           () => mainWindow,
           'library:syncProgress',
           300
@@ -1069,18 +1053,17 @@ export function initIpc(): void {
         modelName?: string
       } & Partial<BanModelStub>
     ) => {
-    // Ban = exclude from future downloads + delete library files if any exist.
+    // Ban is reversible and retains owned files and inventory records.
     // Keep card in Browse as banned (do not remove from gallery).
     const pending = inventory.getAllPendingVersions().find((p) => p.modelId === payload.modelId)
     const incomplete = inventory.getIncompleteModel(payload.modelId)
     const deferred = inventory
       .getAllDeferredDownloads()
       .find((d) => d.modelId === payload.modelId)
-    // Detach inventory + ban immediately; unlink large files in background so UI stays responsive.
-    const deleted = await deleteModelFromLibrary(payload.modelId, { awaitFiles: false })
+    const owned = inventory.getVersionsForModel(payload.modelId)
     const modelName =
       payload.modelName ??
-      deleted[0]?.modelName ??
+      owned[0]?.modelName ??
       pending?.modelName ??
       incomplete?.modelName ??
       deferred?.modelName ??
@@ -1092,32 +1075,32 @@ export function initIpc(): void {
         pending?.versionId ??
         incomplete?.resolvedVersionId ??
         deferred?.versionId ??
-        deleted[0]?.versionId,
+        owned[0]?.versionId,
       modelType:
         payload.modelType || incomplete?.modelType || deferred?.modelType || undefined,
       baseModel:
         payload.baseModel ||
         pending?.baseModel ||
         incomplete?.baseModel ||
-        deleted[0]?.baseModel,
+        owned[0]?.baseModel,
       author:
-        payload.author || pending?.author || incomplete?.author || deleted[0]?.author,
+        payload.author || pending?.author || incomplete?.author || owned[0]?.author,
       previewUrl:
         payload.previewUrl ||
         pending?.previewUrl ||
         incomplete?.previewUrl ||
         deferred?.previewUrl ||
-        (deleted[0]?.previewPath ? deleted[0].previewPath : undefined),
+        (owned[0]?.previewPath ? owned[0].previewPath : undefined),
       pageUrl: payload.pageUrl || incomplete?.pageUrl,
       sourceDomain:
-        payload.sourceDomain || incomplete?.sourceDomain || deleted[0]?.civitaiDomain,
+        payload.sourceDomain || incomplete?.sourceDomain || owned[0]?.civitaiDomain,
       tags: payload.tags?.length
         ? payload.tags
         : incomplete?.tags?.length
           ? incomplete.tags
-          : deleted[0]?.civitaiTags,
-      downloadCount: payload.downloadCount ?? deleted[0]?.downloadCount,
-      thumbsUpCount: payload.thumbsUpCount ?? deleted[0]?.thumbsUpCount
+          : owned[0]?.civitaiTags,
+      downloadCount: payload.downloadCount ?? owned[0]?.downloadCount,
+      thumbsUpCount: payload.thumbsUpCount ?? owned[0]?.thumbsUpCount
     }
     inventory.banModelAndMarkSeen(payload.modelId, modelName, stub)
     inventory.clearBrowseCardCacheForModel(payload.modelId)
@@ -1136,134 +1119,39 @@ export function initIpc(): void {
     })
     downloadQueue.cancelByModelId(payload.modelId)
     emitMissingList(() => mainWindow)
-    if (deleted.length > 0) {
+    if (owned.length > 0) {
       scheduler.log(
         'info',
-        `Deleted and excluded: ${modelName || payload.modelId}`,
+        `Banned: ${modelName || payload.modelId} (library files retained)`,
         undefined,
-        { source: 'ban', modelId: payload.modelId }
+        { source: 'manual', modelId: payload.modelId }
       )
     } else {
       scheduler.log('info', `Excluded model ${payload.modelId} from downloads`)
     }
-    return { modelId: payload.modelId, deletedVersions: deleted.length }
+    return { modelId: payload.modelId, deletedVersions: 0 }
   })
 
-  ipcMain.handle(
-    'model:forget',
-    async (
-      _e,
-      payload: {
-        modelId: number
-        modelName?: string
-      } & Partial<BanModelStub>
-    ) => {
-      const pending = inventory.getAllPendingVersions().find((p) => p.modelId === payload.modelId)
-      const incomplete = inventory.getIncompleteModel(payload.modelId)
-      const deferred = inventory
-        .getAllDeferredDownloads()
-        .find((d) => d.modelId === payload.modelId)
-      const tagSkip = inventory.getTagSkipReview(payload.modelId)
-      const missing = inventory.getMissingModel(payload.modelId)
-      const deleted = await deleteModelFromLibrary(payload.modelId, { awaitFiles: false })
-      const modelName =
-        payload.modelName ??
-        deleted[0]?.modelName ??
-        pending?.modelName ??
-        incomplete?.modelName ??
-        deferred?.modelName ??
-        tagSkip?.modelName ??
-        missing?.modelName ??
-        ''
-      const stub: BanModelStub = {
-        modelName,
-        versionId:
-          payload.versionId ??
-          pending?.versionId ??
-          incomplete?.resolvedVersionId ??
-          deferred?.versionId ??
-          tagSkip?.versionId ??
-          missing?.versionId ??
-          deleted[0]?.versionId,
-        modelType:
-          payload.modelType ||
-          incomplete?.modelType ||
-          deferred?.modelType ||
-          tagSkip?.modelType ||
-          missing?.modelType ||
-          undefined,
-        baseModel:
-          payload.baseModel ||
-          pending?.baseModel ||
-          incomplete?.baseModel ||
-          tagSkip?.baseModel ||
-          missing?.baseModel ||
-          deleted[0]?.baseModel,
-        author:
-          payload.author ||
-          pending?.author ||
-          incomplete?.author ||
-          tagSkip?.author ||
-          missing?.author ||
-          deleted[0]?.author,
-        previewUrl:
-          payload.previewUrl ||
-          pending?.previewUrl ||
-          incomplete?.previewUrl ||
-          deferred?.previewUrl ||
-          tagSkip?.previewUrl ||
-          missing?.previewUrl ||
-          (deleted[0]?.previewPath ? deleted[0].previewPath : undefined),
-        pageUrl: payload.pageUrl || incomplete?.pageUrl || tagSkip?.pageUrl || missing?.pageUrl,
-        sourceDomain:
-          payload.sourceDomain ||
-          incomplete?.sourceDomain ||
-          tagSkip?.sourceDomain ||
-          missing?.sourceDomain ||
-          deleted[0]?.civitaiDomain,
-        tags: payload.tags?.length
-          ? payload.tags
-          : incomplete?.tags?.length
-            ? incomplete.tags
-            : tagSkip?.tags?.length
-              ? tagSkip.tags
-              : deleted[0]?.civitaiTags,
-        downloadCount:
-          payload.downloadCount ??
-          tagSkip?.downloadCount ??
-          missing?.downloadCount ??
-          deleted[0]?.downloadCount,
-        thumbsUpCount:
-          payload.thumbsUpCount ??
-          tagSkip?.thumbsUpCount ??
-          missing?.thumbsUpCount ??
-          deleted[0]?.thumbsUpCount
+  const runForget = async (selection: import('../shared/model-actions').ForgetSelection) => {
+    const result = await forgetSelection(selection, { queue: downloadQueue, scheduler })
+    if (selection.versionId == null) {
+      const favorites = getSettings().eaFavoriteModelIds ?? []
+      if (favorites.includes(selection.modelId)) {
+        saveSettings({ eaFavoriteModelIds: favorites.filter(id => id !== selection.modelId) })
+        sendToRenderer(() => mainWindow, 'settings:changed', toPublicSettings(getSettings()))
       }
-      inventory.forgetModel(payload.modelId, modelName, stub)
-      inventory.removePendingForModel(payload.modelId)
-      scheduler.dismissPendingForModel(payload.modelId)
-      scheduler.markModelBannedInBrowseGallery(payload.modelId, {
-        modelName,
-        versionId: stub.versionId,
-        modelType: stub.modelType,
-        baseModel: stub.baseModel,
-        author: stub.author,
-        previewUrl: stub.previewUrl,
-        pageUrl: stub.pageUrl,
-        sourceDomain: stub.sourceDomain,
-        tags: stub.tags
-      })
-      downloadQueue.cancelByModelId(payload.modelId)
-      emitMissingList(() => mainWindow)
-      scheduler.log(
-        'info',
-        `Forgot model ${modelName || payload.modelId} — hidden everywhere`,
-        undefined,
-        { source: 'ban', modelId: payload.modelId }
-      )
-      return { modelId: payload.modelId, deletedVersions: deleted.length }
     }
-  )
+    sendToRenderer(() => mainWindow, 'model:forgotten', result)
+    emitMissingList(() => mainWindow)
+    sendToRenderer(() => mainWindow, 'deferred:list', inventory.getAllDeferredDownloads())
+    sendToRenderer(() => mainWindow, 'incomplete:list', inventory.getAllIncompleteModels())
+    scheduler.log('info', selection.versionId == null ? `Forgot model #${selection.modelId}`
+      : `Forgot version #${selection.versionId} of model #${selection.modelId}`, undefined,
+      { source: 'manual', modelId: selection.modelId, versionId: selection.versionId })
+    return result
+  }
+  ipcMain.handle('model:forget', (_event, payload: { modelId: number }) => runForget({ modelId: payload.modelId }))
+  ipcMain.handle('model:forgetVersion', (_event, payload: { modelId: number; versionId: number }) => runForget(payload))
 
   ipcMain.handle(
     'model:unban',
@@ -1289,7 +1177,9 @@ export function initIpc(): void {
     inventory.removeTagSkipReview(modelId)
     inventory.clearBrowseCardCacheForModel(modelId)
     scheduler.markModelUnbannedInBrowseGallery(modelId)
-    const result = tryManualQueueExclusionModel(modelId, {
+    inventory.clearLibraryVersionChecked(modelId)
+    scheduler.syncBrowseUpdates(scheduler.getBrowseGalleryModels().filter(row => row.id === modelId))
+    const result = opts?.routingTag ? tryManualQueueExclusionModel(modelId, {
       versionId: opts?.versionId || banned?.versionId || tagSkip?.versionId,
       modelName: opts?.modelName || banned?.modelName || tagSkip?.modelName,
       modelType: opts?.modelType || banned?.modelType || tagSkip?.modelType,
@@ -1303,7 +1193,7 @@ export function initIpc(): void {
           : tagSkip?.tags,
       sourceDomain: opts?.sourceDomain ?? banned?.sourceDomain ?? tagSkip?.sourceDomain,
       routingTag: opts?.routingTag
-    })
+    }) : { queued: false }
     scheduler.log(
       'info',
       result.queued
@@ -1312,7 +1202,7 @@ export function initIpc(): void {
       undefined,
       { source: 'system', modelId }
     )
-    emitExclusionRemoved(() => mainWindow, { modelId })
+    emitExclusionRemoved(() => mainWindow, { modelId, kinds: ['bannedManual', 'bannedByTag', 'pausedByTag'] })
     return { modelId, queued: result.queued }
   })
 
@@ -1342,11 +1232,8 @@ export function initIpc(): void {
         throw new Error('modelId and versionId are required')
       }
       const owned = inventory.getVersion(versionId)
-      if (owned) {
-        await deleteVersionFromLibrary(versionId, { awaitFiles: false })
-        scheduler.markVersionRemovedFromBrowseGallery(modelId, versionId)
-      }
-      inventory.forgetPendingVersion({
+      if (owned && owned.modelId !== modelId) throw new Error('Version does not belong to the selected model')
+      inventory.banVersion({
         versionId,
         modelId,
         modelName: payload.modelName || owned?.modelName || `Model #${modelId}`,
@@ -1406,11 +1293,14 @@ export function initIpc(): void {
         throw new Error('modelId and versionId are required')
       }
       const wasModelBanned = inventory.isModelBanned(modelId)
-      inventory.removeSkippedPendingVersion(versionId)
+      const excluded = inventory.getBannedVersion(versionId)
+      if (excluded && excluded.modelId !== modelId) throw new Error('Version does not belong to the selected model')
+      inventory.unbanVersion(versionId)
 
       if (!wasModelBanned) {
         // Version-scoped exclude → allow only this version. Do not forget/ban siblings.
         scheduler.markVersionBannedInBrowseGallery(modelId, versionId, false)
+        scheduler.restoreUnbannedVersion(excluded)
         scheduler.log('info', `Allowed version #${versionId} of model #${modelId}`, undefined, {
           source: 'system',
           modelId,
@@ -1474,7 +1364,7 @@ export function initIpc(): void {
 
       const siblingExcludedIds: number[] = []
       for (const [sibId, meta] of siblingMeta) {
-        inventory.forgetPendingVersion({
+        inventory.banVersion({
           versionId: sibId,
           modelId,
           modelName: meta.modelName || `Model #${modelId}`,
@@ -1489,6 +1379,7 @@ export function initIpc(): void {
         siblingExcludedIds.push(sibId)
       }
       scheduler.applyVersionBanFlags(modelId, versionId, siblingExcludedIds)
+      scheduler.restoreUnbannedVersion(excluded)
       scheduler.log(
         'info',
         `Unbanned version #${versionId} of model #${modelId} (legacy model ban; siblings stay excluded)`,
@@ -1653,78 +1544,11 @@ export function initIpc(): void {
 
   ipcMain.handle('model:getAutoUpdate', () => inventory.getAutoUpdateModels())
 
-  ipcMain.handle(
-    'inventory:deleteVersion',
-    async (_e, payload: { versionId: number; ban?: boolean; modelId?: number }) => {
-      const record = await deleteVersionFromLibrary(payload.versionId, { awaitFiles: false })
-      // ban:true = exclude THIS version only (forget), not ban/delete the whole model.
-      const shouldExclude = payload.ban !== false
-
-      // Already detached (e.g. UI retry after first exclude) — do not throw.
-      if (!record) {
-        if (shouldExclude) {
-          downloadQueue.purgeVersion(payload.versionId)
-          scheduler.dismissPending(payload.versionId)
-          if (payload.modelId && payload.modelId > 0) {
-            scheduler.markVersionRemovedFromBrowseGallery(payload.modelId, payload.versionId)
-          }
-        }
-        return {
-          modelId: payload.modelId ?? 0,
-          versionId: payload.versionId,
-          banned: false,
-          versionExcluded: shouldExclude,
-          alreadyGone: true
-        }
-      }
-
-      if (shouldExclude) {
-        inventory.forgetPendingVersion({
-          versionId: record.versionId,
-          modelId: record.modelId,
-          modelName: record.modelName,
-          versionName: record.versionName || `v${record.versionId}`,
-          baseModel: record.baseModel || '',
-          author: record.author || '',
-          previewUrl: record.previewPath || undefined,
-          existingFolder: record.outputFolder || record.routingTag || '',
-          modelType: record.modelType,
-          nsfw: record.isNsfw ?? undefined,
-          nsfwLevel: record.nsfwLevel ?? undefined,
-          civitaiTags: record.civitaiTags,
-          downloadCount: record.downloadCount,
-          thumbsUpCount: record.thumbsUpCount
-        })
-        inventory.clearBrowseCardCacheForModel(record.modelId)
-        downloadQueue.purgeVersion(record.versionId)
-        scheduler.dismissPending(record.versionId)
-        scheduler.markVersionRemovedFromBrowseGallery(record.modelId, record.versionId)
-        scheduler.log(
-          'info',
-          `Deleted and excluded version: ${record.modelName} → ${record.versionName || record.versionId}`,
-          undefined,
-          {
-            source: 'library',
-            modelId: record.modelId,
-            versionId: record.versionId
-          }
-        )
-      } else {
-        scheduler.markVersionRemovedFromBrowseGallery(record.modelId, record.versionId)
-        scheduler.log('info', `Deleted files: ${record.modelName}`, undefined, {
-          source: 'library',
-          modelId: record.modelId,
-          versionId: record.versionId
-        })
-      }
-      return {
-        modelId: record.modelId,
-        versionId: record.versionId,
-        banned: false,
-        versionExcluded: shouldExclude
-      }
-    }
-  )
+  ipcMain.handle('inventory:deleteVersion', (_event, payload: { versionId: number; modelId?: number; ban?: boolean }) => {
+    const record = inventory.getVersion(payload.versionId)
+    if (!record && payload.modelId == null) throw new Error('Version not found')
+    return runForget({ modelId: record?.modelId ?? payload.modelId!, versionId: payload.versionId })
+  })
 
   ipcMain.handle(
     'inventory:patchNsfw',
@@ -2211,13 +2035,13 @@ export function initIpc(): void {
         versionId: Number(m.versionId),
         name: String(m.name ?? ''),
         versionName: typeof m.versionName === 'string' ? m.versionName : undefined,
-        type: typeof m.type === 'string' ? m.type : undefined,
+        type: typeof m.type === 'string' ? m.type : 'LORA',
         baseModel: typeof m.baseModel === 'string' ? m.baseModel : '',
         creator: typeof m.creator === 'string' ? m.creator : undefined,
         previewUrl: typeof m.previewUrl === 'string' ? m.previewUrl : undefined,
         tags: Array.isArray(m.tags)
           ? (m.tags as unknown[]).filter((t): t is string => typeof t === 'string')
-          : undefined,
+          : [],
         nsfw: typeof m.nsfw === 'boolean' ? (m.nsfw as boolean) : undefined,
         nsfwLevel: typeof m.nsfwLevel === 'number' ? (m.nsfwLevel as number) : undefined,
         isEarlyAccess: m.isEarlyAccess === true,
@@ -2415,12 +2239,11 @@ export function initIpc(): void {
     scheduler.unskipPending(versionId)
   })
 
-  ipcMain.handle('pending:forgetVersion', (_e, versionId: number) => {
-    scheduler.forgetPending(versionId)
-  })
-
-  ipcMain.handle('pending:unforgetVersion', (_e, versionId: number) => {
-    scheduler.unforgetPending(versionId)
+  ipcMain.handle('pending:forgetVersion', (_event, versionId: number) => {
+    const row = [...inventory.getAllPendingVersions(), ...inventory.getAllSkippedPendingVersions(), ...inventory.getAllBannedVersions()]
+      .find(item => item.versionId === versionId)
+    if (!row) throw new Error('Version not found')
+    return runForget({ modelId: row.modelId, versionId })
   })
 
   ipcMain.handle('pending:getSeen', () => ({
@@ -2489,15 +2312,16 @@ export function initIpc(): void {
           downloadCount: item.downloadCount,
           thumbsUpCount: item.thumbsUpCount,
           baseModel: item.baseModel,
-          bumpAttempt: false
+          bumpAttempt: false,
+          clearAccessConfirmation: !item.accessConfirmedAt
         })
       },
       items.length,
-      (versionId) => {
+      (versionId, checked) => {
         const row = inventory.getDeferredDownload(versionId)
-        if (!row) return
+        if (!row || !inventory.confirmDeferredAccessUnlocked(versionId, checked)) return
         unlocked.push(versionId)
-        inventory.clearBrowseCardEarlyAccessFlag(versionId)
+        scheduler.clearBrowseVersionAccess(versionId)
         const preview =
           inventory.backfillDeferredPreviewForVersion(versionId) ?? row.previewUrl
         if (preview) {
@@ -2514,11 +2338,12 @@ export function initIpc(): void {
       }
     }
     const dateReady = downloadQueue.requeueDeferred()
+    if (unlocked.length > 0) scheduler.refreshBrowseGalleryUi()
     if (unlocked.length + dateReady > 0) {
       scheduler.log(
         'info',
         `Early access enrich — unlocked ${unlocked.length} via API` +
-          (dateReady ? `, ${dateReady} by unlock date / pipeline top-up` : ''),
+          (dateReady ? `, ${dateReady} confirmed ready / pipeline top-up` : ''),
         undefined,
         { source: 'system' }
       )

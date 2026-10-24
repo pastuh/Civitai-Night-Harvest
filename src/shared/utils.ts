@@ -261,8 +261,11 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
     // Call sites pass (existing, incoming); incoming wins so Unban on THIS version sticks.
     // Sibling versions are never merged here — they have different keys (v:111 vs v:222).
     isBanned: b.isBanned,
-    isEarlyAccess: a.isEarlyAccess || b.isEarlyAccess,
-    earlyAccessEndsAt: primary.earlyAccessEndsAt || secondary.earlyAccessEndsAt,
+    isAwaitingAccess: b.isAwaitingAccess ?? a.isAwaitingAccess,
+    isAccessChecking: b.isAccessChecking ?? a.isAccessChecking,
+    isEarlyAccess: b.isEarlyAccess ?? a.isEarlyAccess,
+    earlyAccessEndsAt: b.isEarlyAccess === false && b.isAwaitingAccess === false
+      ? b.earlyAccessEndsAt : b.earlyAccessEndsAt ?? a.earlyAccessEndsAt,
     publishedAt: primary.publishedAt ?? secondary.publishedAt,
     downloadCount: Math.max(a.downloadCount ?? 0, b.downloadCount ?? 0) || undefined,
     thumbsUpCount: Math.max(a.thumbsUpCount ?? 0, b.thumbsUpCount ?? 0) || undefined,
@@ -476,7 +479,7 @@ export function resolveUniqueSlugForVersion(options: {
   )
 }
 
-export function pickPrimaryFile(files: { name: string; type: string }[]): { name: string; type: string } | null {
+export function pickPrimaryFile<T extends { name: string; type: string }>(files: T[]): T | null {
   const safetensors = files.find((f) => f.name.endsWith('.safetensors'))
   if (safetensors) return safetensors
   return files[0] ?? null
@@ -572,13 +575,13 @@ export function isCivitaiVideoPreviewUrl(url: string): boolean {
 }
 
 /** True when a card/detail can show this URL in an img tag (not a raw .mp4/.webm). */
-export function isDisplayablePreviewUrl(url?: string | null): boolean {
+export function isDisplayablePreviewUrl(url?: string | null): url is string {
   const trimmed = url?.trim()
   if (!trimmed) return false
   if (isCivitaiVideoPreviewUrl(trimmed)) return false
   if (/^media:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return true
   if (/^https?:\/\//i.test(trimmed)) return true
-  if (trimmed.includes('\\') || trimmed.startsWith('/')) return true
+  if (trimmed.includes('\\') || trimmed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(trimmed)) return true
   return false
 }
 
@@ -735,7 +738,7 @@ export function resolveVersionPreviewUrl(
 
 /** Try every version's images — search API often omits them on older versions */
 export function resolveModelPreviewUrl(
-  model: { modelVersions?: { id?: number; images?: CivitaiImage[] }[] },
+  model: { modelVersions?: { id: number; images?: CivitaiImage[] }[] },
   contentFilter?: ContentFilter
 ): string | undefined {
   return resolveVersionPreviewCandidates(model, undefined, contentFilter)[0]

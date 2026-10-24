@@ -9,7 +9,12 @@ function sameInventoryRecord(a: InventoryRecord, b: InventoryRecord): boolean {
     a.baseModel === b.baseModel &&
     a.routingTag === b.routingTag &&
     a.outputFolder === b.outputFolder &&
-    a.filePath === b.filePath &&
+    a.modelPath === b.modelPath &&
+    a.swarmPath === b.swarmPath &&
+    a.slug === b.slug &&
+    a.modelType === b.modelType &&
+    a.routingLocked === b.routingLocked &&
+    a.ignored === b.ignored &&
     a.previewPath === b.previewPath &&
     a.downloadedAt === b.downloadedAt &&
     a.downloadCount === b.downloadCount &&
@@ -28,7 +33,9 @@ function sameInventoryRecord(a: InventoryRecord, b: InventoryRecord): boolean {
     (a.civitaiTags ?? []).join('\0') === (b.civitaiTags ?? []).join('\0') &&
     a.origin === b.origin &&
     a.duplicateOfVersionId === b.duplicateOfVersionId &&
-    a.fileHashSha256 === b.fileHashSha256
+    a.fileHashSha256 === b.fileHashSha256 &&
+    a.modalityText === b.modalityText &&
+    a.primaryFileName === b.primaryFileName
   )
 }
 
@@ -46,8 +53,9 @@ export function mergeInventoryPreserveIdentity(
 
   const prevById = new Map(prev.map((r) => [r.versionId, r]))
   let anyChange = prev.length !== next.length
-  const out = next.map((row) => {
+  const out = next.map((row, index) => {
     const old = prevById.get(row.versionId)
+    if (old !== prev[index]) anyChange = true
     if (old && sameInventoryRecord(old, row)) return old
     anyChange = true
     return row

@@ -1,3 +1,5 @@
+import { useForgetModel, useOnModelForgotten } from '../hooks/useForgetModel'
+import { matchesSelection } from '../../../shared/model-actions'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type {
@@ -273,6 +275,10 @@ export const MissingTab = memo(function MissingTab({
   onSaveTagRules
 }: Props) {
   const t = useT()
+  const { requestForget, confirmation: forgetConfirmation } = useForgetModel()
+  useOnModelForgotten(selection => {
+    setTemporaryAllowedByKey(prev => new Map([...prev].filter(([, row]) => !matchesSelection(selection, row.modelId, row.versionId))))
+  })
   const resultsPageSize = normalizeResultsPageSize(resultsPageSizeProp)
   const normalizedDisplayMode = normalizeResultsDisplayMode(resultsDisplayModeProp)
   const displayMode = normalizedDisplayMode === 'autoAdvance' ? 'lazy' : normalizedDisplayMode
@@ -409,7 +415,7 @@ export const MissingTab = memo(function MissingTab({
   const [hidePaused, setHidePaused] = useState(false)
   const [hideSeen, setHideSeen] = useState(true)
   const [markSeenMode, setMarkSeenMode] = useState(initial.markSeenMode ?? false)
-  const [showForgotten, setShowForgotten] = useState(initial.showForgotten)
+  const [showForgotten, setShowForgotten] = useState(false)
   const [hideMissing, setHideMissing] = useState(initial.hideMissing ?? true)
   const [forgetFunctionMode, setForgetFunctionMode] = useState(false)
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>(initial.ratingFilter ?? 'all')
@@ -1169,9 +1175,7 @@ export const MissingTab = memo(function MissingTab({
     // Allow / Acknowledge / refresh cannot reshuffle cards mid-review.
     const filterKey = [
       kindFilter,
-      sideFilter.type === 'baseModel'
-        ? `base:${sideFilter.name}`
-        : sideFilter.type === 'blockedTag'
+      sideFilter.type === 'blockedTag'
           ? `tag:${sideFilter.tag}`
           : sideFilter.type === 'byDate'
             ? `day:${sideFilter.day}`
@@ -1524,8 +1528,8 @@ export const MissingTab = memo(function MissingTab({
   const unban = useCallback(
     async (modelId: number) => {
       const item =
-        workingItems.find((m) => m.modelId === modelId) ??
-        items.find((m) => m.modelId === modelId)
+        workingItems.find((m) => m.modelId === modelId && m.kind === 'bannedManual') ??
+        items.find((m) => m.modelId === modelId && m.kind === 'bannedManual')
       setBusyId(modelId)
       setMessage(null)
       // Sync hold before API — startTransition caused a remove→reappear flicker.
@@ -1561,10 +1565,8 @@ export const MissingTab = memo(function MissingTab({
       try {
         if (typeof window.api.allowVersion === 'function') {
           await window.api.allowVersion({ modelId: item.modelId, versionId })
-        } else {
-          await window.api.unforgetPendingVersion(versionId)
         }
-        setMessage(t('missingTab.allowVersionHint'))
+        setMessage(t('gallery.unbanned', { name: item.versionName || item.modelName }))
       } catch (err) {
         setTemporaryAllowedByKey((prev) => {
           const next = new Map(prev)
@@ -1606,32 +1608,10 @@ export const MissingTab = memo(function MissingTab({
     [items, workingItems, holdAllowedUntilLeave, t]
   )
 
-  const forget = useCallback(
-    async (item: ExclusionReviewItem) => {
-      setBusyId(item.modelId)
-      setMessage(null)
-      rememberScrollAndHide(item)
-      try {
-        await window.api.forgetModel(item.modelId, item.modelName, {
-          versionId: item.versionId,
-          previewUrl: item.previewUrl,
-          pageUrl: item.pageUrl,
-          sourceDomain: item.sourceDomain,
-          author: item.author,
-          baseModel: item.baseModel,
-          modelType: item.modelType,
-          tags: item.tags
-        })
-        setMessage(t('missingTab.forgetMsg', { name: item.modelName }))
-      } catch (err) {
-        undoOptimisticHide(item)
-        setMessage(err instanceof Error ? err.message : String(err))
-      } finally {
-        setBusyId(null)
-      }
-    },
-    [rememberScrollAndHide, undoOptimisticHide, t]
-  )
+  const forget = (item: ExclusionReviewItem) => requestForget({
+    modelId: item.modelId, versionId: item.versionId && item.versionId > 0 ? item.versionId : undefined,
+    modelName: item.modelName, versionName: item.versionName
+  })
 
   const folderTagSuggestions = useMemo(() => {
     const names = new Set<string>()
@@ -1694,8 +1674,6 @@ export const MissingTab = memo(function MissingTab({
         if (!versionId || versionId <= 0) return
         if (typeof window.api.allowVersion === 'function') {
           await window.api.allowVersion({ modelId: item.modelId, versionId })
-        } else {
-          await window.api.unforgetPendingVersion(versionId)
         }
         if (tag) {
           await window.api.enqueueDownload(
@@ -2052,24 +2030,6 @@ export const MissingTab = memo(function MissingTab({
               />
               {t('missingTab.hideSeen')}
             </label>
-            <label
-              className={`checkbox-field missing-show-forgotten${
-                !headerToggleAvailability.showForgotten ? ' is-unavailable' : ''
-              }`}
-              title={
-                !headerToggleAvailability.showForgotten
-                  ? t('common.filterToggleEmpty')
-                  : undefined
-              }
-            >
-              <input
-                type="checkbox"
-                checked={showForgotten}
-                disabled={!headerToggleAvailability.showForgotten}
-                onChange={(e) => setShowForgotten(e.target.checked)}
-              />
-              {t('missingTab.showForgotten')}
-            </label>
             <div className="browse-mode-toggles">
               <button
                 type="button"
@@ -2168,7 +2128,7 @@ export const MissingTab = memo(function MissingTab({
 
   const cardGrid = (
     <>
-      {message ? <p className="muted missing-tab-message">{message}</p> : null}
+      <p className="muted missing-tab-message" role="status" aria-live="polite">{message || '\u00a0'}</p>
       {!filtered.length ? (
         <p className="muted">
           {items.length === 0
@@ -2326,6 +2286,7 @@ export const MissingTab = memo(function MissingTab({
             return (
               <StatusModelCard
                 key={`${item.kind}:${item.modelId}:${item.versionId ?? 0}`}
+                preserveHeight={temporaryAllowed || sessionDimmed}
                 className={cardClass}
                 dataBanSeenPending={pendingSeen ? item.modelId : undefined}
                 onPointerEnter={
@@ -2395,49 +2356,9 @@ export const MissingTab = memo(function MissingTab({
                       </button>
                     ) : null}
                     {!temporaryAllowed && forgetFunctionMode ? (
-                      item.kind === 'forgotten' ? (
-                        <button
-                          type="button"
-                          className="gallery-ban-inline-btn is-unban electron-no-drag"
-                          disabled={busyId === item.modelId}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void unban(item.modelId)
-                          }}
-                          title={t('missingTab.unforgetHint')}
-                          aria-label={t('missingTab.unforgetHint')}
-                        >
-                          ×
-                        </button>
-                      ) : item.kind === 'excludedVersion' ? (
-                        <button
-                          type="button"
-                          className="gallery-ban-inline-btn is-unban electron-no-drag"
-                          disabled={busyId === item.modelId}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void allowExcludedVersion(item)
-                          }}
-                          title={t('missingTab.allowVersionHint')}
-                          aria-label={t('missingTab.allowVersion')}
-                        >
-                          ×
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="gallery-ban-inline-btn electron-no-drag"
-                          disabled={busyId === item.modelId}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void forget(item)
-                          }}
-                          title={t('missingTab.forgetHint')}
-                          aria-label={t('missingTab.forget')}
-                        >
-                          ×
-                        </button>
-                      )
+                      <button type="button" className="gallery-ban-inline-btn electron-no-drag"
+                        disabled={busyId === item.modelId} onClick={e => { e.stopPropagation(); forget(item) }}
+                        title={t('missingTab.forgetHint')} aria-label={t('modelActions.forget')}>×</button>
                     ) : null}
                   </>
                 }
@@ -2587,9 +2508,9 @@ export const MissingTab = memo(function MissingTab({
                         className="btn-sm"
                         disabled={busyId === item.modelId}
                         onClick={() => void allowExcludedVersion(item)}
-                        title={t('missingTab.allowVersionHint')}
+                        title={t('modelActions.banHint')}
                       >
-                        {t('missingTab.allowVersion')}
+                        {t('modelActions.unbanVersion')}
                       </button>
                     ) : null}
                     {isTagSkipKind(item.kind) ? (
@@ -2785,17 +2706,6 @@ export const MissingTab = memo(function MissingTab({
               <span className="tag-name">{t('missingTab.filterPausedByTag')}</span>
               <span className="muted tag-count-inline">{counts.pausedByTag}</span>
             </button>
-            <button
-              type="button"
-              className={`sidebar-tag ${
-                kindFilter === 'forgotten' && sideFilter.type === 'all' ? 'active' : ''
-              }`}
-              onClick={() => applyKindFilter('forgotten')}
-            >
-              <span className="tag-name">{t('missingTab.filterForgotten')}</span>
-              <span className="muted tag-count-inline">{counts.forgotten}</span>
-            </button>
-
             {typeCounts.length > 0 ? (
               <>
                 <h4 className="sidebar-section-title">{t('missingTab.sidebarTypes')}</h4>
@@ -2984,6 +2894,11 @@ export const MissingTab = memo(function MissingTab({
               {t('missingTab.openCivitai')}
             </button>
           )}
+          {onOpenModelDetail && (
+            <button {...contextMenuButtonProps(() => openDetails(contextMenu.item), () => setContextMenu(null))}>
+              {t('gallery.modelDetails')}
+            </button>
+          )}
           {onSaveTagRules &&
             canFastTagAllow(contextMenu.item.kind) &&
             !temporaryAllowedByKey.has(exclusionItemKey(contextMenu.item)) && (
@@ -3013,26 +2928,6 @@ export const MissingTab = memo(function MissingTab({
                 {t('missingTab.markSeen')}
               </button>
             ))}
-          {contextMenu.item.kind !== 'forgotten' &&
-            contextMenu.item.kind !== 'excludedVersion' && (
-            <button
-              {...contextMenuButtonProps(() => {
-                void forget(contextMenu.item)
-              }, () => setContextMenu(null))}
-              className="context-menu-danger"
-            >
-              {t('missingTab.forget')}
-            </button>
-          )}
-          {contextMenu.item.kind === 'forgotten' && (
-            <button
-              {...contextMenuButtonProps(() => {
-                void unban(contextMenu.item.modelId)
-              }, () => setContextMenu(null))}
-            >
-              {t('missingTab.unforgetHint')}
-            </button>
-          )}
           {contextMenu.item.kind === 'bannedManual' && (
             <button
               {...contextMenuButtonProps(() => {
@@ -3048,7 +2943,7 @@ export const MissingTab = memo(function MissingTab({
                 void allowExcludedVersion(contextMenu.item)
               }, () => setContextMenu(null))}
             >
-              {t('missingTab.allowVersion')}
+              {t('modelActions.unbanVersion')}
             </button>
           )}
           {isTagSkipKind(contextMenu.item.kind) && (
@@ -3069,8 +2964,16 @@ export const MissingTab = memo(function MissingTab({
               {t('missingTab.confirm')}
             </button>
           )}
+          {(
+            <button className="context-menu-danger" {...contextMenuButtonProps(() => {
+              void forget(contextMenu.item)
+            }, () => setContextMenu(null))}>
+              {t('missingTab.forget')}
+            </button>
+          )}
         </ContextMenuPortal>
       )}
+      {forgetConfirmation}
       {quickAssignTarget && onSaveTagRules ? (
         <AssignModelToTagModal
           key={`${exclusionItemKey(quickAssignTarget.item)}:${quickAssignTarget.initialTag ?? ''}:${quickAssignTarget.initialTag ? 'rules' : 'model'}`}

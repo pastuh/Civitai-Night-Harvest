@@ -21,13 +21,13 @@ import type {
 } from '../shared/types'
 import { clearCrawlCursor, getCrawlCursor, setCrawlCursor, setBackfillPage, incrementCatalogPass, getBackfillPage, isCatalogBackfillDone, clearRuleCrawlState, msUntilNewestPeekAllowed, clearLegacyUnscopedCursor, resetCatalogSessionForAppStart, invalidateAllCatalogBackfills, reconcileCatalogFingerprints, getLastLibraryVersionScanAt, markLibraryVersionScan } from './crawl-state'
 import { buildSampleModels, buildWatchRuleTestResult } from './browse-models'
+import { applyBrowseQueueAccess } from '../shared/browse-access'
 import { mergeCachedBrowseCards, upsertBrowseCardsForRule } from './browse-cache'
 import { setCrawlPaceStatusHook, setCrawlHttpStatusHook } from '../shared/civitai-pace'
 import { RuleCrawler, shouldRunContinuousCrawl, type CrawlRuleOptions } from './rule-crawler'
 import { queuePinnedModel, runDualRulePageCheck, scanOwnedModelsForNewVersions, startDownloadsIfQueued, queueEligibleTestModels, pruneIrrelevantPendingVersions, enrichPendingVersionPreviews, offerNewVersionsForOwnedModel, offerPendingFromBrowseCard, type RulePageQueueResult } from './rule-queue'
 import { DownloadQueue, AUTO_QUEUE_PIPELINE_CAP } from './download-queue'
 import * as inventory from './inventory'
-import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getWatchRules, getTagPolicyOptions, saveSettings, shouldAutoQueue, shouldCrawlAutoDownload, crawlRequireTagMatch, shouldAutoDownloadNewVersions, outputFoldersConfigured, toPublicSettings } from './settings-store'
 import { checkConfiguredOutputFoldersReachable, probeConfiguredOutputFolders } from './output-paths'
 import { activityLogConfigFromSettings, shouldPersistActivityLog } from '../shared/activity-log-policy'
@@ -80,7 +80,7 @@ export class ScanScheduler {
     ownedModelIds: Set<number>
     skippedPending: Set<number>
     bannedIds: Set<number>
-    forgottenVersions: Set<number>
+    bannedVersions: Set<number>
     tagSkipAllow: Set<number>
     at: number
   } | null = null
@@ -319,7 +319,7 @@ export class ScanScheduler {
       ownedModelIds: inventory.getOwnedModelIds(),
       skippedPending: inventory.getSkippedPendingVersionIds(),
       bannedIds: inventory.getBannedModelIds(),
-      forgottenVersions: inventory.getForgottenVersionIds(),
+      bannedVersions: inventory.getBannedVersionIds(),
       tagSkipAllow: new Set(inventory.getTagSkipAllowlistIds()),
       at: now
     }
@@ -367,7 +367,7 @@ export class ScanScheduler {
     // Ban flags from DB — in-memory isBanned goes stale after Unban + Settings round-trip
     // (or when crawl deltas overwrite version excludes with model-level bannedIds).
     const bannedIds = inventory.getBannedModelIds()
-    const forgottenVersions = inventory.getForgottenVersionIds()
+    const bannedVersions = inventory.getBannedVersionIds()
     const preferredByVersion =
       options?.preferredPreviews === false ? null : inventory.getPreferredPreviewUrlMap()
     return models.map((m) => {
@@ -375,7 +375,7 @@ export class ScanScheduler {
         ? inventory.applyPreferredPreviewToModel(m, preferredByVersion)
         : m
       const isBanned =
-        bannedIds.has(m.id) || (m.versionId > 0 && forgottenVersions.has(m.versionId))
+        bannedIds.has(m.id) || (m.versionId > 0 && bannedVersions.has(m.versionId))
       return withPreview.isBanned === isBanned ? withPreview : { ...withPreview, isBanned }
     })
   }
@@ -396,6 +396,15 @@ export class ScanScheduler {
         bucket.set(key, inventory.applyPreferredPreviewToModel({ ...model, previewUrl: url, previewUrls }))
       }
     }
+  }
+
+  clearBrowseVersionAccess(versionId: number): void {
+    for (const bucket of this.crawlBrowseAccumByRule.values()) {
+      const key = `v:${versionId}`
+      const card = bucket.get(key)
+      if (card) bucket.set(key, { ...card, isEarlyAccess: false, earlyAccessEndsAt: undefined, isAwaitingAccess: false })
+    }
+    this.browseGalleryStatsCache = null
   }
 
   /**
@@ -421,11 +430,8 @@ export class ScanScheduler {
       )
     }
 
-    const bannedIds = inventory.getBannedModelIds()
-    const forgottenVersions = inventory.getForgottenVersionIds()
-    const ownedVersions = new Set(
-      inventory.getAllVersions().map((v) => v.versionId).filter((id) => id > 0)
-    )
+    const { bannedIds, bannedVersionIds: bannedVersions, ownedVersionIds: ownedVersions,
+      awaitingVersionIds } = inventory.getBrowseCardState()
     let total = 0
     let globalCache: WatchRuleTestModel[] | null = null
 
@@ -464,17 +470,18 @@ export class ScanScheduler {
       const flagged = cards.map((m) => ({
         ...m,
         inInventory: m.inInventory || ownedVersions.has(m.versionId),
+        isAwaitingAccess: awaitingVersionIds.has(m.versionId),
         isBanned:
           m.isBanned === true ||
           bannedIds.has(m.id) ||
-          (m.versionId > 0 && forgottenVersions.has(m.versionId))
+          (m.versionId > 0 && bannedVersions.has(m.versionId))
       }))
       this.seedBrowseModels(rule.id, flagged)
       // Chunked deltas — one full IPC with thousands of cards freezes tab switch / scroll.
       const CHUNK = 80
       for (let i = 0; i < flagged.length; i += CHUNK) {
         const slice = flagged.slice(i, i + CHUNK)
-        const result = buildWatchRuleTestResult(
+        const result = this.buildBrowseResult(
           slice,
           {
             pageSize: slice.length,
@@ -556,7 +563,7 @@ export class ScanScheduler {
     }
     const merged = this.crawlBrowseModels()
     const stats = this.browseGalleryStats(merged)
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       [model],
       {
         pageSize: 1,
@@ -978,7 +985,7 @@ export class ScanScheduler {
   getBrowseGallerySnapshot(): WatchRuleTestResult | null {
     const merged = this.crawlBrowseModels()
     if (!merged.length) return null
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       merged,
       {
         pageSize: merged.length,
@@ -1020,7 +1027,7 @@ export class ScanScheduler {
     // Quiet harvest: do not push the full in-memory gallery into the renderer.
     if (settings.updateBrowseOnCrawl === false) {
       const stats = this.browseGalleryStats(merged)
-      const emptyResult = buildWatchRuleTestResult(
+      const emptyResult = this.buildBrowseResult(
         [],
         {
           pageSize: meta?.pageModelsOnPage ?? 0,
@@ -1048,7 +1055,7 @@ export class ScanScheduler {
       })
       return true
     }
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       merged,
       {
         pageSize: merged.length,
@@ -1199,6 +1206,14 @@ export class ScanScheduler {
     await yieldMain()
     // Boot UI already showed a short activity window; keep hydrate lighter.
     this.activity = inventory.getActivityLog(500)
+  }
+
+  private buildBrowseResult(...args: Parameters<typeof buildWatchRuleTestResult>): WatchRuleTestResult {
+    const result = buildWatchRuleTestResult(...args)
+    result.sampleModels = applyBrowseQueueAccess(result.sampleModels, this.downloadQueue.getItems(), {
+      queuePaused: this.downloadQueue.isPaused()
+    })
+    return result
   }
 
   private emit(channel: string, data?: unknown): void {
@@ -1493,7 +1508,7 @@ export class ScanScheduler {
           skipped.owned++
           continue
         }
-        if (inventory.isPendingVersionSkipped(m.versionId)) {
+        if (inventory.isVersionAutoDownloadBlocked(m.versionId)) {
           skipped.skipped++
           continue
         }
@@ -1640,7 +1655,7 @@ export class ScanScheduler {
           if (m.id <= 0 || m.versionId <= 0) continue
           if (snapshot.versionIds.has(m.versionId)) continue
           if (pendingIds.has(m.versionId)) continue
-          if (inventory.isPendingVersionSkipped(m.versionId)) continue
+          if (inventory.isVersionAutoDownloadBlocked(m.versionId)) continue
           const ownsOtherOnSamePage = gallery.some(
             (x) =>
               x.id === m.id &&
@@ -1914,17 +1929,17 @@ export class ScanScheduler {
               downloadCount: item.downloadCount,
               thumbsUpCount: item.thumbsUpCount,
               baseModel: item.baseModel,
-              bumpAttempt: false
+              bumpAttempt: false,
+              clearAccessConfirmation: !item.accessConfirmedAt
             })
           },
           maxChecks,
-          (versionId) => {
+          (versionId, checked) => {
             const row = inventory.getDeferredDownload(versionId)
-            if (!row) return
-            // Live API (mini + paidAccess fallback) already confirmed the gate is gone.
+            if (!row || !inventory.confirmDeferredAccessUnlocked(versionId, checked)) return
+            // The complete version response explicitly confirmed public access.
             unlocked.push(versionId)
-            // Copy Early-access cover into browse cache (search often has no EA images).
-            inventory.clearBrowseCardEarlyAccessFlag(versionId)
+            this.clearBrowseVersionAccess(versionId)
             const preview =
               inventory.backfillDeferredPreviewForVersion(versionId) ?? row.previewUrl
             if (preview) {
@@ -1943,6 +1958,7 @@ export class ScanScheduler {
           }
         }
         if (unlocked.length > 0) {
+          this.refreshBrowseGalleryUi()
           this.log(
             'info',
             waitingSlots > 0
@@ -2403,7 +2419,7 @@ export class ScanScheduler {
       const isBanned =
         m.isBanned === true ||
         sets.bannedIds.has(m.id) ||
-        (m.versionId > 0 && sets.forgottenVersions.has(m.versionId))
+        (m.versionId > 0 && sets.bannedVersions.has(m.versionId))
       if (m.inInventory) {
         owned++
         return
@@ -2416,7 +2432,7 @@ export class ScanScheduler {
         skipTag++
         return
       }
-      if (m.isEarlyAccess) {
+      if (m.isEarlyAccess || m.isAwaitingAccess) {
         awaiting++
         return
       }
@@ -2536,7 +2552,7 @@ export class ScanScheduler {
           'warn',
           `Browse gallery: API page ${pageNumber} had ${fromApi} model(s) but 0 match rule filters (Keywords / Content / tags)`,
           rule.id,
-          { source }
+          { source: source === 'night' ? 'crawl' : 'manual' }
         )
       }
     }
@@ -2554,7 +2570,7 @@ export class ScanScheduler {
       if (quiet) {
         const galleryTotal = this.crawlBrowseGalleryLength(rule.id)
         const galleryStats = this.browseGalleryStats(undefined, rule.id)
-        const emptyResult = buildWatchRuleTestResult(
+        const emptyResult = this.buildBrowseResult(
           [],
           {
             pageSize: page.pageModels,
@@ -2592,7 +2608,7 @@ export class ScanScheduler {
 
       if (cards.length === 0 && galleryTotal === 0) {
         if (!pageHasApiData) return
-        const emptyResult = buildWatchRuleTestResult(
+        const emptyResult = this.buildBrowseResult(
           [],
           {
             pageSize: page.pageModels,
@@ -2623,7 +2639,7 @@ export class ScanScheduler {
         return
       }
 
-      const result = buildWatchRuleTestResult(
+      const result = this.buildBrowseResult(
         cards,
         {
           pageSize: page.pageModels || cards.length,
@@ -2722,7 +2738,7 @@ export class ScanScheduler {
       this.reconcileBrowseDownloadQueue({
         models: freshPageModels,
         ruleId: rule.id,
-        source,
+        source: source === 'night' ? 'crawl' : 'manual',
         allowOutsideNightMode
       })
     }
@@ -3790,25 +3806,6 @@ export class ScanScheduler {
     )
   }
 
-  /** Forget one Updates version only (not the whole model). Survives rescans until Unforget. */
-  forgetPending(versionId: number): void {
-    const item =
-      this.pendingVersions.find((p) => p.versionId === versionId) ??
-      inventory.getAllPendingVersions().find((p) => p.versionId === versionId) ??
-      inventory.getAllSkippedPendingVersions().find((p) => p.versionId === versionId)
-    if (!item) return
-    inventory.forgetPendingVersion({ ...item, forgotten: true, skipped: false })
-    this.pendingVersions = this.pendingVersions.filter((p) => p.versionId !== versionId)
-    this.downloadQueue.purgeVersion(versionId)
-    this.emitPendingVersions()
-    this.log(
-      'info',
-      `Forgot update version: ${item.modelName} → ${item.versionName} · ${item.baseModel} · #${item.modelId}`,
-      undefined,
-      { source: 'library', modelId: item.modelId, versionId: item.versionId }
-    )
-  }
-
   /** Restore a skipped Updates offer into the active pending list. */
   unskipPending(versionId: number): void {
     const restored = inventory.unskipPendingVersion(versionId)
@@ -3829,24 +3826,16 @@ export class ScanScheduler {
     )
   }
 
-  /** Restore a forgotten Updates version offer. */
-  unforgetPending(versionId: number): void {
-    const restored = inventory.unforgetPendingVersion(versionId)
-    if (!restored) return
-    if (inventory.hasVersion(versionId) || inventory.isModelBanned(restored.modelId)) {
-      return
-    }
+  /** An unbanned, unowned version of an owned model is available in Updates again. */
+  restoreUnbannedVersion(item: PendingVersion | null): void {
+    if (!item || inventory.hasVersion(item.versionId) || !inventory.isModelOwned(item.modelId) ||
+      inventory.isModelBanned(item.modelId) || inventory.isVersionAutoDownloadBlocked(item.versionId)) return
+    const restored = { ...item, skipped: false, forgotten: false }
     inventory.addPendingVersion(restored)
-    if (!this.pendingVersions.some((p) => p.versionId === versionId)) {
+    if (!this.pendingVersions.some(row => row.versionId === restored.versionId)) {
       this.pendingVersions = [...this.pendingVersions, restored]
     }
     this.emitPendingVersions()
-    this.log(
-      'info',
-      `Unforgot update version: ${restored.modelName} → ${restored.versionName} · #${restored.modelId}`,
-      undefined,
-      { source: 'library', modelId: restored.modelId, versionId: restored.versionId }
-    )
   }
 
   /** Drop a model from the in-memory Browse crawl gallery (all rules). */
@@ -3867,6 +3856,17 @@ export class ScanScheduler {
         order.filter((key) => bucket.has(key))
       )
     }
+  }
+
+  forgetSelection(modelId: number, versionId?: number): void {
+    const matches = (id: number, vid: number) => id === modelId && (versionId == null || vid === versionId)
+    this.pendingVersions = this.pendingVersions.filter(row => !matches(row.modelId, row.versionId))
+    for (const [ruleId, bucket] of this.crawlBrowseAccumByRule) {
+      for (const [key, row] of bucket) if (matches(row.id, row.versionId)) bucket.delete(key)
+      this.crawlBrowseOrderByRule.set(ruleId, (this.crawlBrowseOrderByRule.get(ruleId) ?? []).filter(key => bucket.has(key)))
+    }
+    this.invalidateBrowseStatsSetsCache()
+    this.emitPendingVersions()
   }
 
   /**
@@ -3931,7 +3931,7 @@ export class ScanScheduler {
     const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
     const rule = enabled[0] ?? getWatchRules()[0]
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       models,
       {
         pageSize: models.length,
@@ -3961,11 +3961,12 @@ export class ScanScheduler {
   markModelUnbannedInBrowseGallery(modelId: number): void {
     if (modelId <= 0) return
     this.invalidateBrowseStatsSetsCache()
+    const versionBans = inventory.getBannedVersionIds()
     let found = false
     for (const bucket of this.crawlBrowseAccumByRule.values()) {
       for (const [key, m] of bucket) {
         if (m.id !== modelId || !m.isBanned) continue
-        bucket.set(key, { ...m, isBanned: false })
+        bucket.set(key, { ...m, isBanned: versionBans.has(m.versionId) })
         found = true
       }
     }
@@ -3982,7 +3983,7 @@ export class ScanScheduler {
     const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
     const rule = enabled[0] ?? getWatchRules()[0]
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       models,
       {
         pageSize: models.length,
@@ -4036,7 +4037,7 @@ export class ScanScheduler {
       }
     }
     if (!found) return
-    // forgottenVersions / skipped sets change when Browse exclude writes DB.
+    // bannedVersions / skipped sets change when Browse exclude writes DB.
     this.invalidateBrowseStatsSetsCache()
     this.emitBrowseVersionDelta(
       modelId,
@@ -4076,7 +4077,7 @@ export class ScanScheduler {
     const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
     const rule = enabled[0] ?? getWatchRules()[0]
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       touched,
       {
         pageSize: touched.length,
@@ -4121,7 +4122,7 @@ export class ScanScheduler {
     const stats = this.browseGalleryStats(undefined)
     const enabled = getWatchRules().filter((r) => r.enabled)
     const rule = enabled[0] ?? getWatchRules()[0]
-    const result = buildWatchRuleTestResult(
+    const result = this.buildBrowseResult(
       models,
       {
         pageSize: models.length,
@@ -4149,7 +4150,7 @@ export class ScanScheduler {
   async banModel(modelId: number, modelName = ''): Promise<void> {
     const pending = inventory.getAllPendingVersions().find((p) => p.modelId === modelId)
     const incomplete = inventory.getIncompleteModel(modelId)
-    const deleted = await deleteModelFromLibrary(modelId, { awaitFiles: false })
+    const deleted = inventory.getVersionsForModel(modelId)
     inventory.banModelAndMarkSeen(modelId, modelName || deleted[0]?.modelName || '')
     inventory.clearBrowseCardCacheForModel(modelId)
     this.invalidateBrowseStatsSetsCache()
@@ -4168,7 +4169,7 @@ export class ScanScheduler {
       tags: incomplete?.tags
     })
     if (deleted.length > 0) {
-      this.log('info', `Deleted and excluded: ${modelName || modelId}`)
+      this.log('info', `Banned: ${modelName || modelId} (library files retained)`)
     } else {
       this.log('info', `Excluded model ${modelId} from downloads`)
     }

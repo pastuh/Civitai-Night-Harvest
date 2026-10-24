@@ -2,17 +2,13 @@ import type { CivitaiClient } from '../shared/civitai-client'
 import type { CivitaiModel, ContentFilter, WatchRuleTestModel, WatchRuleTestResult } from '../shared/types'
 import { aggregateResultTags, matchesContentFilter, extractModelFileMeta, pickPrimaryFile } from '../shared/utils'
 import { expandCivitaiTagNames } from '../shared/tag-routing'
-import { isVersionEarlyAccess } from '../shared/early-access'
+import { modelVersionAccess } from '../shared/early-access'
 import { checkpointTypeLabel, modelStatsFromSearch } from '../shared/civitai-meta'
 import * as inventory from './inventory'
 import { previewsFromModel } from './preview-enrich'
 import { registerIncompleteFromModel } from './incomplete-resolve'
 
-type BrowseCardInventory = {
-  ownedVersionIds: Set<number>
-  bannedIds: Set<number>
-  forgottenVersionIds: Set<number>
-}
+type BrowseCardInventory = inventory.BrowseCardState
 
 /** Build one Browse card from a Civitai model (optional preferred version). */
 export function buildBrowseCardFromModel(
@@ -33,13 +29,8 @@ export function buildBrowseCardFromModel(
     registerIncompleteFromModel(m, client.getDomain())
     return null
   }
-  const ownedVersions =
-    options?.inventory?.ownedVersionIds ??
-    new Set(inventory.getAllVersions().map((row) => row.versionId))
-  const bannedIds = options?.inventory?.bannedIds ?? inventory.getBannedModelIds()
-  const forgottenVersionIds =
-    options?.inventory?.forgottenVersionIds ?? inventory.getForgottenVersionIds()
-  const ea = isVersionEarlyAccess(v)
+  const state = options?.inventory ?? inventory.getBrowseCardState()
+  const access = modelVersionAccess(m, v)
   const resolved = previewsFromModel(m, versionId, filter)
   const stats = modelStatsFromSearch(m, versionId)
   const primaryFile = v?.files?.length ? pickPrimaryFile(v.files) : null
@@ -63,10 +54,11 @@ export function buildBrowseCardFromModel(
     creator: m.creator?.username,
     nsfw: m.nsfw,
     nsfwLevel: m.nsfwLevel,
-    inInventory: ownedVersions.has(versionId),
-    isBanned: bannedIds.has(m.id) || forgottenVersionIds.has(versionId),
-    isEarlyAccess: ea,
-    earlyAccessEndsAt: ea ? (v?.earlyAccessEndsAt ?? undefined) : undefined,
+    inInventory: state.ownedVersionIds.has(versionId),
+    isBanned: state.bannedIds.has(m.id) || state.bannedVersionIds.has(versionId),
+    isAwaitingAccess: state.awaitingVersionIds.has(versionId),
+    isEarlyAccess: access.isEarlyAccess,
+    earlyAccessEndsAt: access.endsAt,
     publishedAt: v?.publishedAt ?? v?.createdAt ?? undefined,
     sourceDomain: client.getDomain(),
     downloadCount: stats.downloadCount,
@@ -92,11 +84,7 @@ export function buildSampleModels(
   filter: ContentFilter
 ): WatchRuleTestModel[] {
   // One inventory snapshot per page — pack expansion used to re-scan the whole library per card.
-  const inv: BrowseCardInventory = {
-    ownedVersionIds: new Set(inventory.getAllVersions().map((row) => row.versionId)),
-    bannedIds: inventory.getBannedModelIds(),
-    forgottenVersionIds: inventory.getForgottenVersionIds()
-  }
+  const inv = inventory.getBrowseCardState()
   return items.flatMap((m) => {
     const sameBase = sameBaseVersions(m)
     // Small same-base packs: one card per file so Hide owned / version titles stay accurate.
@@ -223,6 +211,7 @@ export function buildWatchRuleTestResult(
   },
   enums: WatchRuleTestResult['enums']
 ): WatchRuleTestResult {
+  sampleModels = inventory.refreshBrowseCardStates(sampleModels)
   return {
     ...metadata,
     baseModelsInResults: [...new Set(sampleModels.map((m) => m.baseModel).filter(Boolean))],

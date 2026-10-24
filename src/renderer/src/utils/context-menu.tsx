@@ -53,7 +53,7 @@ export function ContextMenuPortal({
   open: boolean
   x: number
   y: number
-  menuRef: RefObject<HTMLDivElement | null>
+  menuRef: RefObject<HTMLDivElement>
   onClose: () => void
   children: ReactNode
 }) {

@@ -255,6 +255,37 @@ export function hasTagFolderRule(tagName: string, tagRules: TagFolderRule[]): bo
   return !!findRuleForTag(tagName, tagRules)
 }
 
+type OrderedRule = { rule: TagFolderRule; order: number }
+type RuleLookup = {
+  aliases: Map<string, OrderedRule>
+  names: Map<string, OrderedRule>
+}
+// Settings/React replace rule arrays on edits. Reuse the index across cards and
+// whole-library filters instead of splitting and comparing every rule per tag.
+const ruleLookups = new WeakMap<TagFolderRule[], RuleLookup>()
+
+function lookupForRules(rules: TagFolderRule[]): RuleLookup {
+  const cached = ruleLookups.get(rules)
+  if (cached) return cached
+  const lookup: RuleLookup = { aliases: new Map(), names: new Map() }
+  const first = (map: Map<string, OrderedRule>, key: string, row: OrderedRule) => {
+    if (key && !map.has(key)) map.set(key, row)
+  }
+  rules.forEach((rule, order) => {
+    const row = { rule, order }
+    const names = parseTagRuleNames(rule.tagName)
+    for (const name of names) {
+      first(lookup.names, name.toLowerCase(), row)
+      for (const alias of pluralVariants(name)) first(lookup.aliases, alias, row)
+    }
+    // Preserve the legacy whole-label and raw-field exact matches too.
+    first(lookup.aliases, names.join(', ').toLowerCase(), row)
+    first(lookup.aliases, rule.tagName.trim().toLowerCase(), row)
+  })
+  ruleLookups.set(rules, lookup)
+  return lookup
+}
+
 export function findRuleForTag(
   tagName: string,
   tagRules: TagFolderRule[],
@@ -269,14 +300,15 @@ export function findRuleForTag(
     }
     return undefined
   }
-  const needleLower = needle.toLowerCase()
-  return tagRules.find((r) => {
-    if (ruleCoversTag(r, needle)) return true
-    const label = parseTagRuleNames(r.tagName).join(', ')
-    return (
-      label.toLowerCase() === needleLower || r.tagName.trim().toLowerCase() === needleLower
-    )
-  })
+  const lookup = lookupForRules(tagRules)
+  let best = lookup.aliases.get(needle.toLowerCase())
+  // tagAliasMatch is symmetric, but does not match two expanded variants of
+  // different names. Query variants therefore consult original names only.
+  for (const variant of pluralVariants(needle)) {
+    const hit = lookup.names.get(variant)
+    if (hit && (!best || hit.order < best.order)) best = hit
+  }
+  return best?.rule
 }
 
 export function namesForRoutingFilter(filterName: string, tagRules: TagFolderRule[]): string[] {

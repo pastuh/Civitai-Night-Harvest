@@ -1,3 +1,5 @@
+import { useForgetModel, useOnModelForgotten } from '../hooks/useForgetModel'
+import { matchesSelection } from '../../../shared/model-actions'
 import {
   useCallback,
   useEffect,
@@ -311,6 +313,12 @@ export function DeferredTab({
   browseVideoPreviews = false
 }: Props) {
   const t = useT()
+  const { requestForget, confirmation: forgetConfirmation } = useForgetModel()
+  useOnModelForgotten(selection => {
+    const keep = ([, row]: [number, DeferredDownload]) => !matchesSelection(selection, row.modelId, row.versionId)
+    setTemporaryAllowedByModelId(prev => new Map([...prev].filter(keep)))
+    setSessionBannedByModelId(prev => new Map([...prev].filter(keep)))
+  })
   const [, setTick] = useState(0)
   const [banTarget, setBanTarget] = useState<DeferredDownload | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
@@ -473,7 +481,8 @@ export function DeferredTab({
       .join(',')
     const prevKey = deferredVersionSnapshotRef.current
     // First paint: let browse-cache / preview hook fill thumbs — don't storm enrichDeferred.
-    const hasNewVersions = prevKey !== '' && versionKey !== prevKey
+    const previousIds = new Set(prevKey.split(','))
+    const hasNewVersions = prevKey !== '' && visibleDeferred.some(row => !previousIds.has(String(row.versionId)))
     deferredVersionSnapshotRef.current = versionKey
     const needsBaseModel = visibleDeferred.some((d) =>
       deferredNeedsBaseModelBackfill(d, browseCards, inventoryByVersion)
@@ -2443,9 +2452,13 @@ export function DeferredTab({
                 {t('gallery.excludeBan')}
               </button>
             )}
+          <button className="context-menu-danger" {...contextMenuButtonProps(() => requestForget({
+            modelId: contextMenu.item.modelId, versionId: contextMenu.item.versionId || undefined, modelName: contextMenu.item.modelName
+          }), () => setContextMenu(null))}>{t('modelActions.forget')}</button>
         </ContextMenuPortal>
       )}
 
+      {forgetConfirmation}
       {banTarget && (
         <ConfirmModal
           title={t('deferredTab.ban')}

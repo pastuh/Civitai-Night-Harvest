@@ -79,8 +79,8 @@ export function deferredBlockedByPolicyTags(
   policyOptions?: TagPolicyOptions
 ): boolean {
   if (isTagSkipAllowed?.(item.modelId)) return false
-  const paused = pausedTags ?? []
-  const banned = bannedTags ?? []
+  const paused = pausedTags ? [...pausedTags] : []
+  const banned = bannedTags ? [...bannedTags] : []
   if (!paused.length && !banned.length) return false
   if (modelHasPolicyTag(item.civitaiTags ?? [], paused, banned, policyOptions)) return true
   const route = item.routingTag?.trim()

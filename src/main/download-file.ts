@@ -1,11 +1,10 @@
-import { createWriteStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'fs'
-import { close } from 'fs/promises'
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, type WriteStream } from 'fs'
 import { dirname } from 'path'
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
-import { net } from 'electron'
 import { isRetryableNetworkError, sleep, withNetworkRetry } from '../shared/network-retry'
 const WRITE_HIGH_WATER_MARK = 4 * 1024 * 1024
+const RANGE_HIGH_WATER_MARK = 256 * 1024
 const MULTIPART_MIN_BYTES = 2 * 1024 * 1024
 const DEFAULT_STREAMS = 8
 const MAX_STREAMS = 32
@@ -45,24 +44,9 @@ function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
-function headerValue(headers: Record<string, string | string[]>, name: string): string | undefined {
-  const raw = headers[name] ?? headers[name.toLowerCase()]
-  const value = Array.isArray(raw) ? raw[0] : raw
-  return value ? String(value) : undefined
-}
-
-function parseContentLength(headers: Record<string, string | string[]>): number {
-  return Number(headerValue(headers, 'content-length') ?? 0) || 0
-}
-
-function parseContentRange(headers: Record<string, string | string[]>): number | null {
-  const value = headerValue(headers, 'content-range')
-  const m = value?.match(/\/(\d+)\s*$/)
-  return m ? Number(m[1]) : null
-}
-
-function hasByteRanges(headers: Record<string, string | string[]>): boolean {
-  return headerValue(headers, 'accept-ranges')?.toLowerCase() === 'bytes'
+async function closeOutput(output: WriteStream): Promise<void> {
+  output.destroy()
+  if (!output.closed) await new Promise<void>((resolve) => output.once('close', resolve))
 }
 
 /** Direct CDN/storage URL from Civitai API — safe for parallel byte ranges. */
@@ -85,80 +69,33 @@ function looksLikeHtmlPayload(chunk: Uint8Array): boolean {
     .toLowerCase()
   return head.startsWith('<!doctype') || head.startsWith('<html') || head.includes('<html')
 }
-function netGet(
+async function withDownloadResponse<T>(
   url: string,
   headers: Record<string, string>,
-  signal?: AbortSignal
-): Promise<{
-  status: number
-  headers: Record<string, string | string[]>
-  body: Buffer
-}> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-
-    const req = net.request({ method: 'GET', url, redirect: 'follow' })
-    for (const [key, value] of Object.entries(headers)) {
-      if (value) req.setHeader(key, value)
-    }
-
-    let settled = false
-    const settle = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      fn()
-    }
-
-    const onAbort = () => {
-      try {
-        req.abort()
-      } catch {
-        /* ignore */
-      }
-      settle(() => reject(new DOMException('Aborted', 'AbortError')))
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-
-    const timer = setTimeout(() => {
-      try {
-        req.abort()
-      } catch {
-        /* ignore */
-      }
-      settle(() => reject(new Error(`Download request timed out after ${NET_GET_TIMEOUT_MS / 1000}s`)))
-    }, NET_GET_TIMEOUT_MS)
-
-    req.on('error', (err) => {
-      settle(() => reject(err instanceof Error ? err : new Error(String(err))))
-    })
-
-    req.on('response', (res) => {
-      const chunks: Buffer[] = []
-      res.on('data', (chunk: Buffer) => chunks.push(chunk))
-      res.on('error', (err) => {
-        settle(() => reject(err instanceof Error ? err : new Error(String(err))))
-      })
-      res.on('aborted', () => {
-        settle(() => reject(new Error('Response aborted')))
-      })
-      res.on('end', () => {
-        settle(() =>
-          resolve({
-            status: res.statusCode ?? 0,
-            headers: res.headers,
-            body: Buffer.concat(chunks)
-          })
-        )
-      })
-    })
-
-    req.end()
-  })
+  signal: AbortSignal | undefined,
+  consume: (response: Response, keepAlive: () => void, signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  let timer: ReturnType<typeof setTimeout>
+  const keepAlive = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => controller.abort(), NET_GET_TIMEOUT_MS)
+  }
+  keepAlive()
+  try {
+    const response = await fetch(url, { method: 'GET', headers, redirect: 'follow', signal: controller.signal })
+    return await consume(response, keepAlive, controller.signal)
+  } catch (err) {
+    if (controller.signal.aborted && !signal?.aborted) throw new Error('Download request timed out waiting for data')
+    throw err
+  } finally {
+    clearTimeout(timer!)
+    signal?.removeEventListener('abort', onAbort)
+    controller.abort()
+  }
 }
 
 async function probeRemoteFile(
@@ -166,19 +103,21 @@ async function probeRemoteFile(
   headers: Record<string, string>,
   signal?: AbortSignal
 ): Promise<{ total: number; ranged: boolean }> {
-  const res = await netGet(url, { ...headers, Range: 'bytes=0-0' }, signal)
-
-  if (res.status === 206) {
-    const total = parseContentRange(res.headers) ?? 0
-    return { total, ranged: total > 0 && hasByteRanges(res.headers) }
-  }
-
-  if (res.status >= 200 && res.status < 300) {
-    const total = parseContentLength(res.headers) || res.body.length
-    return { total, ranged: hasByteRanges(res.headers) }
-  }
-
-  throw new Error(`Download failed ${res.status}: ${url}`)
+  return withDownloadResponse(url, { ...headers, Range: 'bytes=0-0' }, signal, async (res) => {
+    // A server may ignore Range and send a multi-GB body. Inspect headers only,
+    // then cancel it immediately rather than downloading/buffering the whole file.
+    try {
+      if (res.status === 206) {
+        const range = res.headers.get('content-range')?.match(/^bytes 0-0\/(\d+)$/i)
+        const total = range ? Number(range[1]) : 0
+        return { total, ranged: total > 0 }
+      }
+      if (res.ok) return { total: Number(res.headers.get('content-length')) || 0, ranged: false }
+      throw new Error(`Download failed ${res.status}: ${url}`)
+    } finally {
+      await res.body?.cancel()
+    }
+  })
 }
 
 async function downloadRange(
@@ -186,13 +125,38 @@ async function downloadRange(
   headers: Record<string, string>,
   start: number,
   end: number,
+  total: number,
+  tmpPath: string,
+  onBytes: (bytes: number) => void,
   signal?: AbortSignal
-): Promise<Buffer> {
-  const res = await netGet(url, { ...headers, Range: `bytes=${start}-${end}` }, signal)
-  if (res.status !== 206 && res.status !== 200) {
-    throw new Error(`Range download failed ${res.status}: ${url}`)
-  }
-  return res.body
+): Promise<void> {
+  return withDownloadResponse(url, { ...headers, Range: `bytes=${start}-${end}` }, signal, async (res, keepAlive, requestSignal) => {
+    if (res.status !== 206 || res.headers.get('content-range') !== `bytes ${start}-${end}/${total}`) {
+      throw new Error(`Range download failed ${res.status}: invalid Content-Range`)
+    }
+    if (!res.body) throw new Error('Range download failed: empty body')
+    let received = 0
+    const progress = new Transform({ highWaterMark: RANGE_HIGH_WATER_MARK,
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.length
+        if (received > end - start + 1) {
+          callback(new Error('Range download failed: response exceeds requested range'))
+          return
+        }
+        keepAlive()
+        onBytes(received)
+        callback(null, chunk)
+      }
+    })
+    // Offset writes and stream backpressure bound RAM independently of file size.
+    const output = createWriteStream(tmpPath, { flags: 'r+', start, highWaterMark: RANGE_HIGH_WATER_MARK })
+    try {
+      await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream), progress, output, {signal: requestSignal})
+    } finally {
+      await closeOutput(output)
+    }
+    if (received !== end - start + 1) throw new Error(`Range ${start}-${end} short read: got ${received} bytes`)
+  })
 }
 
 async function downloadMultipart(
@@ -207,7 +171,7 @@ async function downloadMultipart(
   const tmpPath = `${destPath}.tmp`
   if (existsSync(tmpPath)) unlinkSync(tmpPath)
 
-  const fd = openSync(tmpPath, 'w')
+  closeSync(openSync(tmpPath, 'w'))
   const partSize = Math.ceil(total / streams)
   const partDone = new Array<number>(streams).fill(0)
   let lastReportAt = 0
@@ -222,25 +186,22 @@ async function downloadMultipart(
   }
 
   let succeeded = false
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) controller.abort()
+  const tasks: Promise<void>[] = []
   try {
-    const tasks: Promise<void>[] = []
     for (let i = 0; i < streams; i++) {
       const start = i * partSize
       if (start >= total) break
       const end = Math.min(total - 1, start + partSize - 1)
       const partIndex = i
-      const expectedLen = end - start + 1
       tasks.push(
-        downloadRange(url, headers, start, end, signal).then((buf) => {
-          if (buf.length !== expectedLen) {
-            throw new Error(
-              `Range ${start}-${end} short read: got ${buf.length} of ${expectedLen} bytes`
-            )
-          }
-          writeSync(fd, buf, 0, buf.length, start)
-          partDone[partIndex] = buf.length
+        downloadRange(url, headers, start, end, total, tmpPath, (bytes) => {
+          partDone[partIndex] = bytes
           report()
-        })
+        }, controller.signal)
       )
     }
     await Promise.all(tasks)
@@ -251,7 +212,10 @@ async function downloadMultipart(
     onProgress?.(total, total)
     succeeded = true
   } finally {
-    await close(fd)
+    controller.abort()
+    // Every range must close its stream before the partial file can be deleted.
+    await Promise.allSettled(tasks)
+    signal?.removeEventListener('abort', onAbort)
     if (!succeeded) {
       // Abort/error path: drop the partial .tmp file so it cannot be mistaken for a finished download
       // or silently renamed later — caller (cleanupPartialDownload) only knows the final paths.
@@ -281,6 +245,7 @@ async function downloadSingle(
   const controller = new AbortController()
   const onAbort = () => controller.abort()
   signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) controller.abort()
 
   let firstByteTimer: ReturnType<typeof setTimeout> | undefined
   const armFirstByteTimeout = () => {
@@ -337,7 +302,7 @@ async function downloadSingle(
     })
 
     try {
-      await pipeline(nodeBody, progressTap, fileStream)
+      await pipeline(nodeBody, progressTap, fileStream, {signal: controller.signal})
       onProgress?.(received, total)
     } catch (err) {
       if (!checkedHtml && existsSync(tmpPath)) {
@@ -351,6 +316,10 @@ async function downloadSingle(
         }
       }
       throw err
+    } finally {
+      // Windows may reject unlink/rename while the async open/close is pending,
+      // especially when HTML detection fails on the very first chunk.
+      await closeOutput(fileStream)
     }
 
     if (existsSync(destPath)) unlinkSync(destPath)
@@ -372,7 +341,7 @@ async function downloadSingle(
 }
 
 /**
- * Download via Chromium network (redirect: follow).
+ * Stream downloads to disk with backpressure (redirect: follow).
  * Multipart ranges only on direct CDN URLs — Civitai API links use a single stream (browser speed).
  */
 export async function downloadToFile(
@@ -403,7 +372,7 @@ async function downloadToFileOnce(
   const canMultipart = isDirectFileUrl(url)
 
   if (canMultipart && requestedStreams > 1) {
-    const streamAttempts = [requestedStreams, Math.min(4, requestedStreams), 1]
+    const streamAttempts = [...new Set([requestedStreams, Math.min(4, requestedStreams), 1])]
     for (const streams of streamAttempts) {
       try {
         const probe = await probeRemoteFile(url, fetchHeaders, signal)
@@ -416,6 +385,7 @@ async function downloadToFileOnce(
         }
         break
       } catch (err) {
+        if (signal?.aborted) throw err
         const msg = err instanceof Error ? err.message : String(err)
         if (streams === 1) break
         // Network errors AND multipart-specific failures (short read, rejected range) both warrant

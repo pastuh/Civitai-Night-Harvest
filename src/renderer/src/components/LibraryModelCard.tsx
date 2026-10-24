@@ -139,7 +139,7 @@ function LibraryModelCardInner({
     ...libraryCardPreviewSource(record),
     previewUrl: localPreviewPath || record.previewPath?.trim() || undefined
   }
-  const cardThumb = resolveModelCardThumb(previewSource, previewOverride)
+  const cardThumb = resolveModelCardThumb(previewSource, previewOverride, undefined, localPreviewPath)
   const videoAvailability = videoPreviewAvailabilityFor(previewSource, previewOverride)
   const metaExtra = inventoryMetaExtra(record)
   const ratingInfo = describeNsfwRatingForCard(record.isNsfw, record.nsfwLevel)

@@ -14,7 +14,6 @@ export function isAwaitingAccessFailureKind(
 /** Stop automatic re-queue after this many failed attempts (manual retry still allowed). */
 export const MAX_AUTO_DEFERRED_ATTEMPTS = 10
 
-const FORBIDDEN_COOLDOWN_MS = 4 * 60 * 60 * 1000
 const NOT_FOUND_COOLDOWN_MS = 60 * 60 * 1000
 const RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000
 
@@ -170,6 +169,7 @@ export interface DeferredRetryContext {
   attemptCount: number
   lastAttemptAt: string
   earlyAccessEndsAt?: string
+  accessConfirmedAt?: string
   additionalResourceCharge?: boolean
   freeTrialLimit?: number | null
 }
@@ -177,27 +177,19 @@ export interface DeferredRetryContext {
 /** Whether scheduler / night mode may re-queue this deferred item without user action. */
 export function shouldAutoRetryDeferred(
   entry: DeferredRetryContext,
-  hasApiKey: boolean
+  _hasApiKey: boolean
 ): boolean {
-  // Early access waits for unlock time — attempt caps do not apply (no point retrying early).
-  // No endsAt → wait for live enrich (API says Public / Buzz gate cleared) rather than blind retry.
-  if (entry.failureKind === 'early_access') {
-    if (entry.earlyAccessEndsAt) {
-      return Date.now() >= new Date(entry.earlyAccessEndsAt).getTime()
-    }
-    return false
+  if (entry.earlyAccessEndsAt && Date.parse(entry.earlyAccessEndsAt) > Date.now()) return false
+  // A deadline only schedules API verification. It never proves a download is accessible.
+  if (isAwaitingAccessFailureKind(entry.failureKind)) {
+    const confirmedAt = Date.parse(entry.accessConfirmedAt ?? '')
+    return Number.isFinite(confirmedAt) && confirmedAt <= Date.now()
   }
 
   if (entry.attemptCount >= MAX_AUTO_DEFERRED_ATTEMPTS) return false
 
   const elapsed = Date.now() - new Date(entry.lastAttemptAt).getTime()
 
-  if (entry.failureKind === 'auth' && hasApiKey) {
-    // API key is set but Civitai still returns 401 — may be early access; enrichment upgrades kind.
-    return false
-  }
-
-  if (entry.failureKind === 'forbidden' && elapsed < FORBIDDEN_COOLDOWN_MS) return false
   if (entry.failureKind === 'not_found' && elapsed < NOT_FOUND_COOLDOWN_MS) return false
   if (entry.failureKind === 'rate_limit' && elapsed < RATE_LIMIT_COOLDOWN_MS) return false
 

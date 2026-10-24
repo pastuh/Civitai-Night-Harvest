@@ -1,4 +1,5 @@
-import type { DownloadQueueItem } from '../../../shared/types'
+import type { DeferredDownload, DownloadQueueItem } from '../../../shared/types'
+import { visibleDownloadItems } from '../../../shared/download-pipeline'
 
 export type DownloadQueueSnapshot = {
   items: DownloadQueueItem[]
@@ -14,7 +15,7 @@ const structureListeners = new Set<Listener>()
 
 export function queueStructureKey(q: DownloadQueueSnapshot): string {
   return `${q.paused ? 1 : 0}:${q.items
-    .map((i) => `${i.id}:${i.status}:${i.versionId}:${i.manual ? 1 : 0}`)
+    .map((i) => `${i.id}:${i.status}:${i.versionId}:${i.manual ? 1 : 0}:${i.failureKind ?? ''}:${i.accessChecked ?? ''}:${i.downloadReady ?? ''}:${i.origin ?? ''}`)
     .join('|')}`
 }
 
@@ -51,8 +52,6 @@ export function applyDownloadQueueSnapshot(next: DownloadQueueSnapshot): {
   return { structureChanged }
 }
 
-export function peekActivePipeline(): boolean {
-  return snapshot.items.some(
-    (i) => i.status === 'queued' || i.status === 'downloading' || i.status === 'failed'
-  )
+export function peekActivePipeline(deferred?: DeferredDownload[]): boolean {
+  return visibleDownloadItems(snapshot.items, { queuePaused: snapshot.paused, deferred }).length > 0
 }

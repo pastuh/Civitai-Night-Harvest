@@ -6,6 +6,7 @@ import { initIpc, registerMediaProtocol, recoverFromNetworkError, setMainWindow,
 import { closeInventory } from './inventory'
 import { applyLaunchAtLogin, shouldStartHidden } from './launch-at-login'
 import { getSettings } from './settings-store'
+import { registerPreviewProtocol } from './preview-protocol'
 import { createTrayImage, createWindowIcon, getAppIconDataUrl } from './tray-icon'
 
 const trayGlobal = global as typeof global & { __csdTray?: Tray | null }
@@ -134,7 +135,10 @@ app.on('before-quit', () => {
 })
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'media', privileges: { bypassCSP: true, stream: true, secure: true, supportFetchAPI: true } }
+  { scheme: 'media', privileges: { bypassCSP: true, stream: true, secure: true, supportFetchAPI: true } },
+  { scheme: 'preview', privileges: {
+    standard: true, bypassCSP: true, stream: true, secure: true, supportFetchAPI: true
+  } }
 ])
 
 function createWindow(): void {
@@ -267,6 +271,7 @@ app.whenReady().then(() => {
   initIpc()
   try {
     registerMediaProtocol()
+    registerPreviewProtocol()
   } catch (err) {
     console.error('Media protocol registration failed:', err)
   }
@@ -277,17 +282,6 @@ app.whenReady().then(() => {
   if (pendingNetworkRecovery) {
     recoverRendererAfterNetworkFault()
   }
-
-  // Clear HTTP cache AFTER the first window load is underway. Doing this in
-  // whenReady() before createWindow races Chromium's Network Service and often
-  // leaves a hidden tray-only window on the first npm run dev.
-  setTimeout(() => {
-    try {
-      void session.defaultSession.clearCache()
-    } catch {
-      /* non-fatal */
-    }
-  }, 15_000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

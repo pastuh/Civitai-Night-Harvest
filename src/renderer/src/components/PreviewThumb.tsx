@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { civitaiVideoToStillFrameUrl, isCivitaiVideoPreviewUrl } from '../../../shared/utils'
 import { useT } from '../i18n/context'
 import { mapPreviewSrcs, toPreviewSrc } from '../utils/preview-src'
+import { selectPreviewSource } from '../utils/preview-display'
+import { toCachedPreviewSrc } from '../../../shared/preview-cache-url'
 import {
   withDefaultPreviewDomain,
   type ModelCardPreviewSource,
@@ -66,9 +68,12 @@ export function PreviewThumb({
       rawVideo
     return mapPreviewSrcs(still ? [still] : [])
   }, [urls.join('|'), videoUrl])
-  const [index, setIndex] = useState(0)
+  const [activeSrc, setActiveSrc] = useState(() => candidates[0] ?? '')
+  const previousCandidatesRef = useRef(candidates)
   const [failed, setFailed] = useState(false)
   const [imageLoaded, setImageLoaded] = useState(false)
+  // Keep the last decoded image mounted while a new cover/cache URL loads.
+  const [paintedSrc, setPaintedSrc] = useState('')
   const [shimmerVisible, setShimmerVisible] = useState(true)
   /** Local/cache URLs died — keep remote shimmer while parent refetches from API. */
   const [awaitingRemote, setAwaitingRemote] = useState(false)
@@ -81,11 +86,9 @@ export function PreviewThumb({
   )
   const [pointerInside, setPointerInside] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
-  const loadGenRef = useRef(0)
+  const currentSourceRef = useRef(activeSrc)
+  currentSourceRef.current = activeSrc
   const hadNoCandidatesRef = useRef(candidates.length === 0)
-  const activeSrc = candidates.length
-    ? candidates[Math.min(index, candidates.length - 1)]
-    : ''
   const [hoverActive, setHoverActive] = useState(false)
   const [showVideoLayer, setShowVideoLayer] = useState(false)
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | undefined>()
@@ -113,18 +116,27 @@ export function PreviewThumb({
   }
 
   useEffect(() => {
+    const previous = previousCandidatesRef.current
+    previousCandidatesRef.current = candidates
+    setActiveSrc((current) => selectPreviewSource(current, previous, candidates))
+    setFailed(false)
+    setAwaitingRemote(false)
+  }, [candidates.join('|')])
+
+  useEffect(() => {
     const len = candidates.length
     const cameFromEmpty = hadNoCandidatesRef.current
     hadNoCandidatesRef.current = len === 0
 
-    loadGenRef.current += 1
-    setIndex(0)
     setFailed(false)
     setAwaitingRemote(false)
     setImageLoaded(false)
     setShimmerVisible(true)
     // Empty → API wait, or first URLs after empty: keep wide shimmer until paint.
     setRemoteShimmerUntilPaint(len === 0 || cameFromEmpty)
+  }, [activeSrc])
+
+  useEffect(() => {
     setShowVideoLayer(false)
     setResolvedVideoUrl(undefined)
     setPlayableVideoSrc('')
@@ -132,51 +144,26 @@ export function PreviewThumb({
     setHoverConfirmedAbsent(false)
     fetchStartedRef.current = false
     cacheKeyRef.current = ''
-  }, [candidates.join('|'), videoUrl, videoAvailability])
+  }, [activeSrc, videoUrl, videoAvailability])
 
   const onAllFailedRef = useRef(onAllFailed)
   onAllFailedRef.current = onAllFailed
-  const emptyKickSentRef = useRef(false)
 
-  // No local URL yet — nudge parent once to resolve from API; keep shimmer (never "No image").
-  useEffect(() => {
-    if (candidates.length) {
-      emptyKickSentRef.current = false
-      return
-    }
-    if (emptyKickSentRef.current) return
-    emptyKickSentRef.current = true
-    // Let the first paint show remote shimmer, then ask for an API resolve.
-    const timer = window.setTimeout(() => onAllFailedRef.current?.(), 0)
-    return () => window.clearTimeout(timer)
-  }, [candidates.length])
-
-  useEffect(() => {
-    loadGenRef.current += 1
-    setImageLoaded(false)
-    setShimmerVisible(true)
-  }, [index])
-
-  // Keep shimmer until pixels are decoded (onLoad alone can fire before paint).
-  const revealLoadedImage = (el: HTMLImageElement | null) => {
+  // Reveal each loaded image immediately. decode() can stay pending for lazy
+  // images in content-visibility grids, even with complete=true/naturalWidth>0.
+  // Waiting for it hid valid disk-cache hits and made covers appear in groups.
+  const revealLoadedImage = (el: HTMLImageElement | null, source = activeSrc) => {
     if (!el || !el.complete || el.naturalWidth <= 0) return
-    const gen = loadGenRef.current
-    const finish = () => {
-      if (gen !== loadGenRef.current) return
-      setImageLoaded(true)
-      setRemoteShimmerUntilPaint(false)
-    }
-    if (typeof el.decode === 'function') {
-      void el.decode().then(finish).catch(finish)
-    } else {
-      finish()
-    }
+    if (imgRef.current !== el || currentSourceRef.current !== source) return
+    setPaintedSrc(source)
+    setImageLoaded(true)
+    setRemoteShimmerUntilPaint(false)
   }
 
   useEffect(() => {
     if (imageLoaded || !activeSrc) return
     revealLoadedImage(imgRef.current)
-  }, [activeSrc, index, imageLoaded])
+  }, [activeSrc, imageLoaded])
 
   useEffect(() => {
     if (!imageLoaded || !shimmerVisible) return
@@ -327,7 +314,7 @@ export function PreviewThumb({
     videoPreviews && availability === 'available' && !showVideoLayer && !showSpinner
 
   // Waiting for API (no URL yet, or cache URLs died and parent is refetching).
-  if (!candidates.length || awaitingRemote) {
+  if ((!candidates.length || awaitingRemote) && !paintedSrc) {
     return (
       <div
         className={`${className} placeholder preview-thumb-shell preview-thumb-awaiting`}
@@ -340,7 +327,7 @@ export function PreviewThumb({
   }
 
   // Only after local candidates failed and there is no API retry hook.
-  if (failed) {
+  if (failed && !paintedSrc) {
     return (
       <div className={`${className} placeholder preview-empty`}>
         <span className="preview-empty-icon" aria-hidden>
@@ -352,7 +339,8 @@ export function PreviewThumb({
   }
 
   const src = activeSrc
-  const showImageShimmer = shimmerVisible
+  const showImageShimmer = !paintedSrc && shimmerVisible
+  const displayedSources = [...new Set([paintedSrc, src].filter(Boolean))]
 
   const tryPlayVideo = () => {
     const el = videoRef.current
@@ -369,9 +357,10 @@ export function PreviewThumb({
   return (
     <div
       className="preview-thumb-shell"
+      title=""
       onMouseEnter={() => setPointerInside(true)}
       onMouseLeave={() => setPointerInside(false)}
-      aria-busy={!imageLoaded || undefined}
+      aria-busy={!paintedSrc || undefined}
     >
       {showImageShimmer ? (
         <span
@@ -383,19 +372,23 @@ export function PreviewThumb({
           }}
         />
       ) : null}
-      <img
-        ref={imgRef}
-        src={src}
+      {displayedSources.map((candidate) => <img
+        key={candidate}
+        ref={candidate === src ? imgRef : undefined}
+        src={toCachedPreviewSrc(candidate)}
         alt=""
-        className={`${className}${showVideoLayer ? ' preview-thumb-img-hidden' : ''}${!imageLoaded ? ' preview-thumb-img-loading' : ''}`}
+        className={`${className}${showVideoLayer ? ' preview-thumb-img-hidden' : ''}${candidate !== paintedSrc ? ' preview-thumb-img-loading' : ''}`}
+        style={paintedSrc && candidate !== paintedSrc ? { position: 'absolute', inset: 0 } : undefined}
         loading={loading}
         decoding="async"
-        onLoad={(e) => revealLoadedImage(e.currentTarget)}
+        onLoad={(e) => { if (candidate === src) revealLoadedImage(e.currentTarget, candidate) }}
         onError={() => {
+          if (candidate !== src) return
           setImageLoaded(false)
           setShimmerVisible(true)
+          const index = candidates.indexOf(activeSrc)
           if (index + 1 < candidates.length) {
-            setIndex((prev) => prev + 1)
+            setActiveSrc(candidates[index + 1])
             return
           }
           // Prefer API refetch shimmer over a flash of "No image".
@@ -409,7 +402,7 @@ export function PreviewThumb({
           }
           onError?.()
         }}
-      />
+      />)}
       {videoPreviews && effectiveVideoUrl && playableVideoSrc ? (
         <video
           ref={videoRef}
@@ -439,7 +432,7 @@ export function PreviewThumb({
         />
       ) : null}
       {showVideoBadge ? (
-        <span className="preview-thumb-video-badge" title={t('previewThumb.videoBadgeTitle')} aria-hidden>
+        <span className="preview-thumb-video-badge" aria-hidden>
           ▶
         </span>
       ) : null}
@@ -452,7 +445,6 @@ export function PreviewThumb({
         <span
           className="preview-thumb-video-spinner"
           aria-label={t('previewThumb.videoLoading')}
-          title={t('previewThumb.videoLoading')}
         />
       ) : null}
     </div>

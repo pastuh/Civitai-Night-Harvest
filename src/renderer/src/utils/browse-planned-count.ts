@@ -2,79 +2,57 @@ import type {
   DeferredDownload,
   DownloadQueueItem,
   InventoryRecord,
-  PendingVersion,
-  WatchRule,
-  WatchRuleTestModel
+  PendingVersion
 } from '../../../shared/types'
-import { modelHasPolicyTag, type TagPolicyOptions } from '../../../shared/tag-routing'
-import { modelMatchesAnyEnabledWatchRule } from '../../../shared/utils'
+import { isAwaitingAccessFailureKind } from '../../../shared/download-errors'
+import { isEarlyAccessActive } from '../../../shared/early-access'
 
 export interface BrowsePlannedCountInput {
   queueItems: DownloadQueueItem[]
-  browseModels: WatchRuleTestModel[] | undefined
-  watchRules: WatchRule[]
   inventory: InventoryRecord[]
   pending: PendingVersion[]
   deferred: DeferredDownload[]
   bannedModelIds: Set<number>
-  /** Browse Ban / Updates Forget — per-version exclude (not whole-model ban). */
+  /** Per-version Ban (not whole-model ban). */
   excludedVersionIds?: Set<number>
-  hiddenTags: string[]
-  bannedTags?: string[]
-  tagPolicyOptions?: TagPolicyOptions
 }
 
 /**
- * Version IDs still eligible for the Browse download queue (or currently queued/downloading).
- * Shrinks as models become owned / banned / awaiting. Independent of Pause / Harvest.
+ * Prepared Browse downloads still queued or saving. Gallery candidates are not downloads.
  */
 export function collectBrowseQueueEligibleIds(input: BrowsePlannedCountInput): Set<number> {
   const ownedVersionIds = new Set(input.inventory.map((r) => r.versionId))
-  const ownedModelIds = new Set(input.inventory.map((r) => r.modelId).filter((id) => id > 0))
+  for (const item of input.queueItems) if (item.status === 'done') ownedVersionIds.add(item.versionId)
   const activePending = input.pending.filter((p) => !p.skipped && !p.forgotten)
   const pendingVersionIds = new Set(activePending.map((p) => p.versionId).filter((id) => id > 0))
-  const pendingModelIds = new Set(activePending.map((p) => p.modelId).filter((id) => id > 0))
-  const deferredIds = new Set(input.deferred.map((d) => d.versionId))
+  const deferredByVersion = new Map(input.deferred.map(row => [row.versionId, row]))
   const excludedVersionIds = input.excludedVersionIds ?? new Set<number>()
   const ids = new Set<number>()
 
   for (const item of input.queueItems) {
-    if (item.status !== 'queued' && item.status !== 'downloading' && item.status !== 'done') {
+    if (item.status !== 'queued' && item.status !== 'downloading') {
       continue
     }
     if (item.versionId <= 0) continue
     if (ownedVersionIds.has(item.versionId)) continue
     if (excludedVersionIds.has(item.versionId)) continue
     if (input.bannedModelIds.has(item.modelId)) continue
-    const isUpdatesPending =
-      pendingVersionIds.has(item.versionId) || pendingModelIds.has(item.modelId)
-    // Updates queue traffic belongs on the Updates badge, not Browse Yield-style badge.
-    if (isUpdatesPending && !item.manual) continue
+    // Origin is captured at enqueue: finishing one pack version must not move its siblings to Updates.
+    if (item.origin === 'updates' || (!item.origin && pendingVersionIds.has(item.versionId) && !item.manual)) continue
+    if (isAwaitingAccessFailureKind(item.failureKind)) continue
+    const transferring = item.status === 'downloading' && item.accessChecked === true
+    const deferred = deferredByVersion.get(item.versionId)
+    if (!transferring && deferred && (isAwaitingAccessFailureKind(deferred.failureKind) ||
+      isEarlyAccessActive(deferred.earlyAccessEndsAt))) continue
+    // Metadata probes and legacy queued snapshots cannot create a phantom badge.
+    if (item.downloadReady !== true && item.accessChecked !== true) continue
     ids.add(item.versionId)
-  }
-
-  if (!input.browseModels?.length) return ids
-
-  const enabledRules = input.watchRules.filter((r) => r.enabled)
-
-  for (const m of input.browseModels) {
-    if (m.versionId <= 0 || ids.has(m.versionId)) continue
-    if (m.inInventory || ownedVersionIds.has(m.versionId)) continue
-    if (m.isBanned || input.bannedModelIds.has(m.id)) continue
-    if (excludedVersionIds.has(m.versionId)) continue
-    if (m.isEarlyAccess || deferredIds.has(m.versionId)) continue
-    if (modelHasPolicyTag(m.tags ?? [], input.hiddenTags, input.bannedTags, input.tagPolicyOptions)) continue
-    if (ownedModelIds.has(m.id) || pendingModelIds.has(m.id) || pendingVersionIds.has(m.versionId)) {
-      continue
-    }
-    if (!modelMatchesAnyEnabledWatchRule(m, enabledRules)) continue
-    ids.add(m.versionId)
   }
 
   return ids
 }
 
-/** Browse tab badge count from the current eligible set. */
+/** Browse tab badge count from prepared queue entries. */
 export function countBrowsePlannedDownloads(input: BrowsePlannedCountInput): number {
   return collectBrowseQueueEligibleIds(input).size
 }

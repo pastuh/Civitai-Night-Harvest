@@ -12,7 +12,7 @@ import type {
 import { formatBytes, modelMatchesAnyEnabledWatchRule, parseRuleFilterTags, isDisplayablePreviewUrl, normalizePreviewDisplayUrl } from '../shared/utils'
 import { isDeferredVisibleInAwaitingTab } from '../shared/deferred-visibility'
 import type { DeferredDownload, DeferredSource } from '../shared/types'
-import { canWaitForDeferredUnlock } from '../shared/early-access'
+import { canWaitForDeferredUnlock, isEarlyAccessActive } from '../shared/early-access'
 import {
   classifyDownloadFailure,
   humanizeDownloadError,
@@ -46,7 +46,6 @@ function countAutoPipelineItems(items: DownloadQueueItem[]): number {
 }
 import * as inventory from './inventory'
 import { clearMissingModel, disposeNotFoundFailure } from './missing-models'
-import { deleteModelFromLibrary } from './model-delete'
 import { getSettings, getTagRules, getTagPolicyOptions, getWatchRules, shouldCrawlAutoDownload } from './settings-store'
 import { sendToRenderer } from './window-notify'
 import { repairBrokenInventoryPaths } from './library-sync'
@@ -155,7 +154,7 @@ export class DownloadQueue {
     const tagRules = getTagRules()
     let added = 0
     for (const card of inventory.getAllBrowseCardCacheCards()) {
-      if (!card.isEarlyAccess || card.versionId <= 0 || card.id <= 0) continue
+      if ((!card.isEarlyAccess && !isEarlyAccessActive(card.earlyAccessEndsAt)) || card.versionId <= 0 || card.id <= 0) continue
       if (inventory.hasVersion(card.versionId)) continue
       if (
         this.items.some(
@@ -305,8 +304,10 @@ export class DownloadQueue {
 
     let resumed = 0
     for (const item of this.items) {
+      item.downloadReady = false
       if (item.status !== 'downloading') continue
       item.status = 'queued'
+      item.accessChecked = false
       item.interruptedResume = true
       item.bytesReceived = 0
       item.totalBytes = 0
@@ -344,6 +345,7 @@ export class DownloadQueue {
           continue
         }
         item.status = 'queued'
+        item.accessChecked = false
         item.reason = undefined
         item.failureKind = undefined
         item.completedAt = undefined
@@ -355,6 +357,7 @@ export class DownloadQueue {
         continue
       }
       if (item.status === 'queued') {
+        item.accessChecked = false
         item.failureKind = undefined
         if (item.reason && !item.manual) item.reason = undefined
       }
@@ -511,10 +514,11 @@ export class DownloadQueue {
     let count = 0
     const now = new Date().toISOString()
 
-    const canRetry = (versionId: number): boolean => {
+    const deferredByVersion = new Map(inventory.getAllDeferredDownloads().map(row => [row.versionId, row]))
+    const canRetry = (item: DownloadQueueItem): boolean => {
       if (manual) return true
-      const d = inventory.getAllDeferredDownloads().find((x) => x.versionId === versionId)
-      if (!d) return true
+      const d = deferredByVersion.get(item.versionId)
+      if (!d) return !isAwaitingAccessFailureKind(item.failureKind)
       return shouldAutoRetryDeferred(d, hasApiKey)
     }
 
@@ -562,8 +566,8 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(item.versionId)
         continue
       }
-      if (!canRetry(item.versionId)) continue
-      const deferredRow = inventory.getDeferredDownload(item.versionId)
+      if (!canRetry(item)) continue
+      const deferredRow = deferredByVersion.get(item.versionId)
       // Interrupted stalls stay on the download strip — not the EA awaiting tab filter.
       if (
         !manual &&
@@ -578,7 +582,10 @@ export class DownloadQueue {
         deferredRow?.previewUrl ??
         item.previewUrl
       inventory.removeDeferredDownload(item.versionId)
+      deferredByVersion.delete(item.versionId)
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.reason = undefined
       item.failureKind = undefined
       item.previewUrl = previewUrl
@@ -589,7 +596,7 @@ export class DownloadQueue {
       count++
     }
 
-    for (const d of inventory.getAllDeferredDownloads()) {
+    for (const d of deferredByVersion.values()) {
       if (atAutoCap()) break
       if (
         !inventory.isTagSkipAllowed(d.modelId) &&
@@ -640,6 +647,7 @@ export class DownloadQueue {
         routingTag: d.routingTag,
         modelType: d.modelType,
         status: 'queued',
+        accessChecked: false,
         bytesReceived: 0,
         totalBytes: 0,
         phase: 'model',
@@ -673,12 +681,17 @@ export class DownloadQueue {
       )
       return false
     }
+    const stored = inventory.getDeferredDownload(versionId)
+    if (!force && isEarlyAccessActive(stored?.earlyAccessEndsAt)) return false
+    if (!force && stored && isAwaitingAccessFailureKind(stored.failureKind) &&
+      !shouldAutoRetryDeferred(stored, Boolean(getSettings().apiKey))) return false
     if (!force && countAutoPipelineItems(this.items) >= AUTO_QUEUE_PIPELINE_CAP) {
       return false
     }
 
     const item = this.items.find((i) => i.versionId === versionId && i.status === 'deferred')
     if (item) {
+      if (!force && !stored && isAwaitingAccessFailureKind(item.failureKind)) return false
       if (inventory.hasVersion(versionId)) {
         inventory.removeDeferredDownload(versionId)
         item.status = 'skipped'
@@ -689,6 +702,8 @@ export class DownloadQueue {
           inventory.backfillDeferredPreviewForVersion(versionId) ?? item.previewUrl
         inventory.removeDeferredDownload(versionId)
         item.status = 'queued'
+        item.accessChecked = false
+        item.downloadReady = false
         item.reason = undefined
         item.failureKind = undefined
         item.previewUrl = previewUrl
@@ -709,7 +724,7 @@ export class DownloadQueue {
       return item.status === 'queued'
     }
 
-    const d = inventory.getAllDeferredDownloads().find((x) => x.versionId === versionId)
+    const d = stored
     if (!d || inventory.hasVersion(versionId)) {
       if (d) inventory.removeDeferredDownload(versionId)
       return false
@@ -727,6 +742,7 @@ export class DownloadQueue {
       routingTag: d.routingTag,
       modelType: d.modelType,
       status: 'queued',
+      accessChecked: false,
       bytesReceived: 0,
       totalBytes: 0,
       phase: 'model',
@@ -735,6 +751,7 @@ export class DownloadQueue {
       outputFolder: d.outputFolder
     })
     this.broadcast()
+    this.emitDeferred()
     if (!this.paused) void this.pump()
     return true
   }
@@ -798,6 +815,7 @@ export class DownloadQueue {
       this.downloadService.cancelByModelId(item.modelId)
       this.runningIds.delete(item.id)
       item.status = 'queued'
+      item.accessChecked = false
       item.bytesReceived = 0
       item.totalBytes = 0
       item.speedBps = 0
@@ -819,6 +837,7 @@ export class DownloadQueue {
     if (request.modelId <= 0) return ''
     if (request.versionId != null && request.versionId <= 0) return ''
     if (inventory.isModelBanned(request.modelId)) return ''
+    if (request.versionId && inventory.isVersionBanned(request.versionId)) return ''
     // Unavailable Missing: block auto harvest; allow explicit manual queue / Retry.
     if (meta.manual !== true && inventory.isMissingUnavailable(request.modelId)) return ''
     if (request.versionId && inventory.hasVersion(request.versionId)) return ''
@@ -826,7 +845,7 @@ export class DownloadQueue {
     if (
       meta.manual !== true &&
       request.versionId &&
-      inventory.isPendingVersionSkipped(request.versionId)
+      inventory.isVersionAutoDownloadBlocked(request.versionId)
     ) {
       return ''
     }
@@ -915,7 +934,7 @@ export class DownloadQueue {
 
     const deferred = request.versionId ? inventory.getDeferredDownload(request.versionId) : undefined
     const preferredPreview =
-      request.versionId > 0 ? inventory.getPreferredPreviewUrl(request.versionId) : undefined
+      request.versionId && request.versionId > 0 ? inventory.getPreferredPreviewUrl(request.versionId) : undefined
     const useAwaitingAccessDeferred = isAwaitingAccessFailureKind(deferred?.failureKind)
     // Manual retry may clear a stale gate; auto harvest must not wipe Buzz/EA deferred.
     if (deferred && !useAwaitingAccessDeferred && request.versionId) {
@@ -940,9 +959,12 @@ export class DownloadQueue {
       nsfwLevel: meta.nsfwLevel,
       confirmTagsAfter: meta.confirmTagsAfter,
       manual: meta.manual === true,
+      origin: inventory.isModelOwned(request.modelId) ? 'updates' : 'browse',
       runImmediate: meta.manual === true && meta.startNow === true,
       sourceDomain: request.sourceDomain,
       status: useAwaitingAccessDeferred ? 'deferred' : 'queued',
+      accessChecked: false,
+      downloadReady: false,
       bytesReceived: 0,
       totalBytes: 0,
       phase: 'model',
@@ -971,6 +993,8 @@ export class DownloadQueue {
     if (item.status === 'failed') {
       if (item.versionId) this.autoQueueCooldownUntil.delete(item.versionId)
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.bytesReceived = 0
       item.totalBytes = 0
       item.speedBps = 0
@@ -991,6 +1015,8 @@ export class DownloadQueue {
       }
       inventory.removeDeferredDownload(item.versionId)
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.reason = undefined
       item.failureKind = undefined
       item.bytesReceived = 0
@@ -1453,6 +1479,18 @@ export class DownloadQueue {
     if (!this.paused) void this.pump()
   }
 
+  /** Forget removes even completed history; Ban/Skip use their own queue policies. */
+  forgetSelection(modelId: number, versionId?: number): void {
+    const matches = (item: DownloadQueueItem) => item.modelId === modelId && (versionId == null || item.versionId === versionId)
+    for (const item of this.items.filter(matches)) {
+      if (item.versionId) this.downloadService.cancel(item.versionId)
+    }
+    if (versionId == null) this.downloadService.cancelByModelId(modelId)
+    this.items = this.items.filter(item => !matches(item))
+    this.broadcast()
+    this.checkIdle()
+  }
+
   dismissQueueItem(id: string): void {
     const item = this.items.find((i) => i.id === id)
     if (!item) return
@@ -1469,14 +1507,11 @@ export class DownloadQueue {
       if (!item.manual && item.modelId > 0) {
         void (async () => {
           try {
-            const deleted = await deleteModelFromLibrary(item.modelId)
             inventory.banModelAndMarkSeen(item.modelId, item.modelName)
             inventory.clearBrowseCardCacheForModel(item.modelId)
             this.log?.(
               'info',
-              deleted.length > 0
-                ? `Deleted and excluded: ${item.modelName}`
-                : `Excluded from auto-download: ${item.modelName}`
+              `Excluded from auto-download: ${item.modelName} (owned files retained)`
             )
           } catch (err) {
             this.log?.(
@@ -1498,6 +1533,8 @@ export class DownloadQueue {
     if (!item || item.status !== 'failed') return
     if (item.versionId) this.autoQueueCooldownUntil.delete(item.versionId)
     item.status = 'queued'
+    item.accessChecked = false
+    item.downloadReady = false
     item.bytesReceived = 0
     item.totalBytes = 0
     item.speedBps = 0
@@ -1527,6 +1564,8 @@ export class DownloadQueue {
 
     if (item.status === 'failed') {
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.bytesReceived = 0
       item.totalBytes = 0
       item.speedBps = 0
@@ -1548,6 +1587,8 @@ export class DownloadQueue {
       }
       inventory.removeDeferredDownload(item.versionId)
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.reason = undefined
       item.failureKind = undefined
       item.bytesReceived = 0
@@ -1656,7 +1697,8 @@ export class DownloadQueue {
       if (!item.versionId) continue
       const deferred = inventory.getDeferredDownload(item.versionId)
       if (!deferred) continue
-      if (!isAwaitingAccessFailureKind(deferred.failureKind)) {
+      if (!isAwaitingAccessFailureKind(deferred.failureKind) ||
+        shouldAutoRetryDeferred(deferred, Boolean(getSettings().apiKey))) {
         inventory.removeDeferredDownload(item.versionId)
         item.failureKind = undefined
         continue
@@ -1740,6 +1782,7 @@ export class DownloadQueue {
           routingTag: d.routingTag,
           modelType: d.modelType,
           status: 'queued',
+          accessChecked: false,
           bytesReceived: 0,
           totalBytes: 0,
           phase: 'model',
@@ -2121,7 +2164,7 @@ export class DownloadQueue {
         continue
       }
       // Model Details / Browse version Ban (forgotten) or Updates Skip — do not flash back into strip.
-      if (item.versionId && inventory.isPendingVersionSkipped(item.versionId)) {
+      if (item.versionId && inventory.isVersionAutoDownloadBlocked(item.versionId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         inventory.removeDeferredDownload(item.versionId)
         continue
@@ -2133,6 +2176,8 @@ export class DownloadQueue {
       }
       if (item.versionId) inventory.removeDeferredDownload(item.versionId)
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.reason = undefined
       item.failureKind = undefined
       item.bytesReceived = 0
@@ -2198,7 +2243,7 @@ export class DownloadQueue {
         if (item.versionId) inventory.removeDeferredDownload(item.versionId)
         continue
       }
-      if (item.versionId && inventory.isPendingVersionSkipped(item.versionId)) {
+      if (item.versionId && inventory.isVersionAutoDownloadBlocked(item.versionId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         inventory.removeDeferredDownload(item.versionId)
         continue
@@ -2209,6 +2254,8 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(item.versionId)
       }
       item.status = 'queued'
+      item.accessChecked = false
+      item.downloadReady = false
       item.reason = undefined
       item.failureKind = undefined
       item.bytesReceived = 0
@@ -2317,15 +2364,26 @@ export class DownloadQueue {
         return
       }
 
-      if (item.versionId) {
-        inventory.removeDeferredDownload(item.versionId)
+      const storedGate = item.versionId ? inventory.getDeferredDownload(item.versionId) : null
+      if (storedGate && isAwaitingAccessFailureKind(storedGate.failureKind) &&
+        !shouldAutoRetryDeferred(storedGate, Boolean(getSettings().apiKey))) {
+        // A stale queued snapshot must not turn a known access gate into an HTTP attempt.
+        this.syncDeferredInQueue()
+        this.broadcast()
+        this.emitDeferred()
+        this.checkIdle()
+        return
       }
+      if (item.versionId) inventory.removeDeferredDownload(item.versionId)
 
       if (item.status !== 'queued') {
         return
       }
 
       item.status = 'downloading'
+      item.origin ??= inventory.isModelOwned(item.modelId) ? 'updates' : 'browse'
+      item.downloadReady ??= false
+      item.accessChecked = false
       item.bytesReceived = 0
       item.totalBytes = 0
       item.phase = 'model'
@@ -2398,6 +2456,10 @@ export class DownloadQueue {
           item.slug = p.slug
           item.previewUrl = p.previewUrl ?? item.previewUrl
           item.routingTag = p.routingTag || item.routingTag
+          const wasReady = item.downloadReady === true
+          const hadAccess = item.accessChecked === true
+          if (p.downloadReady || (p.phase === 'model' && p.bytesReceived > 0)) item.downloadReady = true
+          if (p.phase === 'model' && p.bytesReceived > 0) item.accessChecked = true
           if (p.bytesReceived >= item.bytesReceived) {
             item.bytesReceived = p.bytesReceived
           }
@@ -2405,7 +2467,9 @@ export class DownloadQueue {
           item.phase = p.phase
           // Queue broadcast is throttled (~400ms). Do not also fire per-chunk
           // download:progress IPC — renderer uses download:queue only.
-          this.broadcastProgress()
+          // Readiness changes badge membership immediately; byte ticks remain throttled.
+          if ((!wasReady && item.downloadReady) || (!hadAccess && item.accessChecked)) this.emitQueueState()
+          else this.broadcastProgress()
         }
 
       const result = await this.downloadService.downloadModel(

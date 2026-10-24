@@ -277,8 +277,7 @@ export function coercePendingViewPrefs(raw: Partial<PendingViewPrefs> | null | u
     } else if (
       side.type === 'all' ||
       side.type === 'unseen' ||
-      side.type === 'skipped' ||
-      side.type === 'forgotten'
+      side.type === 'skipped'
     ) {
       sideFilter = { type: side.type }
     }
@@ -286,6 +285,7 @@ export function coercePendingViewPrefs(raw: Partial<PendingViewPrefs> | null | u
   return {
     ...base,
     hideConfirmed: base.hideConfirmed === true,
+    showForgotten: false,
     sortMode: normalizePendingSort(base.sortMode),
     ratingFilter: base.ratingFilter ?? 'all',
     sideFilter,

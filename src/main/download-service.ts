@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import type { CivitaiClient } from '../shared/civitai-client'
 import type { CivitaiClientPool } from '../shared/civitai-client-pool'
@@ -34,12 +34,12 @@ import {
 import {
   checkVersionEarlyAccess,
   formatEarlyAccessReason,
-  isVersionEarlyAccess,
+  modelVersionAccess,
   refineDeferredFailure
 } from '../shared/early-access'
 import * as inventory from './inventory'
 import { buildSwarmJson } from './swarm-json'
-import { fetchFirstWorkingPreview, type FetchedPreview } from './preview-fetch'
+import { readPreviewFromDisk, resolvePreviewFile } from './library-preview-file'
 import { resolvePreviewsForModelWithFallback } from './preview-enrich'
 import { getPlaceholderPreview } from './placeholder-preview'
 import { downloadToFile } from './download-file'
@@ -61,55 +61,6 @@ function uniqueUrls(urls: (string | undefined)[]): string[] {
     out.push(t)
   }
   return out
-}
-
-function readPreviewFromDisk(previewPath: string): FetchedPreview | null {
-  if (!existsSync(previewPath)) return null
-  try {
-    const st = statSync(previewPath)
-    if (st.size < 128) return null
-    const buffer = readFileSync(previewPath)
-    return {
-      url: previewPath,
-      base64: buffer.toString('base64'),
-      mime: 'image/jpeg',
-      buffer
-    }
-  } catch {
-    return null
-  }
-}
-
-async function resolvePreviewFile(
-  previewPath: string,
-  candidateUrls: string[]
-): Promise<{ preview: FetchedPreview; warning?: string } | { preview: null; warning: string }> {
-  const onDisk = readPreviewFromDisk(previewPath)
-  if (onDisk) return { preview: onDisk }
-
-  if (candidateUrls.length) {
-    const fetched = await fetchFirstWorkingPreview(candidateUrls.slice(0, 6))
-    if (fetched) {
-      writeFileSync(previewPath, fetched.buffer)
-      return { preview: fetched }
-    }
-  }
-
-  // Do NOT write the 1×1 placeholder as preview.jpg — that blocks library-sync repair
-  // (file "exists") and leaves a dead local thumb that the UI cannot recover from.
-  if (existsSync(previewPath)) {
-    try {
-      const st = statSync(previewPath)
-      if (st.size < 128) unlinkSync(previewPath)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return {
-    preview: null,
-    warning: 'Downloaded without preview image'
-  }
 }
 
 function ensureDir(dir: string): void {
@@ -261,6 +212,7 @@ export class DownloadService {
     let modelPath: string | undefined
     let previewPath: string | undefined
     let swarmPath: string | undefined
+    let transferStarted = false
 
     // Register abort early so queue stall/cancel can stop metadata resolve, not only the byte stream.
     this.trackDownload(trackKey, request.modelId, versionId, abort)
@@ -275,7 +227,7 @@ export class DownloadService {
         }
       }
 
-      if (inventory.isModelBanned(request.modelId)) {
+      if (inventory.isModelBanned(request.modelId) || (request.versionId && inventory.isVersionBanned(request.versionId))) {
         return {
           status: 'failed',
           reason: 'Banned',
@@ -347,7 +299,8 @@ export class DownloadService {
         versionId = version.id
       }
 
-      if (inventory.isModelBanned(model.id)) {
+      abort.signal.throwIfAborted()
+      if (inventory.isModelBanned(model.id) || inventory.isVersionBanned(versionId)) {
         return {
           status: 'failed',
           reason: 'Banned',
@@ -450,18 +403,20 @@ export class DownloadService {
         }
       }
 
-      if (isVersionEarlyAccess(version)) {
+      const versionAccess = modelVersionAccess(model, version)
+      if (versionAccess.isEarlyAccess) {
         return {
           status: 'deferred',
           failureKind: 'early_access',
-          reason: formatEarlyAccessReason(version.earlyAccessEndsAt),
-          earlyAccessEndsAt: version.earlyAccessEndsAt ?? undefined,
+          reason: formatEarlyAccessReason(versionAccess.endsAt),
+          earlyAccessEndsAt: versionAccess.endsAt,
           modelId: model.id,
           versionId
         }
       }
 
       const earlyAccess = await checkVersionEarlyAccess(client, versionId)
+      abort.signal.throwIfAborted()
       if (earlyAccess.isEarlyAccess) {
         return {
           status: 'deferred',
@@ -531,7 +486,8 @@ export class DownloadService {
           slug,
           outputFolder,
           routingTag: routingTag ?? '',
-          civitaiDomain: client.getDomain()
+          civitaiDomain: client.getDomain(),
+          signal: abort.signal
         })
         if (adopted.ok) {
           emitProgress({
@@ -593,10 +549,12 @@ export class DownloadService {
         routingTag: routingTag ?? '',
         bytesReceived: 0,
         totalBytes: estimatedBytes,
+        downloadReady: true,
         phase: 'model'
       })
 
       let dl
+      transferStarted = true
       try {
         dl = await downloadToFile(
           downloadUrl,
@@ -709,6 +667,7 @@ export class DownloadService {
       let thumbnailBase64 = ''
       let mime = 'image/jpeg'
       const previewResult = await resolvePreviewFile(previewPath, needsPreviewFetch ? previewUrls : [])
+      abort.signal.throwIfAborted()
 
       if (previewResult.preview) {
         thumbnailBase64 = previewResult.preview.base64
@@ -747,6 +706,7 @@ export class DownloadService {
       }
 
       const swarm = buildSwarmJson(model, version, sourceUrl, thumbnailBase64, mime, fileHashSha256)
+      abort.signal.throwIfAborted()
       writeFileSync(swarmPath, JSON.stringify(swarm, null, 2), 'utf-8')
       try {
         writeCivitaiSidecar(modelPath, {
@@ -832,7 +792,7 @@ export class DownloadService {
       // Include `${modelPath}.tmp` for defense-in-depth: downloadMultipart already unlinks its
       // .tmp in a failure finally, but an orphan left by a prior interrupted attempt is also
       // cleaned here. Preview/swarm paths are written via different APIs (no .tmp shim).
-      cleanupPartialDownload([modelPath, `${modelPath}.tmp`, previewPath, swarmPath])
+      if (transferStarted) cleanupPartialDownload([modelPath, `${modelPath}.tmp`, previewPath, swarmPath])
 
       const aborted =
         (err instanceof Error && err.name === 'AbortError') ||

@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react'
-import type { DownloadQueueItem } from '../../../shared/types'
+import type { DeferredDownload, DownloadQueueItem } from '../../../shared/types'
+import { visibleDownloadItems } from '../../../shared/download-pipeline'
 import {
   applyDownloadQueueSnapshot,
   getDownloadQueueSnapshot,
@@ -19,12 +20,12 @@ export function useQueueStructureKey(): string {
   return useSyncExternalStore(subscribeQueueStructure, getQueueStructureKey, getQueueStructureKey)
 }
 
-export function useHasPipelineQueue(): boolean {
+export function useHasPipelineQueue(deferred?: DeferredDownload[]): boolean {
   const key = useQueueStructureKey()
   return useMemo(() => {
     void key
-    return peekActivePipeline()
-  }, [key])
+    return peekActivePipeline(deferred)
+  }, [key, deferred])
 }
 
 /** Active downloading+queued count — updates on structure changes only (not byte progress). */
@@ -32,21 +33,14 @@ export function useActiveDownloadCount(): number {
   const key = useQueueStructureKey()
   return useMemo(() => {
     void key
-    const { items } = getDownloadQueueSnapshot()
-    return items.filter((q) => q.status === 'downloading' || q.status === 'queued').length
+    const { items, paused } = getDownloadQueueSnapshot()
+    return visibleDownloadItems(items, { queuePaused: paused }).filter(q => q.status !== 'failed' && q.status !== 'deferred').length
   }, [key])
 }
 
 /** True when strip/status should show pipeline activity — structure only. */
-export function useHasStatusPipeline(): boolean {
-  const key = useQueueStructureKey()
-  return useMemo(() => {
-    void key
-    const { items } = getDownloadQueueSnapshot()
-    return items.some(
-      (i) => i.status === 'downloading' || i.status === 'queued' || i.status === 'failed'
-    )
-  }, [key])
+export function useHasStatusPipeline(deferred?: DeferredDownload[]): boolean {
+  return useHasPipelineQueue(deferred)
 }
 
 /** Version/model ids in active download pipeline — stable across byte progress. */

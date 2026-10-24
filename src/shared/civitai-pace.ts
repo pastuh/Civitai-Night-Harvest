@@ -18,7 +18,9 @@ let crawlLaneBusy = false
 /** Short label of the in-flight crawl request (catalog search vs tag vs …). */
 let crawlLaneLabel: string | null = null
 
-let interactiveChain: Promise<void> = Promise.resolve()
+let interactiveActive = 0
+const interactiveWaiters: Array<() => void> = []
+const INTERACTIVE_CONCURRENCY = 4
 
 export type CrawlPaceStatusInfo = {
   /** Artificial gap before the next crawl GET /models. */
@@ -57,8 +59,8 @@ export function isCrawlLaneBusy(): boolean {
 }
 
 /**
- * Serialize Civitai-bound API fetches.
- * - interactive: no artificial delay; never waits behind crawl/background
+ * Pace Civitai-bound API fetches.
+ * - interactive: up to four independent requests; no crawl/background wait
  * - crawl: short gap; never waits behind background enrich / library polls
  * - background: slow lane for enrich + library (must not block Browse pages)
  */
@@ -68,12 +70,18 @@ export async function paceCivitaiRequest<T>(
   meta?: { label?: string }
 ): Promise<T> {
   if (priority === 'interactive') {
-    const scheduled = interactiveChain.then(async () => fn())
-    interactiveChain = scheduled.then(
-      () => undefined,
-      () => undefined
-    )
-    return scheduled
+    if (interactiveActive >= INTERACTIVE_CONCURRENCY) {
+      await new Promise<void>((resolve) => interactiveWaiters.push(resolve))
+    } else {
+      interactiveActive++
+    }
+    try {
+      return await fn()
+    } finally {
+      const next = interactiveWaiters.shift()
+      if (next) next()
+      else interactiveActive--
+    }
   }
 
   if (priority === 'crawl') {

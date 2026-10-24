@@ -1,7 +1,8 @@
 import { existsSync } from 'fs'
 import { unlink } from 'fs/promises'
 import type { InventoryRecord } from '../shared/types'
-import * as inventory from './inventory'
+import { sidecarPathForModel } from './model-sidecar'
+import { isOutputPathRootReachable } from './output-paths'
 
 async function yieldMain(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve))
@@ -9,11 +10,16 @@ async function yieldMain(): Promise<void> {
 
 type FileTriple = Pick<InventoryRecord, 'modelPath' | 'previewPath' | 'swarmPath'>
 
-/** Serial background file-delete queue so IPC can return before large unlinks finish. */
-let fileDeleteChain: Promise<void> = Promise.resolve()
+export function versionFilePaths(record: FileTriple): string[] {
+  return [...new Set([record.modelPath, record.previewPath, record.swarmPath,
+    ...(record.modelPath ? [sidecarPathForModel(record.modelPath), `${record.modelPath}.civitai.json`] : [])].filter(Boolean))]
+}
 
-export async function deleteVersionFiles(record: FileTriple): Promise<void> {
-  const paths = [record.modelPath, record.previewPath, record.swarmPath].filter(Boolean)
+const fileKey = (file: string) => process.platform === 'win32' ? file.replace(/\\/g, '/').toLowerCase() : file
+export async function deleteVersionFiles(record: FileTriple, protectedPaths?: ReadonlySet<string>): Promise<void> {
+  const paths = versionFilePaths(record).filter(file => !protectedPaths?.has(fileKey(file)))
+  const offline = paths.find(file => !isOutputPathRootReachable(file))
+  if (offline) throw new Error(`Cannot forget files on an unavailable drive: ${offline}`)
   const errors: string[] = []
 
   for (const filePath of paths) {
@@ -31,73 +37,6 @@ export async function deleteVersionFiles(record: FileTriple): Promise<void> {
   }
 }
 
-export function scheduleDeleteVersionFiles(records: FileTriple[]): void {
-  if (!records.length) return
-  const snapshot: FileTriple[] = records.map((r) => ({
-    modelPath: r.modelPath,
-    previewPath: r.previewPath,
-    swarmPath: r.swarmPath
-  }))
-  fileDeleteChain = fileDeleteChain
-    .then(async () => {
-      for (const record of snapshot) {
-        try {
-          await deleteVersionFiles(record)
-        } catch (err) {
-          console.warn(
-            '[model-delete] background unlink failed:',
-            err instanceof Error ? err.message : String(err)
-          )
-        }
-        await yieldMain()
-      }
-    })
-    .catch(() => {
-      /* keep chain alive */
-    })
-}
-
-/** Remove library rows immediately (UI / ban can return before disk I/O). */
-export function detachModelFromLibrary(modelId: number): InventoryRecord[] {
-  const records = inventory.getVersionsForModel(modelId)
-  for (const record of records) {
-    inventory.removeVersion(record.versionId)
-  }
-  return records
-}
-
-/**
- * Detach one version from the library DB.
- * Returns null when already gone (idempotent — safe to call again after a UI retry).
- */
-export async function deleteVersionFromLibrary(
-  versionId: number,
-  options?: { awaitFiles?: boolean }
-): Promise<InventoryRecord | null> {
-  const record = inventory.getVersion(versionId)
-  if (!record) return null
-  inventory.removeVersion(versionId)
-  if (options?.awaitFiles === false) {
-    scheduleDeleteVersionFiles([record])
-    return record
-  }
-  await deleteVersionFiles(record)
-  return record
-}
-
-/** Remove every library version for a model. Disk unlink can be deferred. */
-export async function deleteModelFromLibrary(
-  modelId: number,
-  options?: { awaitFiles?: boolean }
-): Promise<InventoryRecord[]> {
-  const records = detachModelFromLibrary(modelId)
-  if (options?.awaitFiles === false) {
-    scheduleDeleteVersionFiles(records)
-    return records
-  }
-  for (const record of records) {
-    await deleteVersionFiles(record)
-    await yieldMain()
-  }
-  return records
+export function protectedVersionPaths(records: FileTriple[]): Set<string> {
+  return new Set(records.flatMap(versionFilePaths).map(fileKey))
 }

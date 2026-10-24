@@ -17,8 +17,11 @@ import { formatBytes } from '../../../shared/utils'
 
 import { useT } from '../i18n/context'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
+import { visibleDownloadItems } from '../../../shared/download-pipeline'
+import type { DeferredDownload } from '../../../shared/types'
 
 interface Props {
+  deferred?: DeferredDownload[]
   status: AppStatus
   /** Optional override; defaults to live download-queue store. */
   queue?: DownloadQueueItem[]
@@ -72,6 +75,8 @@ function syncProgressLabel(
     identity: t('appBusy.phaseIdentity'),
 
     hash: t('appBusy.phaseHash'),
+
+    recognize: t('appBusy.phaseRecognize'),
 
     rename: t('appBusy.phaseRename'),
 
@@ -539,6 +544,7 @@ function resolveStatusDotKind(
 
 export function GlobalStatusBar({
   status,
+  deferred,
   queue: queueProp,
   queuePaused: queuePausedProp,
   extraMessage,
@@ -560,8 +566,9 @@ export function GlobalStatusBar({
   navigateBackTitle
 }: Props) {
   const liveQueue = useDownloadQueue()
-  const queue = queueProp ?? liveQueue.items
   const queuePaused = queuePausedProp ?? liveQueue.paused
+  const queue = useMemo(() => visibleDownloadItems(queueProp ?? liveQueue.items, { queuePaused, deferred }),
+    [queueProp, liveQueue.items, queuePaused, deferred])
   const t = useT()
 
   const [waitTick, setWaitTick] = useState(0)

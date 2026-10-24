@@ -1,11 +1,24 @@
 import { createHash } from 'crypto'
-import { existsSync, statSync, writeFileSync, unlinkSync } from 'fs'
+import { existsSync, statSync, writeFileSync, renameSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { fetchFirstWorkingPreview } from './preview-fetch'
 import { getPreviewCacheDir } from './media-cache-path'
 
 /** Keep CDN warm-cache gentle — parallel storms cause fetch-failed spam and slow Harvest. */
 const WORKERS = 2
+const pending = new Map<string, Promise<string | null>>()
+const queue: Array<() => Promise<void>> = []
+let active = 0
+
+function pump(): void {
+  while (active < WORKERS && queue.length) {
+    active++
+    void queue.shift()!().finally(() => {
+      active--
+      pump()
+    })
+  }
+}
 
 function cacheDir(): string {
   return getPreviewCacheDir()
@@ -15,12 +28,12 @@ function hashUrl(url: string): string {
   return createHash('sha256').update(url).digest('hex')
 }
 
-function pathForUrl(url: string): string {
-  return join(cacheDir(), `${hashUrl(url)}.jpg`)
+function pathForUrl(url: string, directory = cacheDir()): string {
+  return join(directory, `${hashUrl(url)}.jpg`)
 }
 
-export function readCachedPreviewPath(url: string): string | null {
-  const path = pathForUrl(url)
+export function readCachedPreviewPath(url: string, directory?: string): string | null {
+  const path = pathForUrl(url, directory)
   if (!existsSync(path)) return null
   try {
     if (statSync(path).size >= 128) return path
@@ -28,6 +41,19 @@ export function readCachedPreviewPath(url: string): string | null {
     return null
   }
   return null
+}
+
+/** Resolve settings/create the cache directory only once for a batch of cards. */
+export function createCachedPreviewLookup(): (url: string) => string | undefined {
+  let directory: string | undefined
+  const paths = new Map<string, string | undefined>()
+  return (url) => {
+    if (!paths.has(url)) {
+      directory ??= cacheDir()
+      paths.set(url, readCachedPreviewPath(url, directory) ?? undefined)
+    }
+    return paths.get(url)
+  }
 }
 
 /** Remove a cached preview file so the next resolve re-downloads it. */
@@ -48,9 +74,35 @@ export function invalidateCachedPreviews(urls: string[]): void {
 }
 
 /** Download one remote preview to disk when missing; return local path or null. */
-export async function cachePreviewUrl(
+export function cachePreviewUrl(
   url: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; fetcher?: typeof fetch }
+): Promise<string | null> {
+  const key = url.trim()
+  // A disk hit must never sit behind unrelated pending CDN downloads.
+  if (!options?.force && /^https?:\/\//i.test(key)) {
+    const existing = readCachedPreviewPath(key)
+    if (existing) return Promise.resolve(existing)
+  }
+  const inFlight = pending.get(key)
+  if (inFlight) return inFlight
+  const task = new Promise<string | null>((resolve) => {
+    queue.push(async () => {
+      try {
+        resolve(await downloadPreviewUrl(key, options))
+      } catch {
+        resolve(null)
+      }
+    })
+  }).finally(() => pending.delete(key))
+  pending.set(key, task)
+  pump()
+  return task
+}
+
+async function downloadPreviewUrl(
+  url: string,
+  options?: { force?: boolean; fetcher?: typeof fetch }
 ): Promise<string | null> {
   const trimmed = url?.trim()
   if (!trimmed || trimmed.startsWith('media://')) return null
@@ -64,16 +116,18 @@ export async function cachePreviewUrl(
   const existing = readCachedPreviewPath(trimmed)
   if (existing) return existing
 
-  const fetched = await fetchFirstWorkingPreview([trimmed])
+  const fetched = await fetchFirstWorkingPreview([trimmed], options)
   if (!fetched) return null
 
   const path = pathForUrl(trimmed)
+  const temporary = `${path}.${process.pid}.tmp`
   try {
-    writeFileSync(path, fetched.buffer)
+    writeFileSync(temporary, fetched.buffer)
+    renameSync(temporary, path)
     return path
   } catch {
     try {
-      unlinkSync(path)
+      unlinkSync(temporary)
     } catch {
       /* ignore */
     }
@@ -92,6 +146,7 @@ export async function resolveCachedPreviewUrls(
   const out: string[] = []
   const seen = new Set<string>()
   const deferDownload = options?.deferDownload === true
+  const cachedPath = createCachedPreviewLookup()
 
   if (deferDownload) {
     for (const url of unique) {
@@ -100,7 +155,7 @@ export async function resolveCachedPreviewUrls(
       }
       const existing =
         !options?.force && (url.startsWith('http://') || url.startsWith('https://'))
-          ? readCachedPreviewPath(url)
+          ? cachedPath(url)
           : !url.startsWith('http://') &&
               !url.startsWith('https://') &&
               existsSync(url) &&
@@ -115,10 +170,8 @@ export async function resolveCachedPreviewUrls(
         seen.add(url)
         out.push(url)
       }
-      // Warm disk cache without blocking the card thumb.
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        void cachePreviewUrl(url, options?.force ? { force: true } : undefined).catch(() => {})
-      }
+      // Visible <img> requests populate the cache through preview://. Merely
+      // listing a page must not queue downloads for every offscreen gallery.
     }
     return out
   }

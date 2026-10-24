@@ -145,6 +145,7 @@ export function resolveModelCardThumb(
     videoPreviewUrlFor(base)
 
   const imageUrls = normalizedImageCandidates(
+    localPreviewPath ? [localPreviewPath] : undefined,
     override?.previewUrls,
     override?.previewUrl ? [override.previewUrl] : undefined,
     override?.videoPreviewUrls,
@@ -156,8 +157,7 @@ export function resolveModelCardThumb(
     base.previewUrls,
     base.previewUrl ? [base.previewUrl] : undefined,
     base.videoPreviewUrls,
-    base.videoPreviewUrl ? [base.videoPreviewUrl] : undefined,
-    localPreviewPath ? [localPreviewPath] : undefined
+    base.videoPreviewUrl ? [base.videoPreviewUrl] : undefined
   )
 
   return {

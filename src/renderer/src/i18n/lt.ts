@@ -1,6 +1,19 @@
 import type { Messages } from './en'
 
 export const lt: Messages = {
+  modelActions: {
+    ban: 'BAN',
+    banScopePrompt: 'Uždrausti „{name}“ — „{version}“ ar visas šio modelio versijas? Vietiniai failai liks. Draudimą galėsi atšaukti su Unban.',
+    forget: 'Pamiršti',
+    forgetVersion: 'Pamiršti šią versiją',
+    forgetModel: 'Pamiršti visą modelį',
+    confirmVersion: 'Visam laikui pašalinti „{name}“ — „{version}“, jos vietinius failus ir aplikacijos įrašus? Kitos versijos liks. Atkurti nebus galima. Nauja paieška galės ją atrasti iš naujo.',
+    confirmModel: 'Visam laikui pašalinti visas „{name}“ versijas, jų vietinius failus ir aplikacijos įrašus? Atkurti nebus galima. Nauja paieška galės modelį atrasti iš naujo.',
+    banVersion: 'Uždrausti šią versiją',
+    banModel: 'Uždrausti visą modelį',
+    unbanVersion: 'Atšaukti šios versijos draudimą',
+    banHint: 'Blokuoti būsimus atsisiuntimus. Vietiniai failai liks, draudimą bus galima atšaukti.'
+  },
   common: {
     save: 'Išsaugoti nustatymus',
     saveNow: 'Išsaugoti dabar',
@@ -43,7 +56,7 @@ export const lt: Messages = {
   tabs: {
     browse: 'Naršymas',
     browseBadgeTitle:
-      'Modeliai, kurie dar gali patekti į Browse download eilę (ne Owned / banned / awaiting). Mažėja kai atsisiuntimai baigiasi. Pause jo nenuima.',
+      'Paruošti Browse siuntimai, kurie dar laukia arba siunčiami. Mažėja užbaigus kiekvieną siuntimą. Prieigos tikrinimai ir Early access neskaičiuojami. Pause skaičiaus nenuima.',
     library: 'Biblioteka',
     download: 'Atsisiuntimas',
     tagFolders: 'Tag aplankai',
@@ -451,7 +464,7 @@ export const lt: Messages = {
     libraryUnavailable:
       '**Nepasiekiama Civitai** — failai, kurie jau žinomi kaip taken down / archived (iš išsaugotos info). Filtras matomas tik kai tokių yra; Sync **neperskenuoja** visos bibliotekos gyvai',
     libraryDeleteSafety:
-      '**Delete** / **Exclude / ban** naudoja programos patvirtinimo langą. Jei versiją turite — po patvirtinimo failai ištrinami iš disko. **Neklausti šią sesiją** leidžiama įprastiems trynimams — taken down/archived ir neatpažinti failai visada klausia dar kartą',
+      "**Ban / Unban** blokuoja arba leidžia būsimus atsisiuntimus; vietiniai failai lieka. **Pamiršti šią versiją / Pamiršti visą modelį** po patvirtinimo visam laikui pašalina pasirinktus failus ir aplikacijos įrašus. Atkūrimo sąrašo nėra; nauja paieška gali atrasti modelį iš naujo.",
     libraryTags:
       'Dešinis spustelėjimas → **Priskirti modelį tagui**. Spustelėkite tagą ant kortelės — Tag folders (arba Fast tag, jei įjungta)',
     libraryFastTag:
@@ -469,13 +482,13 @@ export const lt: Messages = {
     missingOverview:
       '**Missing** — modeliai, kurių Civitai neberanda, plius praleisti dėl pause/ban tagų ir jūsų banai. Atidarius detales filtrai lieka',
     missingKinds:
-      'Tipai — Nerasta Civitai, Paused by tag, Banned by tag, Banned by you, Forgotten',
+      "Tipai — nerasta Civitai, pristabdyta pagal žymą, uždrausta pagal žymą, jūsų uždrausti modeliai ir versijos",
     missingFilters:
-      'Hide banned / Hide paused (pagal nutylėjimą ON), Show forgotten, ir sesijos ban/pause filtrai šoninėje juostoje',
+      "Hide banned / Hide paused, peržiūrėtų ir sesijos ban/pause filtrai šoninėje juostoje. Pamiršti įrašai visiškai pašalinami.",
     missingAllow:
       'Vienam modeliui — **Allow** (išimtis + eilė). Spauskite blokuotą tagą — sąrašas modelių, praleistų dėl to tago',
     missingForget:
-      '**Forget** — slepia modelį visur; **Show forgotten** peržiūrai ir atšaukimui',
+      "**Forget** — visam laikui pašalinti versiją arba visą modelį, vietinius failus ir aplikacijos įrašus. Unforget ir Forgotten sąrašo nėra. Nauja paieška gali atrasti iš naujo.",
     missingMarkSeen:
       '**Mark seen** — perbraukite nuo ban/pause kortelės (žalia antraštė). **Hide seen** jas slepia. Sidebar **Neperžiūrėti ban/pause** / **Seen ban/pause** — ban+pause peržiūrai, ne „nerasta“ įrašams',
     missingContextMenu:
@@ -507,7 +520,7 @@ export const lt: Messages = {
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be tinkamos versijos; recheck arba įklijuokite download nuorodą',
     dlNewVersions:
-      '**Atnaujinimai** — kitos versijos modelių, kuriuos jau turite (naujesnė ar kitas failas tame pačiame puslapyje). **Download** vieną kartą; **Visada atnaujinti** — dabartiniai pasiūlymai + ateitis. **Skip** = ši versija vėliau; **Forget** = niekada nesiūlyti šios versijos; **Ban** — exclude ir, jei turite, po patvirtinimo ištrina failus. Skipped/forgotten neįtraukiami į Browse Updates. Sąrašas pildomas Harvest ir foniniu check’u. Custom-folder lokalūs netikrinami',
+      "**Atnaujinimai** rodo kitas turimų modelių versijas. **Download** — atsisiųsti, **Visada atnaujinti** — dabartiniai ir būsimi pasiūlymai. **Skip** atideda versiją. **Ban** blokuoja iki Unban ir palieka failus. **Forget** visam laikui pašalina pasirinktą versiją arba visą modelį, failus ir įrašus; nauja paieška gali atrasti iš naujo. Custom-folder lokalūs modeliai netikrinami.",
     dlTabBadges:
       'Skiltų ženkliukai — Browse: siuntimo eilėje · Library: +N nauji · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
@@ -947,11 +960,11 @@ export const lt: Messages = {
     emptyHint:
       'Nėra laukiančių atnaujinimų. Harvest pats papildo šį sąrašą, kai randa naujesnes versijas modelių, kuriuos jau turite.',
     emptyForgottenHint:
-      'Nėra užmirštų atnaujinimo versijų. Forget slepia tik vieną versiją (Show forgotten). Jei anksčiau naudojote viso modelio Forget — jie yra Missing → Show forgotten.',
+      "Pamiršti įrašai pašalinami visam laikui; atkūrimo sąrašo nėra.",
     baseFilterHint:
       'Rodomos visos trūkstamos versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
     actionsHint:
-      'Skip = ši versija vėliau. Mark seen = peržiūrėta. Forget / Ban = tik ši versija (kitos lieka). Show forgotten = peržiūrėti forgotten versijas.',
+      "Skip — ši versija vėliau. Ban — atšaukiamas siuntimo draudimas, failai lieka. Forget — pašalinti pasirinktą versiją arba visą modelį ir jo failus; nauja paieška gali atrasti iš naujo.",
     searchPlaceholder: 'Ieškoti atnaujinimų…',
     hideSeen: 'Slėpti seen',
     hideSeenHint: 'Slėpti atnaujinimus, kuriuos pažymėjote kaip seen (įskaitant skipped)',
@@ -969,7 +982,7 @@ export const lt: Messages = {
     filterUnseen: 'Nematytos',
     sidebarTitle: 'Filtras',
     sidebarTypes: 'Modelių tipai',
-    forgetHint: 'Forget tik šią versiją — niekada nebesiūlyti šio atnaujinimo (Show forgotten). Kitos to modelio versijos lieka sąraše.',
+    forgetHint: "Visam laikui pašalinti šią versiją ir jos failus. Nauja paieška gali atrasti iš naujo.",
     unforget: 'Unforget',
     unforgetHint: 'Unforget — vėl rodyti šį atnaujinimo pasiūlymą',
     forgottenBadge: 'Forgotten',
@@ -987,9 +1000,9 @@ export const lt: Messages = {
     skippedBadge: 'Skipped',
     ban: 'Ban',
     banHint:
-      'Exclude tik šią versiją — išimti iš Updates ir niekada neauto-siųsti. Kitos modelio versijos lieka. Jei šią versiją jau turite — jos failai ištrinami.',
+      "Blokuoti šią versiją iki Unban. Kitos versijos ir vietiniai failai lieka.",
     banConfirm:
-      'Ban versiją „{version}“ modelio „{name}“? Tik ši versija — sibling’ai lieka. Nebe auto-siunčiama; jei turite failus šiai versijai — jie pašalinami.',
+      "Uždrausti „{name}“ versiją „{version}“? Kitos versijos ir visi vietiniai failai liks. Draudimą bus galima atšaukti.",
     queueDownload: 'Download',
     queueHint: 'Atsisiųsti šią naujesnę versiją; jau turimas palikti',
     alwaysUpdate: 'Visada atnaujinti',
@@ -1021,13 +1034,13 @@ export const lt: Messages = {
     banAll: 'Ban all',
     unban: 'Unban',
     banHint:
-      'Exclude tik šią versiją — kitos lieka. Jei turite šią versiją, failai ištrinami.',
+      "Blokuoti šią versiją iki Unban. Jos failai ir kitos versijos liks.",
     banAllHint:
-      'Ban visą modelį — visos versijos exclude’inamos ir turimi failai ištrinami.',
+      "Blokuoti visų šio modelio versijų atsisiuntimus iki Unban. Turimi failai liks.",
     banConfirm:
-      'Ban versiją „{version}“ modelio „{name}“? Tik ši versija — kitos lieka. Exclude nuo auto-download; turimi šios versijos failai ištrinami.',
+      "Uždrausti „{name}“ versiją „{version}“? Jos failai ir kitos versijos liks. Draudimą bus galima atšaukti.",
     banAllConfirm:
-      'Ban visas „{name}“ versijas? Visas modelis exclude’inamas nuo būsimų siuntimų. Jei turite versijų ({count}), jų failai ištrinami iš disko.',
+      "Uždrausti visas „{name}“ versijas? Turimi vietiniai failai liks. Draudimą bus galima atšaukti.",
     civitaiPage: 'Civitai page ↗',
     openInExplorer: 'Atidaryti Explorer',
     deleteFiles: 'Ištrinti failus ir exclude',
@@ -1432,7 +1445,7 @@ export const lt: Messages = {
     deleteLocalConfirm:
       'Ištrinti vietinius „{name}“ failus iš disko?\n\nTai vietinis / nestandartinis modelis (nėra Civitai arba neatpažintas). Automatiškai iš naujo neatsisiųs.',
     banOwnedConfirm:
-      'Išjungti „{name}“ ir ištrinti failus iš disko?\n\nŠi versija yra bibliotekoje. Atšaukus failai lieka.',
+      "Uždrausti „{name}“? Turimi vietiniai failai liks. Unban vėl leis atsisiųsti.",
     sessionDownloads: 'Sesijos atsisiuntimai',
     alwaysUpdateFilter: 'Visada atnaujinti',
     alwaysUpdateFilterHint:
@@ -1680,9 +1693,9 @@ export const lt: Messages = {
     dismiss: 'Atmesti',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
-    banHint: 'Visam laikui išjungti — nebegrįš į Early access ir nebus auto-siunčiamas',
+    banHint: "Blokuoti šį modelį iki Unban. Turimi vietiniai failai liks.",
     banConfirm:
-      'Ban „{name}“? Pašalinamas iš Early access, Browse auto-siuntimo ir būsimo harvest. Vėliau galima unban Nustatymuose.',
+      "Uždrausti „{name}“? Būsimi automatiniai siuntimai ir pakartojimai sustos; turimi failai liks. Atšaukti galima Missing puslapyje.",
     banConfirmDontAsk: 'Daugiau neklausti (šią sesiją)',
     emptyAfterBan: 'Užblokuoti įrašai pašalinti.',
     waiting: 'Laukia {duration} · bandymai {count}',
@@ -1764,9 +1777,9 @@ export const lt: Messages = {
       'Civitai /models/{id} kartais grąžina be versijų. Įklijuokite download nuorodą iš svetainės (…/api/download/models/VERSION_ID).',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
-    banHint: 'Visam laikui išjungti šį modelį — nebegrįš į Incomplete ir nebus auto-siunčiamas',
+    banHint: "Blokuoti šį modelį iki Unban. Turimi vietiniai failai liks.",
     banConfirm:
-      'Ban „{name}“? Pašalinamas iš Incomplete, Browse auto-siuntimo ir būsimo harvest. Vėliau galima unban Nustatymuose.',
+      "Uždrausti „{name}“? Būsimi automatiniai siuntimai sustos; turimi failai liks. Atšaukti galima Missing puslapyje.",
     banConfirmDontAsk: 'Daugiau neklausti (šią sesiją)',
     emptyAfterBan: 'Užblokuoti įrašai pašalinti.',
     waiting: 'Sekama {duration}',
@@ -1867,21 +1880,21 @@ export const lt: Messages = {
     kindExcludedVersion: 'Excluded versija',
     filterExcludedVersion: 'Excluded versijos',
     forget: 'Forget',
-    forgetHint: 'Forget — slėpti visur ir niekada nesiūlyti (peržiūrai: Show forgotten)',
+    forgetHint: "Visam laikui pašalinti versiją arba visą modelį, vietinius failus ir aplikacijos įrašus.",
     forgetMsg: 'Pamiršta „{name}“',
     forgetModeOff: 'Forget Off',
     forgetModeOn: 'Forget On',
-    forgetModeTitle: 'Rodo × šalia pavadinimų — Forget (slėpti visur)',
+    forgetModeTitle: "Rodyti × versijai arba modeliui pamiršti; apimtį pasirinksite patvirtinimo lange.",
     unforgetHint: 'Unforget — vėl leisti šį modelį',
-    allowVersion: 'Leisti versiją',
-    allowVersionHint: 'Vėl leisti šią versiją — sibling’ai lieka excluded jei buvo',
+    allowVersion: "Atšaukti versijos draudimą",
+    allowVersionHint: "Atšaukti tik šios versijos draudimą; kitų versijų draudimai liks.",
     allowedBadge: 'Allowed',
     allow: 'Allow',
     blockedTagLine: 'Blokuotas tagas: {tag}',
     blockedMatchLine: 'Block „{blocked}“ sutapo su modelio tagu „{matched}“',
     whenLine: '{when}',
     unban: 'Unban',
-    unbanHint: 'Leisti šį modelį visam laikui nepaisant pause/ban tagų — į eilę',
+    unbanHint: "Atšaukti modelio draudimą. Turimi failai lieka; prireikus atsisiųskite atskirai.",
     unbanQueued: 'Modelis allowlist’e ir eilėje (manual — pause/ban ignoruojami)',
     allowTagSkipHint:
       'Leisti šį modelį visam laikui — į eilę. Pause/ban tagai lieka kitiems',

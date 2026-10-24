@@ -30,5 +30,5 @@ export function helpInline(text: string): ReactNode {
   if (last < text.length) {
     nodes.push(<Fragment key={key++}>{text.slice(last)}</Fragment>)
   }
-  return nodes.length === 1 ? nodes[0] : <>{nodes}</>
+  return <>{nodes}</>
 }

@@ -1,9 +1,13 @@
 import { PreviewThumb } from './PreviewThumb'
+import type { ModelCardPreviewSource, VideoPreviewAvailability } from '../utils/model-card-preview'
 
 type Side = {
   urls: string[]
   videoUrl?: string
   label: 'H' | 'L'
+  videoAvailability?: VideoPreviewAvailability
+  videoFetch?: ModelCardPreviewSource
+  onAllFailed?: () => void
 }
 
 interface Props {
@@ -11,17 +15,13 @@ interface Props {
   low: Side
   className?: string
   browseVideoPreviews?: boolean
-  videoAvailability?: 'none' | 'db' | 'civitai'
-  videoFetch?: { versionId: number; modelId: number; civitaiDomain?: string }
 }
 
 export function SplitPairThumbnail({
   high,
   low,
   className,
-  browseVideoPreviews = false,
-  videoAvailability,
-  videoFetch
+  browseVideoPreviews = false
 }: Props) {
   return (
     <div className={['split-pair-thumb', className].filter(Boolean).join(' ')}>
@@ -33,8 +33,9 @@ export function SplitPairThumbnail({
           urls={high.urls}
           videoUrl={high.videoUrl}
           videoPreviews={browseVideoPreviews}
-          videoAvailability={videoAvailability}
-          videoFetch={videoFetch}
+          videoAvailability={high.videoAvailability}
+          videoFetch={high.videoFetch}
+          onAllFailed={high.onAllFailed}
           className="split-pair-thumb-img"
           loading="lazy"
         />
@@ -48,8 +49,9 @@ export function SplitPairThumbnail({
           urls={low.urls}
           videoUrl={low.videoUrl}
           videoPreviews={browseVideoPreviews}
-          videoAvailability={videoAvailability}
-          videoFetch={videoFetch}
+          videoAvailability={low.videoAvailability}
+          videoFetch={low.videoFetch}
+          onAllFailed={low.onAllFailed}
           className="split-pair-thumb-img"
           loading="lazy"
         />

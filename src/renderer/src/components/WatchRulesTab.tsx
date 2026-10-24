@@ -39,6 +39,8 @@ import { FieldHint } from './FieldHint'
 import { watchRulesEqual } from '../utils/watch-rules-equal'
 import { filterBrowseResultForWatchRules } from '../../../shared/watch-rule-crawl'
 import { useQueuedMembership } from '../hooks/useDownloadQueue'
+import { useOnModelForgotten } from '../hooks/useForgetModel'
+import { matchesSelection } from '../../../shared/model-actions'
 
 function previewErrorMessage(t: TranslateFn, raw: string): string {
   const { status, detail } = parseCivitaiApiError(raw)
@@ -179,7 +181,7 @@ interface Props {
   /** Skipped Updates version IDs — hidden on Browse unless Show skipped. */
   skippedPendingVersionIds?: Set<number>
   /** Forgotten Updates version IDs — always hidden on Browse. */
-  forgottenPendingVersionIds?: Set<number>
+  bannedVersionIds?: Set<number>
   /** Active Updates offers — hide on Browse unless Show updates is on. */
   pendingUpdateVersionIds?: Set<number>
   /** False while keep-alive offscreen — pause Browse scroll observers. */
@@ -249,7 +251,7 @@ export function WatchRulesTab({
   onBrowseViewPrefsChange,
   sessionYieldCount = 0,
   skippedPendingVersionIds,
-  forgottenPendingVersionIds,
+  bannedVersionIds,
   pendingUpdateVersionIds,
   isActive = true
 }: Props) {
@@ -258,6 +260,12 @@ export function WatchRulesTab({
   const [draft, setDraft] = useState<WatchRule[]>(rules)
   const [enums, setEnums] = useState<CivitaiEnums | null>(null)
   const [testResult, setTestResult] = useState<WatchRuleTestResult | null>(null)
+  useOnModelForgotten(selection => {
+    setTestResult(prev => prev ? {
+      ...prev,
+      sampleModels: prev.sampleModels.filter(row => !matchesSelection(selection, row.id, row.versionId))
+    } : prev)
+  })
   const [browseFilter, setBrowseFilter] = useState<ContentFilter>('all')
   const [testingId, setTestingId] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -1019,8 +1027,9 @@ export function WatchRulesTab({
 
       {browsePanelResult ? (
         <SearchBrowsePanel
-          key={browseRule?.id ?? 'browse'}
+          key={browsePanelResult.crawlSource ? 'harvest' : browseRule?.id ?? 'browse'}
           result={browsePanelResult}
+          currentModels={liveCrawlBrowse?.sampleModels}
           crawlFetching={crawlFetching}
           crawlProgress={crawlProgress}
           tagRules={tagRules}
@@ -1038,7 +1047,7 @@ export function WatchRulesTab({
           onOpenModelDetail={onOpenModelDetail}
           onOpenTagFolders={onOpenTagFolders}
           onSaveTagRules={onSaveTagRules}
-          onQueueAll={() => void queueAll()}
+          onQueueAll={queueAll}
           queueAllLoading={queueAllLoading}
           queueAllNotice={queueAllNotice}
           onRefreshInventory={onRefreshInventory}
@@ -1078,7 +1087,7 @@ export function WatchRulesTab({
           onViewPrefsChange={onBrowseViewPrefsChange}
           sessionYieldCount={sessionYieldCount}
           skippedPendingVersionIds={skippedPendingVersionIds}
-          forgottenPendingVersionIds={forgottenPendingVersionIds}
+          bannedVersionIds={bannedVersionIds}
           pendingUpdateVersionIds={pendingUpdateVersionIds}
           isActive={isActive}
         />

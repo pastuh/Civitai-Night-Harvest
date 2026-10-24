@@ -1,5 +1,5 @@
 import type { MouseEvent, PointerEvent, ReactNode } from 'react'
-import { memo } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { PreviewThumb } from './PreviewThumb'
 import { mapPreviewSrcs } from '../utils/preview-src'
 
@@ -29,13 +29,15 @@ interface Props {
   /** Action buttons under the card body. Omit when title actions cover everything. */
   actions?: ReactNode
   className?: string
+  /** Keep a reviewed placeholder from shrinking and moving the following grid rows. */
+  preserveHeight?: boolean
   /** When set, Missing tab may mark this ban as seen (full card + pointer). */
   dataBanSeenPending?: number
   onPointerEnter?: (e: PointerEvent<HTMLDivElement>) => void
   onPointerLeave?: (e: PointerEvent<HTMLDivElement>) => void
   /** Re-fetch preview when every thumbnail candidate fails to load. */
   onPreviewAllFailed?: () => void
-  /** Prefer eager on dense status grids — lazy reloads thumbs after Allow layout shifts. */
+  /** Lazy by default so offscreen cards do not compete with visible previews. */
   previewLoading?: 'lazy' | 'eager'
   /** Lets the page prefer preview fetches for cards actually on screen. */
   previewVersionId?: number
@@ -60,22 +62,42 @@ export const StatusModelCard = memo(function StatusModelCard({
   onOpen,
   onContextMenu,
   className,
+  preserveHeight,
   dataBanSeenPending,
   onPointerEnter,
   onPointerLeave,
   onPreviewAllFailed,
-  previewLoading = 'eager',
+  previewLoading = 'lazy',
   previewVersionId
 }: Props) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  const measuredHeight = useRef(0)
+  const preserveHeightRef = useRef(preserveHeight)
+  preserveHeightRef.current = preserveHeight
+  const trackHeight = preserveHeight != null
+  useEffect(() => {
+    if (!trackHeight) return
+    const card = cardRef.current
+    if (!card) return
+    const measure = () => {
+      if (!preserveHeightRef.current) measuredHeight.current = card.getBoundingClientRect().height
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [trackHeight])
   const thumbUrls = mapPreviewSrcs(
     previewUrls?.length ? previewUrls : previewUrl ? [previewUrl] : []
   )
 
   return (
     <div
+      ref={cardRef}
+      style={preserveHeight && measuredHeight.current > 0 ? { minHeight: measuredHeight.current } : undefined}
       className={`gallery-card status-gallery-card${onOpen ? ' status-model-card-clickable' : ''}${className ? ` ${className}` : ''}`}
       data-preview-version={
-        previewVersionId != null && previewVersionId > 0 ? String(previewVersionId) : undefined
+        previewVersionId != null && previewVersionId !== 0 ? String(previewVersionId) : undefined
       }
       data-ban-seen-pending={
         dataBanSeenPending != null && dataBanSeenPending > 0

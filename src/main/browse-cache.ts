@@ -1,33 +1,17 @@
 import type { WatchRuleTestModel } from '../shared/types'
 import * as inventory from './inventory'
-import { localPreviewPathIfCached, resolveCachedPreviewUrls } from './preview-cache'
+import { resolveCachedPreviewUrls } from './preview-cache'
 
 export async function cacheBrowseCardPreviews(cards: WatchRuleTestModel[]): Promise<void> {
-  const needDisk = cards.filter((card) => {
-    const remote = card.previewUrls?.length
-      ? card.previewUrls
-      : card.previewUrl
-        ? [card.previewUrl]
-        : []
-    if (!remote.length) return false
-    // Already media:/file: or on-disk cache — skip network/disk rewrite storm.
-    return !remote.every(
-      (u) =>
-        u.startsWith('media:') ||
-        u.startsWith('file:') ||
-        Boolean(localPreviewPathIfCached(u))
-    )
-  })
-  if (!needDisk.length) return
   await Promise.all(
-    needDisk.map(async (card) => {
+    cards.map(async (card) => {
       const remote = card.previewUrls?.length
         ? card.previewUrls
         : card.previewUrl
           ? [card.previewUrl]
           : []
       if (!remote.length) return
-      const cached = await resolveCachedPreviewUrls(remote)
+      const cached = await resolveCachedPreviewUrls(remote, { deferDownload: true })
       if (!cached.length) return
       card.previewUrls = cached
       card.previewUrl = cached[0]

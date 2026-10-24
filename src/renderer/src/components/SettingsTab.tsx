@@ -24,7 +24,7 @@ interface Props {
   onOpenHelp?: () => void
   onRefreshInventory?: (
     syncDiskOrOpts?: boolean | import('../../../shared/types').InventoryGetOptions
-  ) => Promise<unknown>
+  ) => Promise<import('../../../shared/types').InventoryGetResult | null>
   onWithBusy?: <T,>(message: string, action: () => Promise<T>, subMessage?: string) => Promise<T>
   tagSuggestions?: string[]
 }

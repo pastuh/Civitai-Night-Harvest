@@ -18,6 +18,7 @@ import {
   isUsableStoredPreviewUrl
 } from './preview-cache'
 import * as inventory from './inventory'
+import { scrapeVersionIdFromModelPage } from './incomplete-resolve'
 
 export interface ResolvedPreview {
   modelId: number
@@ -241,6 +242,21 @@ export async function resolvePreviewsForModel(
   const finish = (entry: ResolvedPreview): ResolvedPreview =>
     enrichResolvedWithVideo(entry, model, versionId, contentFilter)
 
+  // Incomplete rows have no version yet. Resolve the model before making any
+  // version/gallery calls; /model-versions/0 can never supply a cover.
+  if (versionId <= 0) {
+    try {
+      model = model ?? await client.getModel(modelId, paceOpts)
+      versionId = model.modelVersions?.[0]?.id ?? 0
+    } catch { /* HTML fallback below */ }
+    if (versionId <= 0) {
+      versionId = await scrapeVersionIdFromModelPage(client.getDomain(), modelId, {
+        timeoutMs: 12_000
+      }) ?? 0
+    }
+    if (versionId <= 0) return { modelId, versionId: 0, previewUrls: [] }
+  }
+
   if (model) {
     const initial = toResolved(modelId, versionId, model, contentFilter, strictVersion)
     if (initial.previewUrls.length) return finish(initial)
@@ -250,7 +266,13 @@ export async function resolvePreviewsForModel(
 
   try {
     const fullVersion = await client.getModelVersion(versionId, paceOpts)
-    if (!model) model = await client.getModel(modelId, paceOpts)
+    // The version endpoint can have images even when its parent omits this
+    // version (or returns 404). Do not discard that successful response.
+    if (!model) {
+      model = { id: modelId, name: '', type: '', modelVersions: [fullVersion] }
+    } else if (!model.modelVersions?.some((v) => v.id === versionId)) {
+      model = { ...model, modelVersions: [...(model.modelVersions ?? []), fullVersion] }
+    }
     mergeVersionImages(model, versionId, fullVersion.images ?? [])
     const fromVersion = toResolved(modelId, versionId, model, contentFilter, strictVersion)
     if (fromVersion.previewUrls.length) return finish(fromVersion)
@@ -262,7 +284,14 @@ export async function resolvePreviewsForModel(
 
   try {
     const gallery = await client.searchImagesForVersion(versionId, 12, paceOpts)
-    if (!model) model = await client.getModel(modelId, paceOpts)
+    if (!model?.modelVersions?.some((v) => v.id === versionId)) {
+      model = {
+        ...(model ?? { id: modelId, name: '', type: '' }),
+        modelVersions: [...(model?.modelVersions ?? []), {
+          id: versionId, name: '', baseModel: '', createdAt: '', files: [], images: gallery
+        }]
+      }
+    }
     mergeVersionImages(model, versionId, gallery)
     const fromGallery = toResolved(modelId, versionId, model, contentFilter, strictVersion)
     if (fromGallery.previewUrls.length) return finish(fromGallery)
@@ -301,6 +330,20 @@ export async function resolvePreviewsBatch(
   const results: ResolvedPreview[] = new Array(items.length)
   const pace: CivitaiPacePriority = items.some((i) => i.interactive) ? 'interactive' : 'background'
   await mapWithConcurrency(items, pace === 'interactive' ? 4 : 10, async (item, i) => {
+    if (!item.refreshCache && item.versionId > 0) {
+      const cached = inventory.getBrowseCardCache([item.versionId]).get(item.versionId)
+      if (cached?.id === item.modelId) {
+        const previewUrls = toDisplayPreviewUrls(cached.previewUrls?.length
+          ? cached.previewUrls : cached.previewUrl ? [cached.previewUrl] : [])
+        // Cached cards were collected with all content; respect a narrower filter.
+        if (previewUrls.length && contentFilter === 'all') {
+          results[i] = { modelId: item.modelId, versionId: item.versionId,
+            previewUrl: previewUrls[0], previewUrls,
+            videoPreviewUrl: cached.videoPreviewUrl, videoPreviewUrls: cached.videoPreviewUrls }
+          return
+        }
+      }
+    }
     results[i] = await resolvePreviewsForModelWithFallback(
       pool,
       item.modelId,
@@ -316,13 +359,12 @@ export async function resolvePreviewsBatch(
   const forceVersionIds = new Set(
     items.filter((item) => item.refreshCache === true).map((item) => item.versionId)
   )
-  const interactive = items.some((item) => item.interactive)
   // Interactive (on-screen cards / model details): return CDN URLs immediately and
   // warm the disk cache in the background. Blocking downloads made Missing thumbs
   // wait far longer than opening the same model in details.
   await applyCachedPreviews(results, {
     forceVersionIds: forceVersionIds.size ? forceVersionIds : undefined,
-    deferDownload: interactive
+    deferDownload: true
   })
   return results.map((entry) => (entry ? applyPreferredToResolved(entry) : entry))
 }

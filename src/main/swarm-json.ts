@@ -330,7 +330,7 @@ export function buildSwarmJson(
     payload['modelspec.resolution'] = primary.metadata.size
   }
 
-  applyLicenseToPayload(payload as Record<string, unknown>, licenseFromModel(model))
+  applyLicenseToPayload(payload as unknown as Record<string, unknown>, licenseFromModel(model))
 
   return payload
 }

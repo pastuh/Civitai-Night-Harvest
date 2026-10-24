@@ -60,7 +60,7 @@ function applyContentFilterAllDefaultMigration(): void {
     store.set('settings', settings)
   }
   const rules = store.get('watchRules', []).map((r) => {
-    const raw = r as Record<string, unknown>
+    const raw = r as unknown as Record<string, unknown>
     const cf = raw.contentFilter
     if (cf === 'all' || cf === 'nsfw') return r
     return { ...raw, contentFilter: 'all' as ContentFilter }
@@ -76,7 +76,7 @@ function applyManualDownloadPolicyMigration(): void {
   settings.scanIntervalMinutes = 0
   store.set('settings', settings)
   const rules = store.get('watchRules', []).map((r) => ({
-    ...(r as Record<string, unknown>),
+    ...(r as unknown as Record<string, unknown>),
     autoDownloadNew: false
   }))
   store.set('watchRules', rules)
@@ -390,7 +390,7 @@ export function saveSettingsFromUi(partial: AppSettingsSave): AppSettings {
   const next: AppSettings = { ...current, domain: 'red' }
   for (const [key, value] of Object.entries(rest) as Array<[keyof AppSettingsSave, unknown]>) {
     if (value !== undefined) {
-      ;(next as Record<string, unknown>)[key as string] = value
+      ;(next as unknown as Record<string, unknown>)[key as string] = value
     }
   }
   if (apiKey?.trim()) {
@@ -431,7 +431,7 @@ export function saveTagRules(rules: TagFolderRule[]): TagFolderRule[] {
 }
 
 export function getWatchRules(): WatchRule[] {
-  return store.get('watchRules', []).map((r) => migrateWatchRule(r as Record<string, unknown>))
+  return store.get('watchRules', []).map((r) => migrateWatchRule(r as unknown as Record<string, unknown>))
 }
 
 /** Whether crawl / scheduled scan may auto-start the download queue. Manual Start always works. */

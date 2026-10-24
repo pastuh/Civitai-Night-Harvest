@@ -26,7 +26,7 @@ import {
   getModelPageUrl,
   isDisplayablePreviewUrl
 } from '../shared/utils'
-import { isVersionEarlyAccess, formatEarlyAccessReason } from '../shared/early-access'
+import { modelVersionAccess, isEarlyAccessActive, formatEarlyAccessReason } from '../shared/early-access'
 import { resolveSearchNextCursor, sanitizeCrawlCursor } from '../shared/civitai-pagination'
 import {
   collectUsedTags,
@@ -258,6 +258,10 @@ export function pruneIrrelevantPendingVersions(
     if (droppedIds.length < 10) droppedIds.push(p.versionId)
   }
   for (const p of pending) {
+    if (inventory.isVersionAutoDownloadBlocked(p.versionId)) {
+      drop(p, 'version-excluded')
+      continue
+    }
     if (inventory.isModelBanned(p.modelId) || inventory.isMissingUnavailable(p.modelId)) {
       drop(p, 'banned/missing')
       continue
@@ -448,7 +452,8 @@ function processModel(
   const ruleBases = parseRuleBaseModels(rule.baseModels)
 
   const tryDeferEarlyAccess = (version: CivitaiModelVersion): boolean => {
-    if (!isVersionEarlyAccess(version)) return false
+    const access = modelVersionAccess(model, version)
+    if (!access.isEarlyAccess) return false
     if (model.id <= 0 || version.id <= 0) return false
     if (inventory.isModelBanned(model.id)) return false
     if (inventory.isMissingUnavailable(model.id)) return false
@@ -475,8 +480,8 @@ function processModel(
       routingTag,
       previewUrl:
         resolveVersionPreviewUrl(model, version.id) ?? resolveModelPreviewUrl(model),
-      reason: formatEarlyAccessReason(version.earlyAccessEndsAt),
-      earlyAccessEndsAt: version.earlyAccessEndsAt ?? undefined,
+      reason: formatEarlyAccessReason(access.endsAt),
+      earlyAccessEndsAt: access.endsAt,
       civitaiTags,
       ...pickVersionStats(version),
       baseModel: version.baseModel
@@ -547,7 +552,7 @@ function processModel(
     if (inventory.isModelBanned(model.id)) return false
     if (inventory.isMissingUnavailable(model.id)) return false
     if (inventory.hasVersion(version.id)) return false
-    if (isVersionEarlyAccess(version)) return false
+    if (modelVersionAccess(model, version).isEarlyAccess) return false
     if (inventory.getDeferredDownload(version.id)) {
       result.upToDate++
       return false
@@ -620,7 +625,7 @@ function processModel(
         if (inventory.isModelBanned(model.id)) return 'banned'
         if (inventory.isMissingUnavailable(model.id)) return 'unavailable (missing)'
         if (inventory.hasVersion(version.id)) return 'already in library'
-        if (isVersionEarlyAccess(version)) return 'early access'
+        if (modelVersionAccess(model, version).isEarlyAccess) return 'early access'
         if (inventory.getDeferredDownload(version.id)) return 'awaiting access'
         if (downloadQueue.hasActiveItem(version.id)) return 'already in download list'
         if (options.requireTagMatch && !matchedUsedTag) return 'no matching tag'
@@ -701,7 +706,7 @@ function processModel(
   for (const version of versions) {
     if (ctx.pendingVersionIds.has(version.id)) continue
     if (inventory.hasVersion(version.id)) continue
-    if (inventory.isPendingVersionSkipped(version.id)) {
+    if (inventory.isVersionAutoDownloadBlocked(version.id)) {
       // User skipped this version on Updates — do not re-offer.
       continue
     }
@@ -1079,14 +1084,14 @@ export function offerPendingFromBrowseCard(
 ): boolean {
   if (m.id <= 0 || m.versionId <= 0) return false
   if (inventory.hasVersion(m.versionId)) return false
-  if (inventory.isPendingVersionSkipped(m.versionId)) return false
+  if (inventory.isVersionAutoDownloadBlocked(m.versionId)) return false
   if (inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) return false
   const owned = inventory.getVersionsForModel(m.id)
   if (!owned.length) return false
   if (inventory.getDeferredDownload(m.versionId)) return false
 
   // Early access siblings belong on Early access, not Updates.
-  if (m.isEarlyAccess && options?.downloadQueue) {
+  if ((m.isEarlyAccess || isEarlyAccessActive(m.earlyAccessEndsAt)) && options?.downloadQueue) {
     const tagRules = getTagRules()
     const { routingTag } = resolveModelRoutingTag(m.tags ?? [], '', tagRules, m.baseModel)
     options.downloadQueue.deferEarlyAccess({
@@ -1145,6 +1150,7 @@ export function offerPendingFromBrowseCard(
     autoUpdateThis &&
     dq &&
     !m.isEarlyAccess &&
+    !isEarlyAccessActive(m.earlyAccessEndsAt) &&
     !dq.hasActiveItem(m.versionId) &&
     shouldAutoQueue()
   ) {
@@ -1219,7 +1225,7 @@ export function queueEligibleTestModels(
       continue
     }
     // User skipped this exact version on Updates — never auto-queue until Unskip.
-    if (inventory.isPendingVersionSkipped(m.versionId)) {
+    if (inventory.isVersionAutoDownloadBlocked(m.versionId)) {
       skipped.needsConfirm++
       continue
     }
@@ -1239,7 +1245,7 @@ export function queueEligibleTestModels(
       continue
     }
     // Early Access first — pause/ban are indicators on EA, not Missing diversions.
-    if (m.isEarlyAccess) {
+    if (m.isEarlyAccess || isEarlyAccessActive(m.earlyAccessEndsAt)) {
       skipped.earlyAccess++
       if (
         !inventory.getDeferredDownload(m.versionId) &&

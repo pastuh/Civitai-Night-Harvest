@@ -1,4 +1,17 @@
 export const en = {
+  modelActions: {
+    ban: 'BAN',
+    banScopePrompt: 'Block “{name}” — “{version}”, or every version of this model? Local files are kept. You can Unban later.',
+    forget: 'Forget',
+    forgetVersion: 'Forget this version',
+    forgetModel: 'Forget entire model',
+    confirmVersion: 'Permanently remove “{name}” — “{version}”, its local files and application records? Other versions stay. There is no Undo. A future search can discover it again.',
+    confirmModel: 'Permanently remove every version of “{name}”, their local files and application records? There is no Undo. A future search can discover the model again.',
+    banVersion: 'Ban this version',
+    banModel: 'Ban entire model',
+    unbanVersion: 'Unban this version',
+    banHint: 'Block future downloads. Keep local files and allow Unban later.'
+  },
   common: {
     save: 'Save settings',
     saveNow: 'Save now',
@@ -41,7 +54,7 @@ export const en = {
   tabs: {
     browse: 'Browse',
     browseBadgeTitle:
-      'Models still eligible for the Browse download queue (not yet owned / banned / awaiting). Shrinks as downloads finish. Pause does not clear it.',
+      'Prepared Browse downloads still waiting or downloading. Decreases as each download finishes. Access checks and Early access are not counted. Pause does not clear it.',
     library: 'Library',
     download: 'Download',
     tagFolders: 'Tag Folders',
@@ -448,7 +461,7 @@ export const en = {
     libraryUnavailable:
       '**Unavailable on Civitai** — files already known as taken down or archived (from saved info). The filter appears only when such files exist; Sync does **not** re-check every model live',
     libraryDeleteSafety:
-      '**Delete** / **Exclude / ban** use an in-app confirm dialog. Owning the version means files are removed from disk after you confirm. **Don’t ask again (this session)** is allowed for normal deletes — taken down/archived and unrecognized files always ask again',
+      "**Ban / Unban** blocks or allows future downloads and keeps local files. **Forget this version / Forget entire model** permanently removes the selected files and application records after confirmation. There is no restore list; a later search may discover them again.",
     libraryTags:
       'Right-click → **Assign model to tag**. Click a card tag to open Tag folders (or Fast tag when enabled)',
     libraryFastTag:
@@ -466,13 +479,13 @@ export const en = {
     missingOverview:
       '**Missing** — models Civitai no longer finds, plus ones skipped by pause/ban tags and manual bans. Opening details keeps your Missing filters',
     missingKinds:
-      'Kinds — Not found on Civitai, Paused by tag, Banned by tag, Banned by you, Forgotten',
+      "Kinds — Not found on Civitai, Paused by tag, Banned by tag, Banned by you, Banned versions",
     missingFilters:
-      'Hide banned / Hide paused (on by default), Show forgotten, and session ban/pause filters in the sidebar',
+      "Hide banned / Hide paused, seen filters, and session ban/pause filters in the sidebar. Forgotten items are removed entirely.",
     missingAllow:
       'Per model — **Allow** (exception + queue). Click a blocked tag to list models skipped for that tag',
     missingForget:
-      '**Forget** — hide the model everywhere; **Show forgotten** to review and undo',
+      "**Forget** — permanently remove a version or the whole model, including local files and application records. No Unforget or Forgotten list. A future search can discover it again.",
     missingMarkSeen:
       '**Mark seen** — swipe off a ban/pause card (green title). **Hide seen** removes those cards. Sidebar **Unseen ban/pause** / **Seen ban/pause** are for ban+pause review, not “not found” items',
     missingContextMenu:
@@ -504,7 +517,7 @@ export const en = {
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but has no usable version; recheck or paste a download link',
     dlNewVersions:
-      '**Updates** — other versions of models you already own (newer or another file on the same page). **Download** once; **Always update** queues current offers and future ones. **Skip** = this version later; **Forget** = never suggest this version again; **Ban** excludes it and, if owned, deletes files after confirm. Skipped/forgotten are not counted in Browse Updates. List fills during Harvest and a background library check. Settings → Auto-download new versions can queue them automatically. Custom-folder locals are not checked',
+      "**Updates** lists other versions of models you own. **Download** once; **Always update** queues current and future offers. **Skip** postpones this version. **Ban** blocks it until Unban and keeps files. **Forget** permanently removes a selected version or entire model, including its files and records; a future search may discover it again. Custom-folder locals are not checked.",
     dlTabBadges:
       'Tab badges — Browse: in the download pipeline · Library: +N new · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
@@ -938,11 +951,11 @@ export const en = {
   pending: {
     emptyHint: 'No updates waiting. Harvest fills this list automatically when it finds newer versions of models you own.',
     emptyForgottenHint:
-      'No forgotten update versions here. Forget hides one version only — use Show forgotten. If you used whole-model Forget earlier, those are under Missing → Show forgotten.',
+      "Forgotten items are permanently removed; they have no restore list.",
     baseFilterHint:
       'Lists every missing version whose base model matches one you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
     actionsHint:
-      'Skip = this version later. Mark seen = reviewed. Forget / Ban = this version only (other versions stay). Show forgotten = review forgotten versions.',
+      "Skip = this version later. Ban = reversible download block, files stay. Forget = permanently remove a version or entire model and its files; a new search may find it again.",
     searchPlaceholder: 'Search updates…',
     hideSeen: 'Hide seen',
     hideSeenHint: 'Hide update offers you marked as seen (including skipped)',
@@ -960,7 +973,7 @@ export const en = {
     filterUnseen: 'Unseen',
     sidebarTitle: 'Filter',
     sidebarTypes: 'Model types',
-    forgetHint: 'Forget this version only — never suggest this update again (Show forgotten to review). Other versions of the model stay listed.',
+    forgetHint: "Permanently remove this version and its files. A new search may discover it again.",
     unforget: 'Unforget',
     unforgetHint: 'Unforget — show this update offer again',
     forgottenBadge: 'Forgotten',
@@ -977,9 +990,9 @@ export const en = {
     skippedBadge: 'Skipped',
     ban: 'Ban',
     banHint:
-      'Exclude this version only — remove it from Updates and never auto-download it again. Other versions of the model stay. If you already own this version, its files are deleted.',
+      "Block this version until Unban. Other versions and existing local files stay.",
     banConfirm:
-      'Ban version “{version}” of “{name}”? This version only — siblings stay. Excluded from auto-download; owned files for this version are removed if present.',
+      "Ban version “{version}” of “{name}”? Other versions and all existing local files stay. You can Unban it later.",
     queueDownload: 'Download',
     queueHint: 'Download this newer version; keep versions you already own',
     alwaysUpdate: 'Always update',
@@ -1011,13 +1024,13 @@ export const en = {
     banAll: 'Ban all',
     unban: 'Unban',
     banHint:
-      'Exclude this version only — siblings stay available. Owned files for this version are deleted.',
+      "Block this version until Unban. Keep its local files and other versions.",
     banAllHint:
-      'Ban the whole model — every version is excluded from auto-download and owned files are deleted.',
+      "Block future downloads for every version of this model until Unban. Keep existing local files.",
     banConfirm:
-      'Ban version “{version}” of “{name}”? This version only — other versions stay. Excluded from auto-download; owned files for this version are removed if present.',
+      "Ban version “{version}” of “{name}”? Its files and other versions stay. The ban can be reversed.",
     banAllConfirm:
-      'Ban all versions of “{name}”? Excludes the whole model from future downloads. If you own any versions ({count}), their files are deleted from disk.',
+      "Ban all versions of “{name}”? Existing local files stay. You can Unban the model later.",
     civitaiPage: 'Civitai page ↗',
     openInExplorer: 'Open in Explorer',
     deleteFiles: 'Delete files & exclude',
@@ -1421,7 +1434,7 @@ export const en = {
     deleteLocalConfirm:
       'Delete local files for "{name}" from disk?\n\nThis is a custom/local model (not on Civitai or unmatched). It cannot be re-downloaded automatically.',
     banOwnedConfirm:
-      'Exclude "{name}" and delete its files from disk?\n\nThis version is in your library. Cancel keeps the files.',
+      "Ban “{name}”? Existing local files stay. Unban allows downloads again.",
     sessionDownloads: 'Session downloads',
     alwaysUpdateFilter: 'Always update',
     alwaysUpdateFilterHint:
@@ -1665,9 +1678,9 @@ export const en = {
     dismiss: 'Dismiss',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
-    banHint: 'Exclude permanently — will not return to Early access or auto-download',
+    banHint: "Block this model until Unban. Existing local files stay.",
     banConfirm:
-      'Ban “{name}”? Excludes it from Early access, Browse auto-download, and future harvest. You can unban later in Settings.',
+      "Ban “{name}”? Stops future automatic downloads and retries; existing files stay. Unban is available under Missing.",
     banConfirmDontAsk: "Don't ask me again (this session)",
     emptyAfterBan: 'Banned entries removed.',
     waiting: 'Waiting {duration} · attempts {count}',
@@ -1748,9 +1761,9 @@ export const en = {
       'Civitai /models/{id} sometimes returns no versions. Paste the download link from the site (…/api/download/models/VERSION_ID).',
     openCivitai: 'Civitai ↗',
     ban: 'Ban',
-    banHint: 'Exclude this model permanently — it will not return to Incomplete or auto-download',
+    banHint: "Block this model until Unban. Existing local files stay.",
     banConfirm:
-      'Ban “{name}”? Excludes it from Incomplete, Browse auto-download, and future harvest. You can unban later in Settings.',
+      "Ban “{name}”? Stops future automatic downloads; existing files stay. Unban is available under Missing.",
     banConfirmDontAsk: "Don't ask me again (this session)",
     emptyAfterBan: 'Banned entries removed.',
     waiting: 'Tracked {duration}',
@@ -1851,21 +1864,21 @@ export const en = {
     kindExcludedVersion: 'Excluded version',
     filterExcludedVersion: 'Excluded versions',
     forget: 'Forget',
-    forgetHint: 'Forget — hide everywhere and never suggest again (Show forgotten to review)',
+    forgetHint: "Permanently remove a version or entire model, including its local files and application records.",
     forgetMsg: 'Forgot “{name}”',
     forgetModeOff: 'Forget Off',
     forgetModeOn: 'Forget On',
-    forgetModeTitle: 'Show × next to titles to forget models (hide everywhere)',
+    forgetModeTitle: "Show × to permanently forget a version or model; choose the scope in the confirmation.",
     unforgetHint: 'Unforget — allow this model again',
-    allowVersion: 'Allow version',
-    allowVersionHint: 'Allow this version again — siblings stay excluded if they were',
+    allowVersion: "Unban version",
+    allowVersionHint: "Remove only this version’s ban; keep sibling bans.",
     allowedBadge: 'Allowed',
     allow: 'Allow',
     blockedTagLine: 'Blocked tag: {tag}',
     blockedMatchLine: 'Block “{blocked}” matched model tag “{matched}”',
     whenLine: '{when}',
     unban: 'Unban',
-    unbanHint: 'Allow this model forever despite pause/ban tags — queue download',
+    unbanHint: "Remove the model ban. Existing local files stay; download separately when needed.",
     unbanQueued: 'Model allowlisted and queued (manual — pause/ban tags ignored)',
     allowTagSkipHint:
       'Allow this model forever — queue download. Pause/ban tags stay on for other models',
@@ -1962,4 +1975,5 @@ export const en = {
   }
 } as const
 
-export type Messages = typeof en
+type Translated<T> = { [K in keyof T]: T[K] extends string ? string : Translated<T[K]> }
+export type Messages = Translated<typeof en>
