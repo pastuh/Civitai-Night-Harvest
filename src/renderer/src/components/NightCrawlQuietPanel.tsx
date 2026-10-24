@@ -144,7 +144,7 @@ export function NightCrawlQuietPanel({
               </span>
             )}
             {awaiting > 0 && (
-              <span className="browse-progress-legend-item">
+              <span className="browse-progress-legend-item" title={t('browse.barLegendAwaitingHint')}>
                 <span className="browse-progress-dot browse-progress-dot-awaiting" aria-hidden />
                 {t('browse.barLegendAwaiting')}{' '}
                 <strong className="browse-progress-legend-count">{awaiting}</strong>

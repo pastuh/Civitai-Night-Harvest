@@ -431,7 +431,7 @@ export class ScanScheduler {
     }
 
     const { bannedIds, bannedVersionIds: bannedVersions, ownedVersionIds: ownedVersions,
-      awaitingVersionIds, incompleteModelIds } = inventory.getBrowseCardState()
+      awaitingVersionIds, incompleteModelIds, unavailableVersionIds } = inventory.getBrowseCardState()
     let total = 0
     let globalCache: WatchRuleTestModel[] | null = null
 
@@ -467,7 +467,7 @@ export class ScanScheduler {
         continue
       }
 
-      const flagged = cards.filter((m) => !incompleteModelIds.has(m.id)).map((m) => ({
+      const flagged = cards.filter((m) => !incompleteModelIds.has(m.id) && !unavailableVersionIds.has(m.versionId)).map((m) => ({
         ...m,
         inInventory: m.inInventory || ownedVersions.has(m.versionId),
         isAwaitingAccess: awaitingVersionIds.has(m.versionId),
@@ -2406,6 +2406,9 @@ export class ScanScheduler {
     const banned = settings.bannedTags ?? []
     const policyOpts = getTagPolicyOptions()
     const sets = this.getBrowseStatsSets()
+    // Download failures can change during this crawl; do not retain them in the
+    // 45-second tag/ownership cache. This is one ID query per stats calculation.
+    const unavailableVersionIds = inventory.getUnavailableBrowseVersionIds()
     let owned = 0
     let excluded = 0
     let skipTag = 0
@@ -2415,6 +2418,7 @@ export class ScanScheduler {
     let total = 0
 
     const visit = (m: WatchRuleTestModel): void => {
+      if (unavailableVersionIds.has(m.versionId)) return
       total++
       const isBanned =
         m.isBanned === true ||

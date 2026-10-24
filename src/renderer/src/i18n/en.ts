@@ -645,7 +645,9 @@ export const en = {
     barLegendOwned: 'Owned',
     barLegendBanned: 'Banned',
     barLegendSkipTag: 'Blocked',
-    barLegendAwaiting: 'Awaiting',
+    barLegendAwaiting: 'Awaiting in Browse',
+    barLegendAwaitingHint:
+      'Access-gated versions in this Browse catalog, excluding owned, banned, paused and unavailable versions. Early access → All covers the full matching waiting list, including versions absent from this catalog.',
     barLegendAwaitingConfirm: 'Updates',
     barLegendAwaitingConfirmHint:
       'You already own another version — confirm on the Updates tab (or Always update) before queueing',

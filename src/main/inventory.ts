@@ -775,12 +775,15 @@ export interface BrowseCardState {
   bannedVersionIds: Set<number>
   awaitingVersionIds: Set<number>
   incompleteModelIds: Set<number>
+  unavailableVersionIds: Set<number>
 }
 
 /** Filter membership only: no library metadata, preview checks or network work. */
 export function getBrowseCardState(): BrowseCardState {
   const database = getDb()
   const ids = (sql: string) => new Set((database.prepare(sql).all() as { version_id: number }[]).map(row => row.version_id))
+  const deferred = database.prepare('SELECT version_id, failure_kind FROM deferred_downloads').all() as
+    { version_id: number; failure_kind: string }[]
   const modelFlags = database.prepare(`
     SELECT model_id, 0 AS incomplete FROM banned_models
     UNION ALL SELECT model_id, 1 AS incomplete FROM incomplete_models
@@ -790,7 +793,8 @@ export function getBrowseCardState(): BrowseCardState {
     bannedIds: new Set(modelFlags.filter(row => !row.incomplete).map(row => row.model_id)),
     incompleteModelIds: new Set(modelFlags.filter(row => row.incomplete).map(row => row.model_id)),
     bannedVersionIds: getBannedVersionIds(),
-    awaitingVersionIds: ids('SELECT version_id FROM deferred_downloads')
+    awaitingVersionIds: new Set(deferred.filter(row => row.failure_kind !== 'not_found').map(row => row.version_id)),
+    unavailableVersionIds: new Set(deferred.filter(row => row.failure_kind === 'not_found').map(row => row.version_id))
   }
 }
 
@@ -798,7 +802,8 @@ export function getBrowseCardState(): BrowseCardState {
 export function refreshBrowseCardStates(cards: WatchRuleTestModel[]): WatchRuleTestModel[] {
   if (!cards.length) return cards
   const state = getBrowseCardState()
-  return cards.filter(card => !state.incompleteModelIds.has(card.id) && !isForgotten(card.id, card.versionId)).map(card => {
+  return cards.filter(card => !state.incompleteModelIds.has(card.id) &&
+    !state.unavailableVersionIds.has(card.versionId) && !isForgotten(card.id, card.versionId)).map(card => {
     const inInventory = state.ownedVersionIds.has(card.versionId)
     const isBanned = state.bannedIds.has(card.id) || state.bannedVersionIds.has(card.versionId)
     const isAwaitingAccess = state.awaitingVersionIds.has(card.versionId)
@@ -2559,6 +2564,12 @@ export function getAllDeferredDownloads(): DeferredDownload[] {
     .prepare('SELECT * FROM deferred_downloads ORDER BY deferred_at DESC')
     .all()
   return rows.map((r) => rowToDeferred(r as Record<string, unknown>)).filter(row => !isForgotten(row.modelId, row.versionId))
+}
+
+/** Known failed versions cannot be counted as pending access from stale Browse flags. */
+export function getUnavailableBrowseVersionIds(): Set<number> {
+  return new Set((getDb().prepare("SELECT version_id FROM deferred_downloads WHERE failure_kind = 'not_found'")
+    .all() as { version_id: number }[]).map(row => row.version_id))
 }
 
 export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCount' | 'deferredAt'> & {

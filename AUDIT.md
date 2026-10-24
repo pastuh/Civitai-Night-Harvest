@@ -482,3 +482,29 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   Praėjo 43 regresijų ir 33 bendrieji testai, SQLite/Electron patikros,
   abi TypeScript patikros ir production build. Paleidimo fixture su 1 000
   bibliotekos versijų: Browse narystė 1 ms, 4 SQL užklausos, 0 failų patikrų.
+
+## Awaiting skaitiklių apimtis — 2026-10-24
+
+- Browse katalogo Awaiting ir Early access All skaičiavo skirtingas aibes.
+  Browse apima tik esamas katalogo korteles; Early access apima visą dabartines
+  taisykles atitinkantį sąrašą, manual ir favorites versijas. Banned/paused
+  tikrinami prieš priskiriant Browse kortelę Awaiting kategorijai. Early access
+  All pagal numatytąsias Hide banned / Hide paused nuostatas jų taip pat nerodo.
+- Tik skaitymo diagnostika: 925 taisykles atitinkantys deferred įrašai,
+  686 atmesti pagal tagų politiką, 9 not-found, 230 tinkamų laukiančių versijų;
+  rankiniais banais pažymėtų versijų tarp šių 230 nebuvo. Anksčiau vartotojo
+  matytos 208 momentinės Browse būsenos DB neatkuria, todėl skirtumas 22 nėra
+  priskiriamas konkrečiai banų ar pause grupei.
+- Aptikta atskira klaida: not-found deferred narystė ir senas isEarlyAccess
+  požymis galėjo kartu išlaikyti kortelę Browse Awaiting skaičiuje. Tokios
+  versijos dabar pašalinamos prieš cache paskelbimą, iš siunčiamų puslapių,
+  renderer atvaizdavimo ir katalogo statistikos. Deferred įrašas išlieka
+  patikrinimui/retry; vien dėl statistikos nedaromas Ban ar Forget.
+- Užrašas pakeistas į Awaiting in Browse, pridėtas EN/LT paaiškinimas.
+  Bendras Early access pranešimas naudoja actionable kiekį, įskaitant owned
+  bei modelio/versijos banų patikrą, vietoje visų deferred eilučių skaičiaus.
+- SQLite testas tikrina tikrą access gate kartu su owned, manual Ban, paused
+  tag, banned tag ir stale not-found kortelėmis. Chromium abiejuose procesuose
+  patikrino Browse 1, Early access All 2 ir bendrą pranešimą 2; paused, banned
+  ir not-found įrašai skaičių nepadidino. Browse būsenai išliko 4 bendros SQL
+  užklausos ir 0 failų patikrų su 1 000 bibliotekos versijų.

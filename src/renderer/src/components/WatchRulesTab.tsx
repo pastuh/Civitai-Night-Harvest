@@ -178,6 +178,8 @@ interface Props {
   onBrowseViewPrefsChange?: (prefs: import('../view-prefs').BrowseViewPrefs) => void
   /** Session Yield — models that entered the download pipeline (only grows). */
   sessionYieldCount?: number
+  /** All actionable Early access versions, independent of the current Browse catalog. */
+  activeAwaitingCount?: number
   /** Skipped Updates version IDs — hidden on Browse unless Show skipped. */
   skippedPendingVersionIds?: Set<number>
   /** Forgotten Updates version IDs — always hidden on Browse. */
@@ -250,6 +252,7 @@ export function WatchRulesTab({
   browseViewPrefs,
   onBrowseViewPrefsChange,
   sessionYieldCount = 0,
+  activeAwaitingCount,
   skippedPendingVersionIds,
   bannedVersionIds,
   pendingUpdateVersionIds,
@@ -382,7 +385,11 @@ export function WatchRulesTab({
     activeRule
 
   const deferredVersionIds = useMemo(
-    () => new Set(deferred.map((d) => d.versionId)),
+    () => new Set(deferred.filter((d) => d.failureKind !== 'not_found').map((d) => d.versionId)),
+    [deferred]
+  )
+  const unavailableVersionIds = useMemo(
+    () => new Set(deferred.filter((d) => d.failureKind === 'not_found').map((d) => d.versionId)),
     [deferred]
   )
   const deferredWaitVersionIds = useMemo(
@@ -1063,7 +1070,8 @@ export function WatchRulesTab({
           nightMode={settings.nightMode ?? false}
           updateBrowseOnCrawl={settings.updateBrowseOnCrawl ?? false}
           showTagStats={settings.showTagStats ?? false}
-          deferredAwaitingCount={deferred.length}
+          deferredAwaitingCount={activeAwaitingCount ?? deferredVersionIds.size}
+          unavailableVersionIds={unavailableVersionIds}
           deferredVersionIds={deferredVersionIds}
           deferredWaitVersionIds={deferredWaitVersionIds}
           banFunctionMode={settings.banFunctionMode ?? false}

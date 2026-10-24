@@ -155,6 +155,30 @@ if (process.versions.electron) {
     assert.deepEqual(page([incompleteCard]), [], 'Known Incomplete rows must never reappear from stale Browse cache')
     inv.removeIncompleteModel(790)
     assert.equal(page([incompleteCard]).length, 1, 'Explicit Incomplete promotion restores Browse eligibility')
+    inv.upsertDeferredDownload({modelId: 791, versionId: 7911, modelName: 'Gone version', modelType: 'LORA',
+      reason: '404', failureKind: 'not_found', routingTag: '', outputFolder: '', lastAttemptAt: '2026-01-01'})
+    const staleUnavailable = {...card({modelId: 791, versionId: 7911}), inInventory: false, isEarlyAccess: true}
+    const browseState = inv.getBrowseCardState()
+    assert.equal(browseState.awaitingVersionIds.has(7911), false, 'Not found must never become an Awaiting member')
+    assert.equal(browseState.unavailableVersionIds.has(7911), true)
+    assert.deepEqual(page([staleUnavailable]), [], 'A stale EA flag cannot revive an unavailable version')
+    global.__downloadFixtureSettings = {hiddenTags: ['paused-fixture'], bannedTags: ['banned-fixture']}
+    try {
+      const stats = ScanScheduler.prototype.browseGalleryStats.call({getBrowseStatsSets: () => ({
+        ownedModelIds: new Set(), skippedPending: new Set(), bannedIds: new Set(), bannedVersions: new Set(),
+        tagSkipAllow: new Set()
+      })}, [staleUnavailable,
+        {...staleUnavailable, versionId: 7912, isBanned: true},
+        {...staleUnavailable, versionId: 7913, tags: ['paused-fixture']},
+        {...staleUnavailable, versionId: 7914, tags: ['banned-fixture']},
+        {...staleUnavailable, versionId: 7915, inInventory: true},
+        {...staleUnavailable, versionId: 7916}])
+      assert.equal(stats.awaiting, 1, 'Only the genuine access-gated version counts as Awaiting')
+      assert.equal(stats.excluded, 1)
+      assert.equal(stats.skipTag, 2)
+      assert.equal(stats.owned, 1)
+      assert.equal(stats.total, 5, 'Unavailable versions do not enter catalog totals')
+    } finally { delete global.__downloadFixtureSettings; inv.removeDeferredDownload(7911) }
     assert.equal(initial[0].inInventory, true, 'First Browse page knows ownership without loading Library metadata')
     assert.equal(initial[1].isBanned, true, 'Cached version Ban is applied before first render')
     assert.equal(initial[2].isBanned, true, 'Cached model Ban is applied before first render')

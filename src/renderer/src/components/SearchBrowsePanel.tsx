@@ -188,6 +188,7 @@ interface Props {
   showTagStats?: boolean
   deferredAwaitingCount?: number
   deferredVersionIds?: Set<number>
+  unavailableVersionIds?: Set<number>
   /** Deferred versions that will unlock for free (wait). */
   deferredWaitVersionIds?: Set<number>
   appStatus?: AppStatus
@@ -539,6 +540,7 @@ export function SearchBrowsePanel({
   showTagStats = false,
   deferredAwaitingCount = 0,
   deferredVersionIds,
+  unavailableVersionIds,
   deferredWaitVersionIds,
   appStatus = 'idle',
   uiExtended = false,
@@ -1345,8 +1347,8 @@ export function SearchBrowsePanel({
         list = [idLookupModel, ...list]
       }
     }
-    return list
-  }, [enrichedModels, browseRule, ruleKeywordExtras, result.crawlSource, idLookupModel])
+    return unavailableVersionIds?.size ? list.filter((m) => !unavailableVersionIds.has(m.versionId)) : list
+  }, [enrichedModels, browseRule, ruleKeywordExtras, result.crawlSource, idLookupModel, unavailableVersionIds])
 
   const ownedModelIds = useMemo(() => {
     const ids = new Set(ownedModelIdsFromInventory)
@@ -3387,7 +3389,7 @@ export function SearchBrowsePanel({
               </span>
             )}
             {catalogBreakdown.awaiting > 0 && (
-              <span className="browse-progress-legend-item">
+              <span className="browse-progress-legend-item" title={t('browse.barLegendAwaitingHint')}>
                 <span className="browse-progress-dot browse-progress-dot-awaiting" aria-hidden />
                 {t('browse.barLegendAwaiting')}{' '}
                 <strong className="browse-progress-legend-count">{catalogBreakdown.awaiting}</strong>

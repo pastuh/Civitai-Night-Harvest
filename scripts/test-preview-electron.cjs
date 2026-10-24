@@ -48,6 +48,7 @@ if (process.argv.includes('--model-actions')) {
       }
       const progressive = await window.webContents.executeJavaScript('window.runProgressivePreviewTest()')
       const filters = await window.webContents.executeJavaScript('window.runBrowseFilterTest()')
+      const awaitingCounts = await window.webContents.executeJavaScript('window.runAwaitingCountsTest()')
       const startup = await window.webContents.executeJavaScript('window.runFullStartupTest()')
       const yieldCounter = await window.webContents.executeJavaScript('window.runYieldCounterTest()')
       const strip = await window.webContents.executeJavaScript('window.runDownloadStripTest()')
@@ -61,6 +62,7 @@ if (process.argv.includes('--model-actions')) {
       result.strip = strip
       result.progressive = progressive
       result.filters = filters
+      result.awaitingCounts = awaitingCounts
       result.pages = pages
       result.missingLayout = missingLayout
       result.actions = actions
@@ -173,6 +175,7 @@ function rendererSource() {
     import App from './src/renderer/src/App';
     import { PreviewThumb } from './src/renderer/src/components/PreviewThumb';
     import { ModelDetailPage } from './src/renderer/src/components/ModelDetailPage';
+    import { DeferredTab } from './src/renderer/src/components/DeferredTab';
     import { setDownloadQueueState } from './src/renderer/src/hooks/useDownloadQueue';
     import { DEFAULT_SETTINGS } from './src/shared/types';
     const models = [1, 2, 3].map(id => ({ id: 100 + id, versionId: 200 + id,
@@ -595,6 +598,35 @@ function rendererSource() {
       setDownloadQueueState({items: [], paused: true});
       flushSync(() => root.render(<div />));
       return {forbiddenFrames, unhidden};
+    };
+    window.runAwaitingCountsTest = async () => {
+      const cards = [1, 2, 3, 4, 5].map(id => ({...models[0], id: 50000 + id, versionId: 60000 + id,
+        name: 'Awaiting audit ' + id, isEarlyAccess: true, isBanned: id === 2,
+        inInventory: id === 3, tags: id === 4 ? ['paused-audit'] : []}));
+      const deferred = [cards[0], cards[3], cards[4], {...cards[0], id: 50006, versionId: 60006}].map(card => ({
+        modelId: card.id, versionId: card.versionId, modelName: card.name, modelType: 'LORA',
+        baseModel: 'MOSS Image', civitaiTags: card.tags, routingTag: '', previewUrl: models[0].previewUrl,
+        failureKind: card.id === 50005 ? 'not_found' : 'early_access', reason: 'Access gate',
+        deferredAt: '2026-01-01', lastAttemptAt: '2026-01-01', outputFolder: ''}));
+      try {
+        flushSync(() => root.render(<WatchRulesTab {...props} deferred={deferred} activeAwaitingCount={2}
+          settings={{...props.settings, hiddenTags: ['paused-audit']}}
+          liveCrawlBrowse={{...result, sampleModels: [models[0], ...cards]}} />));
+        const legend = () => [...document.querySelectorAll('.browse-progress-legend-item')]
+          .find(el => el.textContent.includes('Awaiting in Browse'));
+        await waitFor(() => legend()?.querySelector('strong')?.textContent === '1', 'Browse Awaiting includes unavailable/banned/paused/owned versions');
+        if (!legend().title.includes('this Browse catalog')) throw new Error('Awaiting scope explanation missing');
+        if (!document.querySelector('.browse-deferred-notice')?.textContent.trim().startsWith('2 Early access')) throw new Error('Global Early access notice used raw deferred count');
+        if (document.querySelector('main')?.textContent.includes('Awaiting audit 5')) throw new Error('Not-found cache card remained in Browse');
+        const bannedTagRow = {...deferred[1], modelId: 50007, versionId: 60007, modelName: 'Banned tag audit', civitaiTags: ['banned-audit']};
+        flushSync(() => root.render(<DeferredTab deferred={[...deferred, bannedTagRow]} watchRules={rules}
+          domain="red" hasApiKey={false} hiddenTags={['paused-audit']} bannedTags={['banned-audit']}
+          onRefresh={async () => {}} />));
+        const all = () => [...document.querySelectorAll('button.sidebar-tag')].find(el =>
+          el.querySelector('.tag-name')?.textContent.trim() === 'All');
+        await waitFor(() => all()?.querySelector('.tag-count-inline')?.textContent === '2', 'Early access All included banned/paused/not-found rows');
+        return {browse: 1, earlyAccessAll: 2, globalNotice: 2, excludedNotFound: true};
+      } finally { flushSync(() => root.render(<div />)); }
     };
     window.runPageAudit = async () => {
       const currentSettings = await fixtureApi.getSettings();

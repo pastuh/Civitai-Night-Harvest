@@ -38,6 +38,12 @@ during this app session. Queued, awaiting, Missing, banned, blocked and failed
 attempts do not count. Linking an existing file or importing it through Sync does
 not count either. The counter starts at zero after restarting the app.
 
+**Awaiting in Browse** counts access-gated versions in the current Browse
+catalog, after ownership, Ban and tag-policy exclusions. **Early access → All**
+uses the full matching deferred list and its own Hide banned / Hide paused
+controls; it can include older, manually queued or favorited versions absent
+from Browse. Known not-found versions are excluded from Browse and Awaiting.
+
 Open the in-app **Help** tab for the full UI guide.
 
 Harvest checks the newest page of each enabled Browse rule immediately on startup.

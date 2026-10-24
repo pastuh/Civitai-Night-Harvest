@@ -278,11 +278,12 @@ export default function App() {
   const [liveCrawlBrowse, setLiveCrawlBrowse] = useState<WatchRuleTestResult | null>(null)
   const applyDeferredVersions = useCallback((items: DeferredDownload[]) => {
     setDeferred(items)
-    const ids = new Set(items.map(row => row.versionId))
+    const ids = new Set(items.filter(row => row.failureKind !== 'not_found').map(row => row.versionId))
+    const unavailable = new Set(items.filter(row => row.failureKind === 'not_found').map(row => row.versionId))
     setLiveCrawlBrowse(prev => {
       if (!prev?.sampleModels.length) return prev
-      let changed = false
-      const sampleModels = prev.sampleModels.map(row => {
+      let changed = prev.sampleModels.some(row => unavailable.has(row.versionId))
+      const sampleModels = prev.sampleModels.filter(row => !unavailable.has(row.versionId)).map(row => {
         const isAwaitingAccess = ids.has(row.versionId)
         if (Boolean(row.isAwaitingAccess) === isAwaitingAccess) return row
         changed = true
@@ -2254,6 +2255,7 @@ export default function App() {
     () =>
       deferred.filter((d) => {
         if (d.failureKind === 'not_found') return false
+        if (ownedVersionIds.has(d.versionId) || bannedModelIds.has(d.modelId) || bannedVersionIds.has(d.versionId)) return false
         if (!isDeferredVisibleInAwaitingTab(d, watchRules, eaFavoriteIds)) return false
         if (sessionBanModelIds.includes(d.modelId)) return false
         if (sessionPauseModelIds.includes(d.modelId)) return false
@@ -2276,7 +2278,10 @@ export default function App() {
       settings?.hiddenTags,
       settings?.bannedTags,
       settings?.allowHighPriorityTagBypass,
-      tagRules
+      tagRules,
+      ownedVersionIds,
+      bannedModelIds,
+      bannedVersionIds
     ]
   )
 
@@ -2836,6 +2841,7 @@ export default function App() {
               activity={activity}
               deferred={deferred}
               liveCrawlBrowse={liveCrawlBrowse}
+              activeAwaitingCount={actionableAwaiting.length}
               allowQuietBrowseCards={allowQuietBrowseCards}
               crawlPageMeta={crawlPageMeta}
               crawlProgress={crawlProgress}
