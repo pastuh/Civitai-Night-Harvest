@@ -774,15 +774,21 @@ export interface BrowseCardState {
   bannedIds: Set<number>
   bannedVersionIds: Set<number>
   awaitingVersionIds: Set<number>
+  incompleteModelIds: Set<number>
 }
 
 /** Filter membership only: no library metadata, preview checks or network work. */
 export function getBrowseCardState(): BrowseCardState {
   const database = getDb()
   const ids = (sql: string) => new Set((database.prepare(sql).all() as { version_id: number }[]).map(row => row.version_id))
+  const modelFlags = database.prepare(`
+    SELECT model_id, 0 AS incomplete FROM banned_models
+    UNION ALL SELECT model_id, 1 AS incomplete FROM incomplete_models
+  `).all() as { model_id: number; incomplete: number }[]
   return {
     ownedVersionIds: ids('SELECT version_id FROM versions'),
-    bannedIds: getBannedModelIds(),
+    bannedIds: new Set(modelFlags.filter(row => !row.incomplete).map(row => row.model_id)),
+    incompleteModelIds: new Set(modelFlags.filter(row => row.incomplete).map(row => row.model_id)),
     bannedVersionIds: getBannedVersionIds(),
     awaitingVersionIds: ids('SELECT version_id FROM deferred_downloads')
   }
@@ -792,7 +798,7 @@ export function getBrowseCardState(): BrowseCardState {
 export function refreshBrowseCardStates(cards: WatchRuleTestModel[]): WatchRuleTestModel[] {
   if (!cards.length) return cards
   const state = getBrowseCardState()
-  return cards.filter(card => !isForgotten(card.id, card.versionId)).map(card => {
+  return cards.filter(card => !state.incompleteModelIds.has(card.id) && !isForgotten(card.id, card.versionId)).map(card => {
     const inInventory = state.ownedVersionIds.has(card.versionId)
     const isBanned = state.bannedIds.has(card.id) || state.bannedVersionIds.has(card.versionId)
     const isAwaitingAccess = state.awaitingVersionIds.has(card.versionId)

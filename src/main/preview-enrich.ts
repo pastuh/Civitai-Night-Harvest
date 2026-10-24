@@ -19,12 +19,14 @@ import {
 } from './preview-cache'
 import * as inventory from './inventory'
 import { scrapeVersionIdFromModelPage } from './incomplete-resolve'
+import { groupPreviewImages } from '../shared/preview-gallery'
 
 export interface ResolvedPreview {
   modelId: number
   versionId: number
   previewUrl?: string
   previewUrls: string[]
+  previewImages?: string[][]
   videoPreviewUrl?: string
   videoPreviewUrls?: string[]
 }
@@ -189,7 +191,8 @@ export async function resolvePreviewsForModelWithFallback(
   contentFilter: ContentFilter = 'all',
   hints?: DownloadDomainHints,
   strictVersion = false,
-  pace: CivitaiPacePriority = 'background'
+  pace: CivitaiPacePriority = 'background',
+  allowCrossVersionFallback = true
 ): Promise<ResolvedPreview> {
   const mergedHints = hintsFromSeed(seed, hints)
   const domains = previewDomainsToTry(pool, preferredDomain, mergedHints)
@@ -210,7 +213,7 @@ export async function resolvePreviewsForModelWithFallback(
   }
 
   // EA / gated versions often ship with empty images[] — use another version's cover for display.
-  if (strictVersion) {
+  if (strictVersion && allowCrossVersionFallback) {
     for (const domain of domains) {
       const client = pool.forDomain(domain)
       last = await resolvePreviewsForModel(
@@ -324,13 +327,14 @@ export async function resolvePreviewsBatch(
     strictVersion?: boolean
     refreshCache?: boolean
     interactive?: boolean
+    gallery?: boolean
   }[],
   contentFilter: ContentFilter
 ): Promise<ResolvedPreview[]> {
   const results: ResolvedPreview[] = new Array(items.length)
   const pace: CivitaiPacePriority = items.some((i) => i.interactive) ? 'interactive' : 'background'
   await mapWithConcurrency(items, pace === 'interactive' ? 4 : 10, async (item, i) => {
-    if (!item.refreshCache && item.versionId > 0) {
+    if (!item.gallery && !item.refreshCache && item.versionId > 0) {
       const cached = inventory.getBrowseCardCache([item.versionId]).get(item.versionId)
       if (cached?.id === item.modelId) {
         const previewUrls = toDisplayPreviewUrls(cached.previewUrls?.length
@@ -352,9 +356,17 @@ export async function resolvePreviewsBatch(
       undefined,
       contentFilter,
       { nsfw: item.nsfw, nsfwLevel: item.nsfwLevel },
-      item.strictVersion === true,
-      pace
+      item.strictVersion === true || item.gallery === true,
+      pace,
+      !item.gallery
     )
+    if (item.gallery) {
+      results[i].previewImages = await Promise.all(
+        groupPreviewImages(results[i].previewUrls).map((sources) =>
+          resolveCachedPreviewUrls(sources, { deferDownload: true })
+        )
+      )
+    }
   })
   const forceVersionIds = new Set(
     items.filter((item) => item.refreshCache === true).map((item) => item.versionId)

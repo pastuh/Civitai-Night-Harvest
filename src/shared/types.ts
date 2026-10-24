@@ -810,6 +810,8 @@ export interface PreviewResolveRequest {
   refreshCache?: boolean
   /** User-visible fetch — bypass background harvest pacing queue. */
   interactive?: boolean
+  /** Full version gallery; bypass card cache and keep alternate image sources grouped. */
+  gallery?: boolean
 }
 
 export interface PreviewResolveResult {
@@ -817,6 +819,8 @@ export interface PreviewResolveResult {
   versionId: number
   previewUrl?: string
   previewUrls: string[]
+  /** One item per actual image; each item contains cache/CDN fallback sources. */
+  previewImages?: string[][]
   videoPreviewUrl?: string
   videoPreviewUrls?: string[]
 }

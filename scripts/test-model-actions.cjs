@@ -149,6 +149,12 @@ if (process.versions.electron) {
     const page = cards => buildWatchRuleTestResult(cards, {pageSize: cards.length, currentPage: 1},
       {modelTypes: [], baseModels: [], sortOptions: []}).sampleModels
     const initial = page(staleCards)
+    inv.upsertIncompleteModel({modelId: 790, modelName: 'Known incomplete', sourceDomain: 'red', tags: []})
+    const incompleteCard = {...card({modelId: 790, versionId: 7901}), inInventory: false}
+    assert.equal(inv.getBrowseCardState().incompleteModelIds.has(790), true)
+    assert.deepEqual(page([incompleteCard]), [], 'Known Incomplete rows must never reappear from stale Browse cache')
+    inv.removeIncompleteModel(790)
+    assert.equal(page([incompleteCard]).length, 1, 'Explicit Incomplete promotion restores Browse eligibility')
     assert.equal(initial[0].inInventory, true, 'First Browse page knows ownership without loading Library metadata')
     assert.equal(initial[1].isBanned, true, 'Cached version Ban is applied before first render')
     assert.equal(initial[2].isBanned, true, 'Cached model Ban is applied before first render')
@@ -159,6 +165,33 @@ if (process.versions.electron) {
     assert.equal(refreshed[1].isBanned, false)
     assert.equal(refreshed[2].isBanned, false)
     assert.equal(refreshed[3].isAwaitingAccess, false, 'Removed access gate does not stick in a cached card')
+    // Startup must check every enabled rule even while an earlier gallery is still busy.
+    const startupRules = ['startup-one', 'startup-two'].map(id => ({id, name: id, enabled: true,
+      modelType: 'LORA', contentFilter: 'all', query: '', baseModels: ''}))
+    global.__downloadFixtureRules = startupRules
+    global.__downloadFixtureSettings = {nightMode: true, backfillCatalog: true, newestPeekIntervalMinutes: 10}
+    let releaseGallery, timeout
+    const galleryGate = new Promise(resolve => releaseGallery = resolve)
+    const searched = [], emitted = []
+    const peekClient = {getDomain: () => 'red', searchModels: async () => {
+      searched.push(searched.length + 1); return {items: [], metadata: {pageSize: 100}}
+    }}
+    const peekContext = {downloadQueue: {isBusy: () => true}, pendingVersions: [], pendingChangeHandler: () => {},
+      pool: {forDomain: () => peekClient}, ruleSearchDomains: () => ['red'], crawlBrowseGalleryLength: () => 0,
+      crawlQueueOptions: () => ({queueEnabled: false, requireTagMatch: false}), scheduleFetchingStatus: () => {},
+      cancelPendingFetchingStatus: () => {}, log: () => {}, emitCrawlPage: rule => {emitted.push(rule.id); return galleryGate}}
+    try {
+      await Promise.race([
+        ScanScheduler.prototype.runRuleNewestPeeks.call(peekContext, startupRules, false,
+          {mode: 'startup', respectCooldown: false, requireCatalogDone: false}),
+        new Promise((_, reject) => timeout = setTimeout(() => reject(new Error('Startup API requests waited for gallery work')), 1000))
+      ])
+      assert.deepEqual(searched, [1, 2])
+      assert.deepEqual(emitted, startupRules.map(rule => rule.id))
+    } finally {
+      clearTimeout(timeout); releaseGallery()
+      delete global.__downloadFixtureRules; delete global.__downloadFixtureSettings
+    }
     // Exercise the actual SQLite/queue promotion path without starting a downloader.
     const future = new Date(Date.now() + 3600_000).toISOString()
     inv.upsertDeferredDownload({modelId: 80, versionId: 8001, modelName: 'Future gate', modelType: 'LORA',
@@ -557,7 +590,7 @@ if (process.versions.electron) {
       outfile: path.join(lab, 'actions.cjs'), plugins: [{ name: 'settings-fixture', setup(builder) {
         builder.onResolve({ filter: /^\.\/settings-store$/ }, () => ({ path: 'settings', namespace: 'fixture' }))
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents:
-          'exports.getSettings = () => ({ mediaCacheFolder: "", loraOutputFolder: "", checkpointOutputFolder: "", contentFilter: "all", hiddenTags: [], bannedTags: [], ...global.__downloadFixtureSettings }); exports.getTagRules = () => []; exports.getWatchRules = () => []; exports.getTagPolicyOptions = () => ({}); exports.shouldAutoQueue = () => false; exports.shouldCrawlAutoDownload = () => false', loader: 'js' }))
+          'exports.getSettings = () => ({ mediaCacheFolder: "", loraOutputFolder: "", checkpointOutputFolder: "", contentFilter: "all", hiddenTags: [], bannedTags: [], ...global.__downloadFixtureSettings }); exports.getTagRules = () => []; exports.getWatchRules = () => global.__downloadFixtureRules ?? []; exports.getTagPolicyOptions = () => ({}); exports.shouldAutoQueue = () => false; exports.shouldCrawlAutoDownload = () => false', loader: 'js' }))
       } }] })
     for (const args of [[], ['--restart']]) await new Promise((resolve, reject) => {
       const env = { ...process.env, MODEL_ACTIONS_TEST_DIR: work }; delete env.ELECTRON_RUN_AS_NODE

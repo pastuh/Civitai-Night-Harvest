@@ -298,11 +298,8 @@ export class RuleCrawler {
           await interruptibleCrawlerSleep(waitMs, () => this.stopRequested)
         }
 
-        if (!this.stopRequested) {
-          // Short gap only — was 2s and made "Page N → Page N+1" feel stuck (~20s with API).
-          // Rate limiting is already handled by CIVITAI_CRAWL_PACE_MS on the crawl lane.
-          await interruptibleCrawlerSleep(250, () => this.stopRequested)
-        }
+        // Continue immediately while a cursor remains. The shared crawl API lane
+        // already enforces pacing and HTTP retries; do not add a second page delay.
       }
 
       if (totalQueued > 0) {

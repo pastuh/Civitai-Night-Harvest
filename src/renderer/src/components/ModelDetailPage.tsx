@@ -39,6 +39,7 @@ import {
 } from '../../../shared/quality-tier-pair'
 import { useDownloadQueue } from '../hooks/useDownloadQueue'
 import { mapPreviewSrcs, previewSrcSame, toPreviewSrc } from '../utils/preview-src'
+import { groupPreviewImages, previewImageKey } from '../../../shared/preview-gallery'
 import { sanitizeCivitaiHtml } from '../../../shared/sanitize-html'
 import { TagAutocompleteInput } from './TagAutocompleteInput'
 
@@ -265,6 +266,7 @@ export function ModelDetailPage({
   const [confirmBan, setConfirmBan] = useState<'version' | 'all' | null>(null)
   const [downloadBusyIds, setDownloadBusyIds] = useState<Set<number>>(() => new Set())
   const [previewOverrides, setPreviewOverrides] = useState<Record<number, string[]>>({})
+  const [previewSources, setPreviewSources] = useState<Record<string, string[]>>({})
   const [previewIndex, setPreviewIndex] = useState(0)
   /** Original preview indices that failed to load — dropped from the carousel so you can
       navigate freely (no auto-skip trap when a dead URL sits between two valid ones). */
@@ -441,6 +443,7 @@ export function ModelDetailPage({
     setReloadToken(0)
     setBrokenIndexes(new Set())
     setPreviewOverrides({})
+    setPreviewSources({})
     setPreviewsFetchedVersions(new Set())
     setPreferredPreviewByVersion({})
     setPreviewSaveMessage(null)
@@ -1116,7 +1119,8 @@ export function ModelDetailPage({
               detail?.nsfwLevel ??
               displayDetail?.versions.find((v) => v.id === versionId)?.nsfwLevel,
             strictVersion: true,
-            interactive: true
+            interactive: true,
+            gallery: true
           }
         ],
         'all'
@@ -1127,25 +1131,37 @@ export function ModelDetailPage({
           : resolved?.previewUrl
             ? [resolved.previewUrl]
             : []
-      let ordered = urls
+      // Gallery slides are images, while cache/CDN alternatives stay within a slide.
+      const groups = resolved?.previewImages ?? groupPreviewImages(urls)
       const ownedRec =
         ownedSet.has(versionId)
           ? ownedRecords.find((r) => r.versionId === versionId) ??
             (libraryRecord?.versionId === versionId ? libraryRecord : null)
           : null
-      const savedPref =
+      const remotePref = await window.api.getPreferredPreviewUrl(versionId)
+      const savedPref = remotePref ??
         preferredPreviewByVersion[versionId] ??
         (ownedRec?.previewPath
           ? toPreviewSrc(ownedRec.previewPath)
-          : undefined) ??
-        (await window.api.getPreferredPreviewUrl(versionId))
+          : undefined)
+      let preferredGroup = -1
       if (savedPref?.trim()) {
         setPreferredPreviewByVersion((prev) => ({
           ...prev,
           [versionId]: toPreviewSrc(savedPref)
         }))
-        ordered = [savedPref, ...urls.filter((u) => !previewSrcSame(u, savedPref))]
+        preferredGroup = groups.findIndex((sources) => sources.some((u) =>
+          previewSrcSame(u, savedPref) || previewImageKey(u) === previewImageKey(savedPref)))
       }
+      if (preferredGroup > 0) groups.unshift(...groups.splice(preferredGroup, 1))
+      const sourcesByImage: Record<string, string[]> = {}
+      const ordered = groups.map((sources, index) => {
+        const image = sources.find((u) => /^https?:\/\//i.test(u)) ?? sources[0]
+        sourcesByImage[image] = index === 0 && preferredGroup >= 0 && ownedRec?.previewPath
+          ? [ownedRec.previewPath, ...sources] : sources
+        return image
+      }).filter(Boolean)
+      setPreviewSources((prev) => ({ ...prev, ...sourcesByImage }))
       applyVersionPreviews(versionId, ordered)
       if (resolved?.videoPreviewUrl || resolved?.videoPreviewUrls?.length) {
         setDetail((d) => {
@@ -1166,7 +1182,7 @@ export function ModelDetailPage({
       }
       setBrokenIndexes(new Set())
       setPreviewEpoch((n) => n + 1)
-      if (!urls.length) {
+      if (!groups.length) {
         setPreviewSaveMessage(t('modelDetail.noVersionPreviews'))
       }
     } catch (err) {
@@ -1192,8 +1208,8 @@ export function ModelDetailPage({
     const out: string[] = []
     const remember = (url?: string) => {
       const trimmed = url?.trim()
-      if (!trimmed || seen.has(trimmed) || !isDisplayablePreviewUrl(trimmed)) return
-      seen.add(trimmed)
+      if (!trimmed || seen.has(previewImageKey(trimmed)) || !isDisplayablePreviewUrl(trimmed)) return
+      seen.add(previewImageKey(trimmed))
       out.push(trimmed)
     }
     for (const url of validPreviewUrls) remember(url)
@@ -1294,14 +1310,17 @@ export function ModelDetailPage({
         if (result.record.previewPath) {
           setPreferredPreviewByVersion((prev) => ({
             ...prev,
-            [activeVersionId]: toPreviewSrc(record.previewPath)
+            [activeVersionId]: selectedPreviewUrl as string
           }))
         }
         const all = validPreviewUrls.length
           ? [...validPreviewUrls]
           : [selectedPreviewUrl as string]
+        setPreviewSources((prev) => ({ ...prev,
+          [selectedPreviewUrl as string]: [diskSrc, ...(prev[selectedPreviewUrl as string] ?? [selectedPreviewUrl as string])]
+        }))
         const reordered = [
-          diskSrc,
+          selectedPreviewUrl as string,
           ...all.filter(
             (u) => !previewSrcSame(u, selectedPreviewUrl as string) && !previewSrcSame(u, diskSrc)
           )
@@ -1817,7 +1836,7 @@ export function ModelDetailPage({
                           }}
                         >
                           <PreviewThumb
-                            urls={[url]}
+                            urls={previewSources[url] ?? [url]}
                             className="model-detail-all-preview-thumb"
                             loading="lazy"
                           />
@@ -1832,7 +1851,7 @@ export function ModelDetailPage({
                 ) : (
                   <PreviewThumb
                     key={`detail-preview-${activeVersionId}-${previewEpoch}-${ownedRecordForActive?.previewPath ?? ''}`}
-                    urls={previewCount ? [selectedPreviewUrl as string] : []}
+                    urls={previewCount ? previewSources[selectedPreviewUrl as string] ?? [selectedPreviewUrl as string] : []}
                     className="preview-modal-img model-detail-preview-img"
                     loading="eager"
                     onError={handlePreviewError}

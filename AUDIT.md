@@ -1,4 +1,4 @@
-# Aplikacijos auditas — 2026-10-23
+# Aplikacijos auditas — 2026-10-24
 
 Peržiūrėtas paleidimas, modelių sąrašų paruošimas, preview gavimas ir cache,
 siuntimo srautai, bibliotekos atnaujinimas ir puslapių veiksmai. Puslapių
@@ -441,3 +441,44 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   klaidas, modelio/preview/Swarm fazes, dvigubą IPC, pruned queue ir tuščią Browse.
 - Praėjo 40 regresijų ir 33 bendrieji testai, tikri izoliuoti siuntimai/SQLite,
   abu atskiri Chromium procesai, abi TypeScript patikros ir production build.
+
+## Papildoma skenavimo ir galerijos patikra — 2026-10-24
+
+- Paleidimo metu tikrinamas kiekvienos įjungtos Browse taisyklės pirmas API
+  puslapis, nelaukiant newest-peek intervalo. Tai nėra visų Civitai base modelių
+  paieška. Dabartiniame profilyje abi įjungtos taisyklės jau turi užbaigtą
+  katalogo perėjimą ir neturi likusių cursor; po pradinio patikrinimo naujienos
+  tikrinamos nustatytu 10 min. intervalu. Pilnas bibliotekos Sync paleidimo
+  metu nevykdomas; bibliotekos versijų foninė patikra atidėta 45 s.
+- Nebaigto katalogo puslapiai tęsiami ir kai neaptinkama naujų siuntimų.
+  Pašalinta perteklinė 250 ms pauzė; bendras 200 ms API užklausų pradžios
+  intervalas ir klaidų/retry pauzės išliko. Pradinis kelių taisyklių patikrinimas
+  nebelaukia ankstesnės taisyklės vietinio galerijos/cache paruošimo.
+- Modelio #3018265 / versijos #3426831 įraše rasti trys paveikslėlių CDN asset
+  ID ir papildomi disk-cache adresai. Plokščias fallback adresų sąrašas buvo
+  klaidingai naudojamas kaip galerijos skaidrių sąrašas. Load previews dabar
+  gauna pilną pasirinktos versijos galeriją, nesinaudoja daliniu kortelės
+  sąrašu, grupuoja cache/CDN šaltinius ir nesiskolina kitos versijos paveikslų.
+  Išsaugotas Library viršelis nepridedamas kaip papildoma galerijos skaidrė.
+- Preview navigacija ir All tinklelis naudoja tikrą paveikslėlių skaičių;
+  alternatyvūs to paties Civitai asset transformai turi bendrą tapatybę.
+  Kiekvienas paveikslas išlaiko vietinį ir nuotolinius atsarginius šaltinius.
+  Preview išsaugojimas taip pat nekeičia galerijos paveikslų skaičiaus.
+- Naujas modelis be versijos jau buvo nukreipiamas į Incomplete prieš kuriant
+  Browse kortelę. Tačiau senas jo Browse cache įrašas galėjo pasirodyti po
+  restarto. Žinomi Incomplete ID dabar pašalinami prieš cache kortelių
+  paskelbimą ir prieš siunčiant Browse puslapius. Narystė skaitoma kartu su
+  Ban ID, išlaikant 4 bendras SQL užklausas ir nulį bibliotekos failų patikrų.
+  Tai neįrodo, kad kiekviena pradingstanti kortelė pateko į Incomplete:
+  pilnas siuntimo patikrinimas dar gali nustatyti neprieinamą versiją ar
+  prieigos ribojimą, kurio nebuvo paieškos atsakyme.
+- Regresijos tikrina tris puslapius be naujų siuntimų, lėtą galerijos callback,
+  dvi pradinio tikrinimo taisykles, Incomplete cache atranką, cache/CDN grupes
+  ir griežtą versijos galeriją. Chromium testas dviejuose procesuose tikrina
+  1/3 → 2/3 → 3/3, atsarginį šaltinį, All tinklelio tris paveikslus ir preview
+  išsaugojimą be skaitiklio padidėjimo; antras procesas nesiunčia paveikslų.
+  Patikros naudoja izoliuotas duomenų bazes ir failus, nekeičia naudotojo
+  bibliotekos ir nepaleidžia tikro modelių Sync.
+  Praėjo 43 regresijų ir 33 bendrieji testai, SQLite/Electron patikros,
+  abi TypeScript patikros ir production build. Paleidimo fixture su 1 000
+  bibliotekos versijų: Browse narystė 1 ms, 4 SQL užklausos, 0 failų patikrų.

@@ -1,3 +1,5 @@
+import { previewImageKey } from '../../../shared/preview-gallery'
+
 /** Map a preview path/URL for display in <img> / media:///C:/... protocol. */
 export function toPreviewSrc(url: string): string {
   const trimmed = url?.trim()
@@ -23,5 +25,5 @@ export function mapPreviewSrcs(urls: string[]): string[] {
 export function previewSrcSame(a: string, b: string): boolean {
   const left = toPreviewSrc(a)
   const right = toPreviewSrc(b)
-  return Boolean(left && right && left === right)
+  return Boolean(left && right && previewImageKey(left) === previewImageKey(right))
 }

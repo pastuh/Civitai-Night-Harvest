@@ -44,6 +44,87 @@ const version = { id: 3416068, name: 'Moss v1 v1.0', baseModel: 'MOSS Image',
   createdAt: '', files: [], images: [{ url: image, type: 'image', nsfwLevel: 1 }] }
 const model = { id: 2857958, name: 'Alt Insta Feed', type: 'LORA', modelVersions: [version] }
 
+test('Gallery identity merges only transforms of the same Civitai asset', async () => {
+  const {groupPreviewImages} = await load('src/shared/preview-gallery.ts')
+  const {previewSrcSame} = await load('src/renderer/src/utils/preview-src.ts')
+  const image = 'https://image.civitai.com/token/fa86d694-686f-4b0f-9578-748afcef0aae/width=450/cover.jpeg'
+  const alternate = image.replace('width=450', 'original=true')
+  assert.deepEqual(groupPreviewImages([image, alternate, image]), [[image, alternate]])
+  assert.equal(previewSrcSame(image, alternate), true)
+  const other = image.replace('fa86d694', 'fa86d695')
+  assert.equal(groupPreviewImages([image, other]).length, 2)
+  assert.equal(previewSrcSame(image, other), false)
+  assert.equal(groupPreviewImages(['https://example.test/a.jpg', 'https://example.test/b.jpg']).length, 2)
+})
+
+test('Details gallery counts actual images, bypasses polluted card cache, and preserves cache/CDN fallbacks', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-gallery-'))
+  globalThis.__previewCacheDir = directory
+  const urls = ['fa86d694-686f-4b0f-9578-748afcef0aae', '1f106fc8-72bf-45c0-9d7f-70cc24acabd5',
+    'df3702e0-649a-47a2-b3a7-b17b6ef84235'].map((id, i) => `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${id}/width=450/${i}.jpeg`)
+  const saved = path.join(directory, require('node:crypto').createHash('sha256').update(urls[0]).digest('hex') + '.jpg')
+  fs.writeFileSync(saved, Buffer.alloc(256))
+  const old = global.__previewInventory
+  global.__previewInventory = {...old, getBrowseCardCache: () => {throw new Error('Gallery must not reuse a card fallback list')}}
+  try {
+    const {resolvePreviewsBatch} = await load('src/main/preview-enrich.ts', {
+      inventory: 'module.exports = globalThis.__previewInventory',
+      'incomplete-resolve': 'exports.scrapeVersionIdFromModelPage = async () => null'
+    })
+    let calls = 0
+    const client = {getModelVersion: async () => {calls++; return {...version, images: urls.map(url => ({url}))}}}
+    const pool = {forDomain: () => client, getSetting: () => 'red'}
+    const request = {modelId: 3018265, versionId: 3426831, gallery: true, strictVersion: true, interactive: true}
+    const [result] = await resolvePreviewsBatch(pool, [request], 'all')
+    assert.equal(calls, 1)
+    assert.equal(result.previewImages.length, 3)
+    assert.deepEqual(result.previewImages[0], [saved, urls[0], urls[0].replace('width=450', 'original=true')])
+    assert.ok(result.previewUrls.length > 3, 'Card fallback URLs remain available independently of gallery count')
+    client.getModelVersion = async () => ({...version, images: []})
+    client.searchImagesForVersion = async () => []
+    client.getModel = async () => {throw new Error('Strict gallery must not borrow another version cover')}
+    const [empty] = await resolvePreviewsBatch(pool, [request], 'all')
+    assert.deepEqual(empty.previewImages, [])
+  } finally {
+    global.__previewInventory = old
+    fs.rmSync(directory, {recursive: true, force: true})
+  }
+})
+
+test('Catalog pages with nothing new follow the cursor immediately without waiting for gallery work', async () => {
+  const calls = [], timers = [], cursors = [], gallery = deferred()
+  globalThis.__crawlerPageFixture = async (...args) => {
+    calls.push(args[4])
+    const page = {queued: 0, newModels: 0, newVersions: 0, upToDate: 100, errors: [],
+      rawModels: [], sampleModels: [], pageModels: 100, nextCursor: calls.length < 3 ? `cursor-${calls.length}` : undefined}
+    return {combined: page, backfill: page}
+  }
+  globalThis.__crawlerCursorFixture = (...args) => cursors.push(args)
+  const {RuleCrawler} = await load('src/main/rule-crawler.ts', {
+    'settings-store': 'exports.getSettings = () => ({backfillCatalog: true}); exports.shouldCrawlAutoDownload = () => false',
+    'crawl-state': `exports.getCrawlCursor = () => null; exports.setCrawlCursor = (...args) => globalThis.__crawlerCursorFixture(...args);
+      exports.setBackfillPage = () => {}; exports.incrementCatalogPass = () => 1;
+      exports.isCatalogBackfillDone = () => false; exports.clearLegacyUnscopedCursor = () => {}`,
+    'rule-queue': 'exports.runDualRulePageCheck = (...args) => globalThis.__crawlerPageFixture(...args)'
+  })
+  const originalTimer = global.setTimeout
+  global.setTimeout = (...args) => {timers.push(args[1]); return originalTimer(...args)}
+  try {
+    const summary = await new RuleCrawler().crawlRule({getDomain: () => 'red'}, {},
+      {id: 'rule', name: 'Fixture', enabled: true}, {queue: {}, continuous: false, onCrawlPage: () => gallery.promise}, () => {})
+    assert.deepEqual(calls, [undefined, 'cursor-1', 'cursor-2'])
+    assert.equal(summary.pagesProcessed, 3)
+    assert.equal(summary.reachedEnd, true)
+    assert.equal(summary.totalQueued, 0)
+    assert.deepEqual(timers, [], 'API pacing belongs to the API lane; no additional page sleeps')
+    assert.equal(cursors.at(-1)[1], null, 'End of catalog clears the cursor')
+  } finally {
+    global.setTimeout = originalTimer
+    gallery.resolve()
+    delete globalThis.__crawlerPageFixture; delete globalThis.__crawlerCursorFixture
+  }
+})
+
 test('Full Sync keeps existing previews without API requests and repairs only missing covers', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-sync-previews-'))
   const calls = {resolve: 0, image: 0, model: 0, added: 0}

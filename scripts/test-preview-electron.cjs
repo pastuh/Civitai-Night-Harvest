@@ -54,6 +54,7 @@ if (process.argv.includes('--model-actions')) {
       const pages = await window.webContents.executeJavaScript('window.runPageAudit()')
       const missingLayout = await window.webContents.executeJavaScript('window.runMissingAllowLayoutTest()')
       const actions = await window.webContents.executeJavaScript('window.runModelActionsUiTest()')
+      const gallery = await window.webContents.executeJavaScript('window.runDetailsGalleryTest()')
       const result = await window.webContents.executeJavaScript('window.runPreviewBrowserTest()')
       result.startup = startup
       result.yieldCounter = yieldCounter
@@ -63,6 +64,7 @@ if (process.argv.includes('--model-actions')) {
       result.pages = pages
       result.missingLayout = missingLayout
       result.actions = actions
+      result.gallery = gallery
       result.replacement = await window.webContents.executeJavaScript('window.runReplacementTest()')
       result.warnings = global.__rendererWarnings
       result.downloads = global.__previewFixtureDownloads
@@ -170,6 +172,7 @@ function rendererSource() {
     import { WatchRulesTab } from './src/renderer/src/components/WatchRulesTab';
     import App from './src/renderer/src/App';
     import { PreviewThumb } from './src/renderer/src/components/PreviewThumb';
+    import { ModelDetailPage } from './src/renderer/src/components/ModelDetailPage';
     import { setDownloadQueueState } from './src/renderer/src/hooks/useDownloadQueue';
     import { DEFAULT_SETTINGS } from './src/shared/types';
     const models = [1, 2, 3].map(id => ({ id: 100 + id, versionId: 200 + id,
@@ -804,6 +807,49 @@ function rendererSource() {
       const expected = [{modelId:501,versionId:601},{modelId:501},{modelId:502,versionId:605},{modelId:901},{modelId:701,versionId:801},{modelId:2857958},{modelId:101,versionId:201}];
       if (JSON.stringify(forgetRequests) !== JSON.stringify(expected)) throw new Error('Wrong Forget scopes: ' + JSON.stringify(forgetRequests));
       return {forgotten: forgetRequests, versionBanRetainedOwnedCard: true, unbanAllowsDownload: true};
+    };
+    window.runDetailsGalleryTest = async () => {
+      const oldResolve = fixtureApi.resolvePreviewBatch, oldPref = fixtureApi.getPreferredPreviewUrl;
+      const oldSave = fixtureApi.setPreviewFromUrl;
+      const images = models.map(model => model.previewUrl);
+      const record = {modelId: 3018265, versionId: 3426831, modelName: 'Gallery audit', versionName: 'v1',
+        modelType: 'LORA', baseModel: 'MOSS Image', modelPath: 'fixture.safetensors', previewPath: images[0],
+        outputFolder: '', slug: 'fixture', downloadedAt: '2026-01-01'};
+      let galleryRequests = 0, saved = false;
+      fixtureApi.resolvePreviewBatch = async ([request]) => {
+        if (!request.gallery || !request.strictVersion) throw new Error('Details must request a complete version gallery');
+        galleryRequests++;
+        return [{modelId: record.modelId, versionId: record.versionId,
+          previewUrls: [record.previewPath, ...images, ...images.map(url => url.replace('width=450', 'original=true'))],
+          previewImages: images.map(url => ['media:///missing-cover.png', url])}];
+      };
+      fixtureApi.getPreferredPreviewUrl = async () => images[0];
+      fixtureApi.setPreviewFromUrl = async () => {saved = true; return {savedToLibrary: true, record: {...record, previewPath: images[1]}};};
+      try {
+        flushSync(() => root.render(<ModelDetailPage target={{kind: 'library', record}} ownedRecords={[record]}
+          ownedVersionIds={[record.versionId]} onClose={() => {}} />));
+        await waitFor(() => [...document.querySelectorAll('.model-detail-page button')].some(el => el.textContent.trim() === 'Load previews'), 'Load previews missing');
+        [...document.querySelectorAll('.model-detail-page button')].find(el => el.textContent.trim() === 'Load previews').click();
+        const count = () => document.querySelector('.model-detail-preview-count')?.textContent.replaceAll(' ', '').trim();
+        await waitFor(() => count() === '1/3', 'Fallback aliases/local cover inflated the gallery count');
+        const next = () => [...document.querySelectorAll('.model-detail-preview-nav button')].find(el => el.textContent.trim() === '→');
+        next().click();
+        await waitFor(() => count() === '2/3', 'Second logical image missing');
+        await waitFor(() => document.querySelector('img.model-detail-preview-img')?.naturalWidth > 0, 'Cache failure did not fall back to CDN');
+        const save = [...document.querySelectorAll('.model-detail-page button')].find(el => el.textContent.trim() === 'Use as preview');
+        if (!save) throw new Error('Save preview button missing');
+        save.click();
+        await waitFor(() => saved && count() === '1/3', 'Saving a library cover changed the logical image count');
+        next().click(); await waitFor(() => count() === '2/3', 'Second image missing after save');
+        next().click(); await waitFor(() => count() === '3/3' && next().disabled, 'Gallery did not end at three images');
+        [...document.querySelectorAll('.model-detail-preview-tabs button')].find(el => el.textContent.trim() === 'All').click();
+        await waitFor(() => document.querySelectorAll('.model-detail-all-preview-cell').length === 3, 'All grid duplicated gallery sources');
+        return {images: 3, galleryRequests, fallbackWorks: true, saveKeepsCount: true};
+      } finally {
+        fixtureApi.resolvePreviewBatch = oldResolve; fixtureApi.getPreferredPreviewUrl = oldPref;
+        fixtureApi.setPreviewFromUrl = oldSave;
+        flushSync(() => root.render(<div />));
+      }
     };
     window.runReplacementTest = async () => {
       const oldUrl = models[0].previewUrl;

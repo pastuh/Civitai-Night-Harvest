@@ -431,7 +431,7 @@ export class ScanScheduler {
     }
 
     const { bannedIds, bannedVersionIds: bannedVersions, ownedVersionIds: ownedVersions,
-      awaitingVersionIds } = inventory.getBrowseCardState()
+      awaitingVersionIds, incompleteModelIds } = inventory.getBrowseCardState()
     let total = 0
     let globalCache: WatchRuleTestModel[] | null = null
 
@@ -467,7 +467,7 @@ export class ScanScheduler {
         continue
       }
 
-      const flagged = cards.map((m) => ({
+      const flagged = cards.filter((m) => !incompleteModelIds.has(m.id)).map((m) => ({
         ...m,
         inInventory: m.inInventory || ownedVersions.has(m.versionId),
         isAwaitingAccess: awaitingVersionIds.has(m.versionId),
@@ -3289,7 +3289,12 @@ export class ScanScheduler {
             }
           )
           this.cancelPendingFetchingStatus()
-          await this.emitCrawlPage(rule, 1, combined, 'night', client, false)
+          // As with cursor pages, local gallery/cache work must not delay the
+          // next rule's API request. emitCrawlPage guards generation/status races.
+          void this.emitCrawlPage(rule, 1, combined, 'night', client, false).catch((err) => {
+            this.log('warn', `Could not update Browse gallery: ${err instanceof Error ? err.message : String(err)}`,
+              rule.id, { source: 'crawl' })
+          })
           if (combined.queued > 0) {
             this.log(
               'info',

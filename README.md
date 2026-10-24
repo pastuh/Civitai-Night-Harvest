@@ -40,6 +40,17 @@ not count either. The counter starts at zero after restarting the app.
 
 Open the in-app **Help** tab for the full UI guide.
 
+Harvest checks the newest page of each enabled Browse rule immediately on startup.
+Unfinished catalogs then continue through their saved cursors without an extra
+page delay; API pacing and retry backoff still apply. Completed catalogs use the
+configured newest-page interval instead of repeating the entire catalog. Library
+Sync and background preview work do not gate these search requests.
+
+In model details, **Load previews** loads the selected version's gallery. The
+counter counts actual images, grouping local cache and alternate CDN addresses
+as fallback sources for the same image. The saved Library cover is shown before
+loading the gallery and does not add another gallery slide.
+
 ---
 
 ## Header controls
