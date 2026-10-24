@@ -370,3 +370,41 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   bendrieji testai, abiejų Electron procesų puslapių/preview patikros,
   TypeScript ir production build. 1 000 versijų Browse būsena: 1 ms,
   4 SQL užklausos, 0 failų patikrų. Testai vartotojo profilio nekeitė.
+
+## Swarm metaduomenys ir netinkamų siuntimų taisymas — 2026-10-24
+
+- Civitai `metadata.size = full/pruned` buvo klaidingai rašoma į
+  `modelspec.resolution`. SwarmUI šį lauką skaito kaip du sveikuosius pikselių
+  matmenis. Nauji metaduomenys priima tik teigiamą `plotisxaukštis` reikšmę;
+  nežinoma rezoliucija neįrašoma. Failo variantas lieka atskiru metaduomeniu.
+- Esamus klaidingus resolution laukus taiso Settings → Sync library from disk,
+  išsaugodamas kitus JSON laukus ir nekeisdamas svorių. Tam nereikia Civitai API.
+  Inventoriuje normalizuojamos ir senos netinkamos resolution reikšmės.
+- Single ir multipart siuntimas tikrina `.safetensors` antraštę, UTF-8 JSON,
+  metaduomenų tipus ir vientisus tenzorių intervalus prieš galutinį rename.
+  Fragmentuotas HTML atmetamas ir kitų svorių formatų siuntimuose. Netinkamas
+  atsakymas nepakeičia jau esamo gero failo; laikinas failas išvalomas.
+- Kai Civitai pateikia SHA256, naujo siuntimo turinys privalo su juo sutapti.
+  Naudojamas ribotos atminties srautas, o ne viso modelio buferis. Be Civitai
+  etalono SHA256 neskaičiuojamas. Automatinis Sync hash/backfill ir vietinių
+  modelių fingerprinting pašalinti iš vykdymo kelio. Rankinė Verify hashes
+  tikrina tik atpažintus Civitai modelius su pateikta kontroline suma; etaloną
+  gauna pagal versijos ID. By-hash užklausų metodai pašalinti iš API kliento.
+- Pilnas Sync tikrina esamų svorių turinį, o ne sprendžia pagal mažą dydį.
+  Įrodytai netinkamas failas nebelaikomas owned, paliekama `.invalid-*` kopija
+  ir tinkama Civitai versija įtraukiama į įprastą siuntimo eilę. Nesėkmė ar
+  nebepasiekiama versija owned būsenos neatkuria. Ban, Forget ir Pause lieka
+  atskiros funkcijos; jų ribojimų taisymas neapeina.
+- Užrakintas netinkamas originalas nesustabdo owned būsenos pašalinimo.
+  Pakaitalas gali būti siunčiamas kitu laisvu pavadinimu; originalo perkėlimo
+  klaida išlieka Activity. Neįskaitomas/offline failas nėra įrodytas sugadinimas.
+  Importas ir adoption negali neteisingo failo vėl pažymėti turimu.
+- Patikros vykdomos tik pagal poreikį; paleidimui nepridėtas bibliotekos failų
+  skaitymas. Sync tarp failų atiduoda vykdymą įvykių ciklui. Testai naudoja
+  izoliuotus profilius, SQLite ir vietinį HTTP serverį; tikra biblioteka bus
+  taisoma naudotojui paleidus Sync.
+- Praėjo 39 regresijų ir 33 bendrieji testai, SQLite/modelių veiksmai ir
+  restarto patikra, single/multipart siuntimai bei SHA256 neatitikimai,
+  abiejų Electron procesų sąsajos/preview patikros, abi TypeScript patikros
+  ir production build. 96 MiB siuntimui naudota apie 19 MiB JS buferių.
+  1 000 versijų Browse būsena: 1 ms, 4 SQL užklausos, 0 failų patikrų.

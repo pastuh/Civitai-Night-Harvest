@@ -1,8 +1,10 @@
-import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, type WriteStream } from 'fs'
+import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, type WriteStream } from 'fs'
+import { createHash } from 'node:crypto'
 import { dirname } from 'path'
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { isRetryableNetworkError, sleep, withNetworkRetry } from '../shared/network-retry'
+import { validateModelFile } from './model-file-validation'
 const WRITE_HIGH_WATER_MARK = 4 * 1024 * 1024
 const RANGE_HIGH_WATER_MARK = 256 * 1024
 const MULTIPART_MIN_BYTES = 2 * 1024 * 1024
@@ -32,7 +34,20 @@ export type DownloadTransferMode = 'multipart' | 'single'
 
 export interface DownloadOptions {
   streams?: number
+  expectedSha256?: string
   onMode?: (info: { mode: DownloadTransferMode; streams: number }) => void
+}
+
+async function validateDownloadedFile(tmpPath: string, destPath: string, expectedSha256?: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  validateModelFile(tmpPath, destPath)
+  if (expectedSha256) {
+    if (!/^[a-f0-9]{64}$/i.test(expectedSha256)) throw new Error('Invalid expected SHA256 from Civitai')
+    const hash = createHash('sha256')
+    for await (const chunk of createReadStream(tmpPath, { highWaterMark: 1024 * 1024, signal })) hash.update(chunk)
+    if (hash.digest('hex').toLowerCase() !== expectedSha256.toLowerCase()) throw new Error('Downloaded file SHA256 does not match Civitai — file rejected')
+  }
+  signal?.throwIfAborted()
 }
 
 export interface DownloadFileResult {
@@ -166,7 +181,8 @@ async function downloadMultipart(
   total: number,
   streams: number,
   onProgress?: (received: number, total: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  expectedSha256?: string
 ): Promise<void> {
   const tmpPath = `${destPath}.tmp`
   if (existsSync(tmpPath)) unlinkSync(tmpPath)
@@ -210,6 +226,7 @@ async function downloadMultipart(
       throw new Error(`Multipart incomplete: ${received} of ${total} bytes`)
     }
     onProgress?.(total, total)
+    await validateDownloadedFile(tmpPath, destPath, expectedSha256, signal)
     succeeded = true
   } finally {
     controller.abort()
@@ -236,7 +253,8 @@ async function downloadSingle(
   destPath: string,
   headers: Record<string, string>,
   onProgress?: (received: number, total: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  expectedSha256?: string
 ): Promise<void> {
   const tmpPath = `${destPath}.tmp`
   if (existsSync(tmpPath)) unlinkSync(tmpPath)
@@ -322,6 +340,7 @@ async function downloadSingle(
       await closeOutput(fileStream)
     }
 
+    await validateDownloadedFile(tmpPath, destPath, expectedSha256, signal)
     if (existsSync(destPath)) unlinkSync(destPath)
     renameSync(tmpPath, destPath)
   } catch (err) {
@@ -380,7 +399,7 @@ async function downloadToFileOnce(
 
         if (probe.ranged && total >= MULTIPART_MIN_BYTES && streams > 1) {
           options.onMode?.({ mode: 'multipart', streams })
-          await downloadMultipart(url, destPath, fetchHeaders, total, streams, onProgress, signal)
+          await downloadMultipart(url, destPath, fetchHeaders, total, streams, onProgress, signal, options.expectedSha256)
           return { mode: 'multipart', streams }
         }
         break
@@ -399,6 +418,6 @@ async function downloadToFileOnce(
   }
 
   options.onMode?.({ mode: 'single', streams: 1 })
-  await downloadSingle(url, destPath, fetchHeaders, onProgress, signal)
+  await downloadSingle(url, destPath, fetchHeaders, onProgress, signal, options.expectedSha256)
   return { mode: 'single', streams: 1 }
 }

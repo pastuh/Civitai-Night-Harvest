@@ -6,7 +6,8 @@ import * as inventory from './inventory'
 import { importModelsFromDisk } from './disk-import'
 import { fetchFirstWorkingPreview } from './preview-fetch'
 import { resolvePreviewsForModelWithFallback } from './preview-enrich'
-import { buildSwarmJson, buildUsageHint, hasHardcodedLoraStrengthHint } from './swarm-json'
+import { buildSwarmJson, buildUsageHint, hasHardcodedLoraStrengthHint, normalizeSwarmResolutionFields } from './swarm-json'
+import { normalizeModelResolution } from '../shared/model-resolution'
 import {
   checkConfiguredOutputFoldersReachable,
   safePathExists
@@ -303,8 +304,7 @@ export async function repairMissingPreviews(
 }
 
 /**
- * Patch .swarm.json files that still contain the old invented LoRA strength range.
- * Fetches each model from Civitai and rewrites only modelspec.usage_hint.
+ * Repair invalid resolution fields locally and old invented LoRA usage hints via Civitai.
  */
 export async function repairHardcodedSwarmUsageHints(
   pool: CivitaiClientPool,
@@ -312,22 +312,32 @@ export async function repairHardcodedSwarmUsageHints(
   onProgress?: (p: LibrarySyncProgress) => void
 ): Promise<{ repaired: number; checked: number; failed: number }> {
   const tagRules = getTagRules()
-  const candidates = records.filter((r) => {
-    if (!r.modelId || r.modelId <= 0 || !r.versionId || r.versionId <= 0) return false
-    if (isCustomAssignmentInventoryRecord(r, tagRules) || isLocalInventoryRecord(r)) return false
-    if (!r.swarmPath || safePathExists(r.swarmPath) !== true) return false
+  let resolutionsRepaired = 0
+  const candidates: InventoryRecord[] = []
+  for (let i = 0; i < records.length; i++) {
+    if (i % 8 === 0) await new Promise<void>(resolve => setImmediate(resolve))
+    const r = records[i]
+    if (!r.modelId || r.modelId <= 0 || !r.versionId || r.versionId <= 0) continue
+    if (isCustomAssignmentInventoryRecord(r, tagRules) || isLocalInventoryRecord(r)) continue
+    if (!r.swarmPath || safePathExists(r.swarmPath) !== true) continue
     try {
       const swarm = JSON.parse(readFileSync(r.swarmPath, 'utf-8')) as Record<string, unknown>
+      if (normalizeSwarmResolutionFields(swarm, r.trainingResolution)) {
+        writeFileSync(r.swarmPath, JSON.stringify(swarm, null, 2), 'utf-8')
+        resolutionsRepaired++
+      }
       const hint =
         typeof swarm['modelspec.usage_hint'] === 'string' ? swarm['modelspec.usage_hint'] : ''
-      return hasHardcodedLoraStrengthHint(hint)
+      if (hasHardcodedLoraStrengthHint(hint)) candidates.push(r)
     } catch {
-      return false
+      /* Leave unreadable or malformed sidecars unchanged. */
     }
-  })
+    onProgress?.({ phase: 'metadata', current: i + 1, total: records.length,
+      modelName: r.modelName, action: 'Checking Swarm metadata' })
+  }
 
   const total = candidates.length
-  let repaired = 0
+  let repaired = resolutionsRepaired
   let failed = 0
   const modelCache = new Map<string, CivitaiModel>()
   const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
@@ -338,9 +348,9 @@ export async function repairHardcodedSwarmUsageHints(
       current: 0,
       total: 1,
       modelName: '…',
-      action: 'No hardcoded swarm usage hints'
+      action: resolutionsRepaired ? 'Swarm resolution fields repaired' : 'Swarm metadata checked'
     })
-    return { repaired: 0, checked: 0, failed: 0 }
+    return { repaired, checked: records.length, failed: 0 }
   }
 
   onProgress?.({
@@ -399,89 +409,6 @@ export async function repairHardcodedSwarmUsageHints(
   }
 
   return { repaired, checked: total, failed }
-}
-
-/** LoRA/Checkpoint weight files this small are almost never valid (failed / stub download). */
-const ABSURD_SMALL_WEIGHT_BYTES = 400 * 1024
-
-export type SuspiciousLibraryFile = {
-  modelId: number
-  versionId: number
-  modelName: string
-  versionName: string
-  modelPath: string
-  diskBytes: number
-  expectedBytes?: number
-  reason: 'too_small' | 'truncated_vs_expected'
-}
-
-/**
- * Flag on-disk weight files that look truncated vs inventory/API size, or absurdly small.
- * Skips embedding-like extensions; safetensors/ckpt under ~400KB are reported when no expected size.
- */
-export function findSuspiciousModelFiles(records: InventoryRecord[]): SuspiciousLibraryFile[] {
-  const out: SuspiciousLibraryFile[] = []
-  for (const record of records) {
-    if (safePathExists(record.modelPath) !== true) continue
-    const lower = record.modelPath.toLowerCase()
-    if (!/\.(safetensors|ckpt|sft)$/i.test(lower)) continue
-
-    let diskBytes = 0
-    try {
-      diskBytes = statSync(record.modelPath).size
-    } catch {
-      continue
-    }
-    if (diskBytes <= 0) continue
-
-    const expected =
-      record.fileSizeBytes && record.fileSizeBytes > 0 ? record.fileSizeBytes : undefined
-
-    if (expected && expected >= 1024 * 1024 && diskBytes < expected * 0.5) {
-      out.push({
-        modelId: record.modelId,
-        versionId: record.versionId,
-        modelName: record.modelName,
-        versionName: record.versionName,
-        modelPath: record.modelPath,
-        diskBytes,
-        expectedBytes: expected,
-        reason: 'truncated_vs_expected'
-      })
-      continue
-    }
-
-    if (
-      expected &&
-      expected > ABSURD_SMALL_WEIGHT_BYTES * 2 &&
-      diskBytes < ABSURD_SMALL_WEIGHT_BYTES
-    ) {
-      out.push({
-        modelId: record.modelId,
-        versionId: record.versionId,
-        modelName: record.modelName,
-        versionName: record.versionName,
-        modelPath: record.modelPath,
-        diskBytes,
-        expectedBytes: expected,
-        reason: 'truncated_vs_expected'
-      })
-      continue
-    }
-
-    if (!expected && diskBytes < ABSURD_SMALL_WEIGHT_BYTES) {
-      out.push({
-        modelId: record.modelId,
-        versionId: record.versionId,
-        modelName: record.modelName,
-        versionName: record.versionName,
-        modelPath: record.modelPath,
-        diskBytes,
-        reason: 'too_small'
-      })
-    }
-  }
-  return out
 }
 
 export function syncInventoryWithDisk(): { removedMissing: number; enrichedMeta: number } {
@@ -717,7 +644,8 @@ async function syncInventoryWithDiskInner(
     }
   }
 
-  const needsMeta = afterCheck.filter((r) => !r.fileSizeBytes || !r.trainingResolution)
+  const needsMeta = afterCheck.filter((r) => !r.fileSizeBytes ||
+    (!normalizeModelResolution(r.trainingResolution) && r.trainingResolution !== 'n/a'))
   let enrichedMeta = 0
 
   // Nothing to enrich — still fill missing identity fields on swarm/sidecar (unless startup skip).
@@ -752,13 +680,13 @@ async function syncInventoryWithDiskInner(
     if (!record.fileSizeBytes && safePathExists(record.modelPath) === true) {
       patch.fileSizeBytes = statSync(record.modelPath).size
     }
-    if (!record.trainingResolution) {
+    if (!normalizeModelResolution(record.trainingResolution) && record.trainingResolution !== 'n/a') {
       let resolution: string | undefined
       if (record.swarmPath && safePathExists(record.swarmPath) === true) {
         try {
           const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
           const res = swarm['modelspec.resolution']
-          if (typeof res === 'string' && res.trim()) resolution = res.trim()
+          resolution = normalizeModelResolution(res)
         } catch {
           /* skip */
         }
@@ -801,14 +729,14 @@ function enrichInventoryFileMeta(): number {
     if (!record.fileSizeBytes && existsSync(record.modelPath)) {
       patch.fileSizeBytes = statSync(record.modelPath).size
     }
-    if (!record.trainingResolution) {
+    if (!normalizeModelResolution(record.trainingResolution) && record.trainingResolution !== 'n/a') {
       let resolution: string | undefined
       let swarmDescription: string | undefined
       if (record.swarmPath && existsSync(record.swarmPath)) {
         try {
           const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
           const res = swarm['modelspec.resolution']
-          if (typeof res === 'string' && res.trim()) resolution = res.trim()
+          resolution = normalizeModelResolution(res)
           const desc = swarm['modelspec.description']
           if (typeof desc === 'string' && desc.trim()) swarmDescription = desc.trim()
         } catch {

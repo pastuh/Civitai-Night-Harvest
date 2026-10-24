@@ -8,7 +8,8 @@ if (process.versions.electron) {
   app.setPath('userData', work)
   ;(async () => {
     const { inventory: inv, forgetSelection, tryAdoptExistingModelOnDisk, beginForget, ScanScheduler, buildWatchRuleTestResult,
-      DownloadQueue, DownloadService, queueModelsFromPage, queueEligibleTestModels } = require(path.join(lab, 'actions.cjs'))
+      DownloadQueue, DownloadService, queueModelsFromPage, queueEligibleTestModels,
+      repairInvalidModelFiles, queueInvalidModelRepairs, importModelsFromDisk, repairHardcodedSwarmUsageHints } = require(path.join(lab, 'actions.cjs'))
     inv.countVersions()
     const db = new (require('better-sqlite3'))(path.join(work, 'inventory.db'))
     const assertForgottenBlocked = async (modelId, versionId) => {
@@ -70,6 +71,8 @@ if (process.versions.electron) {
       assert.equal(inv.getAllBrowseCardCacheCards().some(row => row.id === 99), false)
       assert.equal(inv.getExclusionReviewItems().some(row => row.kind === 'forgotten'), false)
       assert.equal(inv.hasVersion(201), true, 'Migration must preserve unrelated library records')
+      for (const id of [18101, 18201, 18301]) assert.equal(inv.hasVersion(id), false, 'Invalid bytes must remain unowned after restart')
+      assert.equal(inv.hasVersion(18001), true, 'A tiny valid model must remain owned after restart')
       assert.ok(inv.getDeferredDownload(8420)?.accessConfirmedAt, 'Public access confirmation survives restart')
       await assertForgottenBlocked(10, 1099)
       await assertForgottenBlocked(40, 401)
@@ -95,6 +98,9 @@ if (process.versions.electron) {
         modelPath: base + '.safetensors', previewPath: base + '.preview.jpg', swarmPath: base + '.json',
         downloadedAt: '2026-01-01', ignored: false }
       for (const file of paths(row)) { assert.ok(path.resolve(file).startsWith(path.resolve(work) + path.sep)); fs.writeFileSync(file, Buffer.alloc(256, 1)) }
+      const header = Buffer.from(JSON.stringify({weight: {dtype: 'U8', shape: [256], data_offsets: [0, 256]}}))
+      const length = Buffer.alloc(8); length.writeBigUInt64LE(BigInt(header.length))
+      fs.writeFileSync(row.modelPath, Buffer.concat([length, header, Buffer.alloc(256, 1)]))
       inv.addVersion(row)
       return row
     }
@@ -385,6 +391,75 @@ if (process.versions.electron) {
     await assert.rejects(adoption, error => error.name === 'AbortError')
     assert.equal(inv.hasVersion(601), false, 'Cancelled hash completion must not recreate inventory')
     assert.ok(paths(adopting).every(file => fs.existsSync(file)), 'Cancelled adoption retains pre-existing files')
+    // Sync must reject HTML independently of size, retain tiny real tensors, and remove ownership
+    // before any replacement API call. Failed/not-found replacements must not regain ownership.
+    const smallValid = record(180, 18001), htmlSmall = record(181, 18101), htmlLarge = record(182, 18201)
+    const sidecar = {'modelspec.title': 'Preserve title', 'modelspec.resolution': 'full', resolution: 'pruned',
+      'modelspec.thumbnail': 'data:image/jpeg;base64,fixture', trainedWords: ['trigger'], custom: {keep: true}}
+    fs.writeFileSync(smallValid.swarmPath, JSON.stringify(sidecar))
+    const weightsBefore = fs.readFileSync(smallValid.modelPath)
+    const metadataRepair = await repairHardcodedSwarmUsageHints({forDomain: () => {throw new Error('Resolution repair must be local')}}, [smallValid])
+    assert.equal(metadataRepair.repaired, 1)
+    const repairedSidecar = JSON.parse(fs.readFileSync(smallValid.swarmPath, 'utf8'))
+    delete sidecar['modelspec.resolution']; delete sidecar.resolution
+    assert.deepEqual(repairedSidecar, sidecar, 'Sync removes invalid resolutions and preserves other fields')
+    assert.deepEqual(fs.readFileSync(smallValid.modelPath), weightsBefore, 'Resolution repair must never change model weights')
+    assert.equal((await repairHardcodedSwarmUsageHints({}, [smallValid])).repaired, 0)
+    fs.writeFileSync(htmlSmall.modelPath, '<!DOCTYPE html><html>Login</html>')
+    fs.writeFileSync(htmlLarge.modelPath, '<!DOCTYPE html><html>' + 'x'.repeat(2 * 1024 * 1024) + '</html>')
+    const checked = await repairInvalidModelFiles([smallValid, htmlSmall, htmlLarge])
+    assert.equal(checked.invalid.length, 2)
+    assert.equal(checked.unreadable, 0)
+    assert.equal(inv.hasVersion(smallValid.versionId), true, 'Tiny structurally valid weights must remain owned')
+    for (const issue of checked.invalid) {
+      assert.equal(inv.hasVersion(issue.versionId), false)
+      assert.equal(inv.isForgotten(issue.modelId, issue.versionId), false)
+      assert.equal(inv.isModelBanned(issue.modelId), false)
+      assert.ok(fs.existsSync(issue.quarantinePath), 'Keep invalid bytes for inspection, outside model extensions')
+      assert.ok(!fs.existsSync(issue.modelPath))
+    }
+    let repairCalls = []
+    assert.equal(queueInvalidModelRepairs([htmlSmall, htmlLarge], checked.invalid, {enqueue: (request, meta) => {
+      assert.equal(inv.hasVersion(request.versionId), false, 'Ownership must be gone before queueing')
+      repairCalls.push({request, meta}); return 'replacement'
+    }}), 2)
+    assert.deepEqual(repairCalls.map(call => call.request.versionId), [18101, 18201])
+    inv.banModel(htmlSmall.modelId, htmlSmall.modelName)
+    const bannedRepairQueue = new DownloadQueue({downloadModel: async () => {throw new Error('Banned repair')}}, () => null)
+    try { assert.equal(queueInvalidModelRepairs([htmlSmall], checked.invalid, bannedRepairQueue), 0) }
+    finally { bannedRepairQueue.dispose() }
+    inv.unbanModel(htmlSmall.modelId)
+    const goneClient = {getDomain: () => 'red', getModel: async () => {throw new Error('404 Model not found')},
+      getModelVersion: async () => {throw new Error('404 Model version not found')}}
+    const goneService = new DownloadService({getSetting: () => 'red', primaryDomain: () => 'red', forDomain: () => goneClient})
+    const goneResult = await goneService.downloadModel({modelId: 181, versionId: 18101, modelType: 'LORA'})
+    assert.notEqual(goneResult.status, 'downloaded')
+    assert.equal(inv.hasVersion(18101), false, 'A real replacement worker with no downloadable version must leave it unowned')
+    // A failed quarantine (e.g. locked file) must not prevent loss of owned status or allow re-import.
+    const locked = record(183, 18301), originalRename = fs.renameSync
+    fs.writeFileSync(locked.modelPath, '<html>Locked invalid file</html>')
+    fs.renameSync = () => {throw new Error('File locked')}
+    let lockedResult
+    try { lockedResult = await repairInvalidModelFiles([locked]) } finally { fs.renameSync = originalRename }
+    assert.equal(inv.hasVersion(18301), false)
+    assert.match(lockedResult.invalid[0].repairError, /locked/)
+    const invalidAdoption = await tryAdoptExistingModelOnDisk({
+      ...locked, model: {id: locked.modelId, name: locked.modelName},
+      version: {id: locked.versionId}, primaryFile: {name: 'model.safetensors'}, civitaiDomain: 'red'
+    })
+    assert.equal(invalidAdoption.ok, false, 'An invalid occupied path must trigger a fresh download under a different name')
+    assert.equal(inv.hasVersion(18301), false)
+    assert.equal(queueInvalidModelRepairs([locked], lockedResult.invalid, {enqueue: () => 'repair-locked'}), 1,
+      'A locked invalid original must not prevent a replacement download to a free path')
+    const isolated = path.join(work, 'invalid-reimport'); fs.mkdirSync(isolated)
+    fs.copyFileSync(locked.modelPath, path.join(isolated, 'bad.safetensors'))
+    const imported = await importModelsFromDisk(isolated, '', [])
+    assert.equal(imported.imported, 0, 'Restart/import cannot count invalid bytes as a local owned model')
+    const unavailable = await repairInvalidModelFiles([{...smallValid, modelPath: path.join(work, 'unreachable.safetensors')}])
+    assert.equal(unavailable.invalid.length, 0)
+    assert.equal(unavailable.unreadable, 1)
+    assert.equal(inv.hasVersion(smallValid.versionId), true, 'Unreadable/offline files are not proven corrupt')
+    process.stdout.write('PASS invalid-file repair: tiny valid retained; small/large HTML quarantined; failed replacements unowned; locked files cannot re-import\n')
     // Seed the old layout and force migration in a new process, not in-memory.
     db.prepare("INSERT INTO skipped_pending_versions (model_id, version_id, model_name, version_name, base_model, author, existing_folder, skipped_at, forgotten) VALUES (88, 8801, 'Legacy version', 'v1', 'Wan Video', '', '', '2026-01-01', 1)").run()
     inv.banModel(99, 'Legacy forgotten'); db.prepare('UPDATE banned_models SET forgotten = 1 WHERE model_id = 99').run()
@@ -406,7 +481,7 @@ if (process.versions.electron) {
     fs.mkdirSync(lab, { recursive: true })
     const work = fs.mkdtempSync(path.join(lab, 'run-'))
     const { build } = require('esbuild')
-    await build({ stdin: { contents: `export * as inventory from './src/main/inventory'; export { forgetSelection } from './src/main/model-forget'; export { tryAdoptExistingModelOnDisk } from './src/main/adopt-on-disk'; export { beginForget } from './src/main/forget-in-progress'; export { ScanScheduler } from './src/main/scheduler'; export { buildWatchRuleTestResult } from './src/main/browse-models'; export { DownloadQueue } from './src/main/download-queue'; export { DownloadService } from './src/main/download-service'; export { queueModelsFromPage, queueEligibleTestModels } from './src/main/rule-queue';`,
+    await build({ stdin: { contents: `export * as inventory from './src/main/inventory'; export { forgetSelection } from './src/main/model-forget'; export { tryAdoptExistingModelOnDisk } from './src/main/adopt-on-disk'; export { beginForget } from './src/main/forget-in-progress'; export { ScanScheduler } from './src/main/scheduler'; export { buildWatchRuleTestResult } from './src/main/browse-models'; export { DownloadQueue } from './src/main/download-queue'; export { DownloadService } from './src/main/download-service'; export { queueModelsFromPage, queueEligibleTestModels } from './src/main/rule-queue'; export { repairInvalidModelFiles, queueInvalidModelRepairs } from './src/main/library-file-repair'; export { importModelsFromDisk } from './src/main/disk-import'; export { repairHardcodedSwarmUsageHints } from './src/main/library-sync';`,
       resolveDir: root, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', external: ['electron', 'better-sqlite3'],
       outfile: path.join(lab, 'actions.cjs'), plugins: [{ name: 'settings-fixture', setup(builder) {
         builder.onResolve({ filter: /^\.\/settings-store$/ }, () => ({ path: 'settings', namespace: 'fixture' }))

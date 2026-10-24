@@ -12,6 +12,8 @@ import * as inventory from './inventory'
 import { sha256File } from './library-hash-verify'
 import { readCivitaiSidecar, readIdsFromSwarm, writeCivitaiSidecar } from './model-sidecar'
 import { getSettings } from './settings-store'
+import { InvalidModelFileError, validateModelFile } from './model-file-validation'
+import { normalizeModelResolution } from '../shared/model-resolution'
 
 export type AdoptOnDiskResult =
   | { ok: true; slug: string; linked: boolean }
@@ -98,19 +100,13 @@ async function verifyOnDiskMatch(params: {
   const identity = resolveStoredIdentity(modelPath, swarmPath)
 
   const hashCheck = async (): Promise<{ match: boolean; diskHash?: string; reasonIfMismatch?: string }> => {
+    // Never fingerprint an unidentified/private local file or invent a checksum without an API reference.
+    if (!identity?.versionId || !expectedHash) {
+      return { match: false, reasonIfMismatch: 'No Civitai identity / reference SHA256 for this existing file' }
+    }
     const diskHash = await fileSha256OrNull(modelPath)
     if (!diskHash) {
       return { match: false, reasonIfMismatch: 'Cannot read on-disk file for SHA256 check' }
-    }
-    if (!expectedHash) {
-      if (identity?.versionId != null && identity.versionId !== versionId) {
-        return {
-          match: false,
-          diskHash,
-          reasonIfMismatch: `On-disk identity is version ${identity.versionId}, not ${versionId}`
-        }
-      }
-      return { match: true, diskHash }
     }
     if (diskHash !== expectedHash) {
       return {
@@ -176,6 +172,11 @@ export async function tryAdoptExistingModelOnDisk(params: {
   params.signal?.throwIfAborted()
 
   if (!existsSync(modelPath)) return { ok: false, reason: 'File missing on disk' }
+  try { validateModelFile(modelPath) }
+  catch (error) {
+    if (error instanceof InvalidModelFileError) return { ok: false, reason: error.message }
+    throw error
+  }
 
   const existing = inventory.getVersion(versionId)
   if (existing) return { ok: true, slug: existing.slug, linked: false }
@@ -236,7 +237,7 @@ export async function tryAdoptExistingModelOnDisk(params: {
   let trainingResolution = fileMeta.trainingResolution
   if (!trainingResolution && swarm) {
     const res = swarm['modelspec.resolution']
-    if (typeof res === 'string' && res.trim()) trainingResolution = res.trim()
+    trainingResolution = normalizeModelResolution(res)
   }
 
   const deferredEntry = inventory.getDeferredDownload(versionId)

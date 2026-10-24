@@ -1,3 +1,4 @@
+import { normalizeModelResolution } from './model-resolution'
 import type {
   CivitaiDomain,
   CivitaiDomainSetting,
@@ -180,8 +181,8 @@ export function extractModelFileMeta(primary: {
   let trainingResolution: string | undefined
   let fileVariant: string | undefined
   if (meta?.size) {
-    if (/^\d+\s*x\s*\d+$/i.test(meta.size.trim())) trainingResolution = meta.size.trim()
-    else fileVariant = meta.size
+    trainingResolution = normalizeModelResolution(meta.size)
+    if (!trainingResolution) fileVariant = meta.size
   }
   return {
     fileSizeBytes: primary.sizeKB ? Math.round(primary.sizeKB * 1024) : undefined,

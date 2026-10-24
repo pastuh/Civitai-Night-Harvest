@@ -43,6 +43,87 @@ const image = 'https://image.civitai.com/example/width=450/cover.jpeg'
 const version = { id: 3416068, name: 'Moss v1 v1.0', baseModel: 'MOSS Image',
   createdAt: '', files: [], images: [{ url: image, type: 'image', nsfwLevel: 1 }] }
 const model = { id: 2857958, name: 'Alt Insta Feed', type: 'LORA', modelVersions: [version] }
+
+test('Swarm resolution uses pixel dimensions, never Civitai full/pruned file variants', async () => {
+  const { buildSwarmJson, normalizeSwarmResolutionFields } = await load('src/main/swarm-json.ts')
+  for (const [size, expected] of [['full', undefined], ['pruned', undefined], ['', undefined],
+    ['1024 X 768', '1024x768'], ['2048×1024', '2048x1024'], ['0x1024', undefined], ['999999999999x1024', undefined]]) {
+    const file = {id: 1, name: 'model.safetensors', type: 'Model', primary: true, metadata: {size}}
+    const payload = buildSwarmJson(model, {...version, files: [file], trainedWords: ['fixture']}, 'https://example.test/model', 'aGVsbG8=')
+    assert.equal(payload['modelspec.resolution'], expected, size)
+    assert.equal(payload['civitai.version_id'], String(version.id))
+    assert.deepEqual(payload.trainedWords, ['fixture'])
+    assert.equal(typeof payload['modelspec.thumbnail'], 'string')
+  }
+  const payload = {'modelspec.resolution': 'full', resolution: 'pruned', 'modelspec.title': 'Preserve',
+    'modelspec.thumbnail': 'data:image/png;base64,fixture', 'civitai.version_id': '3416068', custom: {unchanged: true}}
+  assert.equal(normalizeSwarmResolutionFields(payload), true)
+  assert.deepEqual(payload, {'modelspec.title': 'Preserve', 'modelspec.thumbnail': 'data:image/png;base64,fixture',
+    'civitai.version_id': '3416068', custom: {unchanged: true}})
+  assert.equal(normalizeSwarmResolutionFields(payload), false, 'Repair must be idempotent')
+})
+
+test('Hash verification fetches published checksums by ID and never fingerprints private or reference-free files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-hash-privacy-'))
+  const hash = value => require('node:crypto').createHash('sha256').update(value).digest('hex').toUpperCase()
+  const records = [1, 2, 3, 4, 5].map(id => ({modelId: id, versionId: id, modelName: 'Fixture ' + id,
+    primaryFileName: 'model.safetensors', origin: id === 4 ? 'local' : 'civitai',
+    modelPath: path.join(dir, id + '.safetensors'), outputFolder: id === 5 ? path.join(dir, 'private') : dir,
+    fileHashSha256: hash('stale API checksum')}))
+  for (const record of records) fs.writeFileSync(record.modelPath, 'real bytes')
+  globalThis.__hashPrivacyRecords = records
+  const requested = [], streams = [], originalRead = fs.createReadStream
+  const {verifyLibraryHashes} = await load('src/main/library-hash-verify.ts', {
+    inventory: 'exports.getAllVersions = () => globalThis.__hashPrivacyRecords; exports.patchVersionFileMeta = () => {}',
+    'settings-store': 'exports.getTagRules = () => [{customAssignment: true, folderPath: globalThis.__hashPrivacyRecords[4].outputFolder}]'
+  })
+  fs.createReadStream = function(filename, ...args) {streams.push(filename); return originalRead.call(this, filename, ...args)}
+  try {
+    const result = await verifyLibraryHashes({forDomain: () => ({
+      getModelVersion: async id => { requested.push(id); return {files: [{name: 'model.safetensors', type: 'Model',
+        hashes: id === 3 ? {} : {SHA256: hash(id === 1 ? 'real bytes' : 'different bytes')}}]} },
+      lookupVersionIdsByHashes: () => {throw new Error('Local hashes must never be sent to Civitai')}
+    })})
+    assert.deepEqual(requested, [1, 2, 3], 'Local/custom models must not cause API requests')
+    assert.deepEqual(streams, records.slice(0, 2).map(record => record.modelPath), 'Only files with a Civitai reference may be hashed')
+    assert.equal(result.matched, 1)
+    assert.equal(result.mismatched, 1)
+    assert.equal(result.unknownOnCivitai, 1)
+    assert.equal(result.checked, 2)
+  } finally {
+    fs.createReadStream = originalRead
+    delete globalThis.__hashPrivacyRecords
+    fs.rmSync(dir, {recursive: true, force: true})
+  }
+})
+
+test('Safetensors validation rejects HTML and broken ranges without reading tensor payloads', async () => {
+  const { validateSafetensorsFile } = await load('src/main/model-file-validation.ts')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-safetensors-'))
+  const filename = path.join(dir, 'model.safetensors')
+  const write = (header, data = Buffer.alloc(4)) => {
+    const json = Buffer.from(JSON.stringify(header)), length = Buffer.alloc(8)
+    length.writeBigUInt64LE(BigInt(json.length)); fs.writeFileSync(filename, Buffer.concat([length, json, data]))
+  }
+  const tensor = {dtype: 'U8', shape: [4], data_offsets: [0, 4]}
+  try {
+    write({weight: tensor, __metadata__: {format: 'pt'}})
+    validateSafetensorsFile(filename)
+    write({weight: tensor, scalar: {dtype: 'F32', shape: [], data_offsets: [4, 8]},
+      empty: {dtype: 'U8', shape: [0], data_offsets: [8, 8]}}, Buffer.alloc(8))
+    validateSafetensorsFile(filename)
+    fs.writeFileSync(filename, '<!DOCTYPE html><html>Login page</html>')
+    assert.throws(() => validateSafetensorsFile(filename), /HTML page/)
+    write({weight: {...tensor, data_offsets: [0, 5]}})
+    assert.throws(() => validateSafetensorsFile(filename), /truncated|trailing/)
+    write({weight: {...tensor, data_offsets: [1, 4]}})
+    assert.throws(() => validateSafetensorsFile(filename), /gaps/)
+    write({weight: tensor, __metadata__: {invalid: 123}})
+    assert.throws(() => validateSafetensorsFile(filename), /metadata values/)
+    fs.writeFileSync(filename, Buffer.from('ffffffffffffffff', 'hex'))
+    assert.throws(() => validateSafetensorsFile(filename), /header length/)
+  } finally { fs.rmSync(dir, {recursive: true, force: true}) }
+})
 global.__previewInventory = {
   getBrowseCardCache: () => new Map(),
   applyPreferredPreviewToModel: (entry) => entry

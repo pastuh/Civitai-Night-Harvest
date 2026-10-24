@@ -488,7 +488,7 @@ export function SettingsTab({
                     }
                     const inv = await onRefreshInventory?.({
                       syncDisk: true,
-                      recognizeLocalModels: true,
+                      skipHashBackfill: true,
                       repairPreviews: true
                     })
                     if (inv && typeof inv === 'object' && 'items' in inv) {
@@ -1113,8 +1113,7 @@ export function SettingsTab({
                 setHashProgress(null)
                 void window.api
                   .verifyLibraryHashes({
-                    maxFiles: 80,
-                    domain: 'red'
+                    maxFiles: 80
                   })
                   .then((r) => {
                     const domains =

@@ -58,6 +58,8 @@ export function formatLibrarySyncSummary(inv: InventoryGetResult, locale: AppLoc
       parts.push(translate(locale, 'syncSummary.suspiciousSamples', { list: samples.join('; ') }))
     }
   }
+  if (inv.invalidFilesQueued) parts.push(translate(locale, 'syncSummary.replacements', { count: inv.invalidFilesQueued }))
+  if (inv.unreadableFileCount) parts.push(translate(locale, 'syncSummary.unreadable', { count: inv.unreadableFileCount }))
   if (!parts.length) {
     return translate(locale, 'syncSummary.allOk', { count: checked })
   }

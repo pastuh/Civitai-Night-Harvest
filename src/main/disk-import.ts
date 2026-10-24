@@ -1,5 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { basename, join } from 'path'
+import { normalizeModelResolution } from '../shared/model-resolution'
+import { validateModelFile } from './model-file-validation'
 import type { CivitaiDomain, InventoryRecord, LibrarySyncProgress, TagFolderRule } from '../shared/types'
 import { collectLibraryScanRoots, collectCustomAssignmentScanExcludes, isPathUnderCustomAssignmentScanExclude, parseSwarmDescriptionModelId, parseSwarmDescriptionVersionId } from '../shared/utils'
 import {
@@ -10,7 +12,7 @@ import { applyCustomAssignmentDefaultsToRecord, parseTagRuleNames } from '../sha
 import * as inventory from './inventory'
 import { isOutputPathRootReachable, safePathExists } from './output-paths'
 
-const MODEL_EXTENSIONS = new Set(['safetensors', 'ckpt', 'pt'])
+const MODEL_EXTENSIONS = new Set(['safetensors', 'sft', 'ckpt', 'pt'])
 const MAX_SCAN_DEPTH = 8
 const YIELD_EVERY = 32
 
@@ -187,7 +189,7 @@ function buildRecordFromDisk(params: {
 
   let trainingResolution: string | undefined
   const res = swarm['modelspec.resolution']
-  if (typeof res === 'string' && res.trim()) trainingResolution = res.trim()
+  trainingResolution = normalizeModelResolution(res)
 
   return {
     modelId,
@@ -344,6 +346,10 @@ export async function importModelsFromDisk(
         continue
       }
     }
+
+    // Do not re-import invalid bytes after Sync removed ownership, even if quarantine failed.
+    // Known records are checked by explicit full Sync, keeping startup free of library-wide reads.
+    try { validateModelFile(modelPath) } catch { continue }
 
     const swarmPath = join(folder, `${slug}.swarm.json`)
     const swarm = readSwarm(swarmPath)

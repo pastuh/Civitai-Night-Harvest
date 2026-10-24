@@ -215,7 +215,7 @@ export const en = {
       slugVersionName: 'Version name (Civitai variant title)',
       slugModelTitle: 'Full model title',
       verifyAuto: 'Auto — ID file first, then SHA256',
-      verifySha256: 'SHA256 — always hash (slowest, most certain)',
+      verifySha256: 'SHA256 — verify identified Civitai files with a published checksum',
       verifySidecar: 'ID file — .civitai.json / swarm ids (fast)',
       activityLogMinimal: 'Essential — downloads, errors, new versions',
       activityLogOff: 'Off — write nothing to the activity log',
@@ -249,7 +249,7 @@ export const en = {
       slugFormat:
         'New downloads use this pattern. Version name slugifies the full Civitai title from .swarm.json (e.g. Oiled Skin - Krea 2 v1.0 → oiled_skin_krea_2_v1_0). Compact shortens names.',
       onDiskVerifyMode:
-        'When a file already exists at the download path: Auto reads modelId/versionId from .civitai.json (or civitai.* in swarm.json), then SHA256 if needed. SHA256 always hashes the file. ID file is fastest but needs sidecar written by this app.',
+        'When a file already exists at the download path: Auto reads its Civitai identity, then compares SHA256 if needed and Civitai provides a checksum. Unidentified local files are kept; the download uses another filename. SHA256 verification is limited to identified Civitai files with a published checksum.',
       slugSyncDone:
         'Done ({format}) · Renamed {renamed} · Already matched {matched} · Failed {failed}{errors}',
       slugSyncFinished: 'No need to wait — this process is complete.',
@@ -257,7 +257,7 @@ export const en = {
       slugSyncSkipped: 'skipped {skipped} (name collision or file missing)',
       slugSyncRepaired: 'repaired {repaired} paths',
       diskSyncHint:
-        'Scans LoRA and Checkpoint folders (and Tag Folders paths that are not Custom assignments) for model files, imports .swarm.json models and unrecognized customs, hashes customs locally for duplicate detection (SHA256 never sent to Civitai), removes stale DB entries, fixes old invented LoRA strength hints in .swarm.json, flags tiny/truncated .safetensors, then updates the download queue. Custom assignment folders are skipped — they are final personal locations. Not run automatically on app start — press this button when you want it.',
+        'Scans model folders, imports valid models, and repairs Swarm metadata. Checks .safetensors structure regardless of file size, without hashing local/custom models or sending their hashes to Civitai. Invalid files are kept as .invalid-* backups and removed from owned models; eligible Civitai versions are queued for re-download. If the queue is paused, resume it to download replacements. Ban, Forget and paused tags are respected. Custom assignment folders are skipped during import. This full check runs only when you press Sync.',
       diskSyncDone: 'Disk sync finished — see Library tab for the summary.',
       activityLogHint:
         'Controls what is saved to the activity log and SQLite database. Less logging reduces disk writes and UI updates during long crawls.',
@@ -475,7 +475,7 @@ export const en = {
     libraryConfirmMoves:
       'Settings → **Confirm before bulk tag-folder moves** — turn off to skip the “how many models?” dialog',
     libraryDiskSync:
-      'Settings → **Sync library from disk** — import or match files already on disk. Very large files skip automatic hash during sync (use **Verify hashes** later if needed). Local-only models are not looked up on Civitai',
+      'Settings → **Sync library from disk** — import valid files, repair Swarm metadata and queue replacements for invalid downloads. Sync does not hash local/custom models or look them up on Civitai',
     missingOverview:
       '**Missing** — models Civitai no longer finds, plus ones skipped by pause/ban tags and manual bans. Opening details keeps your Missing filters',
     missingKinds:
@@ -559,7 +559,7 @@ export const en = {
         'For Custom folder assignments, show tag + relative subfolder on cards and in the Library sidebar (e.g. randoms/cars). Off = show only the custom tag name. Default on.',
       launchAtLogin: 'Open at Windows login minimized to tray. Best in installed build.',
       hashVerify:
-        'Compares SHA256 on disk with Civitai. Use after moving files manually. Disk sync skips auto-hash on files over 10GB — run this if you need those checked.',
+        'Manually compares downloaded Civitai models against checksums published by Civitai, fetched by version ID. Local/custom models and files without a published checksum are skipped. Your file hashes are never sent to Civitai. Sync does not run this check.',
       galleryGridSize: 'Minimum column width for Browse and Library model cards. Smaller = more cards per row.',
       browseSettledToEnd:
         'Browse Results — move owned, excluded, and awaiting-access cards to the end of the gallery. Search matches keep normal order.',
@@ -1225,7 +1225,7 @@ export const en = {
     metadataHint: 'Reading size, resolution, and other fields from files already in your library.',
     identityHint: 'Writing .civitai.json / swarm ID fields so on-disk models stay linked to Civitai.',
     syncHint:
-      'Library sync matches your inventory with files on disk — removes entries for deleted files, fills in size/resolution, and computes missing SHA256 hashes (for verification later).',
+      'Library sync checks files on disk, repairs Swarm metadata and replaces invalid downloads. Invalid files no longer count as owned. Local/custom model hashes are not computed or sent to Civitai.',
     previewHint:
       'Checks each library model for preview.jpg and swarm thumbnail; downloads missing images from Civitai (up to 8 per startup).',
     waitHint: 'Please wait — other actions are paused.'
@@ -1258,8 +1258,10 @@ export const en = {
     hashed: 'computed SHA256 for {count} file(s)',
     previews: 'restored {count} preview(s)',
     ratings: 'filled {count} rating(s)',
-    swarmHints: 'fixed {count} swarm usage hint(s)',
-    suspicious: 'flagged {count} tiny/truncated model file(s)',
+    swarmHints: 'fixed {count} Swarm metadata issue(s)',
+    suspicious: 'removed ownership of {count} invalid model file(s)',
+    replacements: 'queued {count} replacement download(s) — resume the queue if paused',
+    unreadable: 'could not check {count} unreadable file(s)',
     suspiciousSamples: 'e.g. {list}',
     allOk: 'Library sync: checked {count} model(s) in library — all OK.',
     summary: 'Library sync ({count} in library): {parts}.'

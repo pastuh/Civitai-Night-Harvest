@@ -1168,7 +1168,10 @@ export interface SuspiciousLibraryFile {
   modelPath: string
   diskBytes: number
   expectedBytes?: number
-  reason: 'too_small' | 'truncated_vs_expected'
+  reason: 'invalid_format'
+  validationError: string
+  quarantinePath?: string
+  repairError?: string
 }
 
 export interface InventoryGetResult {
@@ -1176,11 +1179,13 @@ export interface InventoryGetResult {
   removedMissing: number
   repairedPreviews: number
   repairedRatings?: number
-  /** .swarm.json files where invented LoRA strength hint was rewritten from Civitai */
+  /** Invalid Swarm resolutions or invented LoRA usage hints repaired by explicit Sync. */
   repairedSwarmHints?: number
-  /** Truncated / absurdly small weight files found during Sync */
+  /** Structurally invalid files removed from owned inventory during explicit Sync. */
   suspiciousFileCount?: number
   suspiciousFiles?: SuspiciousLibraryFile[]
+  invalidFilesQueued?: number
+  unreadableFileCount?: number
   enrichedMeta?: number
   hashesBackfilled?: number
   /** Models scanned during syncDisk */
@@ -1206,7 +1211,7 @@ export interface InventoryGetResult {
 export interface InventoryGetOptions {
   /** Scan disk for missing files and enrich file metadata (slow on large libraries) */
   syncDisk?: boolean
-  /** Skip SHA256 backfill during sync (faster startup background sync) */
+  /** Legacy option; Sync no longer hashes files automatically. */
   skipHashBackfill?: boolean
   /**
    * Skip writing .civitai.json / swarm civitai.* identity files.
@@ -1223,11 +1228,6 @@ export interface InventoryGetOptions {
    * Used as a background follow-up after a fast startup check.
    */
   diskImportOnly?: boolean
-  /**
-   * Hash local/custom rows and detect duplicates vs library only (offline).
-   * Never sends private SHA256 to Civitai. Settings → Sync folders; not used on startup.
-   */
-  recognizeLocalModels?: boolean
   repairPreviews?: boolean
   maxRepairs?: number
 }
@@ -1389,7 +1389,7 @@ export interface LibraryHashVerifyResult {
   unknownOnCivitai: number
   hashed: number
   errors: string[]
-  mismatches: Array<{ modelName: string; versionId: number; expected: number; actual: number }>
+  mismatches: Array<{ modelName: string; versionId: number; expected: string; actual: string }>
   /** Civitai API sites used during verification */
   apiDomains: CivitaiDomain[]
 }

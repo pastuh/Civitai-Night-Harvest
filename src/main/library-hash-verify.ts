@@ -1,15 +1,16 @@
 import { createHash } from 'crypto'
-import { createReadStream, existsSync, readFileSync, statSync } from 'fs'
+import { createReadStream, existsSync, readFileSync } from 'fs'
 import type { CivitaiClientPool } from '../shared/civitai-client-pool'
 import type {
   CivitaiDomain,
-  InventoryRecord,
   LibraryHashVerifyProgress,
   LibraryHashVerifyResult
 } from '../shared/types'
 import { isCustomAssignmentInventoryRecord } from '../shared/tag-routing'
 import * as inventory from './inventory'
 import { getTagRules } from './settings-store'
+import { pickPrimaryFile } from '../shared/utils'
+import { safePathExists } from './output-paths'
 
 export function sha256File(path: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -38,51 +39,7 @@ export function trainedWordsFromSwarm(swarmPath: string | undefined): string[] |
   return null
 }
 
-/** Files larger than this are skipped during backfill — SHA256 on huge checkpoints blocks sync. */
-const BACKFILL_MAX_BYTES = 10 * 1024 * 1024 * 1024
-
-export async function backfillMissingHashes(
-  maxFiles = 40,
-  onProgress?: (p: LibraryHashVerifyProgress) => void
-): Promise<number> {
-  const tagRules = getTagRules()
-  const missing = inventory
-    .getAllVersions()
-    .filter(
-      (r) =>
-        !r.fileHashSha256 &&
-        existsSync(r.modelPath) &&
-        r.versionId > 0 &&
-        !isCustomAssignmentInventoryRecord(r, tagRules)
-    )
-    .slice(0, maxFiles)
-  const total = missing.length
-  let count = 0
-
-  for (const record of missing) {
-    count++
-    // Skip very large files during auto-backfill — manual verify handles them.
-    try {
-      if (statSync(record.modelPath).size > BACKFILL_MAX_BYTES) continue
-    } catch {
-      /* stat failed — try hash anyway */
-    }
-    onProgress?.({
-      phase: 'hashing',
-      current: count,
-      total,
-      modelName: record.modelName
-    })
-    try {
-      const hash = await sha256File(record.modelPath)
-      inventory.patchVersionFileMeta(record.versionId, { fileHashSha256: hash })
-    } catch {
-      /* skip unreadable file */
-    }
-  }
-  return count
-}
-
+/** Explicit verification: fetch a published checksum by version ID; never send local hashes to Civitai. */
 export async function verifyLibraryHashes(
   pool: CivitaiClientPool,
   options: {
@@ -91,118 +48,45 @@ export async function verifyLibraryHashes(
     onProgress?: (p: LibraryHashVerifyProgress) => void
   } = {}
 ): Promise<LibraryHashVerifyResult> {
-  const maxFiles = options.maxFiles ?? 80
-  const onProgress = options.onProgress
   const result: LibraryHashVerifyResult = {
-    checked: 0,
-    matched: 0,
-    mismatched: 0,
-    unknownOnCivitai: 0,
-    hashed: 0,
-    errors: [],
-    mismatches: [],
-    apiDomains: []
+    checked: 0, matched: 0, mismatched: 0, unknownOnCivitai: 0, hashed: 0,
+    errors: [], mismatches: [], apiDomains: []
   }
-
   const tagRules = getTagRules()
-  const records = inventory.getAllVersions().filter(
-    (r) =>
-      existsSync(r.modelPath) &&
-      r.versionId > 0 &&
-      r.origin !== 'local' &&
-      !isCustomAssignmentInventoryRecord(r, tagRules)
-  )
-  const pending: InventoryRecord[] = []
-
-  const needHash = records.filter((r) => !r.fileHashSha256).slice(0, maxFiles)
-  const hashTotal = needHash.length
-
-  for (let i = 0; i < needHash.length; i++) {
-    const record = needHash[i]
-    onProgress?.({
-      phase: 'hashing',
-      current: i + 1,
-      total: hashTotal,
-      modelName: record.modelName
-    })
-    try {
-      const hash = await sha256File(record.modelPath)
-      inventory.patchVersionFileMeta(record.versionId, { fileHashSha256: hash })
-      pending.push({ ...record, fileHashSha256: hash })
-      result.hashed++
-    } catch (err) {
-      result.errors.push(`${record.modelName}: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  for (const record of records) {
-    if (record.fileHashSha256) {
-      pending.push(record)
-    }
-  }
-
-  const seenVersion = new Set<number>()
-  const uniquePending = pending.filter((r) => {
-    if (seenVersion.has(r.versionId)) return false
-    seenVersion.add(r.versionId)
-    return Boolean(r.fileHashSha256)
-  })
-
-  const byDomain = new Map<CivitaiDomain, Array<{ record: InventoryRecord; hash: string }>>()
-  for (const record of uniquePending) {
-    const hash = record.fileHashSha256
-    if (!hash) continue
-    const domain = options.domain ?? record.civitaiDomain ?? 'com'
-    const list = byDomain.get(domain) ?? []
-    list.push({ record, hash })
-    byDomain.set(domain, list)
-  }
-
-  const apiTotal = uniquePending.length
-  let apiCurrent = 0
-
-  for (const [domain, list] of byDomain) {
+  const records = inventory.getAllVersions().filter(record =>
+    record.modelId > 0 && record.versionId > 0 && record.origin !== 'local' &&
+    !isCustomAssignmentInventoryRecord(record, tagRules) && safePathExists(record.modelPath) === true
+  ).slice(0, Math.max(0, options.maxFiles ?? 80))
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i], domain = options.domain ?? record.civitaiDomain ?? 'com'
     if (!result.apiDomains.includes(domain)) result.apiDomains.push(domain)
-    const client = pool.forDomain(domain)
-    for (let i = 0; i < list.length; i += 100) {
-      const batch = list.slice(i, i + 100)
-      try {
-        const resolved = await client.lookupVersionIdsByHashes(batch.map((b) => b.hash))
-        const byHash = new Map(resolved.map((r) => [r.hash.toUpperCase(), r.modelVersionId]))
-        for (const { record, hash } of batch) {
-          apiCurrent++
-          onProgress?.({
-            phase: 'api',
-            current: apiCurrent,
-            total: apiTotal,
-            modelName: record.modelName,
-            apiDomain: domain
-          })
-          result.checked++
-          const foundId = byHash.get(hash.toUpperCase())
-          if (foundId == null) {
-            result.unknownOnCivitai++
-            continue
-          }
-          if (foundId === record.versionId) {
-            result.matched++
-          } else {
-            result.mismatched++
-            result.mismatches.push({
-              modelName: record.modelName,
-              versionId: record.versionId,
-              expected: record.versionId,
-              actual: foundId
-            })
-          }
-        }
-      } catch (err) {
-        result.errors.push(
-          `${domain}: ${err instanceof Error ? err.message : String(err)}`
-        )
+    options.onProgress?.({phase: 'api', current: i + 1, total: records.length,
+      modelName: record.modelName, apiDomain: domain})
+    try {
+      const version = await pool.forDomain(domain).getModelVersion(record.versionId)
+      // A stored filename identifies the selected variant. Never compare against a different variant.
+      const file = record.primaryFileName
+        ? version.files.find(candidate => candidate.name === record.primaryFileName)
+        : pickPrimaryFile(version.files)
+      const expected = (file?.hashes?.SHA256 ?? file?.hashes?.sha256)?.toUpperCase()
+      if (!expected || !/^[A-F0-9]{64}$/.test(expected)) {
+        result.unknownOnCivitai++
+        continue // No reference checksum: do not read/fingerprint the local weights.
       }
+      options.onProgress?.({phase: 'hashing', current: i + 1, total: records.length, modelName: record.modelName})
+      // Read actual bytes: legacy inventory may contain the API checksum without having verified them.
+      const actual = await sha256File(record.modelPath)
+      result.hashed++
+      result.checked++
+      inventory.patchVersionFileMeta(record.versionId, {fileHashSha256: actual})
+      if (actual === expected) result.matched++
+      else {
+        result.mismatched++
+        result.mismatches.push({modelName: record.modelName, versionId: record.versionId, expected, actual})
+      }
+    } catch (error) {
+      result.errors.push(`${record.modelName}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-
   return result
 }

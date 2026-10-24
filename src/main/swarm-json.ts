@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { CivitaiFile, CivitaiModel, CivitaiModelVersion } from '../shared/types'
 import { licenseFromModel } from '../shared/civitai-meta'
+import { extractModelFileMeta, pickPrimaryFile } from '../shared/utils'
+import { normalizeModelResolution } from '../shared/model-resolution'
 
 export interface SwarmJsonPayload {
   'modelspec.title': string
@@ -59,14 +61,6 @@ export function htmlToPlain(text: string): string {
     .replace(/&quot;/g, '"')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-}
-
-function pickPrimaryFile(files: CivitaiFile[]): CivitaiFile | null {
-  const model =
-    files.find((f) => f.type === 'Model') ??
-    files.find((f) => /\.(safetensors|ckpt|pt)$/i.test(f.name)) ??
-    files[0]
-  return model ?? null
 }
 
 /**
@@ -251,10 +245,7 @@ function payloadToSummary(payload: Partial<SwarmJsonPayload>, source: 'disk' | '
         ? payload['modelspec.trigger_phrase']
         : undefined,
     trainedWords: trained,
-    resolution:
-      typeof payload['modelspec.resolution'] === 'string'
-        ? payload['modelspec.resolution']
-        : undefined,
+    resolution: normalizeModelResolution(payload['modelspec.resolution']),
     modelId: typeof payload['civitai.model_id'] === 'string' ? payload['civitai.model_id'] : undefined,
     versionId:
       typeof payload['civitai.version_id'] === 'string' ? payload['civitai.version_id'] : undefined,
@@ -326,13 +317,26 @@ export function buildSwarmJson(
     payload.trainedWords = triggers
   }
 
-  if (primary?.metadata?.size) {
-    payload['modelspec.resolution'] = primary.metadata.size
-  }
+  const resolution = extractModelFileMeta(primary).trainingResolution
+  if (resolution) payload['modelspec.resolution'] = resolution
 
   applyLicenseToPayload(payload as unknown as Record<string, unknown>, licenseFromModel(model))
 
   return payload
+}
+
+/** Preserve other fields; unknown size variants defer to SwarmUI's model-class defaults. */
+export function normalizeSwarmResolutionFields(raw: Record<string, unknown>, fallback?: string): boolean {
+  let changed = false
+  for (const key of ['modelspec.resolution', 'resolution']) {
+    if (!(key in raw)) continue
+    const next = normalizeModelResolution(raw[key]) ?? normalizeModelResolution(fallback)
+    if (next === raw[key]) continue
+    if (next) raw[key] = next
+    else delete raw[key]
+    changed = true
+  }
+  return changed
 }
 
 /** Persist license fields into an existing on-disk .swarm.json (download / detail refresh). */

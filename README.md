@@ -61,6 +61,26 @@ Open the in-app **Help** tab for the full UI guide.
 
 Use **Tag Folders** to organize LoRA into named subfolders after downloads.
 
+## Repair earlier downloads
+
+After updating and restarting the app, run **Settings → Sync library from disk**.
+Sync repairs invalid Swarm resolution fields such as `full` / `pruned` without
+changing the model weights. Unknown dimensions are omitted so SwarmUI can use its
+model defaults.
+
+Sync also checks `.safetensors` file structure, regardless of size. Proven invalid
+files (including HTML saved as weights) are renamed to `.invalid-*` backups and
+removed from owned inventory. Eligible Civitai versions are added to the download
+queue; resume it if paused. A failed or unavailable replacement stays unowned.
+Ban, Forget and paused tags still apply. Do not use Forget to repair a download.
+Unreadable/offline files are reported separately and are not assumed corrupt.
+
+New downloads are checked before becoming model files. When Civitai publishes a
+SHA256 checksum, the downloaded bytes must match it. Sync does not hash or identify
+your local/custom models through Civitai. The separate **Verify library hashes**
+action checks identified Civitai models only when Civitai supplies a checksum,
+fetching it by version ID; your file hashes are never sent to Civitai.
+
 ---
 
 ## Development

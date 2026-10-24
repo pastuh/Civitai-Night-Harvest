@@ -24,7 +24,6 @@ import {
   headersForDownloadDomain
 } from '../shared/download-domain'
 import { modelStatsFromSearch, checkpointTypeLabel, pickVersionStats } from '../shared/civitai-meta'
-import { sha256File } from './library-hash-verify'
 import type { ClassifiedDownloadFailure } from '../shared/download-errors'
 import {
   classifyDownloadFailure,
@@ -586,6 +585,7 @@ export class DownloadService {
           abort.signal,
           {
             streams: settings.downloadStreams,
+            expectedSha256: primaryFile.hashes?.SHA256 ?? primaryFile.hashes?.sha256,
             onMode: ({ mode, streams }) => {
               transferMode = mode
               connectionsUsed = streams
@@ -621,6 +621,7 @@ export class DownloadService {
             abort.signal,
             {
               streams: settings.downloadStreams,
+              expectedSha256: primaryFile.hashes?.SHA256 ?? primaryFile.hashes?.sha256,
               onMode: ({ mode, streams }) => {
                 transferMode = mode
                 connectionsUsed = streams
@@ -702,15 +703,8 @@ export class DownloadService {
       })
 
       const sourceUrl = client.getModelPageUrl(model.id, versionId)
-      let fileHashSha256: string | undefined =
+      const fileHashSha256: string | undefined =
         primaryFile.hashes?.SHA256?.toUpperCase() ?? primaryFile.hashes?.sha256?.toUpperCase()
-      if (!fileHashSha256) {
-        try {
-          fileHashSha256 = await sha256File(modelPath)
-        } catch {
-          /* ignore hash failure */
-        }
-      }
 
       const swarm = buildSwarmJson(model, version, sourceUrl, thumbnailBase64, mime, fileHashSha256)
       abort.signal.throwIfAborted()
@@ -727,7 +721,7 @@ export class DownloadService {
 
       const fileMeta = extractModelFileMeta(primaryFile)
       const deferredEntry = inventory.getDeferredDownload(versionId)
-      const actualBytes = modelBytes > 0 ? modelBytes : fileMeta.fileSizeBytes
+      const actualBytes = statSync(modelPath).size
       const stats = modelStatsFromSearch(model, versionId)
       const checkpointType = checkpointTypeLabel(version.baseModelType) ?? undefined
 

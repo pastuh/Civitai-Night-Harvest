@@ -130,18 +130,6 @@ export class CivitaiClient {
     return this.fetchJson('/me')
   }
 
-  async getModelVersionByHash(hash: string): Promise<CivitaiModelVersion & { modelId?: number }> {
-    return this.fetchJson(`/model-versions/by-hash/${encodeURIComponent(hash)}`)
-  }
-
-  async lookupVersionIdsByHashes(hashes: string[]): Promise<Array<{ modelVersionId: number; hash: string }>> {
-    if (!hashes.length) return []
-    return this.fetchJson('/model-versions/by-hash/ids', undefined, {
-      method: 'POST',
-      body: JSON.stringify(hashes.map((h) => h.toUpperCase()))
-    })
-  }
-
   async getModel(modelId: number, opts?: { pace?: CivitaiPacePriority }): Promise<CivitaiModel> {
     return withNormalizedTags(
       await this.fetchJson<CivitaiModel>(`/models/${modelId}`, undefined, { pace: opts?.pace })

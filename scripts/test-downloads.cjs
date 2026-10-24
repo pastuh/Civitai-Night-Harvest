@@ -42,9 +42,25 @@ async function run() {
     for (let i = 0; i < length; i++) data[i] = (start + i) % 251
     return data
   }
-  const sizes = {large: 96 * 1024 * 1024, ignored: 8 * 1024 * 1024, wrong: 4 * 1024 * 1024, short: 4 * 1024 * 1024, abort: 16 * 1024 * 1024}
+  const sizes = {large: 96 * 1024 * 1024, checksum: 4 * 1024 * 1024, ignored: 8 * 1024 * 1024, wrong: 4 * 1024 * 1024, short: 4 * 1024 * 1024, abort: 16 * 1024 * 1024}
+  const tensorHeader = Buffer.from(JSON.stringify({weight: {dtype: 'U8', shape: [4], data_offsets: [0, 4]}}))
+  const tensorLength = Buffer.alloc(8); tensorLength.writeBigUInt64LE(BigInt(tensorHeader.length))
+  const validTensor = Buffer.concat([tensorLength, tensorHeader, Buffer.from([1, 2, 3, 4])])
   const server = createServer((request, response) => {
     const name = request.url.slice(1)
+    if (name === 'valid-tensor') {response.end(validTensor); return}
+    if (name === 'fragmented-html') {
+      response.writeHead(200, {'Content-Type': 'application/octet-stream'})
+      response.write('<'); setTimeout(() => response.end('!DOCTYPE html><html>Login</html>'), 30); return
+    }
+    if (name === 'ranged-html') {
+      const html = Buffer.alloc(3 * 1024 * 1024, 32); html.write('<!DOCTYPE html><html>Login</html>')
+      const range = request.headers.range?.match(/^bytes=(\d+)-(\d+)$/)
+      const start = range ? Number(range[1]) : 0, end = range ? Number(range[2]) : html.length - 1
+      response.writeHead(range ? 206 : 200, {'Content-Type': 'application/octet-stream', 'Content-Length': end - start + 1,
+        ...(range ? {'Content-Range': 'bytes ' + start + '-' + end + '/' + html.length} : {})})
+      response.end(html.subarray(start, end + 1)); return
+    }
     const total = sizes[name] || 1024
     const range = request.headers.range?.match(/^bytes=(\d+)-(\d+)$/)
     const record = {name, range: request.headers.range, sent: 0, closed: false}
@@ -91,7 +107,7 @@ async function run() {
     const largeFile = path.join(dir, 'large.bin')
     const result = await downloadToFile(base + '/large', largeFile, {}, received => {
       if (received > 0 && received < sizes.large) progressBeforeFinish = true
-    }, undefined, {streams: 8})
+    }, undefined, {streams: 8, expectedSha256: expectedHash(sizes.large)})
     clearInterval(sample)
     assert.equal(result.mode, 'multipart', JSON.stringify({errors: global.__rangeErrors, requests: requests.map(row => ({range: row.range, sent: row.sent}))}))
     assert.ok(progressBeforeFinish, 'Progress must arrive before all ranges complete')
@@ -131,6 +147,31 @@ async function run() {
     assert.ok(!fs.existsSync(path.join(dir, 'html.bin')))
     assert.ok(!fs.existsSync(path.join(dir, 'html.bin.tmp')))
     process.stdout.write('PASS abort cleanup, no restart after cancel, HTML authentication failures\n')
+    await assert.rejects(downloadToFile(base + '/fragmented-html', path.join(dir, 'html.ckpt'), {}, undefined, undefined,
+      {streams: 1}), /HTML|auth failed/)
+    assert.ok(!fs.existsSync(path.join(dir, 'html.ckpt')))
+    const modelFile = path.join(dir, 'verified.safetensors')
+    const tensorHash = createHash('sha256').update(validTensor).digest('hex')
+    await downloadToFile(base + '/valid-tensor', modelFile, {}, undefined, undefined, {streams: 1, expectedSha256: tensorHash})
+    assert.deepEqual(fs.readFileSync(modelFile), validTensor)
+    await assert.rejects(downloadToFile(base + '/valid-tensor', modelFile, {}, undefined, undefined,
+      {streams: 1, expectedSha256: '0'.repeat(64)}), /SHA256 does not match/)
+    assert.deepEqual(fs.readFileSync(modelFile), validTensor, 'A hash mismatch must preserve the old valid file')
+    assert.ok(!fs.existsSync(modelFile + '.tmp'))
+    for (const streams of [1, 8]) {
+      const checksumFile = path.join(dir, 'checksum.bin')
+      fs.writeFileSync(checksumFile, 'Keep original')
+      await assert.rejects(downloadToFile(base + '/checksum', checksumFile, {}, undefined, undefined,
+        {streams, expectedSha256: '0'.repeat(64)}), /SHA256 does not match/)
+      assert.equal(fs.readFileSync(checksumFile, 'utf8'), 'Keep original')
+      assert.ok(!fs.existsSync(checksumFile + '.tmp'))
+    }
+    for (const [endpoint, streams] of [['fragmented-html', 1], ['ranged-html', 8]]) {
+      await assert.rejects(downloadToFile(base + '/' + endpoint, modelFile, {}, undefined, undefined, {streams}), /HTML|auth failed/)
+      assert.deepEqual(fs.readFileSync(modelFile), validTensor, 'Invalid responses must not overwrite an existing valid model')
+      assert.ok(!fs.existsSync(modelFile + '.tmp'), 'Invalid model payload must be removed before publication')
+    }
+    process.stdout.write('PASS valid safetensors; fragmented/multipart HTML and SHA256 mismatches cannot replace an existing model\n')
   } finally {
     server.closeAllConnections()
     await new Promise(resolve => server.close(resolve))

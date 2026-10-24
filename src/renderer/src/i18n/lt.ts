@@ -217,7 +217,7 @@ export const lt: Messages = {
       slugVersionName: 'Versijos pavadinimas (Civitai variantas)',
       slugModelTitle: 'Pilnas modelio pavadinimas',
       verifyAuto: 'Auto — pirmiau ID failas, tada SHA256',
-      verifySha256: 'SHA256 — visada hash (lėčiausia, tikriausia)',
+      verifySha256: 'SHA256 — tik Civitai failams su paskelbta kontroline suma',
       verifySidecar: 'ID failas — .civitai.json / swarm id (greita)',
       activityLogMinimal: 'Esminiai — atsisiuntimai, klaidos, naujos versijos',
       activityLogOff: 'Išjungta — nieko nerašo į veiklos logą',
@@ -251,7 +251,7 @@ export const lt: Messages = {
       slugFormat:
         'Nauji atsisiuntimai naudoja šį formatą. Version name slugina pilną Civitai title iš .swarm.json (pvz. Oiled Skin - Krea 2 v1.0 → oiled_skin_krea_2_v1_0). Kompaktinis sutrumpina.',
       onDiskVerifyMode:
-        'Kai atsisiuntimo kelyje failas jau yra: Auto skaito modelId/versionId iš .civitai.json (arba civitai.* swarm.json), jei reikia — SHA256. SHA256 visada skaičiuoja hash. ID failas greičiausias, bet reikia sidecar, kurį rašo ši app.',
+        'Kai atsisiuntimo kelyje failas jau yra: Auto skaito jo Civitai ID ir prireikus lygina SHA256, jei Civitai pateikia kontrolinę sumą. Neatpažinti vietiniai failai paliekami, siuntimui naudojamas kitas pavadinimas. SHA256 tikrinami tik atpažinti Civitai failai su paskelbta kontroline suma.',
       slugSyncDone:
         'Baigta ({format}) · Pervardinta {renamed} · Jau atitiko {matched} · Nepavyko {failed}{errors}',
       slugSyncFinished: 'Laukti nereikia — procesas baigtas.',
@@ -259,7 +259,7 @@ export const lt: Messages = {
       slugSyncSkipped: 'praleista {skipped} (konfliktas ar failas nerastas)',
       slugSyncRepaired: 'atstatyta {repaired} kelių',
       diskSyncHint:
-        'Skenuoja LoRA ir Checkpoint aplankus (ir Tag Folders kelius, kurie nėra Custom assignment): importuoja modelius su .swarm.json ir neatpažintus custom, skaičiuoja hash lokaliai dublikatams (SHA256 niekada nesiunčiamas į Civitai), pašalina pasenusius įrašus, pataiso senuose .swarm.json išgalvotus LoRA strength hint’us, pažymi per mažus / nukirstus .safetensors, atnaujina eilę. Custom assignment aplankai praleidžiami — tai galutinės asmeninės vietos. Paleidžiant app automatiškai nebegroja — spauskite šį mygtuką, kai reikia.',
+        'Skenuoja modelių aplankus, importuoja tinkamus modelius ir taiso Swarm metaduomenis. Tikrina .safetensors struktūrą nepriklausomai nuo dydžio, neskaičiuodama vietinių/custom modelių hash ir nesiųsdama jų į Civitai. Netinkami failai išsaugomi kaip .invalid-* kopijos ir nebelaikomi turimais modeliais; leidžiamos Civitai versijos įtraukiamos į pakartotinio siuntimo eilę. Jei eilė pristabdyta, tęskite ją. Laikomasi Ban, Forget ir pristabdytų žymų. Importuojant praleidžiami Custom assignment aplankai. Ši pilna patikra vykdoma tik paspaudus Sync.',
       diskSyncDone: 'Disko sync baigtas — santrauka Library skirtuke.',
       activityLogHint:
         'Valdo, kas rašoma į veiklos logą ir SQLite. Mažiau logų = mažiau disko rašymo ir UI atnaujinimų ilgų crawl metu.',
@@ -478,7 +478,7 @@ export const lt: Messages = {
     libraryConfirmMoves:
       'Nustatymai → **Patvirtinti prieš masinius tag-folder perkėlimus** — išjunkite, kad praleistumėte „kiek modelių?“ dialogą',
     libraryDiskSync:
-      'Nustatymai → **Sync library from disk** — importuoti ar suderinti jau esamus failus. Labai dideli failai praleidžia automatinį hash sync metu (vėliau — **Verify hashes**). Tik lokalūs modeliai Civitai neieškomi',
+      'Nustatymai → **Sync library from disk** — importuoti tinkamus failus, taisyti Swarm metaduomenis ir įtraukti netinkamų siuntimų pakaitalus į eilę. Sync neskaičiuoja vietinių/custom modelių hash ir neieško jų Civitai',
     missingOverview:
       '**Missing** — modeliai, kurių Civitai neberanda, plius praleisti dėl pause/ban tagų ir jūsų banai. Atidarius detales filtrai lieka',
     missingKinds:
@@ -564,7 +564,7 @@ export const lt: Messages = {
         'Custom folder assignments: kortelėse ir Library šoninėje juostoje rodyti tagą + santykinį subfolderį (pvz. randoms/cars). Išjungta = tik custom tago vardas. Pagal nutylėjimą įjungta.',
       launchAtLogin: 'Atidaryti prisijungus Windows, minimized į tray. Geriausia instaliacijoje.',
       hashVerify:
-        'Lyginama SHA256 diske su Civitai. Naudokite po rankinio failų perkėlimo. Disk sync praleidžia auto-hash failams >10GB — paleiskite čia, jei reikia juos patikrinti.',
+        'Rankiniu būdu lygina atsiųstus Civitai modelius su Civitai paskelbtais SHA256 pagal versijos ID. Vietiniai/custom modeliai ir failai be paskelbto SHA256 praleidžiami. Jūsų failų hash į Civitai nesiunčiami. Sync šios patikros nevykdo.',
       galleryGridSize: 'Minimalus Browse ir Library kortelių stulpelio plotis. Mažesnis = daugiau kortelių eilėje.',
       browseSettledToEnd:
         'Browse Results — owned, excluded ir awaiting-access kortelės į galerijos galą. Paieškos atitikmenys lieka savo vietoje.',
@@ -1235,7 +1235,7 @@ export const lt: Messages = {
     metadataHint: 'Skaitomas dydis, raiška ir kiti laukai iš failų, jau esančių bibliotekoje.',
     identityHint: 'Rašomi .civitai.json / swarm ID laukai, kad modeliai diske liktų susieti su Civitai.',
     syncHint:
-      'Bibliotekos sync suderina inventorių su failais diske — pašalina ištrintus, papildo dydį/raišką ir skaičiuoja trūkstamus SHA256 hash.',
+      'Bibliotekos sync tikrina failus diske, taiso Swarm metaduomenis ir paruošia netinkamų siuntimų pakaitalus. Netinkami failai nebelaikomi turimais modeliais. Vietinių/custom modelių hash neskaičiuojami ir nesiunčiami į Civitai.',
     previewHint:
       'Tikrina ar kiekvienas bibliotekos modelis turi preview.jpg ir swarm miniatiūrą; trūkstamas atsisiunčia iš Civitai (iki 8 per paleidimą).',
     waitHint: 'Palaukite — kiti veiksmai pauzuoti.'
@@ -1268,8 +1268,10 @@ export const lt: Messages = {
     hashed: 'skaičiuotas SHA256 {count} failams',
     previews: 'atstatyta {count} preview',
     ratings: 'užpildyta {count} reitingo(-ų)',
-    swarmHints: 'pataisyta {count} swarm usage hint(-ų)',
-    suspicious: 'pažymėta {count} per mažų / nukirstų modelio failų',
+    swarmHints: 'pataisyta {count} Swarm metaduomenų klaida(-ų)',
+    suspicious: '{count} netinkamų failų nebelaikomi turimais modeliais',
+    replacements: 'į eilę įtraukti {count} pakartotiniai siuntimai — jei pristabdyta, tęskite eilę',
+    unreadable: 'nepavyko patikrinti {count} neperskaitomų failų',
     suspiciousSamples: 'pvz. {list}',
     allOk: 'Bibliotekos sync: patikrinta {count} modelių — viskas gerai.',
     summary: 'Bibliotekos sync ({count} bibliotekoje): {parts}.'

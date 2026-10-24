@@ -30,7 +30,8 @@ import { enrichDeferredDownloads } from '../shared/early-access'
 import { DownloadQueue } from './download-queue'
 import { DownloadService } from './download-service'
 import * as inventory from './inventory'
-import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync, findSuspiciousModelFiles } from './library-sync'
+import { repairHardcodedSwarmUsageHints, repairMissingPreviews, syncInventoryWithDiskAsync } from './library-sync'
+import { repairInvalidModelFiles, queueInvalidModelRepairs } from './library-file-repair'
 import { setLibraryPreviewFromUrl } from './library-preview'
 import { enrichModelPreviews, enrichTestModelPreviews, resolvePreviewsBatch, resolveVideoPreviewsBatch, enrichDeferredPreviews } from './preview-enrich'
 import { isUsableStoredPreviewUrl } from './preview-cache'
@@ -44,8 +45,7 @@ import { moveRecordToTagFolder, reconcileLibraryTagFolders } from './model-move'
 import { forgetSelection } from './model-forget'
 import { fetchCivitaiModelDetail, refreshCivitaiMe } from './model-detail'
 import { emitMissingList, emitExclusionRemoved, recheckMissingModels } from './missing-models'
-import { verifyLibraryHashes, backfillMissingHashes } from './library-hash-verify'
-import { recognizeLocalModels } from './recognize-local-models'
+import { verifyLibraryHashes } from './library-hash-verify'
 import { syncLibrarySlugs } from './slug-rename'
 import { sendToRenderer, setRendererReady, createThrottledProgressEmitter, bindRendererWindow, flushDeferredRendererMessages } from './window-notify'
 import { getAppIconDataUrl } from './tray-icon'
@@ -856,22 +856,17 @@ export function initIpc(): void {
         skipDiskImport?: boolean
         diskImportOnly?: boolean
         skipIdentityBackfill?: boolean
-        recognizeLocalModels?: boolean
       }
     ) => {
       // Yield so the Loading overlay / title bar can paint before a large SELECT *.
       await new Promise<void>((resolve) => setImmediate(resolve))
       let removedMissing = 0
       let enrichedMeta = 0
-      let hashesBackfilled = 0
       let checked = 0
       let importedFromDisk = 0
       let importedLocalFromDisk = 0
       let relinkedFromDisk = 0
       let diskScanned = 0
-      let localDuplicatesMarked = 0
-      let localPromoted = 0
-      let localStillUnrecognized = 0
       let storageError: string | undefined
       if (options?.syncDisk) {
         const reach = await probeConfiguredOutputFolders()
@@ -908,43 +903,6 @@ export function initIpc(): void {
             notifyOutputStorageUnavailable(sync.storageError)
             downloadQueue.pause()
           }
-          if (!options?.skipHashBackfill && !options?.diskImportOnly) {
-            hashesBackfilled = await backfillMissingHashes(50, (p) =>
-              emitSync({
-                phase: 'hash',
-                current: p.current,
-                total: p.total,
-                modelName: p.modelName,
-                action: 'Computing SHA256'
-              })
-            )
-          }
-          if (options?.recognizeLocalModels && !options?.diskImportOnly) {
-            const recognized = await recognizeLocalModels(clientPool, {
-              domain: settings.domain === 'both' ? 'red' : settings.domain,
-              onProgress: emitSync
-            })
-            hashesBackfilled += recognized.hashed
-            localDuplicatesMarked = recognized.duplicatesMarked
-            localPromoted = recognized.promoted
-            localStillUnrecognized = recognized.stillUnrecognized
-            if (recognized.skippedLarge > 0) {
-              scheduler.log(
-                'info',
-                `Skipped SHA256 hash on ${recognized.skippedLarge} large file(s) (>10GB) — use Verify hashes later`,
-                undefined,
-                { source: 'library' }
-              )
-            }
-            if (recognized.errors.length) {
-              scheduler.log(
-                'warn',
-                `Local model recognition: ${recognized.errors.slice(0, 3).join('; ')}`,
-                undefined,
-                { source: 'library' }
-              )
-            }
-          }
           downloadQueue.syncWithInventory()
         }
       }
@@ -955,6 +913,8 @@ export function initIpc(): void {
       let repairedRatings = 0
       let repairedSwarmHints = 0
       let suspiciousFiles: import('../shared/types').SuspiciousLibraryFile[] = []
+      let invalidFilesQueued = 0
+      let unreadableFileCount = 0
       const offline = Boolean(storageError) || isConfiguredOutputOffline()
       if (offline) {
         // Avoid media:// loads on offline roots (Chromium open of F:\ freezes the app).
@@ -981,17 +941,24 @@ export function initIpc(): void {
           current: 0,
           total: Math.max(items.length, 1),
           modelName: '…',
-          action: 'Checking for truncated / tiny model files'
+          action: 'Checking model file structure'
         })
-        suspiciousFiles = findSuspiciousModelFiles(items)
+        const validation = await repairInvalidModelFiles(items, emitHints)
+        suspiciousFiles = validation.invalid
+        unreadableFileCount = validation.unreadable
         if (suspiciousFiles.length) {
+          invalidFilesQueued = queueInvalidModelRepairs(items, suspiciousFiles, downloadQueue)
+          items = inventory.getAllVersions()
+          downloadQueue.syncWithInventory()
+          downloadQueue.flushPersist()
           scheduler.log(
             'warn',
-            `Suspicious model files: ${suspiciousFiles.length} (tiny or truncated vs expected size)`,
+            `Removed ownership of ${suspiciousFiles.length} invalid model file(s); queued ${invalidFilesQueued} replacement(s). ${suspiciousFiles.map(f => `${f.modelName}: ${f.validationError}${f.repairError ? `; quarantine failed: ${f.repairError}` : ''}`).join('; ')}`,
             undefined,
             { source: 'library' }
           )
         }
+        if (unreadableFileCount) scheduler.log('warn', `Could not validate ${unreadableFileCount} unreadable model file(s); ownership retained`, undefined, { source: 'library' })
       }
       if (options?.repairPreviews && !offline) {
         const emitPreview = createThrottledProgressEmitter<import('../shared/types').LibrarySyncProgress>(
@@ -1012,9 +979,7 @@ export function initIpc(): void {
           repairedRatings > 0 ||
           repairedSwarmHints > 0 ||
           enrichedMeta > 0 ||
-          hashesBackfilled > 0 ||
-          importedFromDisk > 0 ||
-          localPromoted > 0
+          importedFromDisk > 0
         ) {
           items = inventory.getAllVersions()
         }
@@ -1027,18 +992,16 @@ export function initIpc(): void {
         repairedPreviews,
         repairedRatings,
         repairedSwarmHints,
-        suspiciousFiles: suspiciousFiles.length ? suspiciousFiles.slice(0, 25) : undefined,
+        suspiciousFiles: suspiciousFiles.length ? suspiciousFiles : undefined,
         suspiciousFileCount: suspiciousFiles.length || undefined,
+        invalidFilesQueued,
+        unreadableFileCount,
         enrichedMeta,
-        hashesBackfilled,
         checked,
         importedFromDisk,
         importedLocalFromDisk,
         relinkedFromDisk,
         diskScanned,
-        localDuplicatesMarked,
-        localPromoted,
-        localStillUnrecognized,
         storageError
       }
     }
