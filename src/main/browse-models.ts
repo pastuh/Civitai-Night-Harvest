@@ -18,6 +18,7 @@ export function buildBrowseCardFromModel(
   preferredVersionId?: number,
   options?: { packSibling?: boolean; inventory?: BrowseCardInventory }
 ): WatchRuleTestModel | null {
+  if (inventory.isForgotten(m.id, preferredVersionId)) return null
   if (!matchesContentFilter(m.nsfw, filter)) return null
   const versions = m.modelVersions ?? []
   const v =
@@ -25,6 +26,7 @@ export function buildBrowseCardFromModel(
       ? versions.find((x) => x.id === preferredVersionId)
       : undefined) ?? versions[0]
   const versionId = v?.id ?? 0
+  if (inventory.isForgotten(m.id, versionId)) return null
   if (!versionId) {
     registerIncompleteFromModel(m, client.getDomain())
     return null

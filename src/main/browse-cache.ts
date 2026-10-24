@@ -56,7 +56,7 @@ export function upsertBrowseCards(cards: WatchRuleTestModel[]): number {
  */
 export function upsertBrowseCardsForRule(ruleId: string, cards: WatchRuleTestModel[]): number {
   if (!ruleId || !cards.length) return 0
-  const fresh = cards.filter((c) => c.versionId > 0 && !inventory.hasVersion(c.versionId))
+  const fresh = cards.filter((c) => c.versionId > 0 && !inventory.isForgotten(c.id, c.versionId) && !inventory.hasVersion(c.versionId))
   if (!fresh.length) return 0
   const cleared = upsertBrowseCards(fresh)
   inventory.appendBrowseRuleGalleryMembers(

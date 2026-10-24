@@ -5,8 +5,8 @@ export const en = {
     forget: 'Forget',
     forgetVersion: 'Forget this version',
     forgetModel: 'Forget entire model',
-    confirmVersion: 'Permanently remove “{name}” — “{version}”, its local files and application records? Other versions stay. There is no Undo. A future search can discover it again.',
-    confirmModel: 'Permanently remove every version of “{name}”, their local files and application records? There is no Undo. A future search can discover the model again.',
+    confirmVersion: 'Permanently remove “{name}” — “{version}” and its local files? Other versions stay. This version stays forgotten after restart and will not be downloaded again. There is no Undo.',
+    confirmModel: 'Permanently remove every version of “{name}” and their local files? This model stays forgotten after restart, including future versions, and will not be downloaded again. There is no Undo.',
     banVersion: 'Ban this version',
     banModel: 'Ban entire model',
     unbanVersion: 'Unban this version',
@@ -461,7 +461,7 @@ export const en = {
     libraryUnavailable:
       '**Unavailable on Civitai** — files already known as taken down or archived (from saved info). The filter appears only when such files exist; Sync does **not** re-check every model live',
     libraryDeleteSafety:
-      "**Ban / Unban** blocks or allows future downloads and keeps local files. **Forget this version / Forget entire model** permanently removes the selected files and application records after confirmation. There is no restore list; a later search may discover them again.",
+      "**Ban / Unban** blocks or allows future downloads and keeps local files. **Forget this version / Forget entire model** permanently removes the selected files and application records after confirmation. A separate Forget decision is remembered after restart and prevents downloading them again. There is no restore list.",
     libraryTags:
       'Right-click → **Assign model to tag**. Click a card tag to open Tag folders (or Fast tag when enabled)',
     libraryFastTag:
@@ -485,7 +485,7 @@ export const en = {
     missingAllow:
       'Per model — **Allow** (exception + queue). Click a blocked tag to list models skipped for that tag',
     missingForget:
-      "**Forget** — permanently remove a version or the whole model, including local files and application records. No Unforget or Forgotten list. A future search can discover it again.",
+      "**Forget** — permanently remove a version or the whole model, including local files and application records. The Forget decision survives restart and prevents downloading it again. No Unforget or restore list.",
     missingMarkSeen:
       '**Mark seen** — swipe off a ban/pause card (green title). **Hide seen** removes those cards. Sidebar **Unseen ban/pause** / **Seen ban/pause** are for ban+pause review, not “not found” items',
     missingContextMenu:
@@ -517,7 +517,7 @@ export const en = {
     dlIncomplete:
       'Incomplete tab — Civitai lists the model but has no usable version; recheck or paste a download link',
     dlNewVersions:
-      "**Updates** lists other versions of models you own. **Download** once; **Always update** queues current and future offers. **Skip** postpones this version. **Ban** blocks it until Unban and keeps files. **Forget** permanently removes a selected version or entire model, including its files and records; a future search may discover it again. Custom-folder locals are not checked.",
+      "**Updates** lists other versions of models you own. **Download** once; **Always update** queues current and future offers. **Skip** postpones this version. **Ban** blocks it until Unban and keeps files. **Forget** permanently removes a selected version or entire model, including its files and records; the remembered Forget decision prevents downloading it again after restart. Custom-folder locals are not checked.",
     dlTabBadges:
       'Tab badges — Browse: in the download pipeline · Library: +N new · Updates / Early access / Missing / Incomplete: items waiting',
     dlActivity:
@@ -955,7 +955,7 @@ export const en = {
     baseFilterHint:
       'Lists every missing version whose base model matches one you already own for that model (e.g. Krea2→Krea2). When Browse Rules set baseModels, that filter applies too — no separate Rules editor here.',
     actionsHint:
-      "Skip = this version later. Ban = reversible download block, files stay. Forget = permanently remove a version or entire model and its files; a new search may find it again.",
+      "Skip = this version later. Ban = reversible download block, files stay. Forget = permanently remove a version or entire model and its files; a persistent Forget decision prevents downloading it again after restart.",
     searchPlaceholder: 'Search updates…',
     hideSeen: 'Hide seen',
     hideSeenHint: 'Hide update offers you marked as seen (including skipped)',
@@ -973,7 +973,7 @@ export const en = {
     filterUnseen: 'Unseen',
     sidebarTitle: 'Filter',
     sidebarTypes: 'Model types',
-    forgetHint: "Permanently remove this version and its files. A new search may discover it again.",
+    forgetHint: "Permanently remove this version and its files. It stays forgotten after restart and will not be downloaded again.",
     unforget: 'Unforget',
     unforgetHint: 'Unforget — show this update offer again',
     forgottenBadge: 'Forgotten',

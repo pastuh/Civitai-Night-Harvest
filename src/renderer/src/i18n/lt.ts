@@ -7,8 +7,8 @@ export const lt: Messages = {
     forget: 'Pamiršti',
     forgetVersion: 'Pamiršti šią versiją',
     forgetModel: 'Pamiršti visą modelį',
-    confirmVersion: 'Visam laikui pašalinti „{name}“ — „{version}“, jos vietinius failus ir aplikacijos įrašus? Kitos versijos liks. Atkurti nebus galima. Nauja paieška galės ją atrasti iš naujo.',
-    confirmModel: 'Visam laikui pašalinti visas „{name}“ versijas, jų vietinius failus ir aplikacijos įrašus? Atkurti nebus galima. Nauja paieška galės modelį atrasti iš naujo.',
+    confirmVersion: 'Visam laikui pašalinti „{name}“ — „{version}“ ir jos vietinius failus? Kitos versijos liks. Ši versija liks pamiršta ir po restarto, daugiau nebus atsisiunčiama. Atkūrimo nėra.',
+    confirmModel: 'Visam laikui pašalinti visas „{name}“ versijas ir jų vietinius failus? Modelis liks pamirštas ir po restarto; jo dabartinės ir būsimos versijos daugiau nebus atsisiunčiamos. Atkūrimo nėra.',
     banVersion: 'Uždrausti šią versiją',
     banModel: 'Uždrausti visą modelį',
     unbanVersion: 'Atšaukti šios versijos draudimą',
@@ -464,7 +464,7 @@ export const lt: Messages = {
     libraryUnavailable:
       '**Nepasiekiama Civitai** — failai, kurie jau žinomi kaip taken down / archived (iš išsaugotos info). Filtras matomas tik kai tokių yra; Sync **neperskenuoja** visos bibliotekos gyvai',
     libraryDeleteSafety:
-      "**Ban / Unban** blokuoja arba leidžia būsimus atsisiuntimus; vietiniai failai lieka. **Pamiršti šią versiją / Pamiršti visą modelį** po patvirtinimo visam laikui pašalina pasirinktus failus ir aplikacijos įrašus. Atkūrimo sąrašo nėra; nauja paieška gali atrasti modelį iš naujo.",
+      "**Ban / Unban** blokuoja arba leidžia būsimus atsisiuntimus; vietiniai failai lieka. **Pamiršti šią versiją / Pamiršti visą modelį** po patvirtinimo visam laikui pašalina pasirinktus failus ir aplikacijos įrašus. Pamiršimo žyma išlieka po restarto ir neleidžia modelio vėl atsisiųsti. Atkūrimo sąrašo nėra.",
     libraryTags:
       'Dešinis spustelėjimas → **Priskirti modelį tagui**. Spustelėkite tagą ant kortelės — Tag folders (arba Fast tag, jei įjungta)',
     libraryFastTag:
@@ -488,7 +488,7 @@ export const lt: Messages = {
     missingAllow:
       'Vienam modeliui — **Allow** (išimtis + eilė). Spauskite blokuotą tagą — sąrašas modelių, praleistų dėl to tago',
     missingForget:
-      "**Forget** — visam laikui pašalinti versiją arba visą modelį, vietinius failus ir aplikacijos įrašus. Unforget ir Forgotten sąrašo nėra. Nauja paieška gali atrasti iš naujo.",
+      "**Forget** — visam laikui pašalinti versiją arba visą modelį, vietinius failus ir aplikacijos įrašus. Unforget ir Forgotten sąrašo nėra. Pamiršimo žyma išlieka po restarto ir neleidžia atsisiųsti dar kartą.",
     missingMarkSeen:
       '**Mark seen** — perbraukite nuo ban/pause kortelės (žalia antraštė). **Hide seen** jas slepia. Sidebar **Neperžiūrėti ban/pause** / **Seen ban/pause** — ban+pause peržiūrai, ne „nerasta“ įrašams',
     missingContextMenu:
@@ -520,7 +520,7 @@ export const lt: Messages = {
     dlIncomplete:
       'Incomplete — Civitai rodo modelį be tinkamos versijos; recheck arba įklijuokite download nuorodą',
     dlNewVersions:
-      "**Atnaujinimai** rodo kitas turimų modelių versijas. **Download** — atsisiųsti, **Visada atnaujinti** — dabartiniai ir būsimi pasiūlymai. **Skip** atideda versiją. **Ban** blokuoja iki Unban ir palieka failus. **Forget** visam laikui pašalina pasirinktą versiją arba visą modelį, failus ir įrašus; nauja paieška gali atrasti iš naujo. Custom-folder lokalūs modeliai netikrinami.",
+      "**Atnaujinimai** rodo kitas turimų modelių versijas. **Download** — atsisiųsti, **Visada atnaujinti** — dabartiniai ir būsimi pasiūlymai. **Skip** atideda versiją. **Ban** blokuoja iki Unban ir palieka failus. **Forget** visam laikui pašalina pasirinktą versiją arba visą modelį, failus ir įrašus; pamiršimo žyma išlieka po restarto ir neleidžia siųsti dar kartą. Custom-folder lokalūs modeliai netikrinami.",
     dlTabBadges:
       'Skiltų ženkliukai — Browse: siuntimo eilėje · Library: +N nauji · Atnaujinimai / Early access / Missing / Incomplete: laukiantys',
     dlActivity:
@@ -964,7 +964,7 @@ export const lt: Messages = {
     baseFilterHint:
       'Rodomos visos trūkstamos versijos, kurių base model sutampa su jau turima to modelio versija (pvz. Krea2→Krea2). Jei Browse Rules turi baseModels — tas filtras irgi taikomas. Atskiro Rules redaktoriaus čia nėra.',
     actionsHint:
-      "Skip — ši versija vėliau. Ban — atšaukiamas siuntimo draudimas, failai lieka. Forget — pašalinti pasirinktą versiją arba visą modelį ir jo failus; nauja paieška gali atrasti iš naujo.",
+      "Skip — ši versija vėliau. Ban — atšaukiamas siuntimo draudimas, failai lieka. Forget — pašalinti pasirinktą versiją arba visą modelį ir jo failus; pamiršimo žyma išlieka po restarto ir neleidžia siųsti dar kartą.",
     searchPlaceholder: 'Ieškoti atnaujinimų…',
     hideSeen: 'Slėpti seen',
     hideSeenHint: 'Slėpti atnaujinimus, kuriuos pažymėjote kaip seen (įskaitant skipped)',
@@ -982,7 +982,7 @@ export const lt: Messages = {
     filterUnseen: 'Nematytos',
     sidebarTitle: 'Filtras',
     sidebarTypes: 'Modelių tipai',
-    forgetHint: "Visam laikui pašalinti šią versiją ir jos failus. Nauja paieška gali atrasti iš naujo.",
+    forgetHint: "Visam laikui pašalinti šią versiją ir jos failus. Pamiršimo žyma išlieka po restarto ir neleidžia atsisiųsti dar kartą.",
     unforget: 'Unforget',
     unforgetHint: 'Unforget — vėl rodyti šį atnaujinimo pasiūlymą',
     forgottenBadge: 'Forgotten',

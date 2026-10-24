@@ -1,5 +1,4 @@
-// Only protects an active delete from concurrent downloads. No persistent ban:
-// a later search/crawl is free to discover the model again.
+// Protect the file-delete window before inventory commits the durable Forget selection.
 const models = new Set<number>()
 const versions = new Set<number>()
 const busyModels = new Set<number>()

@@ -23,8 +23,10 @@ Repository: [github.com/pastuh/Civitai-Night-Harvest](https://github.com/pastuh/
 
 **Ban / Unban** blocks or allows downloads and keeps owned files. **Forget** asks
 before permanently removing a selected version or the entire model, including its
-files and app records. There is no Forgotten list or undo; a new Rules search can
-discover it again.
+files and app records. A separate persistent Forget decision prevents the selection
+from returning or downloading again, including after restart. Forgetting an entire
+model also blocks its future versions. There is no restore list or undo; Unban
+only affects reversible bans.
 
 The **Browse** counter shows prepared downloads still waiting or downloading,
 and decreases as each one finishes. Cached gallery cards and access checks do

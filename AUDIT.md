@@ -333,3 +333,40 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   HTML auth), abu Electron procesai, abi TypeScript patikros ir production
   build. 1 000 versijų Browse būsena: 1 ms, 4 SQL užklausos, 0 failų patikrų.
   Antrame Electron procese 0 naujų preview siuntimų; preview dingimo kadrų 0.
+
+## Nuolatinis Forget sprendimas — 2026-10-24
+
+- Patikslinta Forget semantika: failai ir darbiniai įrašai pašalinami, tačiau
+  atskiroje `forgotten_selections` lentelėje išlieka modelio/versijos ID ir laikas.
+  Šis sprendimas nepriklauso nuo Ban/Unban, Updates Skip ir Pause. Visas modelis
+  reiškia ir jo būsimas versijas; viena versija neblokuoja kitų modelio versijų.
+  Forgotten atkūrimo filtro ar Unforget veiksmo nepridėta.
+- Žyma įrašoma toje pačioje SQLite transakcijoje kaip duomenų valymas, tik po
+  sėkmingo vietinių failų pašalinimo. Nesėkmingas unlink neįrašo Forget žymos ir
+  palieka Library įrašą problemai ištaisyti. Viso modelio sprendimas sutraukia
+  ankstesnes to modelio versijų žymas į vieną.
+- Apsaugoti Harvest, Browse/search, Updates/Always update, Early access,
+  Incomplete ir eilės atkūrimas. Tiesioginis ar force siuntimas, sena rankinė
+  eilė ir Unban negali apeiti Forget. Pavėlavęs cache/metaduomenų ar siuntimo
+  užbaigimas negali vėl sukurti pašalintos versijos. Bibliotekos failų per
+  Explorer pašalinimas savaime nesukuria Forget sprendimo.
+- Narystė pamirštų ID rinkiniuose talpinama atmintyje ir perrenkama tik po
+  pakeitimo / DB uždarymo. Kortelių ir eilės tikrinimams nepridedama SQL
+  užklausos kiekvienam modeliui. Likę ankstesni pasenę būsenų įrašai nerodomi
+  Updates, Early access, Incomplete ar Missing peržiūrose.
+- Vienkartinė migracija išsaugo aiškias senas whole-model Forgotten žymas ir
+  atkuria ankstesnius sėkmingus Forget iš išlikusių struktūrizuotų Activity
+  įrašų. Sutapti turi manual šaltinis, tikslus operacijos tekstas ir ID; panašus
+  tekstas ar nesutampantys ID nelaikomi sprendimu. Istorijos nebuvimo atkurti
+  negalima. Migracija savavališkai netrina jau iš naujo atsiųstų failų.
+- Atnaujinti patvirtinimai ir EN/LT pagalba: paieška nebeatkuria pamiršto
+  modelio. Ban tebėra atšaukiamas ir palieka vietinius failus.
+- Izoliuoti SQLite testai tikrina versijos ir viso modelio atvejus, du
+  atskirus procesus, būsimas versijas, Unban/force/atkurtos rankinės eilės
+  apėjimo bandymus, naują API paiešką, pasenusį cache, pavėlavusį addVersion,
+  nepavykusį unlink, istorijos migraciją ir jos klaidingų sutapimų atmetimą.
+  Kitos versijos ir nesusiję Library failai išlieka.
+- Praėjo SQLite/modelių veiksmai abiejuose procesuose, 36 regresijų ir 33
+  bendrieji testai, abiejų Electron procesų puslapių/preview patikros,
+  TypeScript ir production build. 1 000 versijų Browse būsena: 1 ms,
+  4 SQL užklausos, 0 failų patikrų. Testai vartotojo profilio nekeitė.

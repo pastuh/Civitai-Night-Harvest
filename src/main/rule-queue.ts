@@ -262,7 +262,7 @@ export function pruneIrrelevantPendingVersions(
       drop(p, 'version-excluded')
       continue
     }
-    if (inventory.isModelBanned(p.modelId) || inventory.isMissingUnavailable(p.modelId)) {
+    if (inventory.isModelDownloadBlocked(p.modelId) || inventory.isMissingUnavailable(p.modelId)) {
       drop(p, 'banned/missing')
       continue
     }
@@ -434,6 +434,7 @@ function processModel(
   model: CivitaiModel
 ): void {
   if (!client.isSupportedType(model, rule.modelType)) return
+  if (inventory.isForgotten(model.id)) return
   const filter = rule.contentFilter ?? ctx.filter
   if (!matchesContentFilter(model.nsfw, filter)) return
 
@@ -452,10 +453,11 @@ function processModel(
   const ruleBases = parseRuleBaseModels(rule.baseModels)
 
   const tryDeferEarlyAccess = (version: CivitaiModelVersion): boolean => {
+    if (inventory.isForgotten(model.id, version.id)) return false
     const access = modelVersionAccess(model, version)
     if (!access.isEarlyAccess) return false
     if (model.id <= 0 || version.id <= 0) return false
-    if (inventory.isModelBanned(model.id)) return false
+    if (inventory.isModelDownloadBlocked(model.id)) return false
     if (inventory.isMissingUnavailable(model.id)) return false
     if (inventory.hasVersion(version.id)) return false
     if (inventory.getDeferredDownload(version.id)) {
@@ -538,6 +540,7 @@ function processModel(
   }
 
   const tryQueue = (version: CivitaiModelVersion, label: string): boolean => {
+    if (inventory.isForgotten(model.id, version.id)) return false
     if (!options.queueEnabled) return false
     if (model.id <= 0 || version.id <= 0) return false
     {
@@ -549,7 +552,7 @@ function processModel(
         return false
       }
     }
-    if (inventory.isModelBanned(model.id)) return false
+    if (inventory.isModelDownloadBlocked(model.id)) return false
     if (inventory.isMissingUnavailable(model.id)) return false
     if (inventory.hasVersion(version.id)) return false
     if (modelVersionAccess(model, version).isEarlyAccess) return false
@@ -604,6 +607,7 @@ function processModel(
     let offered = 0
     for (const version of versions) {
       if (ctx.snapshot.versionIds.has(version.id) || inventory.hasVersion(version.id)) continue
+      if (inventory.isForgotten(model.id, version.id)) continue
       if (ctx.pendingVersionIds.has(version.id)) continue
       if (downloadQueue.hasActiveItem(version.id)) continue
       if (inventory.getDeferredDownload(version.id)) {
@@ -622,7 +626,7 @@ function processModel(
             return 'blocked tag'
           }
         }
-        if (inventory.isModelBanned(model.id)) return 'banned'
+        if (inventory.isModelDownloadBlocked(model.id)) return 'banned'
         if (inventory.isMissingUnavailable(model.id)) return 'unavailable (missing)'
         if (inventory.hasVersion(version.id)) return 'already in library'
         if (modelVersionAccess(model, version).isEarlyAccess) return 'early access'
@@ -681,7 +685,7 @@ function processModel(
   // Live ban check — snapshot can be stale if user bans mid-scan / mid-harvest.
   if (
     ctx.snapshot.ignoredModelIds.has(model.id) ||
-    inventory.isModelBanned(model.id) ||
+    inventory.isModelDownloadBlocked(model.id) ||
     inventory.isMissingUnavailable(model.id)
   ) {
     result.upToDate++
@@ -697,7 +701,7 @@ function processModel(
     result.upToDate++
     return
   }
-  if (inventory.isModelBanned(model.id) || inventory.isMissingUnavailable(model.id)) {
+  if (inventory.isModelDownloadBlocked(model.id) || inventory.isMissingUnavailable(model.id)) {
     result.upToDate++
     return
   }
@@ -1085,7 +1089,7 @@ export function offerPendingFromBrowseCard(
   if (m.id <= 0 || m.versionId <= 0) return false
   if (inventory.hasVersion(m.versionId)) return false
   if (inventory.isVersionAutoDownloadBlocked(m.versionId)) return false
-  if (inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) return false
+  if (inventory.isModelDownloadBlocked(m.id) || inventory.isMissingUnavailable(m.id)) return false
   const owned = inventory.getVersionsForModel(m.id)
   if (!owned.length) return false
   if (inventory.getDeferredDownload(m.versionId)) return false
@@ -1240,7 +1244,7 @@ export function queueEligibleTestModels(
       })
       continue
     }
-    if (m.isBanned || inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) {
+    if (m.isBanned || inventory.isModelDownloadBlocked(m.id) || inventory.isMissingUnavailable(m.id)) {
       skipped.banned++
       continue
     }
@@ -1521,7 +1525,7 @@ export async function scanOwnedModelsForNewVersions(
         )
         .map((v) => v.modelId)
     )
-  ].filter((id) => !inventory.isModelBanned(id) && !inventory.isMissingUnavailable(id))
+  ].filter((id) => !inventory.isModelDownloadBlocked(id) && !inventory.isMissingUnavailable(id))
 
   const allowedBases = allowedBaseModelsFromRules()
   const ruleBaseModelsStr = allowedBases ? [...allowedBases].join(',') : ''
@@ -1585,7 +1589,7 @@ export async function scanOwnedModelsForNewVersions(
 
   for (let i = 0; i < dueModelIds.length; i++) {
     const modelId = dueModelIds[i]
-    if (inventory.isModelBanned(modelId) || inventory.isMissingUnavailable(modelId)) {
+    if (inventory.isModelDownloadBlocked(modelId) || inventory.isMissingUnavailable(modelId)) {
       result.modelsChecked++
       continue
     }
@@ -1652,7 +1656,7 @@ export async function offerNewVersionsForOwnedModel(
   } = {}
 ): Promise<{ newVersions: number; upToDate: number; error?: string }> {
   if (modelId <= 0) return { newVersions: 0, upToDate: 0 }
-  if (inventory.isModelBanned(modelId) || inventory.isMissingUnavailable(modelId)) {
+  if (inventory.isModelDownloadBlocked(modelId) || inventory.isMissingUnavailable(modelId)) {
     return { newVersions: 0, upToDate: 0 }
   }
   const preferred = options.preferredDomain ?? 'com'

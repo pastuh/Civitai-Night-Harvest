@@ -40,7 +40,7 @@ export function registerIncompleteFromModel(
   getWindow?: () => BrowserWindow | null
 ): void {
   if (!model?.id || (model.modelVersions?.length ?? 0) > 0) return
-  if (inventory.isModelBanned(model.id)) return
+  if (inventory.isModelDownloadBlocked(model.id)) return
   if (inventory.getVersionsForModel(model.id).length > 0) return
 
   const pageUrl = `${getSiteBase(domain)}/models/${model.id}`
@@ -192,7 +192,7 @@ export async function downloadIncompleteModel(options: {
   if (!row) {
     return { status: 'failed', modelId, reason: 'Not in Incomplete list' }
   }
-  if (inventory.isModelBanned(modelId)) {
+  if (inventory.isModelDownloadBlocked(modelId)) {
     inventory.removeIncompleteModel(modelId)
     emitIncompleteList(getWindow)
     return { status: 'skipped', modelId, reason: 'Model is banned' }

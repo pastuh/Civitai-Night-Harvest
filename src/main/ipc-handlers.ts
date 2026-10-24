@@ -539,7 +539,7 @@ export function initIpc(): void {
     }
   ): { queued: boolean } {
     if (!modelId || modelId <= 0) return { queued: false }
-    if (inventory.isModelBanned(modelId)) return { queued: false }
+    if (inventory.isModelDownloadBlocked(modelId) || inventory.isForgotten(modelId, stub?.versionId)) return { queued: false }
     // Prefer stub from Missing/ban row — avoid rematerializing the whole Browse gallery
     // (preferred-preview SQL) on every Allow click.
     let browse: import('../shared/types').WatchRuleTestModel | undefined
@@ -1171,6 +1171,7 @@ export function initIpc(): void {
       }
     ) => {
     // Snapshot stub before delete — used for manual queue (bypass blocked tags).
+    if (inventory.isForgotten(modelId)) throw new Error('This model was permanently forgotten')
     const banned = inventory.getBannedModels().find((b) => b.modelId === modelId)
     const tagSkip = inventory.getTagSkipReview(modelId)
     inventory.unbanModel(modelId)
@@ -1231,6 +1232,7 @@ export function initIpc(): void {
       if (versionId <= 0 || modelId <= 0) {
         throw new Error('modelId and versionId are required')
       }
+      if (inventory.isForgotten(modelId, versionId)) throw new Error('This model/version was permanently forgotten')
       const owned = inventory.getVersion(versionId)
       if (owned && owned.modelId !== modelId) throw new Error('Version does not belong to the selected model')
       inventory.banVersion({
@@ -1292,6 +1294,7 @@ export function initIpc(): void {
       if (versionId <= 0 || modelId <= 0) {
         throw new Error('modelId and versionId are required')
       }
+      if (inventory.isForgotten(modelId, versionId)) throw new Error('This model/version was permanently forgotten')
       const wasModelBanned = inventory.isModelBanned(modelId)
       const excluded = inventory.getBannedVersion(versionId)
       if (excluded && excluded.modelId !== modelId) throw new Error('Version does not belong to the selected model')
@@ -1522,7 +1525,7 @@ export function initIpc(): void {
       _e,
       payload: { modelId: number; enabled: boolean; modelName?: string }
     ): { modelId: number; enabled: boolean } => {
-      if (payload.enabled && inventory.isModelBanned(payload.modelId)) {
+      if (payload.enabled && inventory.isModelDownloadBlocked(payload.modelId)) {
         throw new Error('Cannot auto-update a banned model')
       }
       inventory.setModelAutoUpdate(
@@ -2189,7 +2192,7 @@ export function initIpc(): void {
       if (modelId <= 0) {
         throw new Error('Invalid model id')
       }
-      if (inventory.isModelBanned(modelId)) {
+      if (inventory.isModelDownloadBlocked(modelId)) {
         throw new Error('Cannot auto-update a banned model')
       }
       const modelName =

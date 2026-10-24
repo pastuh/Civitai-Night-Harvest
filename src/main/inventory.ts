@@ -34,6 +34,7 @@ import { filterUsablePreviewUrls, isUsableStoredPreviewUrl, createCachedPreviewL
 import { isForgettingModel, isForgettingVersion } from './forget-in-progress'
 
 let db: Database.Database | null = null
+let forgottenIds: { models: Set<number>; versions: Set<number> } | null = null
 const FORGET_VERSION_TABLES = ['versions', 'pending_versions', 'skipped_pending_versions', 'banned_versions',
   'deferred_downloads', 'browse_card_cache', 'version_preview_prefs', 'version_video_preview']
 const FORGET_MODEL_TABLES = [...FORGET_VERSION_TABLES, 'auto_update_models', 'library_version_checks',
@@ -577,6 +578,12 @@ function migrateInventorySchema(database: Database.Database): void {
       banned_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_banned_versions_model ON banned_versions(model_id);
+    CREATE TABLE IF NOT EXISTS forgotten_selections (
+      model_id INTEGER NOT NULL,
+      version_id INTEGER NOT NULL DEFAULT 0,
+      forgotten_at TEXT NOT NULL,
+      PRIMARY KEY (model_id, version_id)
+    );
     CREATE TABLE IF NOT EXISTS inventory_migrations (name TEXT PRIMARY KEY);
   `)
   const migration = 'separate-ban-and-forget-v1'
@@ -590,6 +597,8 @@ function migrateInventorySchema(database: Database.Database): void {
       database.prepare('DELETE FROM skipped_pending_versions WHERE forgotten = 1').run()
       const forgotten = database.prepare('SELECT model_id FROM banned_models WHERE forgotten = 1').all() as { model_id: number }[]
       if (forgotten.length) {
+        database.prepare(`INSERT OR IGNORE INTO forgotten_selections
+          SELECT model_id, 0, banned_at FROM banned_models WHERE forgotten = 1`).run()
         const selection = 'SELECT model_id FROM banned_models WHERE forgotten = 1'
         const ids = FORGET_VERSION_TABLES.map(table => `SELECT version_id FROM ${table} WHERE model_id IN (${selection})`).join(' UNION ')
         for (const table of ['pending_seen', 'ea_access_seen', 'browse_rule_gallery']) {
@@ -601,6 +610,28 @@ function migrateInventorySchema(database: Database.Database): void {
         database.prepare('DELETE FROM banned_models WHERE forgotten = 1').run()
       }
       database.prepare('INSERT INTO inventory_migrations VALUES (?)').run(migration)
+    })()
+  }
+  const persistentForget = 'persistent-forget-v1'
+  if (!database.prepare('SELECT 1 FROM inventory_migrations WHERE name = ?').get(persistentForget)) {
+    database.transaction(() => {
+      // Recover prior completed Forget actions when the older build retained only its structured activity log.
+      // Exact messages + manual source + matching IDs avoid interpreting ordinary log/model-name text as a decision.
+      database.prepare(`INSERT OR IGNORE INTO forgotten_selections
+        SELECT model_id, 0, timestamp FROM activity_log
+        WHERE source = 'manual' AND model_id > 0 AND message = 'Forgot model #' || model_id`).run()
+      database.prepare(`INSERT OR IGNORE INTO forgotten_selections
+        SELECT model_id, version_id, timestamp FROM activity_log
+        WHERE source = 'manual' AND version_id != 0
+          AND message = 'Forgot version #' || version_id || ' of model #' || model_id`).run()
+      // Preserve any unambiguous legacy whole-model Forget without exposing it as a reversible Ban.
+      database.prepare(`INSERT OR IGNORE INTO forgotten_selections
+        SELECT model_id, 0, banned_at FROM banned_models WHERE forgotten = 1`).run()
+      database.prepare('DELETE FROM banned_models WHERE forgotten = 1').run()
+      database.prepare(`DELETE FROM forgotten_selections AS version
+        WHERE version_id != 0 AND EXISTS (SELECT 1 FROM forgotten_selections AS model
+          WHERE model.model_id = version.model_id AND model.version_id = 0)`).run()
+      database.prepare('INSERT INTO inventory_migrations VALUES (?)').run(persistentForget)
     })()
   }
 }
@@ -761,7 +792,7 @@ export function getBrowseCardState(): BrowseCardState {
 export function refreshBrowseCardStates(cards: WatchRuleTestModel[]): WatchRuleTestModel[] {
   if (!cards.length) return cards
   const state = getBrowseCardState()
-  return cards.map(card => {
+  return cards.filter(card => !isForgotten(card.id, card.versionId)).map(card => {
     const inInventory = state.ownedVersionIds.has(card.versionId)
     const isBanned = state.bannedIds.has(card.id) || state.bannedVersionIds.has(card.versionId)
     const isAwaitingAccess = state.awaitingVersionIds.has(card.versionId)
@@ -773,7 +804,7 @@ export function refreshBrowseCardStates(cards: WatchRuleTestModel[]): WatchRuleT
 }
 
 export function isModelIgnored(modelId: number): boolean {
-  if (isModelBanned(modelId)) return true
+  if (isModelDownloadBlocked(modelId)) return true
   const row = getDb()
     .prepare('SELECT ignored FROM versions WHERE model_id = ? ORDER BY downloaded_at DESC LIMIT 1')
     .get(modelId) as { ignored: number } | undefined
@@ -784,6 +815,33 @@ export function isModelBanned(modelId: number): boolean {
   if (isForgettingModel(modelId)) return true
   const row = getDb().prepare('SELECT 1 FROM banned_models WHERE model_id = ?').get(modelId)
   return Boolean(row)
+}
+
+/** Durable Forget decisions are separate from reversible Ban and are read once per mutation. */
+function getForgottenIds(): { models: Set<number>; versions: Set<number> } {
+  if (!forgottenIds) {
+    const rows = getDb().prepare('SELECT model_id, version_id FROM forgotten_selections').all() as { model_id: number; version_id: number }[]
+    forgottenIds = { models: new Set(), versions: new Set() }
+    for (const row of rows) {
+      if (row.version_id === 0) forgottenIds.models.add(row.model_id)
+      else forgottenIds.versions.add(row.version_id)
+    }
+  }
+  return forgottenIds
+}
+
+export function isVersionForgotten(versionId: number): boolean {
+  return getForgottenIds().versions.has(versionId)
+}
+
+export function isForgotten(modelId: number, versionId?: number): boolean {
+  const ids = getForgottenIds()
+  return ids.models.has(modelId) || (versionId != null && ids.versions.has(versionId))
+}
+
+/** Model-level download policy; unlike isModelBanned this also respects permanent Forget. */
+export function isModelDownloadBlocked(modelId: number): boolean {
+  return isForgotten(modelId) || isModelBanned(modelId)
 }
 
 /** Confirmed Missing (Unavailable) — skip auto harvest; manual Retry still allowed. */
@@ -811,6 +869,7 @@ export function banModelAndMarkSeen(modelId: number, modelName = '', stub?: BanM
 
 export function banModel(modelId: number, modelName = '', stub?: BanModelStub): void {
   if (!modelId || modelId <= 0) return
+  if (isForgotten(modelId)) return
   const name = stub?.modelName?.trim() || modelName.trim() || `Model #${modelId}`
   const now = new Date().toISOString()
   const tagsJson = JSON.stringify(stub?.tags ?? [])
@@ -860,7 +919,7 @@ export function banModel(modelId: number, modelName = '', stub?: BanModelStub): 
   invalidateInventorySnapshotCache()
 }
 
-/** Forget removes identity/history; it never creates an exclusion or restore entry. */
+/** Remove files' identity/history, retaining only a durable non-restorable download exclusion. */
 export function forgetModelData(modelId: number, versionId?: number): void {
   const database = getDb()
   database.transaction(() => {
@@ -891,7 +950,11 @@ export function forgetModelData(modelId: number, versionId?: number): void {
     }
     // A persisted queue must not restore the forgotten selection on next launch.
     pruneStoredQueue(database, row => row.modelId === modelId && (versionId == null || row.versionId === versionId))
+    if (versionId == null) database.prepare('DELETE FROM forgotten_selections WHERE model_id = ? AND version_id != 0').run(modelId)
+    database.prepare('INSERT OR IGNORE INTO forgotten_selections VALUES (?, ?, ?)')
+      .run(modelId, versionId ?? 0, new Date().toISOString())
   })()
+  forgottenIds = null
   invalidateInventorySnapshotCache()
 }
 
@@ -1018,7 +1081,7 @@ export function getTagSkipAllowlistIds(): number[] {
 export function recordTagSkipReview(input: TagSkipInput): TagSkipReview | null {
   if (!input.modelId || input.modelId <= 0) return null
   if (!input.blockedTag.trim()) return null
-  if (isModelBanned(input.modelId)) return null
+  if (isModelDownloadBlocked(input.modelId) || isForgotten(input.modelId, input.versionId)) return null
   if (isTagSkipAllowed(input.modelId)) return null
   if (isModelOwned(input.modelId)) return null
   if (input.versionId && input.versionId > 0 && hasVersion(input.versionId)) return null
@@ -1357,7 +1420,7 @@ export function getExclusionReviewItems(): ExclusionReviewItem[] {
       }
     })
 
-  const items = [...missing, ...banned, ...tagSkips, ...excludedVersions]
+  const items = [...missing, ...banned, ...tagSkips, ...excludedVersions].filter(item => !isForgotten(item.modelId, item.versionId))
   fillExclusionStatsFromVersions(items)
   fillExclusionVersionNames(items)
   return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
@@ -1751,6 +1814,9 @@ export function modelHasAwaitingAccessDeferred(modelId: number, versionId?: numb
 }
 
 export function addVersion(record: InventoryRecord): void {
+  if (isForgotten(record.modelId, record.versionId) || isForgettingModel(record.modelId) || isForgettingVersion(record.versionId)) {
+    throw new Error('This model/version was forgotten and cannot be added again')
+  }
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO versions (
@@ -2070,11 +2136,11 @@ export function getAllPendingVersions(): PendingVersion[] {
     // Oldest first so newly detected offers appear at the bottom (safer while reviewing).
     .prepare('SELECT * FROM pending_versions ORDER BY detected_at ASC')
     .all()
-  return rows.map((r) => rowToPending(r as Record<string, unknown>))
+  return rows.map((r) => rowToPending(r as Record<string, unknown>)).filter(row => !isForgotten(row.modelId, row.versionId))
 }
 
 export function addPendingVersion(pending: PendingVersion): void {
-  if (isModelBanned(pending.modelId) || isVersionExcluded(pending.versionId)) return
+  if (isModelDownloadBlocked(pending.modelId) || isVersionExcluded(pending.versionId)) return
   const tagsJson = JSON.stringify(pending.civitaiTags ?? [])
   const detectedAt = pending.detectedAt?.trim() || new Date().toISOString()
   getDb()
@@ -2252,7 +2318,7 @@ export function isPendingVersionSkipped(versionId: number): boolean {
 
 /** A reversible version ban is independent of an Updates Skip. */
 export function isVersionExcluded(versionId: number): boolean {
-  return isForgettingVersion(versionId) || isVersionBanned(versionId) || getDb().prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ?').get(versionId) != null
+  return isForgettingVersion(versionId) || isVersionForgotten(versionId) || isVersionBanned(versionId) || getDb().prepare('SELECT 1 FROM skipped_pending_versions WHERE version_id = ?').get(versionId) != null
 }
 export const isVersionAutoDownloadBlocked = isVersionExcluded
 
@@ -2275,6 +2341,7 @@ export function getBannedVersion(versionId: number): PendingVersion | null {
 }
 
 export function banVersion(pending: PendingVersion): void {
+  if (isForgotten(pending.modelId, pending.versionId)) return
   getDb().prepare('INSERT OR REPLACE INTO banned_versions VALUES (?, ?, ?, ?)')
     .run(pending.versionId, pending.modelId, JSON.stringify({ ...pending, skipped: false, forgotten: undefined }), new Date().toISOString())
   removePendingVersion(pending.versionId)
@@ -2302,11 +2369,12 @@ export function getAllSkippedPendingVersions(): PendingVersion[] {
       ...rowToPending(row),
       skipped: true
     }
-  })
+  }).filter(row => !isForgotten(row.modelId, row.versionId))
 }
 
 /** Persist a skipped Updates offer (keeps library files). */
 export function skipPendingVersion(pending: PendingVersion): void {
+  if (isForgotten(pending.modelId, pending.versionId)) return
   upsertSkippedPendingVersion(pending, false)
 }
 
@@ -2355,6 +2423,7 @@ export function unskipPendingVersion(versionId: number): PendingVersion | null {
   // Only restore soft-skipped rows via Unskip (not forgotten).
   if (Boolean(row.forgotten)) return null
   const pending = rowToPending(row)
+  if (isForgotten(pending.modelId, pending.versionId)) return null
   getDb().prepare('DELETE FROM skipped_pending_versions WHERE version_id = ?').run(versionId)
   return pending
 }
@@ -2369,14 +2438,13 @@ export function removeSkippedPendingForModel(modelId: number): void {
   getDb().prepare('DELETE FROM skipped_pending_versions WHERE model_id = ?').run(modelId)
 }
 
-/** Drop skipped rows that are owned, banned, deferred, or no longer relevant.
- *  Forgotten update versions are sticky — only clear when that version is owned. */
+/** Drop skipped rows that are owned, blocked, deferred, or no longer relevant. */
 export function pruneSkippedPendingVersions(): void {
   const rows = getAllSkippedPendingVersions()
   if (!rows.length) return
   const snapshot = getInventorySnapshotCached(60_000)
   for (const p of rows) {
-    if (isModelBanned(p.modelId) || isMissingUnavailable(p.modelId)) {
+    if (isModelDownloadBlocked(p.modelId) || isForgotten(p.modelId, p.versionId) || isMissingUnavailable(p.modelId)) {
       removeSkippedPendingVersion(p.versionId)
       continue
     }
@@ -2484,7 +2552,7 @@ export function getAllDeferredDownloads(): DeferredDownload[] {
   const rows = getDb()
     .prepare('SELECT * FROM deferred_downloads ORDER BY deferred_at DESC')
     .all()
-  return rows.map((r) => rowToDeferred(r as Record<string, unknown>))
+  return rows.map((r) => rowToDeferred(r as Record<string, unknown>)).filter(row => !isForgotten(row.modelId, row.versionId))
 }
 
 export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCount' | 'deferredAt'> & {
@@ -2496,7 +2564,7 @@ export function upsertDeferredDownload(entry: Omit<DeferredDownload, 'attemptCou
   /** A positive access-gate response revokes any previous Public confirmation. */
   clearAccessConfirmation?: boolean
 }): void {
-  if (isModelBanned(entry.modelId) || isVersionBanned(entry.versionId) || isForgettingVersion(entry.versionId)) return
+  if (isModelDownloadBlocked(entry.modelId) || isForgotten(entry.modelId, entry.versionId) || isVersionBanned(entry.versionId) || isForgettingVersion(entry.versionId)) return
   const existing = getDb()
     .prepare(
       'SELECT attempt_count, deferred_at, civitai_tags, download_count, thumbs_up_count, access_confirmed_at FROM deferred_downloads WHERE version_id = ?'
@@ -2742,7 +2810,7 @@ export function getAllIncompleteModels(): IncompleteModel[] {
   const rows = getDb()
     .prepare('SELECT * FROM incomplete_models ORDER BY detected_at ASC')
     .all()
-  return rows.map((r) => rowToIncomplete(r as Record<string, unknown>))
+  return rows.map((r) => rowToIncomplete(r as Record<string, unknown>)).filter(row => !isForgotten(row.modelId, row.resolvedVersionId))
 }
 
 export function getIncompleteModel(modelId: number): IncompleteModel | null {
@@ -2757,6 +2825,7 @@ export function upsertIncompleteModel(
   }
 ): void {
   if (entry.modelId <= 0) return
+  if (isForgotten(entry.modelId, entry.resolvedVersionId)) return
   const existing = getDb()
     .prepare('SELECT detected_at FROM incomplete_models WHERE model_id = ?')
     .get(entry.modelId) as { detected_at: string } | undefined
@@ -2869,7 +2938,7 @@ export function getAllMissingModels(): MissingModel[] {
   const rows = getDb()
     .prepare('SELECT * FROM missing_models ORDER BY last_hit_at DESC')
     .all()
-  return rows.map((r) => rowToMissing(r as Record<string, unknown>))
+  return rows.map((r) => rowToMissing(r as Record<string, unknown>)).filter(row => !isForgotten(row.modelId, row.versionId))
 }
 
 export function getMissingModel(modelId: number): MissingModel | null {
@@ -2919,7 +2988,7 @@ export type MissingHitInput = {
  */
 export function recordMissingModelHit(input: MissingHitInput): MissingModel | null {
   if (!input.modelId || input.modelId <= 0) return null
-  if (isModelBanned(input.modelId)) return null
+  if (isModelDownloadBlocked(input.modelId) || isForgotten(input.modelId, input.versionId)) return null
   const now = new Date()
   const nowIso = now.toISOString()
   const today = nowIso.slice(0, 10)
@@ -3140,6 +3209,7 @@ export function loadDownloadQueueState(): PersistedDownloadQueueState | null {
 export function closeInventory(): void {
   db?.close()
   db = null
+  forgottenIds = null
 }
 
 /** modelId → local calendar day (YYYY-MM-DD) when the ban card was fully scrolled into view. */
@@ -3338,6 +3408,7 @@ export function upsertBrowseCardCache(
   const tx = getDb().transaction((items: typeof rows) => {
     for (const row of items) {
       if (!row.versionId || row.versionId <= 0) continue
+      if (isForgotten(row.modelId, row.versionId) || isForgettingModel(row.modelId) || isForgettingVersion(row.versionId)) continue
       stmt.run(
         row.versionId,
         row.modelId,
@@ -3392,7 +3463,7 @@ export function getBrowseCardCache(versionIds: number[]): Map<number, WatchRuleT
   for (const row of rows) {
     try {
       const card = JSON.parse(row.card_json) as WatchRuleTestModel
-      if (card?.versionId) out.set(row.version_id, sanitizeBrowseCardPreviews(card, cachedPath))
+      if (card?.versionId && !isForgotten(card.id, card.versionId)) out.set(row.version_id, sanitizeBrowseCardPreviews(card, cachedPath))
     } catch {
       /* skip corrupt row */
     }
@@ -3408,7 +3479,7 @@ export function getAllBrowseCardCacheCards(): WatchRuleTestModel[] {
   for (const row of rows) {
     try {
       const card = JSON.parse(row.card_json) as WatchRuleTestModel
-      if (card?.versionId && card.versionId > 0) out.push(card)
+      if (card?.versionId && card.versionId > 0 && !isForgotten(card.id, card.versionId)) out.push(card)
     } catch {
       /* skip corrupt row */
     }
@@ -3490,7 +3561,7 @@ export function getBrowseRuleGalleryCards(ruleId: string): WatchRuleTestModel[] 
   for (const row of rows) {
     try {
       const card = JSON.parse(row.card_json) as WatchRuleTestModel
-      if (card?.versionId && card.versionId > 0) out.push(card)
+      if (card?.versionId && card.versionId > 0 && !isForgotten(card.id, card.versionId)) out.push(card)
     } catch {
       /* skip corrupt row */
     }
@@ -3726,6 +3797,7 @@ export function upsertVersionVideoPreview(input: {
   videoPreviewUrls?: string[]
 }): void {
   if (input.versionId <= 0 || input.modelId <= 0) return
+  if (isForgotten(input.modelId, input.versionId)) return
   const urls = (input.videoPreviewUrls ?? []).filter((u) => u?.trim())
   const primary = input.videoPreviewUrl?.trim() || urls[0]
   if (!primary && !urls.length) return
@@ -3753,6 +3825,7 @@ export function upsertVersionVideoPreview(input: {
 
 export function markVersionVideoAbsent(versionId: number, modelId: number): void {
   if (versionId <= 0 || modelId <= 0) return
+  if (isForgotten(modelId, versionId)) return
   const now = new Date().toISOString()
   getDb()
     .prepare(

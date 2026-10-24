@@ -184,7 +184,7 @@ export class DownloadQueue {
         }
         continue
       }
-      if (card.isBanned || inventory.isModelBanned(card.id)) continue
+      if (card.isBanned || inventory.isModelDownloadBlocked(card.id)) continue
 
       const stub: DeferredDownload = {
         modelId: card.id,
@@ -516,6 +516,7 @@ export class DownloadQueue {
 
     const deferredByVersion = new Map(inventory.getAllDeferredDownloads().map(row => [row.versionId, row]))
     const canRetry = (item: DownloadQueueItem): boolean => {
+      if (inventory.isForgotten(item.modelId, item.versionId)) return false
       if (manual) return true
       const d = deferredByVersion.get(item.versionId)
       if (!d) return !isAwaitingAccessFailureKind(item.failureKind)
@@ -542,7 +543,7 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(item.versionId)
         continue
       }
-      if (inventory.isModelBanned(item.modelId)) {
+      if (inventory.isModelDownloadBlocked(item.modelId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         inventory.removeDeferredDownload(item.versionId)
         continue
@@ -597,6 +598,7 @@ export class DownloadQueue {
     }
 
     for (const d of deferredByVersion.values()) {
+      if (inventory.isForgotten(d.modelId, d.versionId)) continue
       if (atAutoCap()) break
       if (
         !inventory.isTagSkipAllowed(d.modelId) &&
@@ -611,7 +613,7 @@ export class DownloadQueue {
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
-      if (inventory.isModelBanned(d.modelId)) {
+      if (inventory.isModelDownloadBlocked(d.modelId)) {
         inventory.removeDeferredDownload(d.versionId)
         continue
       }
@@ -671,6 +673,7 @@ export class DownloadQueue {
    * Respects AUTO_QUEUE_PIPELINE_CAP unless `force` (manual Retry).
    */
   requeueDeferredVersion(versionId: number, options?: { force?: boolean }): boolean {
+    if (inventory.isVersionForgotten(versionId)) return false
     const force = options?.force === true
     if (!force && inventory.isVersionAutoDownloadBlocked(versionId)) {
       inventory.removeDeferredDownload(versionId)
@@ -682,6 +685,7 @@ export class DownloadQueue {
       return false
     }
     const stored = inventory.getDeferredDownload(versionId)
+    if (stored && inventory.isForgotten(stored.modelId, versionId)) return false
     if (!force && isEarlyAccessActive(stored?.earlyAccessEndsAt)) return false
     if (!force && stored && isAwaitingAccessFailureKind(stored.failureKind) &&
       !shouldAutoRetryDeferred(stored, Boolean(getSettings().apiKey))) return false
@@ -691,6 +695,7 @@ export class DownloadQueue {
 
     const item = this.items.find((i) => i.versionId === versionId && i.status === 'deferred')
     if (item) {
+      if (inventory.isForgotten(item.modelId, versionId)) return false
       if (!force && !stored && isAwaitingAccessFailureKind(item.failureKind)) return false
       if (inventory.hasVersion(versionId)) {
         inventory.removeDeferredDownload(versionId)
@@ -836,7 +841,8 @@ export class DownloadQueue {
   enqueue(request: DownloadRequest, meta: EnqueueMeta = {}): string {
     if (request.modelId <= 0) return ''
     if (request.versionId != null && request.versionId <= 0) return ''
-    if (inventory.isModelBanned(request.modelId)) return ''
+    if (inventory.isForgotten(request.modelId, request.versionId)) return ''
+    if (inventory.isModelDownloadBlocked(request.modelId)) return ''
     if (request.versionId && inventory.isVersionBanned(request.versionId)) return ''
     // Unavailable Missing: block auto harvest; allow explicit manual queue / Retry.
     if (meta.manual !== true && inventory.isMissingUnavailable(request.modelId)) return ''
@@ -985,6 +991,7 @@ export class DownloadQueue {
   runNow(id: string): boolean {
     const item = this.items.find((i) => i.id === id)
     if (!item) return false
+    if (inventory.isForgotten(item.modelId, item.versionId)) return false
     if (item.status === 'downloading') return true
 
     item.manual = true
@@ -1720,6 +1727,11 @@ export class DownloadQueue {
   private purgeExcludedVersionsFromQueue(): boolean {
     let changed = false
     for (const item of this.items) {
+      if (inventory.isForgotten(item.modelId, item.versionId)) {
+        if (item.status === 'downloading') this.downloadService.cancel(item.versionId)
+        inventory.removeDeferredDownload(item.versionId)
+        continue
+      }
       if (item.manual) continue
       if (!item.versionId || !inventory.isVersionAutoDownloadBlocked(item.versionId)) continue
       if (item.status === 'downloading') this.downloadService.cancel(item.versionId)
@@ -1727,6 +1739,7 @@ export class DownloadQueue {
     }
     const before = this.items.length
     this.items = this.items.filter((i) => {
+      if (inventory.isForgotten(i.modelId, i.versionId)) return false
       if (i.manual) return true
       if (i.versionId && inventory.isVersionAutoDownloadBlocked(i.versionId)) return false
       return true
@@ -1746,7 +1759,7 @@ export class DownloadQueue {
     const policyOpts = getTagPolicyOptions()
     for (const d of inventory.getAllDeferredDownloads()) {
       if (inventory.hasVersion(d.versionId)) continue
-      if (inventory.isModelBanned(d.modelId)) continue
+      if (inventory.isModelDownloadBlocked(d.modelId)) continue
       if (inventory.isVersionAutoDownloadBlocked(d.versionId)) {
         inventory.removeDeferredDownload(d.versionId)
         continue
@@ -1988,7 +2001,8 @@ export class DownloadQueue {
   private pruneQueue(): void {
     const seenTerminal = new Set<number>()
     this.items = this.items.filter((i) => {
-      if (inventory.isModelBanned(i.modelId)) return false
+      if (inventory.isForgotten(i.modelId, i.versionId)) return false
+      if (inventory.isModelDownloadBlocked(i.modelId)) return false
       if (i.status === 'skipped' || i.status === 'done') return false
       if (i.status === 'queued' || i.status === 'downloading' || i.status === 'deferred') return true
       if (i.status !== 'failed') return true
@@ -2032,6 +2046,7 @@ export class DownloadQueue {
     thumbsUpCount?: number
     baseModel?: string
   }): boolean {
+    if (inventory.isForgotten(params.modelId, params.versionId)) return false
     if (inventory.hasVersion(params.versionId)) return false
     if (this.hasActiveItem(params.versionId)) return false
 
@@ -2158,7 +2173,7 @@ export class DownloadQueue {
         }
         continue
       }
-      if (inventory.isModelBanned(item.modelId)) {
+      if (inventory.isModelDownloadBlocked(item.modelId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         if (item.versionId) inventory.removeDeferredDownload(item.versionId)
         continue
@@ -2238,7 +2253,7 @@ export class DownloadQueue {
       if (item.status !== 'failed') continue
       const reason = item.reason ?? ''
       if (!isRetryableDownloadError(reason)) continue
-      if (inventory.isModelBanned(item.modelId)) {
+      if (inventory.isModelDownloadBlocked(item.modelId)) {
         this.items = this.items.filter((i) => i.id !== item.id)
         if (item.versionId) inventory.removeDeferredDownload(item.versionId)
         continue
@@ -2304,7 +2319,7 @@ export class DownloadQueue {
         : this.items
       const next = pickNextQueuedItem(
         pool,
-        (id) => inventory.isModelBanned(id),
+        (id) => inventory.isModelDownloadBlocked(id),
         (vid) => inventory.isVersionAutoDownloadBlocked(vid)
       )
       if (!next || this.runningIds.has(next.id)) break
@@ -2342,6 +2357,12 @@ export class DownloadQueue {
     let stallCheck: ReturnType<typeof setInterval> | undefined
 
     try {
+      if (inventory.isForgotten(item.modelId, item.versionId)) {
+        this.items = this.items.filter(row => row.id !== item.id)
+        this.broadcast()
+        this.checkIdle()
+        return
+      }
       if (
         !item.manual &&
         item.versionId &&

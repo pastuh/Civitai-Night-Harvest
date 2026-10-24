@@ -227,7 +227,11 @@ export class DownloadService {
         }
       }
 
-      if (inventory.isModelBanned(request.modelId) || (request.versionId && inventory.isVersionBanned(request.versionId))) {
+      if (inventory.isForgotten(request.modelId, request.versionId)) {
+        return { status: 'skipped', reason: 'Permanently forgotten', modelId: request.modelId, versionId: request.versionId ?? 0 }
+      }
+
+      if (inventory.isModelDownloadBlocked(request.modelId) || (request.versionId && inventory.isVersionBanned(request.versionId))) {
         return {
           status: 'failed',
           reason: 'Banned',
@@ -300,7 +304,10 @@ export class DownloadService {
       }
 
       abort.signal.throwIfAborted()
-      if (inventory.isModelBanned(model.id) || inventory.isVersionBanned(versionId)) {
+      if (inventory.isForgotten(model.id, versionId)) {
+        return { status: 'skipped', reason: 'Permanently forgotten', modelId: model.id, versionId }
+      }
+      if (inventory.isModelDownloadBlocked(model.id) || inventory.isVersionBanned(versionId)) {
         return {
           status: 'failed',
           reason: 'Banned',
@@ -561,7 +568,7 @@ export class DownloadService {
           modelPath,
           headers,
           (received, total) => {
-            if (inventory.isModelBanned(model.id)) abort.abort()
+            if (inventory.isModelDownloadBlocked(model.id) || inventory.isForgotten(model.id, versionId)) abort.abort()
             emitProgress({
               modelId: model.id,
               versionId,
@@ -596,7 +603,7 @@ export class DownloadService {
             modelPath,
             headers,
             (received, total) => {
-              if (inventory.isModelBanned(model.id)) abort.abort()
+              if (inventory.isModelDownloadBlocked(model.id) || inventory.isForgotten(model.id, versionId)) abort.abort()
               emitProgress({
                 modelId: model.id,
                 versionId,

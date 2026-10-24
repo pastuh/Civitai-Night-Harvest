@@ -11,14 +11,78 @@ if (process.versions.electron) {
       DownloadQueue, DownloadService, queueModelsFromPage, queueEligibleTestModels } = require(path.join(lab, 'actions.cjs'))
     inv.countVersions()
     const db = new (require('better-sqlite3'))(path.join(work, 'inventory.db'))
+    const assertForgottenBlocked = async (modelId, versionId) => {
+      assert.equal(inv.isForgotten(modelId, versionId), true)
+      const Database = require('better-sqlite3'), prepare = Database.prototype.prepare
+      let queries = 0
+      Database.prototype.prepare = function(sql) {queries++; return prepare.call(this, sql)}
+      try { for (let i = 0; i < 100; i++) assert.equal(inv.isForgotten(modelId, versionId), true) }
+      finally { Database.prototype.prepare = prepare }
+      assert.equal(queries, 0, 'Repeated per-card/queue Forget checks use cached ID sets, not N+1 SQL')
+      inv.unbanModel(modelId); inv.unbanVersion(versionId)
+      assert.equal(inv.isForgotten(modelId, versionId), true, 'Unban must never erase a Forget decision')
+      const request = {modelId, versionId, modelType: 'LORA'}
+      let calls = 0
+      const queue = new DownloadQueue({downloadModel: async () => {calls++; throw new Error('Forgotten download must not run')}}, () => null)
+      queue.broadcast = () => {}; queue.checkIdle = () => {}
+      try {
+        for (const manual of [false, true]) assert.equal(queue.enqueue(request, {modelType: 'LORA', manual}), '', 'Neither automatic nor stale manual requests bypass Forget')
+        const stale = {id: 'stale-forgotten', ...request, status: 'queued', manual: true}
+        queue.items = [stale]
+        await queue.runOne(stale)
+        assert.equal(calls, 0)
+        assert.equal(queue.getItems().length, 0, 'Restored manual queue rows must also be discarded')
+        assert.equal(queue.deferEarlyAccess({...request, modelName: 'Forgotten', modelType: 'LORA'}), false)
+        if (!inv.isForgotten(modelId)) {
+          assert.ok(queue.enqueue({...request, versionId: versionId + 1000000}, {modelType: 'LORA'}), 'A version-only Forget must still allow unowned sibling versions')
+        }
+      } finally { queue.dispose() }
+      const service = new DownloadService({primaryDomain: () => 'red', forDomain: () => ({getDomain: () => 'red'})})
+      for (const force of [false, true]) {
+        const result = await service.downloadModel({...request, force})
+        assert.equal(result.status, 'skipped', 'Direct and forced workers must respect Forget before any API call')
+        assert.equal(result.reason, 'Permanently forgotten')
+      }
+      const forgottenModel = {id: modelId, name: 'Forgotten search result', type: 'LORA', tags: [], modelVersions: [
+        {id: versionId, name: 'v1', baseModel: 'MOSS Image', availability: 'Public', files: [], images: []}]}
+      const client = {searchModels: async () => ({items: [forgottenModel], metadata: {pageSize: 100}}),
+        isSupportedType: () => true, getDomain: () => 'red', getModelPageUrl: () => 'https://civitai.red/models/' + modelId}
+      const neverQueue = {hasActiveItem: () => false, enqueue: () => {throw new Error('Search must not queue a forgotten version')},
+        deferEarlyAccess: () => {throw new Error('Search must not recreate a forgotten access wait')}, start: () => {}}
+      const search = await queueModelsFromPage(client, neverQueue,
+        {id: 'forgotten', name: 'Forgotten', enabled: true, query: '', baseModels: '', modelType: 'LORA', contentFilter: 'all'},
+        {queueEnabled: true, requireTagMatch: false, includeNewVersions: true})
+      assert.deepEqual(search.errors, [])
+      assert.equal(search.queued + search.newModels + search.newVersions, 0, 'Searching again must not rediscover a forgotten selection as new')
+      assert.deepEqual(search.sampleModels, [], 'Forgotten results must not flash in Browse')
+      inv.addPendingVersion({...request, modelName: 'Forgotten', versionName: 'v1', baseModel: '', author: '', existingFolder: ''})
+      assert.equal(inv.hasPendingVersion(versionId), false, 'Always update cannot re-offer forgotten versions')
+      const staleCard = {id: modelId, versionId, name: 'Forgotten', type: 'LORA', baseModel: '', tags: [], inInventory: false, isBanned: false}
+      inv.upsertBrowseCardCache([{modelId, versionId, card: staleCard}])
+      assert.equal(inv.getBrowseCardCache([versionId]).has(versionId), false, 'Late cache updates must not restore forgotten cards')
+      assert.deepEqual(buildWatchRuleTestResult([staleCard], {pageSize: 1, currentPage: 1}, {}).sampleModels, [])
+    }
     if (process.argv.includes('--restart')) {
       assert.equal(inv.isVersionBanned(8801), true, 'Ambiguous old version exclusions survive as Ban')
       assert.equal(inv.isPendingVersionSkipped(8801), false, 'Ban must not remain an Updates Skip')
-      assert.equal(inv.isModelBanned(99), false, 'Old whole-model Forgotten is removed, not unbanned for restoration')
+      assert.equal(inv.isModelBanned(99), false, 'Legacy Forget is not a reversible Ban')
+      assert.equal(inv.isForgotten(99), true, 'Unambiguous legacy Forgotten survives as a permanent selection')
       assert.equal(inv.getAllBrowseCardCacheCards().some(row => row.id === 99), false)
       assert.equal(inv.getExclusionReviewItems().some(row => row.kind === 'forgotten'), false)
       assert.equal(inv.hasVersion(201), true, 'Migration must preserve unrelated library records')
       assert.ok(inv.getDeferredDownload(8420)?.accessConfirmedAt, 'Public access confirmation survives restart')
+      await assertForgottenBlocked(10, 1099)
+      await assertForgottenBlocked(40, 401)
+      assert.equal(inv.isForgotten(40, 402), false, 'Sibling availability survives restart')
+      await assertForgottenBlocked(170, 17001)
+      await assertForgottenBlocked(171, 17101)
+      assert.equal(inv.isForgotten(171, 17102), false, 'A recovered historical version Forget must retain sibling availability')
+      assert.equal(inv.isForgotten(172), false, 'An ordinary log with similar words is not a Forget decision')
+      assert.equal(inv.isForgotten(173), false, 'Mismatched message/structured IDs must not create Forget decisions')
+      assert.equal(inv.getAllPendingVersions().some(row => row.modelId === 170), false, 'Recovered historical Forget hides stale Updates offers')
+      assert.equal(inv.getAllDeferredDownloads().some(row => row.modelId === 170), false, 'Recovered historical Forget hides stale access waits')
+      assert.equal(inv.getAllSkippedPendingVersions().some(row => row.modelId === 171), false, 'Historical Forget must not appear as an Unskip offer')
+      assert.equal(inv.unskipPendingVersion(17101), null, 'Unskip cannot revive a forgotten version')
       process.stdout.write('PASS model actions: legacy migration and restart persistence\n')
       db.close(); app.exit(0); return
     }
@@ -267,21 +331,29 @@ if (process.versions.electron) {
     assert.ok(paths(a).every(file => !fs.existsSync(file)), 'Forget deletes model, preview, metadata and both identity sidecars')
     assert.ok(paths(sibling).every(file => fs.existsSync(file)), 'Version Forget retains sibling files')
     assert.equal(inv.hasVersion(102), true)
-    assert.equal(inv.isVersionAutoDownloadBlocked(101), false, 'Forget must not leave a ban or skip')
+    assert.equal(inv.isVersionAutoDownloadBlocked(101), true, 'Forget must prevent automatic rediscovery')
+    assert.equal(inv.isVersionBanned(101), false, 'Forget is stored separately from Ban')
+    assert.equal(inv.isForgotten(10, 101), true)
+    assert.equal(inv.isForgotten(10, 102), false, 'Version Forget does not forget siblings')
+    assert.equal(inv.isForgotten(10), false)
     for (const table of ['versions', 'pending_versions', 'skipped_pending_versions', 'banned_versions', 'deferred_downloads',
       'browse_card_cache', 'browse_rule_gallery', 'pending_seen', 'ea_access_seen', 'version_preview_prefs', 'version_video_preview']) {
       assert.equal(db.prepare(`SELECT count(*) n FROM ${table} WHERE version_id = 101`).get().n, 0, table)
     }
     assert.deepEqual(JSON.parse(db.prepare('SELECT items_json FROM download_queue_state').get().items_json).map(row => row.versionId), [102])
     assert.deepEqual(queueCalls[0], [10, 101]); assert.deepEqual(schedulerCalls[0], [10, 101])
-    // A genuine new search is allowed to rediscover the exact version after Forget.
+    // A fresh search or late preview update must not restore the exact version after Forget.
     inv.upsertBrowseCardCache([{ modelId: 10, versionId: 101, card: card(a) }])
-    assert.equal(inv.getBrowseCardCache([101]).has(101), true)
+    assert.equal(inv.getBrowseCardCache([101]).has(101), false)
+    assert.throws(() => inv.addVersion(a), /forgotten/, 'A late download completion must not restore a deleted version')
+    await assertForgottenBlocked(10, 101)
     inv.banModel(10, 'Model 10'); inv.banVersion(pending(sibling))
     await forgetSelection({ modelId: 10 }, services)
     assert.ok(paths(sibling).every(file => !fs.existsSync(file)))
     assert.equal(inv.isModelBanned(10), false)
     assert.equal(inv.isVersionBanned(102), false)
+    assert.equal(inv.isForgotten(10), true, 'Whole-model Forget covers every future version')
+    assert.equal(db.prepare('SELECT count(*) n FROM forgotten_selections WHERE model_id = 10').get().n, 1, 'Whole-model Forget compacts older version decisions')
     assert.equal(inv.getAllBrowseCardCacheCards().some(row => row.id === 10), false)
     assert.ok(paths(unrelated).every(file => fs.existsSync(file)))
     assert.equal(inv.hasVersion(201), true)
@@ -291,6 +363,7 @@ if (process.versions.electron) {
     await assert.rejects(forgetSelection({ modelId: 30, versionId: 301 }, services), /Could not delete/)
     assert.equal(inv.hasVersion(301), true)
     assert.equal(inv.isVersionAutoDownloadBlocked(301), false)
+    assert.equal(inv.isForgotten(30, 301), false, 'A failed deletion must not commit a Forget decision')
     fs.rmdirSync(blocked.previewPath)
     await forgetSelection({ modelId: 30 }, services)
     const shared = record(40, 401), kept = record(50, 501)
@@ -298,6 +371,7 @@ if (process.versions.electron) {
     await forgetSelection({ modelId: 40, versionId: 401 }, services)
     assert.equal(fs.existsSync(shared.previewPath), true, 'A shared file still used by another model must stay')
     assert.equal(inv.hasVersion(501), true)
+    await assertForgottenBlocked(40, 401)
     // A slow hash check from a cancelled queue item must not restore a forgotten row.
     const adopting = record(60, 601)
     inv.removeVersion(601)
@@ -316,7 +390,15 @@ if (process.versions.electron) {
     inv.banModel(99, 'Legacy forgotten'); db.prepare('UPDATE banned_models SET forgotten = 1 WHERE model_id = 99').run()
     inv.upsertBrowseCardCache([{ modelId: 99, versionId: 9901, card: card({modelId: 99, versionId: 9901}) }])
     db.prepare("DELETE FROM inventory_migrations WHERE name = 'separate-ban-and-forget-v1'").run()
-    process.stdout.write('PASS model actions: Ban/Unban retain files; version/model Forget purge records, sidecars and queue; siblings retained; rediscovery and failed unlink\n')
+    inv.appendActivityEntry({id: 'old-forget-model', timestamp: '2026-01-01', level: 'info', source: 'manual', modelId: 170, message: 'Forgot model #170'})
+    inv.appendActivityEntry({id: 'old-forget-version', timestamp: '2026-01-01', level: 'info', source: 'manual', modelId: 171, versionId: 17101, message: 'Forgot version #17101 of model #171'})
+    inv.appendActivityEntry({id: 'ordinary-log', timestamp: '2026-01-01', level: 'info', source: 'crawl', modelId: 172, message: 'Forgot model #172'})
+    inv.appendActivityEntry({id: 'mismatched-log', timestamp: '2026-01-01', level: 'info', source: 'manual', modelId: 173, message: 'Forgot model #174'})
+    inv.addPendingVersion({modelId: 170, versionId: 17002, modelName: 'Stale offer', versionName: 'v2', baseModel: '', author: '', existingFolder: ''})
+    inv.upsertDeferredDownload({modelId: 170, versionId: 17003, modelName: 'Stale gate', modelType: 'LORA', reason: 'Early access', failureKind: 'early_access', outputFolder: '', routingTag: '', lastAttemptAt: '2026-01-01'})
+    inv.skipPendingVersion({modelId: 171, versionId: 17101, modelName: 'Stale skipped offer', versionName: 'v1', baseModel: '', author: '', existingFolder: ''})
+    db.prepare("DELETE FROM inventory_migrations WHERE name = 'persistent-forget-v1'").run()
+    process.stdout.write('PASS model actions: persistent version/model Forget; no rediscovery, forced download or Unban bypass; siblings retained; failed unlink stays recoverable\n')
     db.close(); app.exit(0)
   })().catch(error => { process.stderr.write(error.stack + '\n'); app.exit(1) })
 } else {

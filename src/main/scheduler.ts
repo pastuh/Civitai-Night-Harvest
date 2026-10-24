@@ -690,7 +690,7 @@ export class ScanScheduler {
     for (const r of reviews) {
       const versionId = r.versionId
       if (!r.modelId || r.modelId <= 0 || !versionId || versionId <= 0) continue
-      if (inventory.isModelBanned(r.modelId)) continue
+      if (inventory.isModelDownloadBlocked(r.modelId)) continue
       if (inventory.hasVersion(versionId)) continue
       const id = this.downloadQueue.enqueue(
         {
@@ -1512,7 +1512,7 @@ export class ScanScheduler {
           skipped.skipped++
           continue
         }
-        if (inventory.isModelBanned(m.id) || inventory.isMissingUnavailable(m.id)) {
+        if (inventory.isModelDownloadBlocked(m.id) || inventory.isMissingUnavailable(m.id)) {
           skipped.banned++
           continue
         }
@@ -3810,7 +3810,7 @@ export class ScanScheduler {
   unskipPending(versionId: number): void {
     const restored = inventory.unskipPendingVersion(versionId)
     if (!restored) return
-    if (inventory.hasVersion(versionId) || inventory.isModelBanned(restored.modelId)) {
+    if (inventory.hasVersion(versionId) || inventory.isModelDownloadBlocked(restored.modelId)) {
       return
     }
     inventory.addPendingVersion(restored)
@@ -3829,7 +3829,7 @@ export class ScanScheduler {
   /** An unbanned, unowned version of an owned model is available in Updates again. */
   restoreUnbannedVersion(item: PendingVersion | null): void {
     if (!item || inventory.hasVersion(item.versionId) || !inventory.isModelOwned(item.modelId) ||
-      inventory.isModelBanned(item.modelId) || inventory.isVersionAutoDownloadBlocked(item.versionId)) return
+      inventory.isModelDownloadBlocked(item.modelId) || inventory.isVersionAutoDownloadBlocked(item.versionId)) return
     const restored = { ...item, skipped: false, forgotten: false }
     inventory.addPendingVersion(restored)
     if (!this.pendingVersions.some(row => row.versionId === restored.versionId)) {
