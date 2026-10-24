@@ -44,6 +44,46 @@ const version = { id: 3416068, name: 'Moss v1 v1.0', baseModel: 'MOSS Image',
   createdAt: '', files: [], images: [{ url: image, type: 'image', nsfwLevel: 1 }] }
 const model = { id: 2857958, name: 'Alt Insta Feed', type: 'LORA', modelVersions: [version] }
 
+test('Full Sync keeps existing previews without API requests and repairs only missing covers', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-sync-previews-'))
+  const calls = {resolve: 0, image: 0, model: 0, added: 0}
+  globalThis.__syncPreviewFixture = calls
+  const {repairMissingPreviews} = await load('src/main/library-sync.ts', {
+    inventory: 'exports.addVersion = () => globalThis.__syncPreviewFixture.added++; exports.patchVersionPrimaryFileName = () => {}; exports.patchVersionFileMeta = () => {}',
+    'settings-store': 'exports.getTagRules = () => []',
+    'disk-import': 'exports.importModelsFromDisk = async () => ({})',
+    'backfill-civitai-ids': 'exports.backfillCivitaiIdentityFiles = async () => ({}); exports.invalidateIdentityBackfillCache = () => {}',
+    'preview-enrich': 'exports.resolvePreviewsForModelWithFallback = async () => {globalThis.__syncPreviewFixture.resolve++; return {previewUrls: ["https://example.test/cover.jpg"]}}',
+    'preview-fetch': 'exports.fetchFirstWorkingPreview = async () => {globalThis.__syncPreviewFixture.image++; const buffer = Buffer.alloc(256, 1); return {buffer, base64: buffer.toString("base64"), mime: "image/jpeg"}}'
+  })
+  const row = {modelId: model.id, versionId: version.id, modelName: model.name, versionName: version.name,
+    outputFolder: dir, slug: 'fixture', modelPath: path.join(dir, 'fixture.safetensors'),
+    previewPath: path.join(dir, 'fixture.preview.jpg'), swarmPath: path.join(dir, 'fixture.swarm.json'),
+    isNsfw: false, nsfwLevel: 1}
+  const pool = {primaryDomain: () => 'red', forDomain: () => ({
+    getModel: async () => {calls.model++; return model}, getModelPageUrl: () => 'https://example.test/model'
+  })}
+  try {
+    fs.writeFileSync(row.modelPath, 'Weights are not read by preview repair')
+    fs.writeFileSync(row.previewPath, Buffer.alloc(256, 1))
+    assert.deepEqual(await repairMissingPreviews(pool, [row]), {repairedPreviews: 0, repairedRatings: 0})
+    assert.deepEqual(calls, {resolve: 0, image: 0, model: 0, added: 0}, 'A saved preview must not trigger any remote work, even with a missing swarm thumbnail')
+    fs.unlinkSync(row.previewPath)
+    assert.deepEqual(await repairMissingPreviews(pool, [row]), {repairedPreviews: 1, repairedRatings: 0})
+    assert.equal(calls.image, 1)
+    assert.ok(fs.existsSync(row.previewPath))
+    const afterRepair = {...calls}
+    assert.deepEqual(await repairMissingPreviews(pool, [row]), {repairedPreviews: 0, repairedRatings: 0})
+    assert.deepEqual(calls, afterRepair, 'The next Sync must reuse the repaired cover')
+    await repairMissingPreviews(pool, [{...row, nsfwLevel: undefined}])
+    assert.equal(calls.model, afterRepair.model + 1, 'Missing rating metadata can still be fetched independently')
+    assert.equal(calls.image, afterRepair.image, 'Metadata enrichment must not download an existing cover again')
+  } finally {
+    delete globalThis.__syncPreviewFixture
+    fs.rmSync(dir, {recursive: true, force: true})
+  }
+})
+
 test('Swarm resolution uses pixel dimensions, never Civitai full/pruned file variants', async () => {
   const { buildSwarmJson, normalizeSwarmResolutionFields } = await load('src/main/swarm-json.ts')
   for (const [size, expected] of [['full', undefined], ['pruned', undefined], ['', undefined],

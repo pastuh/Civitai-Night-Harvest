@@ -408,3 +408,14 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   abiejų Electron procesų sąsajos/preview patikros, abi TypeScript patikros
   ir production build. 96 MiB siuntimui naudota apie 19 MiB JS buferių.
   1 000 versijų Browse būsena: 1 ms, 4 SQL užklausos, 0 failų patikrų.
+
+## Pilno Sync turimų preview persiuntimo regresija — 2026-10-24
+
+- `repairMissingPreviews` pažymėdavo trūkstamą Swarm thumbnail net tada,
+  kai `.preview.jpg` jau buvo diske. Dėl to pilnas Sync galėjo iš naujo
+  spręsti URL, siųsti preview ir perrašyti metaduomenis kiekvienam modeliui.
+- Esamas preview dabar praleidžia nuotolinį paveikslėlio taisymą. Trūkstami
+  NSFW metaduomenys papildomi atskirai, o iš tikrųjų dingęs preview atkuriamas.
+- Regresinis testas prieš pataisą atkūrė neteisingą persiuntimą; po pataisos
+  tikrina 0 tinklo užklausų esamam preview, vieną dingusio failo atkūrimą,
+  jo panaudojimą kito Sync metu ir atskirą NSFW papildymą be preview siuntimo.

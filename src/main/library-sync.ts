@@ -185,22 +185,9 @@ export async function repairMissingPreviews(
           return true
         }
       })()
-    // Only check swarm thumbnail when the preview file is also missing — a valid preview.jpg
-    // is the canonical image source, so re-downloading just for the swarm thumb wastes API.
-    let swarmThumbMissing = false
-    if (previewMissing && record.swarmPath && existsSync(record.swarmPath)) {
-      try {
-        const swarm = JSON.parse(readFileSync(record.swarmPath, 'utf-8')) as Record<string, unknown>
-        const thumb = swarm['modelspec.thumbnail']
-        swarmThumbMissing = typeof thumb !== 'string' || !thumb.startsWith('data:image/')
-      } catch {
-        swarmThumbMissing = true
-      }
-    } else {
-      swarmThumbMissing = true
-    }
-
-    if (!previewMissing && !swarmThumbMissing) {
+    // The saved preview is canonical. A missing Swarm thumbnail must not cause a
+    // remote cover lookup/download when the preview file is already present.
+    if (!previewMissing) {
       if (needsRating(record)) {
         report('Fetching rating from Civitai')
         if (await backfillRating(record)) {
