@@ -60,6 +60,7 @@ function BrowseQualityPairCardInner({
 
   return (
     <div
+      data-browse-version={`v:${high.versionId}`}
       className={`gallery-card quality-tier-pair-card browse-quality-pair-card${
         owned ? ' is-owned' : canQueue ? ' clickable can-queue-hint' : ''
       }${queuing ? ' queuing' : ''}${inQueue ? ' in-queue' : ''}`}

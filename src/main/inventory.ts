@@ -771,6 +771,7 @@ export function isModelOwned(modelId: number): boolean {
 
 export interface BrowseCardState {
   ownedVersionIds: Set<number>
+  ownedModelIds: Set<number>
   bannedIds: Set<number>
   bannedVersionIds: Set<number>
   awaitingVersionIds: Set<number>
@@ -781,7 +782,8 @@ export interface BrowseCardState {
 /** Filter membership only: no library metadata, preview checks or network work. */
 export function getBrowseCardState(): BrowseCardState {
   const database = getDb()
-  const ids = (sql: string) => new Set((database.prepare(sql).all() as { version_id: number }[]).map(row => row.version_id))
+  const owned = database.prepare('SELECT version_id, model_id FROM versions').all() as
+    { version_id: number; model_id: number }[]
   const deferred = database.prepare('SELECT version_id, failure_kind FROM deferred_downloads').all() as
     { version_id: number; failure_kind: string }[]
   const modelFlags = database.prepare(`
@@ -789,7 +791,8 @@ export function getBrowseCardState(): BrowseCardState {
     UNION ALL SELECT model_id, 1 AS incomplete FROM incomplete_models
   `).all() as { model_id: number; incomplete: number }[]
   return {
-    ownedVersionIds: ids('SELECT version_id FROM versions'),
+    ownedVersionIds: new Set(owned.map(row => row.version_id)),
+    ownedModelIds: new Set(owned.map(row => row.model_id).filter(id => id > 0)),
     bannedIds: new Set(modelFlags.filter(row => !row.incomplete).map(row => row.model_id)),
     incompleteModelIds: new Set(modelFlags.filter(row => row.incomplete).map(row => row.model_id)),
     bannedVersionIds: getBannedVersionIds(),
@@ -805,12 +808,13 @@ export function refreshBrowseCardStates(cards: WatchRuleTestModel[]): WatchRuleT
   return cards.filter(card => !state.incompleteModelIds.has(card.id) &&
     !state.unavailableVersionIds.has(card.versionId) && !isForgotten(card.id, card.versionId)).map(card => {
     const inInventory = state.ownedVersionIds.has(card.versionId)
+    const hasOwnedVersion = state.ownedModelIds.has(card.id)
     const isBanned = state.bannedIds.has(card.id) || state.bannedVersionIds.has(card.versionId)
     const isAwaitingAccess = state.awaitingVersionIds.has(card.versionId)
     const isEarlyAccess = Boolean(card.isEarlyAccess || isEarlyAccessActive(card.earlyAccessEndsAt))
-    return card.inInventory === inInventory && card.isBanned === isBanned && card.isAwaitingAccess === isAwaitingAccess &&
+    return card.inInventory === inInventory && card.hasOwnedVersion === hasOwnedVersion && card.isBanned === isBanned && card.isAwaitingAccess === isAwaitingAccess &&
       Boolean(card.isEarlyAccess) === isEarlyAccess
-      ? card : { ...card, inInventory, isBanned, isAwaitingAccess, isEarlyAccess }
+      ? card : { ...card, inInventory, hasOwnedVersion, isBanned, isAwaitingAccess, isEarlyAccess }
   })
 }
 

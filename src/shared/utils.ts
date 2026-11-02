@@ -258,6 +258,7 @@ export function preferBrowseModel(a: WatchRuleTestModel, b: WatchRuleTestModel):
     tags,
     creator: primary.creator || secondary.creator,
     inInventory: a.inInventory || b.inInventory,
+    hasOwnedVersion: b.hasOwnedVersion ?? a.hasOwnedVersion,
     // a and b share the same browseModelDedupeKey ⇒ same versionId (or same model if no version).
     // Call sites pass (existing, incoming); incoming wins so Unban on THIS version sticks.
     // Sibling versions are never merged here — they have different keys (v:111 vs v:222).

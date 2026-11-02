@@ -33,6 +33,11 @@ and decreases as each one finishes. Cached gallery cards and access checks do
 not create a counter. In **Library**, **BAN** opens a version / entire-model
 choice before changing any ban.
 
+During background downloads, Browse keeps the card being read at the same scroll
+position as other cards leave through Hide filters. Queue changes do not restore
+cards hidden by Updates or Skipped filters. Other versions of owned models are
+classified before Library metadata loads and follow **Show updates** immediately.
+
 **Yield this session** counts unique versions fully downloaded, validated and saved
 during this app session. Queued, awaiting, Missing, banned, blocked and failed
 attempts do not count. Linking an existing file or importing it through Sync does

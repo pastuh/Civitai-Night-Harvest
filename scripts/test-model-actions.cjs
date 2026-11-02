@@ -180,6 +180,9 @@ if (process.versions.electron) {
       assert.equal(stats.total, 5, 'Unavailable versions do not enter catalog totals')
     } finally { delete global.__downloadFixtureSettings; inv.removeDeferredDownload(7911) }
     assert.equal(initial[0].inInventory, true, 'First Browse page knows ownership without loading Library metadata')
+    assert.equal(initial[0].hasOwnedVersion, true)
+    assert.equal(page([{...card(a), versionId: 999101, inInventory: false}])[0].hasOwnedVersion, true,
+      'A sibling version is classified as Updates before full Library metadata arrives')
     assert.equal(initial[1].isBanned, true, 'Cached version Ban is applied before first render')
     assert.equal(initial[2].isBanned, true, 'Cached model Ban is applied before first render')
     assert.equal(initial[3].isAwaitingAccess, true, 'Stored access gate wins over missing Civitai early-access flags')

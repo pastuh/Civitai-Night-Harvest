@@ -57,6 +57,7 @@ export function buildBrowseCardFromModel(
     nsfw: m.nsfw,
     nsfwLevel: m.nsfwLevel,
     inInventory: state.ownedVersionIds.has(versionId),
+    hasOwnedVersion: state.ownedModelIds.has(m.id),
     isBanned: state.bannedIds.has(m.id) || state.bannedVersionIds.has(versionId),
     isAwaitingAccess: state.awaitingVersionIds.has(versionId),
     isEarlyAccess: access.isEarlyAccess,

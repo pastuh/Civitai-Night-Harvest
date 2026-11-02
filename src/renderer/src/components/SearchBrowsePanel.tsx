@@ -75,6 +75,7 @@ import { shortCardFolderLabel, folderLineIfNotDuplicatingTag, cardTagFolderRole,
 import { MoreTagsChip } from './MoreTagsChip'
 import { TagAutocompleteInput } from './TagAutocompleteInput'
 import { useResultsWindow } from '../hooks/useResultsWindow'
+import { useLiveResultsAnchor } from '../hooks/useLiveResultsAnchor'
 import { useDownloadQueue, useQueuedMembership } from '../hooks/useDownloadQueue'
 import { ResultsPager } from './ResultsPager'
 import { scrollResultsAnchorIntoView } from '../utils/scroll-results'
@@ -1355,7 +1356,7 @@ export function SearchBrowsePanel({
     // Pack pages: owning any versionId on a Browse card marks that modelId as owned,
     // even if the library row still has a stale/missing modelId.
     for (const m of ruleScopedModels) {
-      if (m.id > 0 && m.versionId > 0 && ownedVersionIds.has(m.versionId)) {
+      if (m.id > 0 && (m.hasOwnedVersion || (m.versionId > 0 && ownedVersionIds.has(m.versionId)))) {
         ids.add(m.id)
       }
     }
@@ -1513,7 +1514,9 @@ export function SearchBrowsePanel({
       )
       .filter((i) => {
         const key = i.versionId > 0 ? `v:${i.versionId}` : `m:${i.modelId}`
-        if (orphanSeen.has(key) || seen.has(key)) return false
+        // A known card was already evaluated by the gallery filters. Queue
+        // membership must not reinsert a hidden Updates/skipped/tag-filtered card.
+        if (orphanSeen.has(key) || seen.has(key) || knownCards.has(key)) return false
         orphanSeen.add(key)
         return true
       })
@@ -1527,7 +1530,9 @@ export function SearchBrowsePanel({
       })
       .filter(m => searchActive ||
         ((!onlyMissing || !m.inInventory) && (!hideBanned || !m.isBanned) &&
-          (!hideAwaitingAccess || !isBrowseAwaitingModel(m, awaitingAccessVersionIds))))
+          (!hideAwaitingAccess || !isBrowseAwaitingModel(m, awaitingAccessVersionIds)) &&
+          (showAwaitingConfirm || !isAwaitingConfirmModel(m)) &&
+          (showSkipped || !isSkippedPendingModel(m)) && !unavailableVersionIds?.has(m.versionId)))
       .filter((m) => !searchActive || modelMatchesBrowseSearch(m, deferredSearchQuery))
 
     orphans.forEach((m, i) => orphanOrder.set(browseModelDedupeKey(m), i))
@@ -1632,6 +1637,11 @@ export function SearchBrowsePanel({
     onlyMissing,
     hideBanned,
     hideAwaitingAccess,
+    showAwaitingConfirm,
+    showSkipped,
+    isAwaitingConfirmModel,
+    isSkippedPendingModel,
+    unavailableVersionIds,
     sortAscending,
     ownedVersionIds,
     awaitingAccessVersionIds,
@@ -1713,6 +1723,11 @@ export function SearchBrowsePanel({
     resultsResetKey
   )
   const gridUnits = resultsWindow.visible
+  const liveResultsRef = useLiveResultsAnchor(
+    gridUnits.map(unit => unit.kind === 'pair' ? `pair:${unit.key}` : browseModelDedupeKey(unit.item)).join('|') + `::queue:${queueActiveMembershipKey}`,
+    `${resultsResetKey}|${resultsWindow.page}|${hideAwaitingAccess}|${showAwaitingConfirm}|${showSkipped}|${showBlockedModels}|${sortAscending}`,
+    isActive
+  )
   const visiblePreviewModels = useMemo(() => {
     const visibleModels: WatchRuleTestModel[] = []
     for (const unit of gridUnits) {
@@ -3444,6 +3459,7 @@ export function SearchBrowsePanel({
 
           <div ref={resultsTopRef} className="results-page-anchor" aria-hidden />
 
+          <div ref={liveResultsRef}>
           <BrowseModelGrid
             units={gridUnits}
             searchQuery={deferredSearchQuery}
@@ -3479,6 +3495,7 @@ export function SearchBrowsePanel({
             isSkippedPendingModel={isSkippedPendingModel}
             ownedModelIds={ownedModelIds}
           />
+          </div>
 
           {!gridUnits.length && showEmptyHint && (
             <div className={`browse-empty-hint${resultsUpdating ? ' browse-empty-hint-updating' : ''}`}>
@@ -4229,6 +4246,7 @@ const ModelCard = memo(function ModelCard({
     <div
       className={cardClass}
       data-state={cardState}
+      data-browse-version={model.versionId > 0 ? `v:${model.versionId}` : `m:${model.id}`}
       style={cardStyle}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, a, input, label, .tag-chip')) return

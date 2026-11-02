@@ -48,6 +48,8 @@ if (process.argv.includes('--model-actions')) {
       }
       const progressive = await window.webContents.executeJavaScript('window.runProgressivePreviewTest()')
       const filters = await window.webContents.executeJavaScript('window.runBrowseFilterTest()')
+      const liveScroll = await window.webContents.executeJavaScript('window.runLiveBrowseScrollTest()')
+      const queuedFilters = await window.webContents.executeJavaScript('window.runQueuedFilterStabilityTest()')
       const awaitingCounts = await window.webContents.executeJavaScript('window.runAwaitingCountsTest()')
       const startup = await window.webContents.executeJavaScript('window.runFullStartupTest()')
       const yieldCounter = await window.webContents.executeJavaScript('window.runYieldCounterTest()')
@@ -62,6 +64,8 @@ if (process.argv.includes('--model-actions')) {
       result.strip = strip
       result.progressive = progressive
       result.filters = filters
+      result.liveScroll = liveScroll
+      result.queuedFilters = queuedFilters
       result.awaitingCounts = awaitingCounts
       result.pages = pages
       result.missingLayout = missingLayout
@@ -598,6 +602,92 @@ function rendererSource() {
       setDownloadQueueState({items: [], paused: true});
       flushSync(() => root.render(<div />));
       return {forbiddenFrames, unhidden};
+    };
+    window.runLiveBrowseScrollTest = async () => {
+      const cards = Array.from({length: 80}, (_, i) => ({...models[0], id: 70000 + i, versionId: 80000 + i,
+        name: 'Scroll audit ' + String(i).padStart(2, '0'), publishedAt: '2026-11-01'}));
+      let current = cards;
+      const render = () => flushSync(() => root.render(<main className="content" style={{height: 740, overflow: 'auto', flex: 'none'}}>
+        <WatchRulesTab {...props} settings={{...props.settings, resultsDisplayMode: 'pages', resultsPageSize: 100}}
+          liveCrawlBrowse={{...result, sampleModels: current}} currentModels={current} />
+      </main>));
+      setDownloadQueueState({items: [], paused: true});
+      try {
+        render(); await pause(200);
+        const scroller = document.querySelector('main.content');
+        const cardsInDom = () => [...document.querySelectorAll('.search-browse .gallery-card')];
+        const title = card => card.querySelector('strong')?.textContent;
+        const find = name => cardsInDom().find(card => title(card) === name);
+        const original = find('Scroll audit 30');
+        if (!original) throw new Error('Scroll test card missing');
+        scroller.scrollTop += original.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 70;
+        await pause(200);
+        const anchorName = title(cardsInDom().find(card => card.getBoundingClientRect().top >= scroller.getBoundingClientRect().top + 15));
+        const anchor = find(anchorName), top = anchor.getBoundingClientRect().top;
+        const images = [...anchor.querySelectorAll('img')];
+        let maxShift = 0, remounts = 0, blankFrames = 0;
+        const monitor = () => {
+          const card = find(anchorName);
+          if (card !== anchor || images.some(img => !img.isConnected)) remounts++;
+          if (card) {
+            maxShift = Math.max(maxShift, Math.abs(card.getBoundingClientRect().top - top));
+            if (![...card.querySelectorAll('img')].some(img => img.naturalWidth && getComputedStyle(img).opacity === '1')) blankFrames++;
+          }
+        };
+        const sampling = setInterval(monitor, 8);
+        try {
+          for (let i = 0; i < 8; i++) {
+            current = current.map((card, index) => index === i ? {...card, inInventory: true} : card);
+            render(); monitor(); await pause(35);
+          }
+        } finally { clearInterval(sampling); }
+        if (maxShift > 2 || remounts || blankFrames) throw new Error('Live downloads shifted or blanked the card being read: ' + JSON.stringify({maxShift, remounts, blankFrames}));
+        scroller.scrollTop += 100;
+        const userTop = anchor.getBoundingClientRect().top;
+        // Commit before the scroll listener's RAF has run.
+        current = current.map((card, index) => index === 8 ? {...card, inInventory: true} : card);
+        render();
+        const userScrollShift = Math.abs(anchor.getBoundingClientRect().top - userTop);
+        if (userScrollShift > 2) throw new Error('An IPC update undid a new user scroll');
+        await pause(60);
+        const hideOwned = [...document.querySelectorAll('.search-browse label')].find(el => el.textContent.trim() === 'Hide owned')?.querySelector('input');
+        const beforeFilter = scroller.scrollTop;
+        hideOwned.click(); await pause(60);
+        if (Math.abs(scroller.scrollTop - beforeFilter) > 2) throw new Error('Explicit filter change was incorrectly scroll-anchored');
+        return {anchorName, maxShift, remounts, blankFrames, userScrollShift, manualFilterKeptScroll: true};
+      } finally { flushSync(() => root.render(<div />)); }
+    };
+    window.runQueuedFilterStabilityTest = async () => {
+      const update = {...models[0], id: 71001, versionId: 81001, name: 'Hidden queued update', hasOwnedVersion: true};
+      const skipped = {...models[0], id: 71002, versionId: 81002, name: 'Hidden queued skip'};
+      const gallery = {...result, sampleModels: [models[0], update, skipped]};
+      const hidden = () => [...document.querySelectorAll('.search-browse .gallery-card strong')].filter(el => el.textContent.startsWith('Hidden queued'));
+      let forbiddenFrames = 0;
+      const render = () => flushSync(() => root.render(<WatchRulesTab {...props} liveCrawlBrowse={gallery}
+        skippedPendingVersionIds={new Set([skipped.versionId])} />));
+      const timer = setInterval(() => {if (hidden().length) forbiddenFrames++;}, 8);
+      try {
+        setDownloadQueueState({items: [], paused: true});
+        render(); await pause(80);
+        if (hidden().length) throw new Error('Updates classification waited for full Library metadata');
+        for (const status of ['queued', 'downloading']) {
+          setDownloadQueueState({items: [update, skipped].map(card => ({id: String(card.versionId),
+            modelId: card.id, versionId: card.versionId, modelName: card.name, modelType: 'LORA',
+            status, accessChecked: true})), paused: false});
+          await pause(90);
+          if (hidden().length) throw new Error('Queue reinserted a card hidden by Updates/Skipped filters');
+        }
+        setDownloadQueueState({items: [], paused: true}); await pause(80);
+        if (forbiddenFrames) throw new Error('Hidden cards flickered through queue status changes');
+        const showUpdates = [...document.querySelectorAll('.search-browse label')].find(el => el.textContent.trim() === 'Show updates')?.querySelector('input');
+        if (!showUpdates || showUpdates.disabled) throw new Error('Lightweight ownership did not enable Show updates');
+        showUpdates.click();
+        await waitFor(() => hidden().some(el => el.textContent === update.name), 'Explicit Show updates did not restore the update');
+        return {forbiddenFrames, lightweightOwnership: true, explicitShowUpdates: true};
+      } finally {
+        clearInterval(timer); setDownloadQueueState({items: [], paused: true});
+        flushSync(() => root.render(<div />));
+      }
     };
     window.runAwaitingCountsTest = async () => {
       const cards = [1, 2, 3, 4, 5].map(id => ({...models[0], id: 50000 + id, versionId: 60000 + id,

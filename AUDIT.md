@@ -1,4 +1,4 @@
-# Aplikacijos auditas — 2026-10-24
+# Aplikacijos auditas — 2026-11-02
 
 Peržiūrėtas paleidimas, modelių sąrašų paruošimas, preview gavimas ir cache,
 siuntimo srautai, bibliotekos atnaujinimas ir puslapių veiksmai. Puslapių
@@ -508,3 +508,42 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   patikrino Browse 1, Early access All 2 ir bendrą pranešimą 2; paused, banned
   ir not-found įrašai skaičių nepadidino. Browse būsenai išliko 4 bendros SQL
   užklausos ir 0 failų patikrų su 1 000 bibliotekos versijų.
+
+## Gyvo Browse sąrašo šuoliai — 2026-11-02
+
+- Tik skaitymo patikra rado 25 šiandienos sėkmingo siuntimo įrašus ir
+  atitinkamas Library versijas, išsaugotas 12:15:54–12:19:07 UTC. Tai
+  paaiškina dalį kortelių dingimo per Hide owned. Tikrintame laikotarpyje
+  taip pat atnaujinti 48 early_access ir 3 not_found deferred įrašai.
+  Šie skaičiai nėra konkrečių vartotojo matytų dingstančių kortelių istorija;
+  kiekvieno anksčiau matyto kadro patikimai atkurti iš DB negalima.
+- Atkurtas tikras pozicijos šuolis su 80 Browse kortelių: paslėpus 8 aukščiau
+  esančias atsisiųstas korteles, peržiūrima kortelė pasislinkdavo apie 653 px.
+  Tame atkūrime DOM elementai ir preview nebuvo permontuojami — pasislinkdavo
+  visas tinklelį stebimas turinys. Bendras content pane turi išjungtą naršyklės
+  scroll anchoring, kad tab keitimas nepritrauktų ankstesnio tinklelio.
+- Pridėtas tik aktyvaus Browse tinklelio pozicijos išlaikymas. Jis stabilizuoja
+  tą pačią matomą kortelę per iš eilės vykstančius siuntimų atnaujinimus,
+  gerbia vartotojo slinkimą (ir dar neįvykusį scroll RAF), filtrų/puslapio
+  keitimą ir nieko neperstumia paslėptame tab. Slenkant matuojamos tik
+  viewport kaimyninės kortelės; jų pradžia randama dvejetaine paieška.
+  Lazy/puslapių ribojimas ir content-visibility optimizacija išlaikyti.
+- Eilės orphan kortelių logika anksčiau ieškojo tik jau matomų kortelių.
+  Todėl žinoma, filtrų paslėpta Updates ar Skipped kortelė galėjo būti iš naujo
+  įterpta kaip tariamai galerijoje nesanti queued/downloading kortelė, o
+  pasikeitus eilei vėl pradingti. Dabar žinomos kortelės paklūsta vienai
+  galerijos filtrų atrankai; tikriems orphan taikomi ir Updates/Skipped bei
+  nepasiekiamų versijų ribojimai. Paieškos išimtis ir explicit Show updates
+  išliko pagal ankstesnę paskirtį.
+- Modelio lygmens ownership nebuvo pateikiamas kartu su kortele: unowned
+  versija galėjo trumpai patekti į Browse, kol užsikrovę Library metaduomenys
+  parodydavo, kad tai jau turimo modelio atnaujinimas. Kortelė dabar gauna
+  hasOwnedVersion iš tos pačios lengvos versions ID užklausos. Tipai, merge,
+  Browse filtrai ir Browse→Updates sync naudoja šį požymį prieš Library
+  hidrataciją. Papildomų API užklausų ar failų skenavimo nepridėta.
+- Abiejuose Chromium procesuose tas pats 80 kortelių scenarijus po pataisymo:
+  0 px matuojamos kortelės poslinkis, 0 permontavimų, 0 tuščio preview kadrų.
+  Atskirai tikrinti vartotojo scroll prieš IPC atnaujinimą ir rankinis Hide owned
+  pakeitimas; paslėptos queued Updates/Skipped kortelės nepasirodė nė kadre,
+  o Show updates jas aiškiai atkuria. SQLite testas patvirtino pradinį sibling
+  ownership. Su 1 000 versijų liko 4 SQL užklausos ir 0 failų patikrų.

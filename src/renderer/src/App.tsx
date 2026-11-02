@@ -1890,7 +1890,7 @@ export default function App() {
     const gallery = liveCrawlBrowse?.sampleModels
     if (gallery?.length) {
       for (const m of gallery) {
-        if (m.id > 0 && m.versionId > 0 && ownedVersionIds.has(m.versionId)) {
+        if (m.id > 0 && (m.hasOwnedVersion || (m.versionId > 0 && ownedVersionIds.has(m.versionId)))) {
           ids.add(m.id)
         }
       }

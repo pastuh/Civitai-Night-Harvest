@@ -858,6 +858,8 @@ export interface WatchRuleTestModel {
   nsfw?: boolean
   nsfwLevel?: number
   inInventory: boolean
+  /** The parent model has an owned version; known before Library metadata hydrates. */
+  hasOwnedVersion?: boolean
   isBanned: boolean
   /** Current local deferred membership, included before full page lists hydrate. */
   isAwaitingAccess?: boolean
