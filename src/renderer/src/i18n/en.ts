@@ -646,6 +646,7 @@ export const en = {
     barLegendBanned: 'Banned',
     barLegendSkipTag: 'Blocked',
     barLegendAwaiting: 'Awaiting in Browse',
+    checkingAccess: 'Checking access…',
     barLegendAwaitingHint:
       'Access-gated versions in this Browse catalog, excluding owned, banned, paused and unavailable versions. Early access → All covers the full matching waiting list, including versions absent from this catalog.',
     barLegendAwaitingConfirm: 'Updates',

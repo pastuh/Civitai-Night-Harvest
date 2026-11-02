@@ -773,6 +773,26 @@ test('Incoming access flags replace cached membership without losing image metad
     'A sparse details seed must not clear known local access membership')
 })
 
+test('Confirmed payload clears stale card gates while metadata checks preserve real early access', async () => {
+  const {applyBrowseQueueAccess, isQueueCheckingAccess, isQueueTransferConfirmed} = await load('src/shared/browse-access.ts')
+  const gate = {id: 1, versionId: 2, name: 'Gate', type: 'LORA', baseModel: '', tags: [],
+    inInventory: false, isBanned: false, isEarlyAccess: true, isAwaitingAccess: true,
+    earlyAccessEndsAt: new Date(Date.now() + 3600_000).toISOString()}
+  const probing = {id: 'q', modelId: 1, versionId: 2, status: 'downloading', accessChecked: false, bytesReceived: 0}
+  assert.equal(isQueueCheckingAccess(probing), true)
+  assert.equal(applyBrowseQueueAccess([gate], [probing])[0].isEarlyAccess, true)
+  const payload = {...probing, bytesReceived: 1, failureKind: 'early_access'}
+  assert.equal(isQueueTransferConfirmed(payload), true)
+  assert.equal(isQueueCheckingAccess(payload), false)
+  const cleared = applyBrowseQueueAccess([gate], [payload])[0]
+  assert.equal(cleared.isEarlyAccess, false)
+  assert.equal(cleared.isAwaitingAccess, false)
+  assert.equal(cleared.isAccessChecking, false)
+  assert.equal(cleared.earlyAccessEndsAt, undefined)
+  assert.equal(applyBrowseQueueAccess([gate], [{...probing, status: 'queued', accessChecked: true}])[0].isEarlyAccess, true,
+    'A queued row is not evidence of a transfer through a real access gate')
+})
+
 test('Future unlocks cannot be cleared by a sparse Public mini response', async () => {
   const { enrichDeferredDownloads } = await load('src/shared/early-access.ts')
   const future = new Date(Date.now() + 3600_000).toISOString()
@@ -874,6 +894,18 @@ test('Queue access changes notify membership subscribers without broadcasting by
   assert.equal(store.getDownloadQueueSnapshot().sessionDownloadCount, 2)
   store.applyDownloadQueueSnapshot({items: [], paused: false, sessionDownloadCount: 2})
   assert.equal(changes, 6, 'Duplicate completion snapshots must not trigger structural updates')
+})
+
+test('The first payload is structural even when a legacy access flag is delayed', async () => {
+  const store = await load('src/renderer/src/utils/download-queue-store.ts')
+  const item = {id: 'q', modelId: 1, versionId: 2, status: 'downloading', accessChecked: false, bytesReceived: 0}
+  let notifications = 0
+  store.subscribeQueueStructure(() => notifications++)
+  store.applyDownloadQueueSnapshot({items: [item], paused: false})
+  store.applyDownloadQueueSnapshot({items: [{...item, bytesReceived: 1}], paused: false})
+  assert.equal(notifications, 2)
+  store.applyDownloadQueueSnapshot({items: [{...item, bytesReceived: 4096}], paused: false})
+  assert.equal(notifications, 2, 'Subsequent byte progress must not rerender gallery membership')
 })
 
 test('Deferred enrichment uses the full access response and keeps uncertain gates', async () => {

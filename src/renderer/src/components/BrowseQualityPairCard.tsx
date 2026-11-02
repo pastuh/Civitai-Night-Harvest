@@ -1,4 +1,5 @@
 import { memo, type MouseEvent } from 'react'
+import { isBrowseAwaitingAccess, isQueueAwaitingAccess, isQueueCheckingAccess, isQueueTransferConfirmed } from '../../../shared/browse-access'
 import type { DownloadQueueItem, TagFolderRule, WatchRuleTestModel } from '../../../shared/types'
 import { describeNsfwRating } from '../../../shared/nsfw-rating'
 import { displayVersionNameForPair } from '../../../shared/quality-tier-pair'
@@ -6,6 +7,8 @@ import { useT } from '../i18n/context'
 import { VersionNameRow } from './VersionNameRow'
 import { SplitPairThumbnail } from './SplitPairThumbnail'
 import { videoPreviewAvailabilityFor, videoPreviewUrlFor } from '../utils/model-card-preview'
+
+const NO_DEFERRED_IDS = new Set<number>()
 
 type Props = {
   high: WatchRuleTestModel
@@ -49,6 +52,14 @@ function BrowseQualityPairCardInner({
     lowQueue?.status === 'queued' ||
     highQueue?.status === 'downloading' ||
     lowQueue?.status === 'downloading'
+  const checking = [highQueue, lowQueue].some(item => item && isQueueCheckingAccess(item, queuePaused))
+  const gated = isBrowseAwaitingAccess(high, NO_DEFERRED_IDS) || isBrowseAwaitingAccess(low, NO_DEFERRED_IDS)
+  const confirmed = [highQueue, lowQueue].filter(item => item && (isQueueTransferConfirmed(item) ||
+    (!isQueueCheckingAccess(item, queuePaused) && !isQueueAwaitingAccess(item) &&
+      !isBrowseAwaitingAccess(item.versionId === high.versionId ? high : low, NO_DEFERRED_IDS))))
+  const downloading = confirmed.some(item => item?.status === 'downloading')
+  const queued = confirmed.some(item => item?.status === 'queued')
+  const active = downloading || queued
   const canQueue = !owned && !model.isBanned && (!inQueue || queuePaused)
   const versionLabel =
     displayVersionNameForPair(high.versionName) ||
@@ -61,9 +72,10 @@ function BrowseQualityPairCardInner({
   return (
     <div
       data-browse-version={`v:${high.versionId}`}
+      data-state={owned ? 'owned' : downloading ? 'downloading' : queued ? 'queued-auto' : gated ? 'deferred' : checking ? 'checking' : 'new'}
       className={`gallery-card quality-tier-pair-card browse-quality-pair-card${
         owned ? ' is-owned' : canQueue ? ' clickable can-queue-hint' : ''
-      }${queuing ? ' queuing' : ''}${inQueue ? ' in-queue' : ''}`}
+      }${queuing ? ' queuing' : ''}${active ? ' in-queue' : ''}`}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, a, input, label, .tag-chip')) return
         if (canQueue || inQueue) onEnqueuePair(high, low)
@@ -73,7 +85,7 @@ function BrowseQualityPairCardInner({
         e.stopPropagation()
         onContextMenu(e, high)
       }}
-      title={owned ? t('browse.badgeOwnedTitle') : t('qualityTierPair.downloadPairHint')}
+      title={checking && !active ? t('browse.checkingAccess') : owned ? t('browse.badgeOwnedTitle') : t('qualityTierPair.downloadPairHint')}
     >
       <span className={`nsfw-rating-badge tier-${rating.tier}`} title={`Content: ${rating.label}`}>
         {rating.label}
@@ -102,6 +114,7 @@ function BrowseQualityPairCardInner({
           }}
           browseVideoPreviews={browseVideoPreviews}
         />
+        {checking && !active ? <div className="card-status-foot">{t('browse.checkingAccess')}</div> : null}
       </div>
       <div className="gallery-card-body">
         <div className="gallery-card-title-row">

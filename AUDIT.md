@@ -547,3 +547,35 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
   pakeitimas; paslėptos queued Updates/Skipped kortelės nepasirodė nė kadre,
   o Show updates jas aiškiai atkuria. SQLite testas patvirtino pradinį sibling
   ownership. Su 1 000 versijų liko 4 SQL užklausos ir 0 failų patikrų.
+
+## Dešimties kandidatų dingimas ir siuntimo rėmelis — 2026-11-02
+
+- Automatinės eilės pipeline limitas yra 10. Browse Hide awaiting pagalbinė
+  funkcija suplakė tikrą EA/deferred prieigą su isAccessChecking. Kai jau
+  parodyta viešų kandidatų grupė buvo įtraukta į eilę, jos accessChecked=false
+  laikinai paslėpdavo visas dešimt kortelių. Pirmus baitus gavusios versijos
+  vėl pasirodydavo po kelias. Tai yra atskira priežastis nuo slinkimo šuolio.
+- Prieigos tikrinimas atskirtas nuo tikro Awaiting ir jo statistikos. Jau
+  matyta vieša kortelė išlieka per trumpą tikrinimą; pirmąkart gaunamas dar
+  nepatikrintas kandidatas neiššoka per Hide awaiting. Tikras EA/Buzz vartų
+  patvirtinimas, banai ir kiti filtrai tebegalioja. Matoma kortelė tikrinimo
+  metu gauna Checking access… tekstą ir neutralų rėmelį.
+- Patvirtinta downloading prieiga arba gauti failo baitai renderer modelyje
+  viršija pasenusius cached EA, unlock datos ir uždelstus deferred požymius.
+  Vien queued būsena nėra toks patvirtinimas. Tai apsaugo realų siuntimą nuo
+  pakartotinio paslėpimo / perklasifikavimo atgal į Early access.
+- Normalioms ir porinėms kortelėms atskirtos checking / queued / downloading
+  būsenos. Porinės kortelės anksčiau neturėjo data-state. Suderinta UI overhaul
+  border-top-color taisyklė su temos queue spalva, kad likusi sena CSS
+  border-top deklaracija jos neperrašytų. Pirmas payload pranešimas laikomas
+  struktūriniu net ir senesniame snapshot su uždelstu accessChecked; vėlesni
+  vien baitų pasikeitimai kortelių narystės prenumeratorių neinformuoja.
+- Chromium abiejuose atskiruose procesuose patikrino 10 MiniMax kortelių
+  seką: New → Checking → dalis Downloading. 0 kortelių dingimo kadrų ir
+  tie patys DOM elementai; tikras gate pasislėpė, vėluojantis gate snapshot
+  nepaslėpė tikro siuntimo. Tikrinta ir porinės kortelės būsena/spalva.
+  Aroma temoje tikro siuntimo rėmelis sutapo su --strip-queued
+  (rgb(200, 205, 216)). Tikrinimas nebuvo rodomas žalia New spalva.
+- Praėjo 45 regresijų ir 33 bendrieji testai, tikri izoliuoti SQLite/worker
+  testai ir paleidimo fixture. Vartotojo modelių failai nekeičiami; naujų
+  Civitai užklausų kiekvienai kortelei nepridėta.

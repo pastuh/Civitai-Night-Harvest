@@ -651,6 +651,7 @@ export const lt: Messages = {
     barLegendBanned: 'Banned',
     barLegendSkipTag: 'Blocked',
     barLegendAwaiting: 'Awaiting šiame Browse',
+    checkingAccess: 'Tikrinama prieiga…',
     barLegendAwaitingHint:
       'Šio Browse katalogo versijos, laukiančios prieigos. Turimos, banned, paused ir nepasiekiamos versijos neįtraukiamos. Early access → All apima visą tinkamų laukiančių versijų sąrašą, įskaitant šiame kataloge nesančias versijas.',
     barLegendAwaitingConfirm: 'Atnaujinimai',

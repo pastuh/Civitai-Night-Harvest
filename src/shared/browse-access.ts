@@ -2,12 +2,18 @@ import type { DownloadQueueItem, WatchRuleTestModel } from './types'
 import { isEarlyAccessActive } from './early-access'
 import { isAwaitingAccessFailureKind } from './download-errors'
 
+/** Received payload wins over stale cached/deferred access flags. */
+export function isQueueTransferConfirmed(item: DownloadQueueItem): boolean {
+  return item.status === 'downloading' && (item.accessChecked === true || (item.bytesReceived ?? 0) > 0)
+}
+
 export function isQueueAwaitingAccess(item: DownloadQueueItem): boolean {
   return item.status !== 'done' && item.status !== 'skipped' &&
     isAwaitingAccessFailureKind(item.failureKind)
 }
 
 export function isQueueCheckingAccess(item: DownloadQueueItem, queuePaused = false): boolean {
+  if (isQueueTransferConfirmed(item)) return false
   if (item.accessChecked !== false) return false
   return item.status === 'downloading' ||
     (item.status === 'queued' && (!queuePaused || item.runImmediate === true))
@@ -36,9 +42,13 @@ export function applyBrowseQueueAccess(
   }
   return cards.map(card => {
     const item = byVersion.get(card.versionId) ?? byModel.get(card.id)
+    const transferring = Boolean(item && isQueueTransferConfirmed(item))
     const isAccessChecking = item ? isQueueCheckingAccess(item, options?.queuePaused) :
       options?.preserveChecking === true && Boolean(card.isAccessChecking)
-    const isAwaitingAccess = Boolean(card.isAwaitingAccess || (item && isQueueAwaitingAccess(item)))
+    const isAwaitingAccess = !transferring && Boolean(card.isAwaitingAccess || (item && isQueueAwaitingAccess(item)))
+    if (transferring && (card.isEarlyAccess || card.earlyAccessEndsAt)) {
+      return { ...card, isAccessChecking: false, isAwaitingAccess: false, isEarlyAccess: false, earlyAccessEndsAt: undefined }
+    }
     return Boolean(card.isAccessChecking) === isAccessChecking && Boolean(card.isAwaitingAccess) === isAwaitingAccess
       ? card : { ...card, isAccessChecking, isAwaitingAccess }
   })

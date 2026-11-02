@@ -1,6 +1,6 @@
 import { useForgetModel, useOnModelForgotten } from '../hooks/useForgetModel'
 import { matchesSelection } from '../../../shared/model-actions'
-import { memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState, startTransition, forwardRef, type MouseEvent } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, startTransition, forwardRef, type MouseEvent } from 'react'
 import { flushSync } from 'react-dom'
 import type {
   ContentFilter,
@@ -56,7 +56,7 @@ import { displayFolderForTag, findRuleForTag, isPermanentlyBannedModelTag, isPau
 import { fuzzyTagMatch, modelHasFuzzyTag } from '../../../shared/tag-fuzzy'
 import { accessGateBadgeKind } from '../../../shared/early-access'
 import { isAwaitingAccessFailureKind } from '../../../shared/download-errors'
-import { applyBrowseQueueAccess, isBrowseAwaitingAccess, isQueueAwaitingAccess } from '../../../shared/browse-access'
+import { applyBrowseQueueAccess, isBrowseAwaitingAccess, isQueueAwaitingAccess, isQueueCheckingAccess, isQueueTransferConfirmed } from '../../../shared/browse-access'
 import { PreviewThumb } from './PreviewThumb'
 import { VersionNameRow } from './VersionNameRow'
 import { BrowseQualityPairCard } from './BrowseQualityPairCard'
@@ -130,7 +130,7 @@ function modelFromQueueItem(item: DownloadQueueItem, ownedVersionIds: Set<number
 }
 
 function isBrowseAwaitingModel(model: WatchRuleTestModel, awaitingAccessVersionIds: Set<number>): boolean {
-  return Boolean(model.isAccessChecking || isBrowseAwaitingAccess(model, awaitingAccessVersionIds))
+  return isBrowseAwaitingAccess(model, awaitingAccessVersionIds)
 }
 
 function isBrowseSettledModel(
@@ -614,7 +614,11 @@ export function SearchBrowsePanel({
   )
 
   const awaitingAccessVersionIds = useMemo(
-    () => new Set([...(deferredVersionIds ?? []), ...queue.filter(isQueueAwaitingAccess).map(item => item.versionId)]),
+    () => {
+      const ids = new Set([...(deferredVersionIds ?? []), ...queue.filter(isQueueAwaitingAccess).map(item => item.versionId)])
+      for (const item of queue) if (isQueueTransferConfirmed(item)) ids.delete(item.versionId)
+      return ids
+    },
     [deferredVersionIds, queue]
   )
   const waitAccessVersionIds = useMemo(
@@ -661,6 +665,7 @@ export function SearchBrowsePanel({
   const [showSkipped, setShowSkipped] = useState(browseInitial.showSkipped === true)
   const [routingTag, setRoutingTag] = useState('')
   const [queuingId, setQueuingId] = useState<number | null>(null)
+  const presentedPublicVersions = useRef(new Set<number>())
   const [message, setMessage] = useState('')
   const [localBanned, setLocalBanned] = useState<Set<number>>(new Set())
   /** Optimistic unban overrides — m.isBanned from crawl data can stay stale until remapped. */
@@ -1451,7 +1456,8 @@ export function SearchBrowsePanel({
         continue
       }
 
-      if (hideAwaitingAccess && isBrowseAwaitingModel(m, awaitingAccessVersionIds)) continue
+      if (hideAwaitingAccess && (isBrowseAwaitingModel(m, awaitingAccessVersionIds) ||
+        (m.isAccessChecking && !presentedPublicVersions.current.has(m.versionId)))) continue
       if (hideBanned && m.isBanned) continue
       if (onlyMissing && m.inInventory) continue
 
@@ -1530,7 +1536,8 @@ export function SearchBrowsePanel({
       })
       .filter(m => searchActive ||
         ((!onlyMissing || !m.inInventory) && (!hideBanned || !m.isBanned) &&
-          (!hideAwaitingAccess || !isBrowseAwaitingModel(m, awaitingAccessVersionIds)) &&
+          (!hideAwaitingAccess || (!isBrowseAwaitingModel(m, awaitingAccessVersionIds) &&
+            (!m.isAccessChecking || presentedPublicVersions.current.has(m.versionId)))) &&
           (showAwaitingConfirm || !isAwaitingConfirmModel(m)) &&
           (showSkipped || !isSkippedPendingModel(m)) && !unavailableVersionIds?.has(m.versionId)))
       .filter((m) => !searchActive || modelMatchesBrowseSearch(m, deferredSearchQuery))
@@ -1723,6 +1730,15 @@ export function SearchBrowsePanel({
     resultsResetKey
   )
   const gridUnits = resultsWindow.visible
+  useLayoutEffect(() => {
+    for (const unit of gridUnits) {
+      for (const card of unit.kind === 'pair' ? [unit.high, unit.low] : [unit.item]) {
+        if (!card.isAccessChecking && !isBrowseAwaitingModel(card, awaitingAccessVersionIds)) {
+          presentedPublicVersions.current.add(card.versionId)
+        }
+      }
+    }
+  }, [gridUnits, awaitingAccessVersionIds])
   const liveResultsRef = useLiveResultsAnchor(
     gridUnits.map(unit => unit.kind === 'pair' ? `pair:${unit.key}` : browseModelDedupeKey(unit.item)).join('|') + `::queue:${queueActiveMembershipKey}`,
     `${resultsResetKey}|${resultsWindow.page}|${hideAwaitingAccess}|${showAwaitingConfirm}|${showSkipped}|${showBlockedModels}|${sortAscending}`,
@@ -1930,7 +1946,7 @@ export function SearchBrowsePanel({
     for (const m of ruleScopedModels) {
       if (m.inInventory) owned++
       if (m.isBanned) banned++
-      if (isBrowseAwaitingModel(m, awaitingAccessVersionIds)) awaiting++
+      if (m.isAccessChecking || isBrowseAwaitingModel(m, awaitingAccessVersionIds)) awaiting++
       if (isAwaitingConfirmModel?.(m)) awaitingConfirm++
       if (isSkippedPendingModel(m)) skipped++
       if (modelHasPolicyTag(m.tags, hiddenTags, bannedTags, tagPolicyOptions)) blocked++
@@ -4057,11 +4073,13 @@ const ModelCard = memo(function ModelCard({
   const statusClass = model.isBanned ? 'banned' : model.inInventory ? 'owned' : 'missing'
   const isEarlyAccessCard =
     !model.inInventory && (Boolean(model.isEarlyAccess) || awaitingAccess)
-  const isQueued = queueItem?.status === 'queued' && !model.inInventory && !isEarlyAccessCard
+  const isChecking = !model.inInventory && !isEarlyAccessCard && Boolean(model.isAccessChecking ||
+    (queueItem && isQueueCheckingAccess(queueItem, queuePaused)))
+  const isQueued = queueItem?.status === 'queued' && !model.inInventory && !isEarlyAccessCard && !isChecking
   const showQueuedStyle = isQueued && queueItem?.manual === true
   const isAutoQueued = isQueued && queueItem?.manual !== true
   const isDownloading =
-    queueItem?.status === 'downloading' && !model.inInventory && !isEarlyAccessCard
+    queueItem?.status === 'downloading' && !model.inInventory && !isEarlyAccessCard && !isChecking
   const isQueuedPaused = showQueuedStyle && queuePaused
   const inQueueActive = isDownloading || isQueued
   const isFailed = queueItem?.status === 'failed' && !model.inInventory
@@ -4077,6 +4095,7 @@ const ModelCard = memo(function ModelCard({
     !isFailed &&
     !isSkipped &&
     !isDeferred &&
+    !isChecking &&
     !isEarlyAccessCard
 
   const cardTags = expandCivitaiTagNames(model.tags)
@@ -4119,7 +4138,9 @@ const ModelCard = memo(function ModelCard({
   let badgeClass = ''
   let queueStatusFoot = ''
 
-  if (isDownloading) {
+  if (isChecking) {
+    queueStatusFoot = t('browse.checkingAccess')
+  } else if (isDownloading) {
     queueStatusFoot = ''
   } else if (showQueuedStyle) {
     queueStatusFoot = isQueuedPaused ? 'queued · paused' : 'queued'
@@ -4204,6 +4225,7 @@ const ModelCard = memo(function ModelCard({
   else if (updateSkipped) cardState = 'skipped'
   else if (awaitingConfirm) cardState = 'awaiting-confirm'
   else if (isEarlyAccessCard || isDeferred) cardState = 'deferred'
+  else if (isChecking) cardState = 'checking'
   else if (isDownloading) cardState = 'downloading'
   else if (isQueued) cardState = 'queued-auto'
   else if (isFailed) cardState = 'failed'
@@ -4221,7 +4243,7 @@ const ModelCard = memo(function ModelCard({
     isSkipped ? 'download-skipped' : '',
     inQueueActive ? 'in-queue' : '',
     canQueue ? 'can-queue-hint' : '',
-    isQueued || canQueue ? 'clickable' : '',
+    isQueued || isChecking || canQueue ? 'clickable' : '',
     queuing ? 'queuing' : '',
     settledDimOpacity != null ? 'browse-card-settled-dim' : ''
   ]
@@ -4230,7 +4252,7 @@ const ModelCard = memo(function ModelCard({
 
   const cardStyle = settledDimOpacity != null ? { opacity: settledDimOpacity } : undefined
 
-  const statusHint = isDeferred
+  const statusHint = isChecking ? t('browse.checkingAccess') : isDeferred
     ? queueItem?.reason ?? 'Early access — retry when unlocked or access is ready'
     : isFailed
     ? queueItem?.reason ?? 'Download failed'
@@ -4250,7 +4272,7 @@ const ModelCard = memo(function ModelCard({
       style={cardStyle}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, a, input, label, .tag-chip')) return
-        if (isQueued || canQueue) onEnqueue(model)
+        if (isQueued || isChecking || canQueue) onEnqueue(model)
       }}
       onContextMenu={(e) => {
         e.preventDefault()

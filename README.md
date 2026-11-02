@@ -38,6 +38,11 @@ position as other cards leave through Hide filters. Queue changes do not restore
 cards hidden by Updates or Skipped filters. Other versions of owned models are
 classified before Library metadata loads and follow **Show updates** immediately.
 
+**Checking access…** is a temporary check, separate from Early access. A previously
+visible public card stays in place during that check. A confirmed access gate still
+obeys **Hide awaiting**. Once the file transfer starts, its card uses the queue's
+light border color; old cached gate metadata cannot hide an active transfer.
+
 **Yield this session** counts unique versions fully downloaded, validated and saved
 during this app session. Queued, awaiting, Missing, banned, blocked and failed
 attempts do not count. Linking an existing file or importing it through Sync does

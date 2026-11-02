@@ -1,5 +1,6 @@
 import type { DeferredDownload, DownloadQueueState } from '../../../shared/types'
 import { visibleDownloadItems } from '../../../shared/download-pipeline'
+import { isQueueTransferConfirmed } from '../../../shared/browse-access'
 
 export type DownloadQueueSnapshot = DownloadQueueState
 
@@ -12,7 +13,7 @@ const structureListeners = new Set<Listener>()
 
 export function queueStructureKey(q: DownloadQueueSnapshot): string {
   return `${q.paused ? 1 : 0}:${q.sessionDownloadCount ?? 0}:${q.items
-    .map((i) => `${i.id}:${i.status}:${i.versionId}:${i.manual ? 1 : 0}:${i.failureKind ?? ''}:${i.accessChecked ?? ''}:${i.downloadReady ?? ''}:${i.origin ?? ''}:${i.downloadedFromNetwork ?? ''}`)
+    .map((i) => `${i.id}:${i.status}:${i.versionId}:${i.manual ? 1 : 0}:${i.failureKind ?? ''}:${i.accessChecked ?? ''}:${i.downloadReady ?? ''}:${i.origin ?? ''}:${i.downloadedFromNetwork ?? ''}:${isQueueTransferConfirmed(i) ? 1 : 0}`)
     .join('|')}`
 }
 

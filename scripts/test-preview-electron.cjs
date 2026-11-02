@@ -50,6 +50,7 @@ if (process.argv.includes('--model-actions')) {
       const filters = await window.webContents.executeJavaScript('window.runBrowseFilterTest()')
       const liveScroll = await window.webContents.executeJavaScript('window.runLiveBrowseScrollTest()')
       const queuedFilters = await window.webContents.executeJavaScript('window.runQueuedFilterStabilityTest()')
+      const accessLifecycle = await window.webContents.executeJavaScript('window.runAccessLifecycleTest()')
       const awaitingCounts = await window.webContents.executeJavaScript('window.runAwaitingCountsTest()')
       const startup = await window.webContents.executeJavaScript('window.runFullStartupTest()')
       const yieldCounter = await window.webContents.executeJavaScript('window.runYieldCounterTest()')
@@ -66,6 +67,7 @@ if (process.argv.includes('--model-actions')) {
       result.filters = filters
       result.liveScroll = liveScroll
       result.queuedFilters = queuedFilters
+      result.accessLifecycle = accessLifecycle
       result.awaitingCounts = awaitingCounts
       result.pages = pages
       result.missingLayout = missingLayout
@@ -687,6 +689,72 @@ function rendererSource() {
       } finally {
         clearInterval(timer); setDownloadQueueState({items: [], paused: true});
         flushSync(() => root.render(<div />));
+      }
+    };
+    window.runAccessLifecycleTest = async () => {
+      const cards = Array.from({length: 10}, (_, i) => ({...models[0], id: 72000 + i, versionId: 82000 + i,
+        name: 'MiniMax lifecycle ' + i, baseModel: 'MiniMax H3'}));
+      let current = cards;
+      const oldClasses = document.documentElement.className;
+      document.documentElement.classList.add('theme-aroma');
+      const render = deferred => flushSync(() => root.render(<WatchRulesTab {...props}
+        liveCrawlBrowse={{...result, sampleModels: current}} deferred={deferred ?? []} />));
+      const card = index => document.querySelector('[data-browse-version="v:' + cards[index].versionId + '"]');
+      const queueItem = (index, patch = {}) => ({id: 'lifecycle-' + index, modelId: cards[index].id,
+        versionId: cards[index].versionId, modelName: cards[index].name, modelType: 'LORA',
+        status: 'queued', accessChecked: false, bytesReceived: 0, ...patch});
+      let disappearingFrames = 0;
+      const monitor = () => {for (let i = 0; i < 10; i++) if (!card(i)) disappearingFrames++;};
+      let timer;
+      try {
+        setDownloadQueueState({items: [], paused: false}); render();
+        await waitFor(() => cards.every((_, i) => card(i)), 'Initial ten models missing');
+        const original = cards.map((_, i) => card(i));
+        const newBorder = getComputedStyle(card(0)).borderTopColor;
+        timer = setInterval(monitor, 8);
+        setDownloadQueueState({items: cards.map((_, i) => queueItem(i)), paused: false});
+        await waitFor(() => cards.every((_, i) => card(i)?.dataset.state === 'checking'), 'Metadata checks hid previously visible models');
+        monitor();
+        await waitFor(() => getComputedStyle(card(0)).borderTopColor !== newBorder, 'A checking card still has the green New border');
+        const rows = cards.map((_, i) => queueItem(i, i < 2 ? {status: 'downloading', accessChecked: true, bytesReceived: 512} : {}));
+        setDownloadQueueState({items: rows, paused: false});
+        await waitFor(() => card(0)?.dataset.state === 'downloading' && card(1)?.dataset.state === 'downloading', 'Confirmed transfer kept the New state');
+        const expected = getComputedStyle(document.documentElement).getPropertyValue('--strip-queued').trim();
+        const probe = document.createElement('div'); probe.style.color = expected; document.body.append(probe);
+        const expectedColor = getComputedStyle(probe).color; probe.remove();
+        await waitFor(() => getComputedStyle(card(0)).borderTopColor === expectedColor, 'A real transfer does not use the queue border color');
+        await pause(90); monitor();
+        if (disappearingFrames || original.some((node, i) => node !== card(i))) throw new Error('The 10-model group disappeared or remounted during access checks');
+        clearInterval(timer); timer = null;
+        // Delayed gate metadata cannot override an already confirmed byte stream.
+        current = current.map((row, i) => i === 0 ? {...row, isEarlyAccess: true, isAwaitingAccess: true,
+          earlyAccessEndsAt: new Date(Date.now() + 3600_000).toISOString()} : row);
+        render([{modelId: cards[0].id, versionId: cards[0].versionId, failureKind: 'early_access'}]);
+        await waitFor(() => card(0)?.dataset.state === 'downloading', 'Delayed Deferred metadata hid a real download');
+        // A positive gate result still obeys Hide awaiting.
+        setDownloadQueueState({items: rows.map((row, i) => i === 2 ? {...row, status: 'deferred', failureKind: 'early_access'} : row), paused: false});
+        await waitFor(() => !card(2) && Boolean(card(0)), 'A real access gate remained visible');
+        const high = {...models[0], id: 73000, versionId: 83000, name: 'Pair lifecycle', baseModel: 'Wan Video 2.2 I2V-A14B',
+          versionName: 'High noise - v1.0', primaryFileName: 'lifecycle_high.safetensors'};
+        const low = {...high, versionId: 83001, versionName: 'Low noise - v1.0', primaryFileName: 'lifecycle_low.safetensors'};
+        setDownloadQueueState({items: [], paused: false}); current = [high, low]; render();
+        const pair = () => document.querySelector('.browse-quality-pair-card');
+        await waitFor(() => Boolean(pair()), 'Pair lifecycle fixture did not group');
+        const pairNode = pair();
+        const pairQueue = {id: 'pair-lifecycle', modelId: high.id, versionId: high.versionId, modelName: high.name,
+          modelType: 'LORA', status: 'downloading', accessChecked: false, bytesReceived: 0};
+        setDownloadQueueState({items: [pairQueue], paused: false});
+        await waitFor(() => pair()?.dataset.state === 'checking', 'Pair checking state missing');
+        setDownloadQueueState({items: [{...pairQueue, accessChecked: true, bytesReceived: 512}], paused: false});
+        await waitFor(() => pair()?.dataset.state === 'downloading' && getComputedStyle(pair()).borderTopColor === expectedColor,
+          'Paired transfer did not receive the queue border');
+        if (pair() !== pairNode) throw new Error('Paired card remounted during metadata check');
+        return {groupSize: 10, disappearingFrames, checkingDistinct: true, confirmedBorder: expectedColor,
+          realGateHidden: true, staleGateCannotHideTransfer: true, pairTransferBorder: true};
+      } finally {
+        if (timer) clearInterval(timer);
+        document.documentElement.className = oldClasses;
+        setDownloadQueueState({items: [], paused: true}); flushSync(() => root.render(<div />));
       }
     };
     window.runAwaitingCountsTest = async () => {
