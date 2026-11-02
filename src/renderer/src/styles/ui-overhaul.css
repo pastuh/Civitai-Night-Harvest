@@ -241,6 +241,7 @@
   --browse-cat-banned: #ff3b3b;
   --strip-interrupted: #ff6bb2;
   --strip-queued: #c8cdd8;
+  --card-queue-border: #ffffff;
 
   /* Gradient-y chrome */
   --chrome-bg: #252a36;
@@ -1032,8 +1033,8 @@ label.field-label {
 .gallery-card.in-queue,
 .gallery-card.in-queue.queue-manual,
 .gallery-card.in-queue.queue-auto {
-  --card-accent: var(--strip-queued);
-  border-top-color: var(--strip-queued);
+  --card-accent: var(--card-queue-border, var(--strip-queued));
+  border-top-color: var(--card-queue-border, var(--strip-queued));
 }
 
 .gallery-card[data-state='failed'] {

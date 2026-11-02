@@ -579,3 +579,11 @@ garantija kiekvienam tinklui, disko būsenai ar filtrų deriniui.
 - Praėjo 45 regresijų ir 33 bendrieji testai, tikri izoliuoti SQLite/worker
   testai ir paleidimo fixture. Vartotojo modelių failai nekeičiami; naujų
   Civitai užklausų kiekvienai kortelei nepridėta.
+
+### Aroma siuntimo rėmelio spalvos patikslinimas
+
+Aroma kortelių queued/downloading rėmeliui pridėtas atskiras baltas
+`--card-queue-border` (#ffffff), kad jis nebepaveldėtų pilkos strip spalvos.
+Prieigos tikrinimo rėmelis lieka neutralus. Kitų temų spalvos ir eilės juostos
+paletė išlaikytos. Chromium scenarijus tikrina tiksliai rgb(255, 255, 255)
+įprastai ir porinei kortelei.

@@ -719,9 +719,11 @@ function rendererSource() {
         const rows = cards.map((_, i) => queueItem(i, i < 2 ? {status: 'downloading', accessChecked: true, bytesReceived: 512} : {}));
         setDownloadQueueState({items: rows, paused: false});
         await waitFor(() => card(0)?.dataset.state === 'downloading' && card(1)?.dataset.state === 'downloading', 'Confirmed transfer kept the New state');
-        const expected = getComputedStyle(document.documentElement).getPropertyValue('--strip-queued').trim();
+        const theme = getComputedStyle(document.documentElement);
+        const expected = theme.getPropertyValue('--card-queue-border').trim() || theme.getPropertyValue('--strip-queued').trim();
         const probe = document.createElement('div'); probe.style.color = expected; document.body.append(probe);
         const expectedColor = getComputedStyle(probe).color; probe.remove();
+        if (expectedColor !== 'rgb(255, 255, 255)') throw new Error('Aroma model transfer border must be white');
         await waitFor(() => getComputedStyle(card(0)).borderTopColor === expectedColor, 'A real transfer does not use the queue border color');
         await pause(90); monitor();
         if (disappearingFrames || original.some((node, i) => node !== card(i))) throw new Error('The 10-model group disappeared or remounted during access checks');
